@@ -18,55 +18,94 @@ Pre-reqs: /tmp/fafb_pairs.tsv + /tmp/seed_<mod>.txt for the 7 modalities
 session script).
 =#
 
-using Pkg; Pkg.activate("/home/shivaji1012/PRIMUS/packages/MORK"); using MORK
-using PathMap: read_zipper_at_path, zipper_to_next_val!, zipper_path, set_val_at!,
-               ArenaCompactTree, act_from_zipper, act_save, act_open_mmap
+using Pkg;
+Pkg.activate("/home/shivaji1012/PRIMUS/packages/MORK");
+using MORK
+using PathMap:
+    read_zipper_at_path,
+    zipper_to_next_val!,
+    zipper_path,
+    set_val_at!,
+    ArenaCompactTree,
+    act_from_zipper,
+    act_save,
+    act_open_mmap
 
 # ── byte-level helpers (identical to info_flow_zipper.jl) ─────────────────────
-@inline function syn_pre_prefix(r::AbstractString) :: Vector{UInt8}
-    n = ncodeunits(r); rb = codeunits(r); sb = codeunits("syn")
+@inline function syn_pre_prefix(r::AbstractString)::Vector{UInt8}
+    n = ncodeunits(r);
+    rb = codeunits(r);
+    sb = codeunits("syn")
     buf = Vector{UInt8}(undef, 6 + n)
-    buf[1] = item_byte(ExprArity(UInt8(4))); buf[2] = item_byte(ExprSymbol(UInt8(3)))
-    @inbounds for i in 1:3; buf[2+i] = sb[i]; end
+    buf[1] = item_byte(ExprArity(UInt8(4)));
+    buf[2] = item_byte(ExprSymbol(UInt8(3)))
+    @inbounds for i in 1:3
+        ;
+        buf[2 + i] = sb[i];
+    end
     buf[6] = item_byte(ExprSymbol(UInt8(n)))
-    @inbounds for i in 1:n; buf[6+i] = rb[i]; end
+    @inbounds for i in 1:n
+        ;
+        buf[6 + i] = rb[i];
+    end
     buf
 end
 const SYN_PREFIX = vcat(UInt8[item_byte(ExprArity(UInt8(4))), item_byte(ExprSymbol(UInt8(3)))], codeunits("syn"))
 
 @inline function parse_post_cnt(rel::Vector{UInt8})
     isempty(rel) && return nothing
-    t1 = byte_item(rel[1]); t1 isa ExprSymbol || return nothing
-    plen = Int(t1.size); pos = 2 + plen; pos > length(rel) && return nothing
-    post = String(@view rel[2:1+plen])
-    t2 = byte_item(rel[pos]); t2 isa ExprSymbol || return nothing
-    clen = Int(t2.size); pos + clen > length(rel) && return nothing
-    cnt = tryparse(Int, String(@view rel[pos+1:pos+clen]))
+    t1 = byte_item(rel[1]);
+    t1 isa ExprSymbol || return nothing
+    plen = Int(t1.size);
+    pos = 2 + plen;
+    pos > length(rel) && return nothing
+    post = String(@view rel[2:(1 + plen)])
+    t2 = byte_item(rel[pos]);
+    t2 isa ExprSymbol || return nothing
+    clen = Int(t2.size);
+    pos + clen > length(rel) && return nothing
+    cnt = tryparse(Int, String(@view rel[(pos + 1):(pos + clen)]))
     cnt === nothing && return nothing
     (post, cnt)
 end
 @inline function parse_pre_post_cnt(rel::Vector{UInt8})
     isempty(rel) && return nothing
-    t1 = byte_item(rel[1]); t1 isa ExprSymbol || return nothing
-    plen = Int(t1.size); pos = 2 + plen; pos > length(rel) && return nothing
+    t1 = byte_item(rel[1]);
+    t1 isa ExprSymbol || return nothing
+    plen = Int(t1.size);
+    pos = 2 + plen;
+    pos > length(rel) && return nothing
     parse_post_cnt(rel[pos:end])
 end
 
-function bulk_load_syn!(s::Space, tsv_path::AbstractString) :: Int
-    btm = s.btm; n = 0; buf = UInt8[]; sb = codeunits("syn")
+function bulk_load_syn!(s::Space, tsv_path::AbstractString)::Int
+    btm = s.btm;
+    n = 0;
+    buf = UInt8[];
+    sb = codeunits("syn")
     for line in eachline(tsv_path)
         isempty(line) && continue
-        t1 = findfirst('\t', line); t2 = findnext('\t', line, t1+1)
+        t1 = findfirst('\t', line);
+        t2 = findnext('\t', line, t1+1)
         (t1 === nothing || t2 === nothing) && continue
-        pre = SubString(line,1,t1-1); post = SubString(line,t1+1,t2-1); cnt = SubString(line,t2+1,lastindex(line))
-        pb=codeunits(pre); pob=codeunits(post); cb=codeunits(cnt)
+        pre = SubString(line, 1, t1-1);
+        post = SubString(line, t1+1, t2-1);
+        cnt = SubString(line, t2+1, lastindex(line))
+        pb=codeunits(pre);
+        pob=codeunits(post);
+        cb=codeunits(cnt)
         empty!(buf)
         push!(buf, item_byte(ExprArity(UInt8(4))))
-        push!(buf, item_byte(ExprSymbol(UInt8(3)))); append!(buf, sb)
-        push!(buf, item_byte(ExprSymbol(UInt8(length(pb))))); append!(buf, pb)
-        push!(buf, item_byte(ExprSymbol(UInt8(length(pob))))); append!(buf, pob)
-        push!(buf, item_byte(ExprSymbol(UInt8(length(cb))))); append!(buf, cb)
-        set_val_at!(btm, buf, MORK.UNIT_VAL); n += 1
+        push!(buf, item_byte(ExprSymbol(UInt8(3))));
+        append!(buf, sb)
+        push!(buf, item_byte(ExprSymbol(UInt8(length(pb)))));
+        append!(buf, pb)
+        push!(buf, item_byte(ExprSymbol(UInt8(length(pob)))));
+        append!(buf, pob)
+        push!(buf, item_byte(ExprSymbol(UInt8(length(cb)))));
+        append!(buf, cb)
+        set_val_at!(btm, buf, MORK.UNIT_VAL);
+        n += 1
     end
     n
 end
@@ -75,41 +114,50 @@ function compute_tin(btm)
     tin = Dict{String, Int}()
     rz = read_zipper_at_path(btm, SYN_PREFIX)
     while zipper_to_next_val!(rz)
-        pc = parse_pre_post_cnt(collect(zipper_path(rz))); pc === nothing && continue
-        post, cnt = pc; tin[post] = get(tin, post, 0) + cnt
+        pc = parse_pre_post_cnt(collect(zipper_path(rz)));
+        pc === nothing && continue
+        post, cnt = pc;
+        tin[post] = get(tin, post, 0) + cnt
     end
     tin
 end
 
-@inline function apply_frontier!(rin::Dict{String,Int}, btm, frontier::Vector{String}) :: Int
+@inline function apply_frontier!(rin::Dict{String, Int}, btm, frontier::Vector{String})::Int
     walked = 0
     for r in frontier
         rz = read_zipper_at_path(btm, syn_pre_prefix(r))
         while zipper_to_next_val!(rz)
-            pc = parse_post_cnt(collect(zipper_path(rz))); pc === nothing && continue
-            post, cnt = pc; rin[post] = get(rin, post, 0) + cnt; walked += 1
+            pc = parse_post_cnt(collect(zipper_path(rz)));
+            pc === nothing && continue
+            post, cnt = pc;
+            rin[post] = get(rin, post, 0) + cnt;
+            walked += 1
         end
     end
     walked
 end
 
 # ── per-modality flow ─────────────────────────────────────────────────────────
-function flow_for_modality(btm, tin::Dict{String,Int}, seeds::Vector{String};
-                            threshold::Float64 = 0.3, max_rounds::Int = 15)
+function flow_for_modality(
+    btm, tin::Dict{String, Int}, seeds::Vector{String}; threshold::Float64 = 0.3, max_rounds::Int = 15
+)
     # NOTE: do NOT force GC between rounds — on a 5GB+ heap each GC.gc() takes
     # ~10s, dwarfing the µs zipper work. Earlier experiment confirmed this is a
     # net loss vs the occasional natural-GC spike.
     reached = Set{String}(seeds)
-    ranks   = Dict{String,Int}(sd => 0 for sd in seeds)
-    rin     = Dict{String,Int}()
+    ranks   = Dict{String, Int}(sd => 0 for sd in seeds)
+    rin     = Dict{String, Int}()
     apply_frontier!(rin, btm, collect(seeds))
     for k in 1:max_rounds
         next = String[]
         for (post, sr) in rin
             post in reached && continue
-            st = get(tin, post, 0); st <= 0 && continue
+            st = get(tin, post, 0);
+            st <= 0 && continue
             sr / st >= threshold || continue
-            push!(next, post); push!(reached, post); ranks[post] = k
+            push!(next, post);
+            push!(reached, post);
+            ranks[post] = k
         end
         isempty(next) && break
         apply_frontier!(rin, btm, next)
@@ -118,8 +166,7 @@ function flow_for_modality(btm, tin::Dict{String,Int}, seeds::Vector{String};
 end
 
 # ── main ──────────────────────────────────────────────────────────────────────
-const MODALITIES = ["thermosensory", "hygrosensory", "gustatory",
-                    "olfactory", "AN", "mechanosensory", "visual"]
+const MODALITIES = ["thermosensory", "hygrosensory", "gustatory", "olfactory", "AN", "mechanosensory", "visual"]
 const MAX_ROUNDS = 15        # focus on early ranks (paper's Fig 6 lives there)
 
 rss_mb() = parse(Int, split(read("/proc/self/statm", String))[2]) * 4096 ÷ 1024 ÷ 1024
@@ -129,39 +176,45 @@ rss_mb() = parse(Int, split(read("/proc/self/statm", String))[2]) * 4096 ÷ 1024
 # Returns a `btm`-or-`tree` value usable everywhere read_zipper_at_path expects.
 function open_connectome(tsv::AbstractString, act::AbstractString)
     if isfile(act)
-        t = time(); tree = act_open_mmap(act); ms = round((time()-t)*1000, digits=2)
+        t = time();
+        tree = act_open_mmap(act);
+        ms = round((time()-t)*1000; digits = 2)
         println("cold mmap-open $act: ", ms, " ms, RSS=", rss_mb(), " MB")
         flush(stdout)
         return tree
     end
     s = new_space()
-    t = time(); n = bulk_load_syn!(s, tsv)
-    println("first-run text-load $n atoms in ", round(time()-t, digits=1),
-            "s, RSS=", rss_mb(), " MB")
+    t = time();
+    n = bulk_load_syn!(s, tsv)
+    println("first-run text-load $n atoms in ", round(time()-t; digits = 1), "s, RSS=", rss_mb(), " MB")
     flush(stdout)
-    t = time(); tree = act_from_zipper(s.btm, _ -> UInt64(0)); act_save(tree, act)
-    sz = round(filesize(act)/1024/1024, digits=1)
-    println("snapshot → $act ($sz MB) in ", round(time()-t, digits=1), "s")
+    t = time();
+    tree = act_from_zipper(s.btm, _ -> UInt64(0));
+    act_save(tree, act)
+    sz = round(filesize(act)/1024/1024; digits = 1)
+    println("snapshot → $act ($sz MB) in ", round(time()-t; digits = 1), "s")
     flush(stdout)
     # Re-open via mmap so subsequent queries hit the disk-backed copy directly
     # (and the in-RAM PathMap can be GC'd, dropping ~4.7 GB).
-    s = nothing; GC.gc(); GC.gc()
-    t = time(); tree2 = act_open_mmap(act)
-    println("post-snapshot cold mmap-open: ", round((time()-t)*1000, digits=2),
-            " ms, RSS=", rss_mb(), " MB")
+    s = nothing;
+    GC.gc();
+    GC.gc()
+    t = time();
+    tree2 = act_open_mmap(act)
+    println("post-snapshot cold mmap-open: ", round((time()-t)*1000; digits = 2), " ms, RSS=", rss_mb(), " MB")
     flush(stdout)
     tree2
 end
 
 function main()
     btm = open_connectome("/tmp/fafb_pairs.tsv", "/tmp/fafb.act")
-    t = time(); tin = compute_tin(btm)
-    println("tin: ", length(tin), " posts in ", round(time()-t, digits=1),
-            "s, RSS=", rss_mb(), " MB\n")
+    t = time();
+    tin = compute_tin(btm)
+    println("tin: ", length(tin), " posts in ", round(time()-t; digits = 1), "s, RSS=", rss_mb(), " MB\n")
     flush(stdout)
 
     # Per-modality flows
-    results = Dict{String, Dict{String,Int}}()   # modality => (neuron => rank)
+    results = Dict{String, Dict{String, Int}}()   # modality => (neuron => rank)
     timings = Dict{String, Float64}()
     for mod in MODALITIES
         seeds = readlines("/tmp/seed_$mod.txt") .|> strip .|> String
@@ -169,19 +222,29 @@ function main()
         t = time()
         ranks = flow_for_modality(btm, tin, seeds; max_rounds = MAX_ROUNDS)
         elapsed = time() - t
-        results[mod] = ranks; timings[mod] = elapsed
+        results[mod] = ranks;
+        timings[mod] = elapsed
         # rank histogram (just up to MAX_ROUNDS)
-        hist = Dict{Int,Int}()
-        for r in values(ranks); hist[r] = get(hist,r,0) + 1; end
-        hstr = join(["r$k=$(get(hist,k,0))" for k in 0:min(MAX_ROUNDS,5)], " ")
-        println("  $mod  seeds=$(length(seeds))  reached=$(length(ranks))  ",
-                round(elapsed, digits=2), "s   $hstr ...")
+        hist = Dict{Int, Int}()
+        for r in values(ranks)
+            ;
+            hist[r] = get(hist, r, 0) + 1;
+        end
+        hstr = join(["r$k=$(get(hist,k,0))" for k in 0:min(MAX_ROUNDS, 5)], " ")
+        println(
+            "  $mod  seeds=$(length(seeds))  reached=$(length(ranks))  ", round(elapsed; digits = 2), "s   $hstr ..."
+        )
         flush(stdout)
     end
 
     # ── per-modality rank histograms (Fig 6e analog) ──────────────────────────
     println("\n=== rank histograms (rank → count per modality) ===")
-    print(rpad("rank", 6)); for m in MODALITIES; print(rpad(m, 16)); end; println()
+    print(rpad("rank", 6));
+    for m in MODALITIES
+        ;
+        print(rpad(m, 16));
+    end;
+    println()
     for k in 0:MAX_ROUNDS
         print(rpad(k, 6))
         for m in MODALITIES
@@ -193,16 +256,21 @@ function main()
 
     # ── cross-modality overlap matrix (Fig 6d analog: shared-reach Jaccard) ───
     println("\n=== cross-modality Jaccard overlap (|R_i ∩ R_j| / |R_i ∪ R_j|) ===")
-    print(rpad("", 16)); for m in MODALITIES; print(rpad(m, 12)); end; println()
+    print(rpad("", 16));
+    for m in MODALITIES
+        ;
+        print(rpad(m, 12));
+    end;
+    println()
     for mi in MODALITIES
         print(rpad(mi, 16))
         Ri = Set(keys(results[mi]))
         for mj in MODALITIES
-            Rj = Set(keys(results[mj]))
+            Rj    = Set(keys(results[mj]))
             inter = length(intersect(Ri, Rj))
             uni   = length(union(Ri, Rj))
             jac   = uni == 0 ? 0.0 : inter/uni
-            print(rpad(round(jac, digits=3), 12))
+            print(rpad(round(jac; digits = 3), 12))
         end
         println()
     end

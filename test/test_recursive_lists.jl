@@ -23,12 +23,15 @@ load_stdlib!(S)
 
 # factorial is a demo program, not stdlib — define it here as the guarded
 # single clause so the probe is closed over everything it asserts.
-run_metta("""
+run_metta(
+    """
 (= (factorial \$n)
    (if (> \$n 0)
        (* \$n (factorial (- \$n 1)))
        1))
-""", S)
+""",
+    S,
+)
 
 # Helper: evaluate one expression, return the bare result.
 ev(src) = run_metta(src, S)[1]

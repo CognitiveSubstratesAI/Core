@@ -5,20 +5,21 @@ Zero dependency on PRIMUS_Core or PRIMUS_Metagraph.
 Redesigned pure-Julia MeTTa engine using MORK.Space as atom store.
 
 Architecture:
-  MORK.Space  (byte-trie, PathMap substrate)
-      ↓
-  CoreSpace   (AbstractAtomSpace wrapper — match, add, remove, rules)
-      ↓
-  Parser      (S-expression parser: string → Julia values)
-      ↓
-  Primitives  (grounded Julia functions: arithmetic, math, I/O)
-  AtomOps     (grounded atom/list ops: cons/car/cdr/foldl/map/filter)
-      ↓
-  Eval        (MeTTa interpreter: rule rewriting + special forms)
-      ↓
-  stdlib/     (pure .metta files: if, let, list ops, types — hot-reloadable)
+MORK.Space  (byte-trie, PathMap substrate)
+↓
+CoreSpace   (AbstractAtomSpace wrapper — match, add, remove, rules)
+↓
+Parser      (S-expression parser: string → Julia values)
+↓
+Primitives  (grounded Julia functions: arithmetic, math, I/O)
+AtomOps     (grounded atom/list ops: cons/car/cdr/foldl/map/filter)
+↓
+Eval        (MeTTa interpreter: rule rewriting + special forms)
+↓
+stdlib/     (pure .metta files: if, let, list ops, types — hot-reloadable)
 
 Design principles (per MeTTa spec + CeTTa/Mettatron/hyperon cross-check):
+
   - Only operations that MUST control evaluation order are grounded in Julia
   - Everything expressible as (= pattern body) lives in stdlib/*.metta
   - MeTTa atoms are S-expression strings ↔ MORK byte-paths (no UUID atoms)
@@ -27,22 +28,45 @@ Design principles (per MeTTa spec + CeTTa/Mettatron/hyperon cross-check):
 module MeTTaCore
 
 using MORK
-using MORK: Space, new_space,
-            space_add_all_sexpr!, space_dump_all_sexpr,
-            space_val_count, space_metta_calculus!, space_metta_calculus_at!,
-            sexpr_to_expr, expr_serialize, read_zipper,
-            space_query_multi, ExecError,
-            register_grounded!, is_grounded, GROUNDED_REGISTRY,
-            # .act + multi-source machinery (Stage 1 CoreSpaceActIO)
-            asource_new, source_factor, ACT_PATH,
-            # Per-prefix permits — StatusMap lives in MORK's server layer
-            StatusMap, sm_get_read_permission, sm_release_read!,
-            sm_get_write_permission, sm_release_write!
+using MORK:
+    Space,
+    new_space,
+    space_add_all_sexpr!,
+    space_dump_all_sexpr,
+    space_val_count,
+    space_metta_calculus!,
+    space_metta_calculus_at!,
+    sexpr_to_expr,
+    expr_serialize,
+    read_zipper,
+    space_query_multi,
+    ExecError,
+    register_grounded!,
+    is_grounded,
+    GROUNDED_REGISTRY,
+    # .act + multi-source machinery (Stage 1 CoreSpaceActIO)
+    asource_new,
+    source_factor,
+    ACT_PATH,
+    # Per-prefix permits — StatusMap lives in MORK's server layer
+    StatusMap,
+    sm_get_read_permission,
+    sm_release_read!,
+    sm_get_write_permission,
+    sm_release_write!
 using MorkSupercompiler: plan!
-using PathMap: PathMap, UnitVal, UNIT_VAL,
-               read_zipper_at_path, zipper_to_next_val!, zipper_path,
-               set_val_at!, remove_val_at!,
-               act_from_zipper, act_save, ArenaCompactTree
+using PathMap:
+    PathMap,
+    UnitVal,
+    UNIT_VAL,
+    read_zipper_at_path,
+    zipper_to_next_val!,
+    zipper_path,
+    set_val_at!,
+    remove_val_at!,
+    act_from_zipper,
+    act_save,
+    ArenaCompactTree
 
 # WILLIAM (Adaptive Compression and Discovery Service) — Pattern B1 Pkg dep.
 # Its `__init__` registers the `WILLIAM.mine-patterns` grounded primitive into
@@ -104,16 +128,13 @@ end
 Register all grounded primitives into MORK.GROUNDED_REGISTRY.
 Pass `eval_fn` (a String→String callback) to enable foldl/map/filter.
 """
-function register_all_primitives!(eval_fn::Union{Function,Nothing} = nothing)
+function register_all_primitives!(eval_fn::Union{Function, Nothing} = nothing)
     register_core_primitives!()
-    _register_atom_ops!(
-        eval_fn !== nothing ? eval_fn :
-            (s -> begin
-                sp = default_space()
-                r = eval_metta(from_sexpr(s), sp)
-                to_sexpr(r)
-            end)
-    )
+    _register_atom_ops!(eval_fn !== nothing ? eval_fn : (s -> begin
+        sp = default_space()
+        r = eval_metta(from_sexpr(s), sp)
+        to_sexpr(r)
+    end))
 end
 
 """
@@ -143,11 +164,11 @@ for spaces mixing safe and unsafe rules, this is too coarse and would need
 per-exec-atom markers in the byte trie.
 
 Usage:
-    s = new_core_space()
-    register_for_space!(s)                          # default: raw MORK calculus
-    register_for_space!(s; use_supercompiler=true)  # Rule-of-64 decomposition
-    load_stdlib!(s)
-    run_metta("!(import! &self (library william))", s)
+s = new_core_space()
+register_for_space!(s)                          # default: raw MORK calculus
+register_for_space!(s; use_supercompiler=true)  # Rule-of-64 decomposition
+load_stdlib!(s)
+run_metta("!(import! &self (library william))", s)
 """
 function register_for_space!(space::CoreSpace; use_supercompiler::Bool = false)
     use_supercompiler && enable_sc!(space)

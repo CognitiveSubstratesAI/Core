@@ -9,22 +9,21 @@ export parse_metta, parse_sexpr, metta_string, @metta_str
 # Tokenizer
 # ============================================================================
 
-
 function tokenize(source::AbstractString)::Vector{String}
     tokens = String[]
     chars = collect(source)  # Convert to character array for safe indexing
     i = 1
     n = length(chars)
-    
+
     while i <= n
         c = chars[i]
-        
+
         # Skip whitespace
         if isspace(c)
             i += 1
             continue
         end
-        
+
         # Comments (;)
         if c == ';'
             while i <= n && chars[i] != '\n'
@@ -32,14 +31,14 @@ function tokenize(source::AbstractString)::Vector{String}
             end
             continue
         end
-        
+
         # Parentheses
         if c == '(' || c == ')'
             push!(tokens, string(c))
             i += 1
             continue
         end
-        
+
         # Strings — `"` at HEAD position opens a string. Internal `"` inside
         # a non-string atom (e.g. fo"o) is handled by the atom branch below.
         if c == '"'
@@ -66,7 +65,7 @@ function tokenize(source::AbstractString)::Vector{String}
             while j <= n && !isspace(chars[j]) && chars[j] ∉ ('(', ')')
                 j += 1
             end
-            push!(tokens, String(chars[i:j-1]))
+            push!(tokens, String(chars[i:(j - 1)]))
             i = j
             continue
         end
@@ -80,7 +79,7 @@ function tokenize(source::AbstractString)::Vector{String}
         while j <= n && !isspace(chars[j]) && chars[j] ∉ ('(', ')')
             j += 1
         end
-        push!(tokens, String(chars[i:j-1]))
+        push!(tokens, String(chars[i:(j - 1)]))
         i = j
     end
 
@@ -91,19 +90,18 @@ end
 # Parser
 # ============================================================================
 
-
 function parse_atom(token::String)
     # Variable — stored as Symbol with $ prefix (Core convention)
     if startswith(token, "\$")
         return Symbol(token)   # e.g. Symbol("\$x")
     end
-    
+
     # String literal — use prevind for Unicode-safe end-trim
     if startswith(token, "\"") && endswith(token, "\"")
-        inner = token[2 : prevind(token, lastindex(token))]
+        inner = token[2:prevind(token, lastindex(token))]
         return unescape_string(inner)
     end
-    
+
     # Number (Integer or Float)
     num = tryparse(Int, token)
     if num !== nothing
@@ -113,18 +111,17 @@ function parse_atom(token::String)
     if num !== nothing
         return num
     end
-    
+
     # Boolean
     if token == "true" || token == "True"
         return true
     elseif token == "false" || token == "False"
         return false
     end
-    
+
     # Symbol
     return Symbol(token)
 end
-
 
 """
 lift_to_term(x) — identity for Core (plain Julia values, no MeTTaTerm).
@@ -156,7 +153,6 @@ function parse_tokens(tokens::Vector{String}, i::Int)
     end
 end
 
-
 function parse_sexpr(source::AbstractString)
     tokens = tokenize(source)
     if isempty(tokens)
@@ -166,7 +162,6 @@ function parse_sexpr(source::AbstractString)
     return expr
 end
 
-
 """
 parse_metta(source) → Vector{Any}
 
@@ -174,7 +169,7 @@ Parse a MeTTa source string into a list of Julia values.
 Lines starting with `!` are wrapped as `[:!, expr]` (execution directive).
 Returns plain Julia: Symbol, Vector{Any}, Number, Bool, String.
 """
-function parse_metta(source::AbstractString) :: Vector{Any}
+function parse_metta(source::AbstractString)::Vector{Any}
     tokens = tokenize(source)
     # Split `!`-prefixed tokens so the `!` directive fires uniformly:
     #   !42          → ["!", "42"]
@@ -196,7 +191,7 @@ function parse_metta(source::AbstractString) :: Vector{Any}
     end
     tokens = expanded
 
-    exprs  = Any[]
+    exprs = Any[]
     i = 1
     while i <= length(tokens)
         if tokens[i] == "!"
@@ -217,11 +212,11 @@ metta_string(x) → String
 
 Convert a parsed MeTTa value back to an S-expression string.
 """
-function metta_string(x) :: String
-    x isa Symbol  && return string(x)   # includes $var symbols
-    x isa Vector  && return "($(join(metta_string.(x), " ")))"
-    x isa Bool    && return x ? "True" : "False"
-    x isa String  && return "\"$x\""
+function metta_string(x)::String
+    x isa Symbol && return string(x)   # includes $var symbols
+    x isa Vector && return "($(join(metta_string.(x), " ")))"
+    x isa Bool && return x ? "True" : "False"
+    x isa String && return "\"$x\""
     string(x)
 end
 
@@ -240,4 +235,7 @@ Equivalent to `raw"..."` — exists so MeTTa-bearing strings are
 self-documenting at the call site.  Use everywhere MeTTa source is
 embedded in Julia (tests, REPL helpers, generated programs).
 """
-macro metta_str(s); s; end
+macro metta_str(s)
+    ;
+    s;
+end

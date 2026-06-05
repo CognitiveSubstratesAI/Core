@@ -65,11 +65,14 @@ end
     #
     @testset "PROBE 1 — multi-clause `=` fans out" begin
         S = _fresh()
-        run_metta("""
-        (= (color) red)
-        (= (color) green)
-        (= (color) blue)
-        """, S)
+        run_metta(
+            """
+  (= (color) red)
+  (= (color) green)
+  (= (color) blue)
+  """,
+            S,
+        )
 
         r = run_metta("!(collapse (color))", S)
         @test length(r) == 1                                # one top-level expr
@@ -78,9 +81,7 @@ end
         # Don't split into separate length and set checks — main returns
         # accidentally-correct cardinalities (unreduced exprs with the same
         # element count) that would mark the length check "unexpected pass."
-        @test_broken inner isa AbstractVector &&
-                     length(inner) == 3 &&
-                     Set(inner) == Set([:red, :green, :blue])
+        @test_broken inner isa AbstractVector && length(inner) == 3 && Set(inner) == Set([:red, :green, :blue])
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -109,9 +110,7 @@ end
         r = run_metta("!(collapse (+ 1 (superpose (10 20 30))))", S)
         @test length(r) == 1
         inner = r[1]
-        @test_broken inner isa AbstractVector &&
-                     length(inner) == 3 &&
-                     Set(inner) == Set([11, 21, 31])
+        @test_broken inner isa AbstractVector && length(inner) == 3 && Set(inner) == Set([11, 21, 31])
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -150,19 +149,20 @@ end
     #
     @testset "PROBE 3 — chained match: deep-thread + branch-independent bindings" begin
         S = _fresh()
-        run_metta("""
-        (Parent Bob Ann)
-        (Parent Pam Ann)
-        (Parent Cob Bob)
-        (Parent Pop Pam)
-        """, S)
+        run_metta(
+            """
+  (Parent Bob Ann)
+  (Parent Pam Ann)
+  (Parent Cob Bob)
+  (Parent Pop Pam)
+  """,
+            S,
+        )
 
         r = run_metta("!(collapse (match &self (Parent \$x Ann) (match &self (Parent \$g \$x) \$g)))", S)
         @test length(r) == 1
         inner = r[1]
-        @test_broken inner isa AbstractVector &&
-                     length(inner) == 2 &&
-                     Set(inner) == Set([:Cob, :Pop])
+        @test_broken inner isa AbstractVector && length(inner) == 2 && Set(inner) == Set([:Cob, :Pop])
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -192,8 +192,6 @@ end
         r = run_metta("!(collapse (* (superpose (1 2)) (superpose (10 20))))", S)
         @test length(r) == 1
         inner = r[1]
-        @test_broken inner isa AbstractVector &&
-                     length(inner) == 4 &&
-                     sort(inner) == [10, 20, 20, 40]
+        @test_broken inner isa AbstractVector && length(inner) == 4 && sort(inner) == [10, 20, 20, 40]
     end
 end

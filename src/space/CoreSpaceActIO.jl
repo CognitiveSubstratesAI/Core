@@ -39,7 +39,7 @@ entire trie.
 Acquires a read permit on the space's prefix — concurrent writes in the
 same prefix region will serialize against this snapshot.
 """
-function snapshot_space_to_act!(s::CoreSpace, name::AbstractString) :: Bool
+function snapshot_space_to_act!(s::CoreSpace, name::AbstractString)::Bool
     temp_pm = PathMap{UnitVal}()
     n_atoms = 0
     with_read_permit(s) do
@@ -92,8 +92,7 @@ end
 
 True iff `<ACT_PATH>/<name>.act` is present on disk.
 """
-act_exists(name::AbstractString) :: Bool =
-    isfile(joinpath(ACT_PATH[], String(name) * ".act"))
+act_exists(name::AbstractString)::Bool = isfile(joinpath(ACT_PATH[], String(name) * ".act"))
 
 # ── Lifecycle convenience ─────────────────────────────────────────────────────
 
@@ -113,8 +112,9 @@ end
     open_node!(; act_dir, common_name="common") → (ACTSource, mmaps) | nothing
 
 Single-node startup:
-1. Set the `.act` directory
-2. If a saved `<common_name>.act` exists, wire it as an mmap'd read-only source
+
+ 1. Set the `.act` directory
+ 2. If a saved `<common_name>.act` exists, wire it as an mmap'd read-only source
 
 Returns the source handle (hold for process lifetime) or `nothing` on first
 run when no saved KB exists.
@@ -139,8 +139,6 @@ Call at clean shutdown or phase boundary.  For multi-space nodes (Stage 1
 shared-trie + per-app prefixes), call once per space whose state should
 persist across runs (typically just `&common`).
 """
-close_node!(s::CoreSpace; name::AbstractString = "common") :: Bool =
-    snapshot_space_to_act!(s, name)
+close_node!(s::CoreSpace; name::AbstractString = "common")::Bool = snapshot_space_to_act!(s, name)
 
-export snapshot_space_to_act!, load_act_source, act_exists,
-       set_act_dir!, open_node!, close_node!
+export snapshot_space_to_act!, load_act_source, act_exists, set_act_dir!, open_node!, close_node!

@@ -10,7 +10,7 @@ Evaluates MeTTa expressions against a CoreSpace using:
 
 # Global default space (lazily initialised)
 const _DEFAULT_SPACE = Ref{CoreSpace}()
-function default_space() :: CoreSpace
+function default_space()::CoreSpace
     isassigned(_DEFAULT_SPACE) || (_DEFAULT_SPACE[] = new_core_space())
     _DEFAULT_SPACE[]
 end
@@ -44,9 +44,8 @@ Bounded by `_EVAL_DEPTH_BOUND` (soft) and a Julia `StackOverflowError`
 catch (hard backstop). On either, returns the spec-conformant
 `(Error <expr> StackOverflow)` atom instead of crashing the host.
 """
-function eval_metta(@nospecialize(expr), space::CoreSpace = default_space()) :: Any
-    _EVAL_DEPTH[] >= _EVAL_DEPTH_BOUND &&
-        return Any[Symbol("Error"), expr, Symbol("StackOverflow")]
+function eval_metta(@nospecialize(expr), space::CoreSpace = default_space())::Any
+    _EVAL_DEPTH[] >= _EVAL_DEPTH_BOUND && return Any[Symbol("Error"), expr, Symbol("StackOverflow")]
     _EVAL_DEPTH[] += 1
     try
         return _eval_metta_bounded(expr, space)
@@ -58,7 +57,7 @@ function eval_metta(@nospecialize(expr), space::CoreSpace = default_space()) :: 
     end
 end
 
-function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
+function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace)::Any
     # Variable — return as-is (bindings handled by caller)
     expr isa Symbol && startswith(string(expr), "\$") && return expr
 
@@ -84,36 +83,36 @@ function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
     # Mettatron eval/mod.rs, CeTTa grounded.c, hyperon-experimental interpreter.rs
     # PRIMUS_Core/interpreter/SpecialForms.jl (adopted + stripped of MeTTaTerm)
 
-    head === :match       && return _eval_match(args, space)
+    head === :match && return _eval_match(args, space)
     head === Symbol("match") && return _eval_match(args, space)
-    head === :let         && return _eval_let(args, space)
+    head === :let && return _eval_let(args, space)
     head === Symbol("let*") && return _eval_let_star(args, space)
-    head === :if          && return _eval_if(args, space)
-    head === :collapse    && return _eval_collapse(args, space)
-    head === :superpose   && return _eval_superpose(args, space)
-    head === :case        && return _eval_case(args, space)
-    head === :switch      && return _eval_case(args, space)
-    head === :chain       && return _eval_chain(args, space)
-    head === :function    && return _eval_function(args, space)
-    head === :return      && return _eval_return(args, space)
-    head === :eval        && return _eval_eval(args, space)
-    head === :evalc       && return _eval_eval(args, space)   # context ignored for now
-    head === :unify       && return _eval_unify(args, space)
-    head === :quote       && return _eval_quote(args)
-    head === :unquote     && return _eval_unquote(args, space)
-    head === :empty       && return nothing
+    head === :if && return _eval_if(args, space)
+    head === :collapse && return _eval_collapse(args, space)
+    head === :superpose && return _eval_superpose(args, space)
+    head === :case && return _eval_case(args, space)
+    head === :switch && return _eval_case(args, space)
+    head === :chain && return _eval_chain(args, space)
+    head === :function && return _eval_function(args, space)
+    head === :return && return _eval_return(args, space)
+    head === :eval && return _eval_eval(args, space)
+    head === :evalc && return _eval_eval(args, space)   # context ignored for now
+    head === :unify && return _eval_unify(args, space)
+    head === :quote && return _eval_quote(args)
+    head === :unquote && return _eval_unquote(args, space)
+    head === :empty && return nothing
     head === Symbol("noreduce-eq") && return _eval_noreduce_eq(args)  # no eval of args
-    head === :noeval               && return isempty(args) ? nothing : args[1]  # return unevaluated
+    head === :noeval && return isempty(args) ? nothing : args[1]  # return unevaluated
     # Error is a constructor — args are NOT evaluated (prevents assertEqual infinite recursion)
-    head === :Error                && return vcat([Symbol("Error")], args)
-    head === Symbol("Error")       && return vcat([Symbol("Error")], args)
-    head === :do          && return _eval_do(args, space)
-    head === :begin       && return _eval_do(args, space)
-    head === Symbol("import!")      && return _eval_import!(args, space)
-    head === Symbol("git-import!")  && return _eval_git_import!(args, space)
-    head === Symbol("bind!")        && return _eval_bind!(args, space)
-    head === Symbol("with-space")   && return _eval_with_space(args, space)
-    head === Symbol("add-atom")    && return _eval_add_atom(args, space)
+    head === :Error && return vcat([Symbol("Error")], args)
+    head === Symbol("Error") && return vcat([Symbol("Error")], args)
+    head === :do && return _eval_do(args, space)
+    head === :begin && return _eval_do(args, space)
+    head === Symbol("import!") && return _eval_import!(args, space)
+    head === Symbol("git-import!") && return _eval_git_import!(args, space)
+    head === Symbol("bind!") && return _eval_bind!(args, space)
+    head === Symbol("with-space") && return _eval_with_space(args, space)
+    head === Symbol("add-atom") && return _eval_add_atom(args, space)
     head === Symbol("remove-atom") && return _eval_remove_atom(args, space)
     # ECAN bulk ops — Julia fast path for trie-wide STI/LTI updates.
     # Pure-MeTTa equivalents in t1_core_logic.metta become unreachable once
@@ -122,9 +121,9 @@ function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
     head === Symbol("decimate-importance!") && return _eval_decimate_importance!(args, space)
     head === Symbol("normalize-attention!") && return _eval_normalize_attention!(args, space)
     # exec atoms — add to MORK space and run calculus (AUSink/CountSink/HeadSink)
-    head === :exec                  && return _eval_exec_atom(expr, space)
-    head === Symbol("get-atoms")   && return core_atoms(space)
-    head === Symbol("new-space")   && return new_core_space()
+    head === :exec && return _eval_exec_atom(expr, space)
+    head === Symbol("get-atoms") && return core_atoms(space)
+    head === Symbol("new-space") && return new_core_space()
     head === Symbol("get-type-space") && return _eval_get_type_space(args, space)
     # get-type is dispatched as a special form (rather than the grounded
     # version registered in Primitives.jl) so it can consult the space for
@@ -133,34 +132,42 @@ function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
     # type-cast) for the common single-declaration case. Multi-typed atoms
     # still return only the first declared type — the multi-valued behavior
     # is the step-4 (streaming) consumer-migration item per resume notes.
-    head === Symbol("get-type")    && return _eval_get_type(args, space)
+    head === Symbol("get-type") && return _eval_get_type(args, space)
     # type-cast is dispatched as a special form (rather than the grounded
     # structural-only version in Primitives.jl) so it can read declared
     # types from the space and loop over them per the spec's type_cast
     # algorithm. First-match-success returns the atom; if no declared
     # type matches, accumulates BadType errors per non-matching type.
-    head === Symbol("type-cast")   && return _eval_type_cast(args, space)
-    head === Symbol("add-reduct")     && return _eval_add_reduct(args, space)
+    head === Symbol("type-cast") && return _eval_type_cast(args, space)
+    head === Symbol("add-reduct") && return _eval_add_reduct(args, space)
     head === Symbol("for-each-in-atom") && return _eval_for_each(args, space)
     # Higher-order atom ops — body arg must NOT be pre-evaluated (special forms)
-    head === Symbol("foldl-atom")   && return _eval_foldl_atom(args, space)
-    head === Symbol("map-atom")     && return _eval_map_atom(args, space)
-    head === Symbol("filter-atom")  && return _eval_filter_atom(args, space)
+    head === Symbol("foldl-atom") && return _eval_foldl_atom(args, space)
+    head === Symbol("map-atom") && return _eval_map_atom(args, space)
+    head === Symbol("filter-atom") && return _eval_filter_atom(args, space)
 
     # ── Grounded dispatch ─────────────────────────────────────────────────────
     if head isa Symbol && is_grounded(string(head))
         evaled_args = [eval_metta(a, space) for a in args]
         str_args = to_sexpr_atom.(evaled_args)   # quote-wraps String literals so primitives can tell "hi" from :hi
-        raw = try GROUNDED_REGISTRY[string(head)](str_args)
-              catch e; @warn "grounded call failed" name=head exception=e; nothing; end
+        raw = try
+            GROUNDED_REGISTRY[string(head)](str_args)
+        catch e
+            ; @warn "grounded call failed" name=head exception=e; nothing;
+        end
         raw === nothing && return expr
         # NotReducible protocol: per MeTTa spec, a grounded function returning
         # the symbol `NotReducible` signals "the interpreter should leave my
         # call unreduced." Honor the sentinel by returning the original expr
         # instead of the literal symbol.
         (raw === "NotReducible" || raw === :NotReducible) && return expr
-        return raw isa String ? from_sexpr(raw) :
-               raw isa Vector{String} ? from_sexpr.(raw) : raw
+        return if raw isa String
+            from_sexpr(raw)
+        elseif raw isa Vector{String}
+            from_sexpr.(raw)
+        else
+            raw
+        end
     end
 
     # ── Rule rewriting ────────────────────────────────────────────────────────
@@ -192,8 +199,7 @@ function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
         # return (Error <expr> IncorrectNumberOfArguments) — auto-generated by
         # the interpreter. Previously PRIMUS returned the unreduced expr, which
         # silently masked arity bugs in user code.
-        !isempty(rules) && !matched_arity &&
-            return Any[Symbol("Error"), expr, Symbol("IncorrectNumberOfArguments")]
+        !isempty(rules) && !matched_arity && return Any[Symbol("Error"), expr, Symbol("IncorrectNumberOfArguments")]
         # No rule matched (and either no rules exist or rules existed with
         # right arity but unification failed on value) — return reduced expr.
         return vcat([head], evaled_args)
@@ -211,6 +217,7 @@ If a declared signature `(: head (-> T1 T2 ... Tret))` exists in the space
 and an arg's actual type doesn't match its expected type, returns the
 spec-conformant Error atom `(Error <expr> (BadArgType <pos> <expected> <actual>))`.
 Returns `nothing` (allow eval to continue) if:
+
   - No signature declared for this head.
   - The declared signature has different arity than the call.
   - All args' types pass the lenient `_types_match` check.
@@ -228,31 +235,28 @@ function _check_arg_types(head::Symbol, expr, evaled_args::Vector, space::CoreSp
         sig = m[3]
         sig isa Vector && length(sig) >= 2 && sig[1] === Symbol("->") || continue
         # sig = [->, T1, T2, ..., TN, Tret]
-        expected_arg_types = sig[2:end-1]
+        expected_arg_types = sig[2:(end - 1)]
         length(expected_arg_types) == length(evaled_args) || continue
         for (i, (arg, expected_t)) in enumerate(zip(evaled_args, expected_arg_types))
             actual_t = _infer_arg_type(arg, space)
             _types_match(actual_t, expected_t) && continue
-            return Any[Symbol("Error"),
-                       expr,
-                       Any[Symbol("BadArgType"), i, expected_t, actual_t]]
+            return Any[Symbol("Error"), expr, Any[Symbol("BadArgType"), i, expected_t, actual_t]]
         end
         return nothing
     end
     nothing
 end
 
-function _types_match(actual, expected) :: Bool
+function _types_match(actual, expected)::Bool
     actual === expected && return true
     # Per spec: %Undefined% and Atom are universal in the type system
-    actual   === Symbol("%Undefined%") && return true
+    actual === Symbol("%Undefined%") && return true
     expected === Symbol("%Undefined%") && return true
-    expected === Symbol("Atom")        && return true
+    expected === Symbol("Atom") && return true
     # Variable actual (at unification it'll be bound to something concrete)
     actual === Symbol("Variable") && return true
     # Generic parameters in the expected type — `(: id (-> $t $t))`
-    expected isa Symbol && (startswith(string(expected), "\$") ||
-                            startswith(string(expected), "__var_")) && return true
+    expected isa Symbol && (startswith(string(expected), "\$") || startswith(string(expected), "__var_")) && return true
     false
 end
 
@@ -265,11 +269,11 @@ function _infer_arg_type(atom, space::CoreSpace)
     end
     atom_s = to_sexpr_atom(atom)
     s = strip(atom_s)
-    tryparse(Int, s) !== nothing     && return Symbol("Number")
+    tryparse(Int, s) !== nothing && return Symbol("Number")
     tryparse(Float64, s) !== nothing && return Symbol("Number")
     (s == "True" || s == "False" || s == "true" || s == "false") && return Symbol("Bool")
     startswith(s, "\"") && return Symbol("String")
-    startswith(s, "(")  && return Symbol("Expression")
+    startswith(s, "(") && return Symbol("Expression")
     startswith(s, "\$") && return Symbol("Variable")
     Symbol("Symbol")
 end
@@ -287,9 +291,9 @@ Used by `_eval_type_cast` so both meta-type universals AND structural
 equality fire correctly. Kept in lock-step with the grounded `match-types`
 registration in Primitives.jl.
 """
-function _spec_types_match(t1, t2) :: Bool
-    (t1 === Symbol("%Undefined%") || t1 === Symbol("Atom") ||
-     t2 === Symbol("%Undefined%") || t2 === Symbol("Atom")) && return true
+function _spec_types_match(t1, t2)::Bool
+    (t1 === Symbol("%Undefined%") || t1 === Symbol("Atom") || t2 === Symbol("%Undefined%") || t2 === Symbol("Atom")) &&
+        return true
     t1 === t2
 end
 
@@ -307,6 +311,7 @@ spec's type_cast algorithm:
     return [(Error \$atom (BadType \$type \$t)) for \$t in \$no_match]
 
 Differences from the previous grounded implementation:
+
   - Reads ALL declared types from the space, not just structural inference.
   - Loops over them with first-match-success (spec semantics).
   - Honors Atom and %Undefined% as universal via _spec_types_match.
@@ -338,15 +343,13 @@ function _eval_type_cast(args::Vector, space::CoreSpace)
         # No declared type matched. Per spec, return errors for each non-matching
         # type. Single-valued evaluator: return the first one (the additional
         # ones would be in the stream under streaming `=`).
-        return Any[Symbol("Error"), atom,
-                   Any[Symbol("BadType"), requested_t, no_match[1]]]
+        return Any[Symbol("Error"), atom, Any[Symbol("BadType"), requested_t, no_match[1]]]
     end
 
     # No declared types — fall back to structural inference.
     inferred = _infer_arg_type(atom, space)
     _spec_types_match(inferred, requested_t) && return atom
-    Any[Symbol("Error"), atom,
-        Any[Symbol("BadType"), requested_t, inferred]]
+    Any[Symbol("Error"), atom, Any[Symbol("BadType"), requested_t, inferred]]
 end
 
 """
@@ -355,10 +358,14 @@ end
 Parse and evaluate a MeTTa source string.
 Lines starting with `!` are executed; others are added as atoms.
 """
-function run_metta(source::String, space::CoreSpace = default_space()) :: Vector{Any}
+function run_metta(source::String, space::CoreSpace = default_space())::Vector{Any}
     results = Any[]
     # Use the proper parser to handle multi-line expressions and comments
-    exprs = try parse_metta(source) catch e; @warn "run_metta: parse error" exception=e; Any[] end
+    exprs = try
+        parse_metta(source)
+    catch e
+        ; @warn "run_metta: parse error" exception=e; Any[]
+    end
     for expr in exprs
         if expr isa Vector && !isempty(expr) && expr[1] === :!
             # Execution directive — evaluate the inner expression
@@ -379,7 +386,7 @@ Relative `import!` paths inside the file are resolved relative to the file's
 own directory — matching PeTTa's behaviour.  The working directory is restored
 after the file finishes loading.
 """
-function run_file(path::String, space::CoreSpace = default_space()) :: Vector{Any}
+function run_file(path::String, space::CoreSpace = default_space())::Vector{Any}
     isfile(path) || error("File not found: $path")
     abs_path = abspath(path)
     prev_dir = pwd()
@@ -398,12 +405,12 @@ end
 # that is itself an expression (e.g. a tuple `($r $c)`) stays a 1-element
 # stream `[(r c)]` instead of being mistaken for the stream `[r, c]`.
 # `collapse` consumes this directly; `_eval_match` adds the convenience unwrap.
-function _eval_match_all(args::Vector, space::CoreSpace) :: Vector{Any}
+function _eval_match_all(args::Vector, space::CoreSpace)::Vector{Any}
     length(args) < 2 && return Any[]
     pattern  = args[2]
     template = length(args) >= 3 ? args[3] : pattern
-    s = _resolve_space(args[1], space)
-    results = Any[]
+    s        = _resolve_space(args[1], space)
+    results  = Any[]
     for cand in core_match(s, pattern)
         b = _unify(pattern, cand)
         b === nothing && continue
@@ -424,20 +431,21 @@ end
 
 function _eval_let(args::Vector, space::CoreSpace)
     length(args) < 3 && return nothing
-    var  = args[1]
-    val  = eval_metta(args[2], space)
+    var = args[1]
+    val = eval_metta(args[2], space)
     body = args[3]
-    bindings = var isa Symbol && startswith(string(var), "\$") ?
-               Dict{Symbol, Any}(Symbol(string(var)[2:end]) => val) :
-               Dict{Symbol, Any}()
+    bindings = if var isa Symbol && startswith(string(var), "\$")
+        Dict{Symbol, Any}(Symbol(string(var)[2:end]) => val)
+    else
+        Dict{Symbol, Any}()
+    end
     eval_metta(_apply_bindings(body, bindings), space)
 end
 
 function _eval_if(args::Vector, space::CoreSpace)
     length(args) < 3 && return nothing
     cond = eval_metta(args[1], space)
-    (cond === true || cond === :True || cond == "True") ?
-        eval_metta(args[2], space) : eval_metta(args[3], space)
+    (cond === true || cond === :True || cond == "True") ? eval_metta(args[2], space) : eval_metta(args[3], space)
 end
 
 function _eval_collapse(args::Vector, space::CoreSpace)
@@ -528,7 +536,7 @@ end
 # by ~10x.  Sufficient to bring a 100-tick ECAN heartbeat from minutes to
 # sub-second at N=5-50 atoms.
 
-function _coerce_float(x::Any) :: Float64
+function _coerce_float(x::Any)::Float64
     x isa Number && return Float64(x)
     if x isa String
         n = tryparse(Float64, x)
@@ -609,13 +617,15 @@ end
 
 # ── Unification helpers ───────────────────────────────────────────────────────
 
-"""Unify two expressions, returning bindings Dict or nothing on failure."""
-function _unify(@nospecialize(pattern), @nospecialize(value)) :: Union{Dict{Symbol,Any}, Nothing}
+"""
+Unify two expressions, returning bindings Dict or nothing on failure.
+"""
+function _unify(@nospecialize(pattern), @nospecialize(value))::Union{Dict{Symbol, Any}, Nothing}
     bindings = Dict{Symbol, Any}()
     _unify!(pattern, value, bindings) ? bindings : nothing
 end
 
-function _unify!(@nospecialize(pat), @nospecialize(val), b::Dict{Symbol,Any}) :: Bool
+function _unify!(@nospecialize(pat), @nospecialize(val), b::Dict{Symbol, Any})::Bool
     # Symmetric variable handling per MeTTa spec match_atoms: a variable on
     # either side binds to the other side. Previously PRIMUS only checked
     # the pat (first) position, so calls like
@@ -629,9 +639,7 @@ function _unify!(@nospecialize(pat), @nospecialize(val), b::Dict{Symbol,Any}) ::
     if pat isa Symbol
         pat_str = string(pat)
         if startswith(pat_str, "\$") || startswith(pat_str, "__var_")
-            vname = startswith(pat_str, "__var_") ?
-                    Symbol("\$" * pat_str[7:end]) :
-                    Symbol(pat_str[2:end])
+            vname = startswith(pat_str, "__var_") ? Symbol("\$" * pat_str[7:end]) : Symbol(pat_str[2:end])
             existing = get(b, vname, nothing)
             existing !== nothing && return existing == val
             b[vname] = val
@@ -643,9 +651,7 @@ function _unify!(@nospecialize(pat), @nospecialize(val), b::Dict{Symbol,Any}) ::
     if val isa Symbol
         val_str = string(val)
         if startswith(val_str, "\$") || startswith(val_str, "__var_")
-            vname = startswith(val_str, "__var_") ?
-                    Symbol("\$" * val_str[7:end]) :
-                    Symbol(val_str[2:end])
+            vname = startswith(val_str, "__var_") ? Symbol("\$" * val_str[7:end]) : Symbol(val_str[2:end])
             existing = get(b, vname, nothing)
             existing !== nothing && return existing == pat
             b[vname] = pat
@@ -659,14 +665,18 @@ function _unify!(@nospecialize(pat), @nospecialize(val), b::Dict{Symbol,Any}) ::
     all(i -> _unify!(pat[i], val[i], b), eachindex(pat))
 end
 
-"""Unify a list of patterns against a list of values."""
-function _unify_args(params::Vector, args::Vector) :: Union{Dict{Symbol,Any}, Nothing}
+"""
+Unify a list of patterns against a list of values.
+"""
+function _unify_args(params::Vector, args::Vector)::Union{Dict{Symbol, Any}, Nothing}
     length(params) == length(args) || return nothing
     _unify(params, args)
 end
 
-"""Apply variable bindings to an expression."""
-function _apply_bindings(@nospecialize(expr), b::Dict{Symbol,Any}) :: Any
+"""
+Apply variable bindings to an expression.
+"""
+function _apply_bindings(@nospecialize(expr), b::Dict{Symbol, Any})::Any
     isempty(b) && return expr
     if expr isa Symbol
         s = string(expr)
@@ -687,12 +697,12 @@ function _eval_let_star(args::Vector, space::CoreSpace)
     length(args) < 2 && return nothing
     bindings_list = args[1]
     body = args[2]
-    b = Dict{Symbol,Any}()
+    b = Dict{Symbol, Any}()
     pairs = bindings_list isa Vector ? bindings_list : [bindings_list]
     for pair in pairs
         pair isa Vector && length(pair) >= 2 || continue
-        var  = pair[1]
-        val  = eval_metta(_apply_bindings(pair[2], b), space)
+        var = pair[1]
+        val = eval_metta(_apply_bindings(pair[2], b), space)
         if var isa Vector && !isempty(var)
             # Compound pattern: ((Constructor $x $y) val) — unify and merge bindings
             bindings = _unify(_apply_bindings(var, b), val)
@@ -714,7 +724,7 @@ function _eval_case(args::Vector, space::CoreSpace)
         pair isa Vector && length(pair) >= 2 || continue
         pat    = pair[1]
         result = pair[2]
-        b = _unify(pat, val)
+        b      = _unify(pat, val)
         b === nothing && continue
         return eval_metta(_apply_bindings(result, b), space)
     end
@@ -728,9 +738,9 @@ function _eval_chain(args::Vector, space::CoreSpace)
     evaled   = eval_metta(args[1], space)
     var      = args[2]
     template = args[3]
-    vname = _var_name(var)
+    vname    = _var_name(var)
     if vname !== nothing
-        eval_metta(_apply_bindings(template, Dict{Symbol,Any}(vname => evaled)), space)
+        eval_metta(_apply_bindings(template, Dict{Symbol, Any}(vname => evaled)), space)
     else
         eval_metta(template, space)
     end
@@ -738,7 +748,7 @@ end
 
 # Sentinel type for function/return control flow
 struct _ReturnValue
-    val :: Any
+    val::Any
 end
 
 function _eval_function(args::Vector, space::CoreSpace)
@@ -822,20 +832,21 @@ const _METTA_PACKAGES_DIR = joinpath(homedir(), ".metta", "packages")
 # Core/lib/ — algorithm libraries, mirrors PeTTa/lib/
 const _CORE_LIB_DIR = joinpath(@__DIR__, "..", "..", "lib")
 
-"""Return the local path for a `(library pkg file)` import expression, or nothing.
+"""
+Return the local path for a `(library pkg file)` import expression, or nothing.
 
 Resolution order (directory form preferred so multi-file libraries can name
 their entry point conventionally):
 
-  (library name)            tries  Core/lib/name/name.metta
-                                   Core/lib/name/loader.metta
-                                   Core/lib/name.metta
-                                   <package registry> ...
-  (library pkg file)        tries  Core/lib/pkg/file.metta
-                                   Core/lib/file.metta
-                                   <package registry> ...
+(library name)            tries  Core/lib/name/name.metta
+Core/lib/name/loader.metta
+Core/lib/name.metta
+<package registry> ...
+(library pkg file)        tries  Core/lib/pkg/file.metta
+Core/lib/file.metta
+<package registry> ...
 """
-function _resolve_library(expr) :: Union{String, Nothing}
+function _resolve_library(expr)::Union{String, Nothing}
     if expr isa Vector && !isempty(expr) && expr[1] === Symbol("library")
         parts = expr[2:end]
         if length(parts) == 2
@@ -919,16 +930,16 @@ function _eval_git_import!(args::Vector, space::CoreSpace)
     mkpath(dirname(dest))
 
     if isdir(joinpath(dest, ".git"))
-        run(`git -C $dest pull --quiet`, wait=true)
+        run(`git -C $dest pull --quiet`; wait = true)
     else
-        run(`git clone --quiet $url $dest`, wait=true)
+        run(`git clone --quiet $url $dest`; wait = true)
     end
 
     # Run optional build script
     if length(args) >= 2
         build = string(args[2])
         build_path = joinpath(dest, build)
-        isfile(build_path) && run(`bash $build_path`, wait=true)
+        isfile(build_path) && run(`bash $build_path`; wait = true)
     end
 
     _PACKAGE_REGISTRY[repo_name] = dest
@@ -943,16 +954,20 @@ function _eval_get_type_space(args::Vector, space::CoreSpace)
     atom_s = to_sexpr(atom)
     # Search for (: atom Type) in space
     matches = core_match(space, [Symbol(":"), atom, Symbol("\$t")])
-    isempty(matches) ? Symbol("%Undefined%") :
+    if isempty(matches)
+        Symbol("%Undefined%")
+    else
         (matches[1] isa Vector && length(matches[1]) >= 3 ? matches[1][3] : Symbol("%Undefined%"))
+    end
 end
 
 """
     _eval_get_type(args, space) → Symbol
 
 Special-form implementation of `(get-type \$atom)`. Resolves the type by:
-  1. Querying the space for `(: \$atom \$t)` declarations — declared types win.
-  2. Falling back to structural inference if no declaration exists.
+
+ 1. Querying the space for `(: \$atom \$t)` declarations — declared types win.
+ 2. Falling back to structural inference if no declaration exists.
 
 Closes the historic three-oracle disagreement on declared-but-non-structural
 atoms — previously `get-type` ignored declarations and returned the
@@ -975,11 +990,11 @@ function _eval_get_type(args::Vector, space::CoreSpace)
     # registration in Primitives.jl, kept in sync with that policy choice).
     atom_s = to_sexpr_atom(atom)
     s = strip(atom_s)
-    tryparse(Int, s) !== nothing     && return Symbol("Number")
+    tryparse(Int, s) !== nothing && return Symbol("Number")
     tryparse(Float64, s) !== nothing && return Symbol("Number")
     (s == "True" || s == "False" || s == "true" || s == "false") && return Symbol("Bool")
     startswith(s, "\"") && return Symbol("String")
-    startswith(s, "(")  && return Symbol("Expression")
+    startswith(s, "(") && return Symbol("Expression")
     startswith(s, "\$") && return Symbol("Variable")
     Symbol("Symbol")
 end
@@ -995,8 +1010,8 @@ end
 function _eval_for_each(args::Vector, space::CoreSpace)
     # (for-each-in-atom list fn) — apply fn to each element
     length(args) < 2 && return nothing
-    lst  = eval_metta(args[1], space)
-    fn   = args[2]
+    lst = eval_metta(args[1], space)
+    fn = args[2]
     items = lst isa Vector ? lst : [lst]
     for item in items
         eval_metta([fn, item], space)
@@ -1015,7 +1030,7 @@ end
 # collisions, and unbounded memory leaks under concurrent/nested evaluation.
 # Each CoreSpace carries its own registry; bind! writes to space.named_spaces.
 
-function _resolve_space(sp_arg::Any, default::CoreSpace) :: CoreSpace
+function _resolve_space(sp_arg::Any, default::CoreSpace)::CoreSpace
     sp_arg === Symbol("&self") && return default
     if sp_arg isa Symbol
         v = get(default.named_spaces, sp_arg, nothing)
@@ -1024,12 +1039,18 @@ function _resolve_space(sp_arg::Any, default::CoreSpace) :: CoreSpace
         # Silent fallthrough to `default` would mutate the wrong space with no error.
         sp_str = string(sp_arg)
         if startswith(sp_str, "&")
-            error("Unresolved space reference: $sp_arg\n" *
-                  "Use (bind! $sp_arg (new-space)) before using it as a space arg, " *
-                  "or (with-space $sp_arg (new-space) ...) for a transient scope.")
+            error(
+                "Unresolved space reference: $sp_arg\n" *
+                "Use (bind! $sp_arg (new-space)) before using it as a space arg, " *
+                "or (with-space $sp_arg (new-space) ...) for a transient scope.",
+            )
         end
     end
-    resolved = try eval_metta(sp_arg, default) catch; nothing end
+    resolved = try
+        eval_metta(sp_arg, default)
+    catch
+        ; nothing
+    end
     resolved isa CoreSpace ? resolved : default
 end
 
@@ -1101,11 +1122,11 @@ end
 
 # ── Variable name extraction ──────────────────────────────────────────────────
 
-function _var_name(var::Any) :: Union{Symbol, Nothing}
+function _var_name(var::Any)::Union{Symbol, Nothing}
     var isa Symbol || return nothing
     s = string(var)
-    startswith(s, "\$")      && return Symbol(s[2:end])
-    startswith(s, "__var_")  && return Symbol("\$" * s[7:end])
+    startswith(s, "\$") && return Symbol(s[2:end])
+    startswith(s, "__var_") && return Symbol("\$" * s[7:end])
     nothing
 end
 
@@ -1126,15 +1147,20 @@ function _eval_foldl_atom(args::Vector, space::CoreSpace)
     acc_name  = _var_name(acc_var)
     elem_name = _var_name(elem_var)
 
-    items = list_val isa Vector ? list_val :
-            list_val isa String ? begin
-                p = from_sexpr(list_val)
-                p isa Vector ? p : (p === nothing ? [] : [p])
-            end : [list_val]
+    items = if list_val isa Vector
+        list_val
+    elseif list_val isa String
+        begin
+        p = from_sexpr(list_val)
+        p isa Vector ? p : (p === nothing ? [] : [p])
+    end
+    else
+        [list_val]
+    end
 
     for item in items
-        b = Dict{Symbol,Any}()
-        acc_name  !== nothing && (b[acc_name]  = acc)
+        b = Dict{Symbol, Any}()
+        acc_name !== nothing && (b[acc_name] = acc)
         elem_name !== nothing && (b[elem_name] = item)
         acc = eval_metta(_apply_bindings(body, b), space)
     end
@@ -1150,15 +1176,20 @@ function _eval_map_atom(args::Vector, space::CoreSpace)
 
     elem_name = _var_name(elem_var)
 
-    items = list_val isa Vector ? list_val :
-            list_val isa String ? begin
-                p = from_sexpr(list_val)
-                p isa Vector ? p : (p === nothing ? [] : [p])
-            end : [list_val]
+    items = if list_val isa Vector
+        list_val
+    elseif list_val isa String
+        begin
+        p = from_sexpr(list_val)
+        p isa Vector ? p : (p === nothing ? [] : [p])
+    end
+    else
+        [list_val]
+    end
 
     results = Any[]
     for item in items
-        b = Dict{Symbol,Any}()
+        b = Dict{Symbol, Any}()
         elem_name !== nothing && (b[elem_name] = item)
         push!(results, eval_metta(_apply_bindings(body, b), space))
     end
@@ -1174,15 +1205,20 @@ function _eval_filter_atom(args::Vector, space::CoreSpace)
 
     elem_name = _var_name(elem_var)
 
-    items = list_val isa Vector ? list_val :
-            list_val isa String ? begin
-                p = from_sexpr(list_val)
-                p isa Vector ? p : (p === nothing ? [] : [p])
-            end : [list_val]
+    items = if list_val isa Vector
+        list_val
+    elseif list_val isa String
+        begin
+        p = from_sexpr(list_val)
+        p isa Vector ? p : (p === nothing ? [] : [p])
+    end
+    else
+        [list_val]
+    end
 
     kept = Any[]
     for item in items
-        b = Dict{Symbol,Any}()
+        b = Dict{Symbol, Any}()
         elem_name !== nothing && (b[elem_name] = item)
         r = eval_metta(_apply_bindings(pred, b), space)
         (r === true || r === :True || r == "True") && push!(kept, item)
