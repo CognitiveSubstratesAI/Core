@@ -329,6 +329,14 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (List.length (getChildren (first (addLogicalKnobs (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) True NilMMap (a b))))) 5)")
     end
 
+    @testset "M1c-2b — buildLogical (recursive knob tree-walk)" begin
+        # buildLogical over (AND A) with labels (a b) walks root AND + inserted OR-above-A
+        # + appended OR child, building 4 knobs at each → 12 total, returns (tree mmap).
+        @test aok("!(assertEqual (MultiMap.length (second (buildLogical (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) NilMMap (a b)))) 12)")
+        # result is a 2-tuple whose first element is a Tree
+        @test aok("!(assertEqual (isNullVertex (first (buildLogical (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) NilMMap (a b)))) False)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

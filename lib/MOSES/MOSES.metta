@@ -30,7 +30,8 @@
 ;;;;   M1c-2b ✅ logical-probe: logicalProbe/strategyProbe (collect knobs over perms)
 ;;;;   M1c-2b ✅ sample-logical-perms (DETERMINISTIC enumerated selection, not RNG)
 ;;;;   M1c-2b ✅ add-logical-knobs: addLogicalKnobs + pairKnobWithSpec + expToMMap
-;;;;          [M1c-2b cont: buildLogical (siblingit tree-walk) → build-knobs]
+;;;;   M1c-2b ✅ build-logical: buildLogical + siblingit (recursive knob tree-walk)
+;;;;          [M1c-2b cont: build-knobs (logicalCanonize→buildLogical dispatch)]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -55,3 +56,4 @@
 !(import! &self "logical_probe.metta")
 !(import! &self "sample_logical_perms.metta")
 !(import! &self "add_logical_knobs.metta")
+!(import! &self "build_logical.metta")
