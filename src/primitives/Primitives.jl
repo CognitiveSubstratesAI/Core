@@ -84,53 +84,11 @@ function _register_type_checks!()
 end
 
 # ── List ops ─────────────────────────────────────────────────────────────────
-
-function _register_list_ops!()
-    MORK.register_grounded!("car-atom", args -> begin
-        isempty(args) && return nothing
-        s = strip(args[1])
-        if startswith(s, "(") && endswith(s, ")")
-            tokens = MeTTaCore._tokenise(s[2:end-1])
-            isempty(tokens) ? "()" : tokens[1]
-        else
-            s
-        end
-    end)
-
-    MORK.register_grounded!("cdr-atom", args -> begin
-        isempty(args) && return nothing
-        s = strip(args[1])
-        if startswith(s, "(") && endswith(s, ")")
-            tokens = MeTTaCore._tokenise(s[2:end-1])
-            length(tokens) <= 1 ? "()" : "($(join(tokens[2:end], " ")))"
-        else
-            "()"
-        end
-    end)
-
-    MORK.register_grounded!("cons-atom", args -> begin
-        length(args) < 2 && return nothing
-        head = args[1]
-        tail = strip(args[2])
-        if tail == "()"
-            "($head)"
-        elseif startswith(tail, "(")
-            "($(head) $(tail[2:end-1]))"
-        else
-            "($head $tail)"
-        end
-    end)
-
-    MORK.register_grounded!("size-atom", args -> begin
-        isempty(args) && return "0"
-        s = strip(args[1])
-        if startswith(s, "(") && endswith(s, ")")
-            string(length(MeTTaCore._tokenise(s[2:end-1])))
-        else
-            "1"
-        end
-    end)
-end
+# REMOVED 2026-06-10: car/cdr/cons/size-atom were double-registered here AND in
+# AtomOps.jl `_register_atom_ops!`, which runs LATER (register_core_primitives! →
+# _register_atom_ops!) and therefore WON. These copies were dead (last-writer-wins).
+# The canonical, more-complete versions live in AtomOps.jl. See
+# docs/PRIMITIVE_SURFACE_AND_ECOSYSTEM_TOOLING_2026-06-10.md §1 (double-registration).
 
 # ── Boolean ops ───────────────────────────────────────────────────────────────
 
@@ -477,7 +435,8 @@ function register_core_primitives!()
     _register_comparison!()
     _register_string_ops!()
     _register_type_checks!()
-    _register_list_ops!()
+    # car/cdr/cons/size-atom are registered by AtomOps.jl (canonical) — the former
+    # _register_list_ops!() duplicate here was dead (AtomOps wins). Removed 2026-06-10.
     _register_boolean_ops!()
     _register_math!()
     _register_vector_ops!()

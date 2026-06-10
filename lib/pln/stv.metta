@@ -28,7 +28,4 @@
 (= (get-tv $atom)
    (match &self (AtomSTV $atom $s $c) (STV $s $c)))
 
-;; Clamp utility (needed by PLN formulas)
-(= (clamp $v $lo $hi)
-   (if (> $v $hi) $hi
-       (if (< $v $lo) $lo $v)))
+;; clamp lives in Core stdlib/math.metta (always loaded) — local copy removed 2026-06-10.

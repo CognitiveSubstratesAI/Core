@@ -74,9 +74,7 @@
        $b
        (cons-atom (car-atom $a) (concatT (cdr-atom $a) $b))))
 
-;; is-member — membership in a native ()-list (PeTTa builtin in upstream; here an
-;; alias of List.member so tree.metta's (is-member $r (AND OR)) ports unchanged).
-(= (is-member $x $xs) (List.member $x $xs))
+;; is-member is now a Core stdlib op (stdlib/core.metta, → member) — consolidated 2026-06-10.
 
 ;; isUnit / isNotUnit — the named predicates that replace (compose not isUnit).
 (= (isUnit    $e) (== $e ()))
@@ -97,10 +95,7 @@
 ;; swapAndOr — AND↔OR, anything else unchanged (the reduct's de Morgan dual).
 (= (swapAndOr $op) (case $op ((AND OR) (OR AND) ($else $op))))
 
-;; ~= / === — not-equal / strict-equal. Core lacks these (and `!=` even tokenizes as
-;; `! =`); both reduce to ==.  (Upstream uses ~= for "not equal" and === as a strict ==.)
-(= (~=  $a $b) (not (== $a $b)))
-(= (=== $a $b) (== $a $b))
+;; ~= / === are now Core stdlib ops (stdlib/core.metta) — consolidated 2026-06-10.
 
 ;; findAndReplace — replace the top-level child $old with $new inside $list. If $old
 ;; IS the whole $list, return $new (root replacement). Upstream used

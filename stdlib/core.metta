@@ -103,6 +103,18 @@
 
 (= (first-from-pair ($a $b)) $a)
 
+; ── boolean / list operators promoted from per-library copies ─────────────────
+; Consolidated 2026-06-10 (see docs/PRIMITIVE_SURFACE_AND_ECOSYSTEM_TOOLING_2026-06-10.md).
+; `xor` IS hyperon-canonical (arithmetics.rs) — kept as a thin stdlib rule to keep the
+; grounded tier minimal. `is-member`/`~=`/`===` are PeTTa/MeTTaLog-compat (not hyperon-
+; canonical), needed by MeTTaLog-sourced ports (e.g. MOSES). Previously each was redefined
+; locally; now there is one canonical home. (`!=` cannot be a stdlib rule — the parser
+; tokenizes it as `! =`; use `~=`.)
+(= (xor $a $b) (not (== $a $b)))
+(= (is-member $x $xs) (member $x $xs))
+(= (~=  $a $b) (not (== $a $b)))
+(= (=== $a $b) (== $a $b))
+
 (= (evalc $expression &self)
    (eval $expression))
 

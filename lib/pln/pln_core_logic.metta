@@ -15,8 +15,8 @@
 (= (atom-to-str $atom) $atom)
 ;; ════════════════════════════════════════════════════════════════════════════
 
-(= (clamp $v $min $max)
-   (min $max (max $v $min)))
+;; clamp lives in Core stdlib/math.metta (always loaded) — PLN's second local copy
+;; removed 2026-06-10 (it was also in stv.metta).
 
 ;;Concat tuples
 (= (TupleConcat $Ev1 $Ev2)

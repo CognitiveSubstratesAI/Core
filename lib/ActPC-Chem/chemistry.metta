@@ -23,10 +23,8 @@
 (: Reaction Type)
 (: NoReaction Type)
 
-;; clamp — local definition (mirrors lib/pln/stv.metta; defined here so ActPC-Chem
-;; loads standalone without pulling in PLN). If co-loaded with PLN, dedup to one.
-(= (clamp $v $lo $hi)
-   (if (> $v $hi) $hi (if (< $v $lo) $lo $v)))
+;; clamp lives in Core stdlib/math.metta (always loaded) — local copy removed,
+;; consolidated 2026-06-10.
 
 ;; ---------------------------------------------------------------------------
 ;; Accessors — head destructuring (PLN convention)

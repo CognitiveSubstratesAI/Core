@@ -124,9 +124,7 @@
 ;;   (clamp 0.5 0.0 1.0) → 0.5
 ;;   (clamp 1.5 0.0 1.0) → 1.0
 ;;   (clamp -0.3 0.0 1.0) → 0.0
-(= (clamp $v $lo $hi)
-   (if (> $v $hi) $hi
-       (if (< $v $lo) $lo $v)))
+;; clamp lives in Core stdlib/math.metta (always loaded) — local copy removed 2026-06-10.
 
 ;; Direct STI boost (clamped to max-attention-concentration)
 ;;

@@ -533,6 +533,10 @@ include("test_actpc_chem.jl")
 # adapted: Cons/Nil-ADT → Core-native ()-expr lists). Incremental: M0 scaffold + utils.
 include("test_moses.jl")
 
+# Structural lint — no lib/ definition shadows a Core-provided name (closes the
+# duplication class from the 2026-06-10 primitive audit; clamp/xor/is-member consolidation).
+include("test_no_stdlib_shadow.jl")
+
 # Type-system conformance — Core vs the metta-lang.dev types_basics tutorials,
 # grounded in hyperon-experimental's b5_types_prelim/d4_type_prop scripts: gradual
 # typing, function-application return-type inference, BadArgType checking, parametric

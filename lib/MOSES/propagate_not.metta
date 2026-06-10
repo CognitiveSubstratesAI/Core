@@ -5,8 +5,7 @@
 ;;;; CORE-DIALECT: upstream's `(map-atom $t (|-> ($x) …))` lambda becomes Core's
 ;;;; template `(map-atom $t $x …)`; `xor` is inlined as (not (== a b)).
 
-;; xor on booleans (upstream general-helpers).
-(= (xor $a $b) (not (== $a $b)))
+;; xor is now a Core stdlib op (stdlib/core.metta) — was localized here, consolidated 2026-06-10.
 
 (= (propagateNot $expr) (propagateNot $expr False))
 (= (propagateNot $expr $negate)
