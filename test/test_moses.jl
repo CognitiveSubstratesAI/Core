@@ -208,6 +208,23 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (findAndReplace (AND A) Q (AND A)) Q)")
     end
 
+    @testset "M6-3b — andCut (lift single-child AND grandchildren) + removeEmptyAND" begin
+        # removeEmptyAND strips empty (AND) nodes
+        @test aok("!(assertEqual (removeEmptyAND (OR (AND) B)) (OR B))")
+        @test aok("!(assertEqual (removeEmptyAND (AND A B)) (AND A B))")
+        @test aok("!(assertEqual (removeEmptyAND (AND (AND) C)) (AND C))")
+        # intersections: () for a singleton, common literals otherwise
+        @test aok("!(assertEqual (intersections ((A B))) ())")
+        @test aok("!(assertEqual (intersections ((A B C) (A B))) (A B))")
+        # documented andCut (elements as Core orders them: literals before children —
+        # a commutative reordering, OR/AND are order-independent)
+        @test aok("!(assertEqual (andCut (OR C (AND (OR (AND B D) (NOT E)))) (AND (OR (AND B D) (NOT E)))) ((OR C (NOT E) (AND B D)) () True))")
+        # precondition fails (non-empty guard set) → unchanged, applied False
+        @test aok("!(assertEqual (andCut (OR C (AND X Y)) (AND X Y)) ((OR C (AND X Y)) (AND X Y) False))")
+        # parent == current → no-op False
+        @test aok("!(assertEqual (andCut (AND A) (AND A)) ((AND A) (AND A) False))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
