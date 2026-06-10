@@ -365,6 +365,18 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (isNullVertex (getRepTree (representation (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (a b)))) False)")
     end
 
+    @testset "M1c-3 — getCandidate (Instance→Tree KEYSTONE)" begin
+        # representation of (AND A) over (a b); each Instance (knob settings) → a distinct
+        # boolean program via knob application + cleanTree (the genotype→phenotype map).
+        qm("(= (REP-AND-A) (representation (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (a b)))")
+        # all knobs absent → the base exemplar reduces to A
+        @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (mkInst (0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)))) A)")
+        # knob 0 present → adds a; knob 0 negated → adds (NOT a); knob 1 present → adds b
+        @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (mkInst (1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)))) (AND (OR A a)))")
+        @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (mkInst (2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)))) (AND (OR A (NOT a))))")
+        @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (mkInst (0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)))) (AND (OR A b)))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
