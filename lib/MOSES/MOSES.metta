@@ -23,7 +23,8 @@
 ;;;;   M6-3c ✅ promoteCommonConstraints (factor common child literals up)
 ;;;;   M6-3d ✅ subsumption: oneConstraintSubsume + zeroConstraintSubsume(')
 ;;;;   M6-3e ✅ oneCcSub (one-constraint-complement-subtraction) + invertLiterals
-;;;;          [M6: delete-inconsistent-handle → orchestrator → reduce-to]
+;;;;   M6-3f ✅ deleteInconsistentHandle (+ family) — ALL constraint rules done
+;;;;          [M6: reduce-to-elegance orchestrator → reduce-to → cleanTree wire-up]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -42,3 +43,4 @@
 !(import! &self "promote_common_constraints.metta")
 !(import! &self "subsumption.metta")
 !(import! &self "complement_subtraction.metta")
+!(import! &self "delete_inconsistent_handle.metta")

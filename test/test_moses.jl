@@ -254,6 +254,19 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (oneCcSub (OR (AND D) (AND B C)) (AND B C) ((NOT B) C)) (OR (AND D) (AND C)))")
     end
 
+    @testset "M6-3f — deleteInconsistentHandle (last constraint rule)" begin
+        @test aok("!(assertEqual (negate-lit A) (NOT A))")
+        @test aok("!(assertEqual (negate-lit (NOT A)) A)")
+        @test aok("!(assertEqual (isConsistentExp (A B C)) True)")
+        @test aok("!(assertEqual (isConsistentExp (A B C (NOT A))) False)")   # cartesian rewritten deterministically
+        # documented: inconsistent handle (A) ∪ ((NOT A)) → POA removed
+        @test aok("!(assertEqual (deleteInconsistentHandle (OR B (AND (NOT A) (OR B C))) (AND (NOT A) (OR B C)) (A)) ((OR B) () True))")
+        # consistent → unchanged, False
+        @test aok("!(assertEqual (deleteInconsistentHandle (OR B (AND X (OR B C))) (AND X (OR B C)) (A)) ((OR B (AND X (OR B C))) (AND X (OR B C)) False))")
+        # root self-inconsistent → keep top-level (AND)
+        @test aok("!(assertEqual (deleteInconsistentHandle (AND A (NOT A)) (AND A (NOT A)) ()) ((AND) () True))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
