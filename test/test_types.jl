@@ -43,6 +43,19 @@ ok(e) = !occursin("Error", string(qt(e))) && !occursin("AssertionFailed", string
         @test ok("!(assertEqual (Add Something Z) Something)")            # undeclared = %Undefined% matches Nat
     end
 
+    @testset "type-cast (gradual)" begin
+        # declared type: matching cast returns the atom, mismatch → BadType error
+        @test ok("!(assertEqual (type-cast Z Nat &self) Z)")
+        @test ok("!(assertEqual (type-cast Z Bool &self) (Error Z (BadType Bool Nat)))")
+        # grounded literals carry a structural type
+        @test ok("!(assertEqual (type-cast 42 Number &self) 42)")
+        @test ok("!(assertEqual (type-cast 42 Bool &self) (Error 42 (BadType Bool Number)))")
+        # undeclared atom is %Undefined% → universal, so any cast succeeds (gradual)
+        @test ok("!(assertEqual (type-cast undeclared-foo Nat &self) undeclared-foo)")
+        # Atom is universal on the requested side too
+        @test ok("!(assertEqual (type-cast 42 Atom &self) 42)")
+    end
+
     @testset "parametric / polymorphic types" begin
         qt("(: MyList (-> Type Type))")
         qt(raw"(: MyNil (MyList $t))")
