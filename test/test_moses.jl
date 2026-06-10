@@ -174,6 +174,23 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (any (False False)) False)")
     end
 
+    @testset "M6-2 — normalization: propagateNot / gatherJunctors / addAND" begin
+        # De Morgan: NOT distributes over AND/OR, flipping the junctor
+        @test aok("!(assertEqual (propagateNot (NOT (AND A B))) (OR (NOT A) (NOT B)))")
+        @test aok("!(assertEqual (propagateNot (NOT (OR A B))) (AND (NOT A) (NOT B)))")
+        @test aok("!(assertEqual (propagateNot (AND A (NOT B))) (AND A (NOT B)))")
+        @test aok("!(assertEqual (propagateNot (NOT (NOT A))) A)")
+        # flatten nested same-junctor nodes
+        @test aok("!(assertEqual (gatherJunctors (AND A (AND B C))) (AND A B C))")
+        @test aok("!(assertEqual (gatherJunctors (OR A (OR B (OR C D)))) (OR A B C D))")
+        @test aok("!(assertEqual (gatherJunctors (AND A B)) (AND A B))")
+        # addAND wraps OR's bare children under AND AND gives the OR an AND parent
+        # (upstream (OR False) case: (AND (map addAND over (OR A B))))
+        @test aok("!(assertEqual (addAND (OR A B)) (AND (OR (AND A) (AND B))))")
+        # final-pass: a top-level OR gets an AND parent
+        @test aok("!(assertEqual (addAND (OR (AND A) (AND B)) True) (AND (OR (AND A) (AND B))))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

@@ -17,7 +17,8 @@
 ;;;;   M1c-1 ✅ MultiMap ADT + knob data-structure layer (knob-representation)
 ;;;;   M1c-2a ✅ logical-canonize (reduct-free exemplar canonicalization)
 ;;;;   M6-1 ✅ rte-helpers (reduce-to-elegance set-ops, filter-atom dialect adaptation)
-;;;;          [M6: leaf rules → constraint rules → reduce-to-elegance orchestrator → reduce-to]
+;;;;   M6-2 ✅ normalization leaf rules: propagateNot + gatherJunctors + addAND
+;;;;          [M6: constraint rules → reduce-to-elegance orchestrator → reduce-to]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -29,3 +30,5 @@
 !(import! &self "knob.metta")
 !(import! &self "logical_canonize.metta")
 !(import! &self "rte_helpers.metta")
+!(import! &self "propagate_not.metta")
+!(import! &self "gather_junctors.metta")
