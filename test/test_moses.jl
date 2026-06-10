@@ -358,6 +358,13 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (preOrder (car-atom (appendTo (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ())) (mkTree (mkNode AND) ()) (mkNodeId (0)) 0))) (AND))")
     end
 
+    @testset "M1c-3 — representation ctor (mkRep / crtDiscKnobMap / getRepTree)" begin
+        # representation of (AND A) over (a b) → mkRep with a KnobMap indexing all 20 knobs
+        @test aok("!(assertEqual (let (mkRep (mkKbMap (mkDscKbMp \$dkm) \$disc) \$t) (representation (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (a b)) (Map.length \$dkm)) 20)")
+        # getRepTree returns the (non-null) instrumented exemplar tree
+        @test aok("!(assertEqual (isNullVertex (getRepTree (representation (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (a b)))) False)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
