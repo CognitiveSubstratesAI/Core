@@ -303,6 +303,13 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (logicalSubtreeKnob (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkNodeId (0)) (mkTree (mkNode Z) ())) ((mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()) (mkNullVex ((mkTree (mkNode Z) ()))))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (3))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))))")
     end
 
+    @testset "M1c-2b — logicalProbe (collect knobs over candidate perms)" begin
+        # empty perms → no knobs, tree unchanged
+        @test aok("!(assertEqual (logicalProbe (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) () True ()) (() (mkTree (mkNode AND) ((mkTree (mkNode A) ())))))")
+        # one present perm A → one present LSK collected at (mkNodeId (1))
+        @test aok("!(assertEqual (logicalProbe (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkNodeId (0)) ((mkTree (mkNode A) ())) True ()) (((mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ()))) (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ())))))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

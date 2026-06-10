@@ -27,7 +27,8 @@
 ;;;;   M6-4 ✅ reduce-to-elegance orchestrator + reduce-to (boolean ENF, WORKS)
 ;;;;   M6-5 ✅ cleanTree wired (tree.metta) — boolean-reduct engine COMPLETE
 ;;;;   M1c-2b ✅ lsk: logicalSubtreeKnob/strategySubtreeKnob + accessors (USES cleanTree)
-;;;;          [M1c-2b cont: logical-probe → build-logical; appendTo deferred to M1c-3]
+;;;;   M1c-2b ✅ logical-probe: logicalProbe/strategyProbe (collect knobs over perms)
+;;;;          [M1c-2b cont: sampleLogicalPerms(RNG) → addLogicalKnobs → buildLogical]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -49,3 +50,4 @@
 !(import! &self "delete_inconsistent_handle.metta")
 !(import! &self "reduce_to_elegance.metta")
 !(import! &self "lsk.metta")
+!(import! &self "logical_probe.metta")
