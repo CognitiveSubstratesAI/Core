@@ -15,9 +15,10 @@
 ;;;;     as separate clauses (Core dispatches mutually-exclusive constructors fine).
 ;;;;   • applyGetNodeId arg order flipped to (state elem) to match Core's List.foldl
 ;;;;     (accumulator-first), vs upstream's (elem acc) foldl.
-;;;;   • DEFERRED to later phases: cleanTree / preOrderDebug (need the reduct engine, M6);
-;;;;     extractArgs / treeFtsIndices / pruneExemplar / removeLiteral / alphabetSize
-;;;;     (feature-selection + ITable, M1c-FS / M7).
+;;;;   • cleanTree NOW WIRED (M6-5): preOrder → reduce-to (boolean ENF) → buildTree.
+;;;;     reduce-to lives in reduce_to_elegance.metta (loaded after this file; resolved at
+;;;;     call time). Still DEFERRED: preOrderDebug; extractArgs / treeFtsIndices /
+;;;;     pruneExemplar / removeLiteral / alphabetSize (feature-selection + ITable, M1c-FS / M7).
 
 ;; ── node value / children accessors ──────────────────────────────────────────
 (= (getNodeValue (mkNullVex $xs)) (Error (mkNullVex $xs) "Null Vertex has no value"))
@@ -197,3 +198,12 @@
    (if (isArgument (mkTree (mkNode $a) $children))
        1
        (List.sum (map-atom $children $c (treeComplexity $c)))))
+
+;; cleanTree — reduce a program Tree to elegant normal form: serialize to an
+;; S-expression (preOrder), run the boolean-reduct engine (reduce-to), rebuild the
+;; Tree (buildTree). reduce-to is defined in reduce_to_elegance.metta (loaded after
+;; this file; resolved at call time). [M6-5 — un-deferred now the reduct engine exists.]
+(= (cleanTree $tree)
+   (let* (($preordered (preOrder $tree))
+          ($reduced    (reduce-to $preordered)))
+     (buildTree $reduced)))

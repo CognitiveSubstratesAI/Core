@@ -282,6 +282,14 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (reduce-to (AND (OR A B) A)) A)")
     end
 
+    @testset "M6-5 — cleanTree (reduct wired: preOrder→reduce-to→buildTree)" begin
+        # preOrder ∘ cleanTree ∘ buildTree round-trips through boolean ENF
+        @test aok("!(assertEqual (preOrder (cleanTree (buildTree (AND (OR A B) (NOT A))))) (AND (NOT A) B))")
+        @test aok("!(assertEqual (preOrder (cleanTree (buildTree (AND (OR A B) (NOT A) (NOT B))))) (AND (NOT A) (NOT B)))")
+        # native-tree cleanTree (tree-test): (AND (OR A B) A) → the tree for A
+        @test aok("!(assertEqual (cleanTree (mkTree (mkNode AND) ((mkTree (mkNode OR) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkTree (mkNode A) ())))) (mkTree (mkNode A) ()))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
