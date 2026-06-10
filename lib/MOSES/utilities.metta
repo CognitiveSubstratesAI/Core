@@ -82,6 +82,21 @@
 (= (isUnit    $e) (== $e ()))
 (= (isNotUnit $e) (not (== $e ())))
 
+;; concatTuple — SET-union concat (upstream general-helpers concatTuple = union-atom,
+;; which DEDUPLICATES). Distinct from concatT above (plain order-preserving concat).
+(= (concatTuple $x $y) (union-atom $x $y))
+
+;; any — True iff any element is True (upstream general-helpers).
+(= (any $bools) (is-member True $bools))
+
+;; removeElement — remove the elements of $common from $tuple (set subtraction).
+;; Upstream used (collapse (subtraction (superpose $tuple) (superpose $common)));
+;; Core's grounded subtraction-atom does this deterministically.
+(= (removeElement $common $tuple) (subtraction-atom $tuple $common))
+
+;; swapAndOr — AND↔OR, anything else unchanged (the reduct's de Morgan dual).
+(= (swapAndOr $op) (case $op ((AND OR) (OR AND) ($else $op))))
+
 ;; Pair (utilities/pair.metta) — UNTYPED (Core dialect); constructor mkPair + accessors.
 (= (Pair.first  (mkPair $a $b)) $a)
 (= (Pair.second (mkPair $a $b)) $b)

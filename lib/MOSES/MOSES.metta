@@ -16,7 +16,8 @@
 ;;;;   M1b ✅ Map ADT + program-representation Tree/NodeId substrate
 ;;;;   M1c-1 ✅ MultiMap ADT + knob data-structure layer (knob-representation)
 ;;;;   M1c-2a ✅ logical-canonize (reduct-free exemplar canonicalization)
-;;;;          [build-logical/lsk/logicalProbe + getCandidate are REDUCT-gated → need M6 first]
+;;;;   M6-1 ✅ rte-helpers (reduce-to-elegance set-ops, filter-atom dialect adaptation)
+;;;;          [M6: leaf rules → constraint rules → reduce-to-elegance orchestrator → reduce-to]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -27,3 +28,4 @@
 !(import! &self "tree.metta")
 !(import! &self "knob.metta")
 !(import! &self "logical_canonize.metta")
+!(import! &self "rte_helpers.metta")

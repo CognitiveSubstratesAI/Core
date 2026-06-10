@@ -148,6 +148,32 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (nodeId< (mkNodeId (2 3)) (mkNodeId (2 3))) False)")    # equal ⇒ not <
     end
 
+    @testset "M6-1 — rte-helpers (reduce-to-elegance set-ops via filter-atom)" begin
+        # getLiterals: keep the literals (symbols + (NOT …)), drop the head junctor
+        @test aok("!(assertEqual (getLiterals (AND (NOT A) (NOT B) X)) ((NOT A) (NOT B) X))")
+        @test aok("!(assertEqual (getLiterals (OR (NOT A) X)) ((NOT A) X))")
+        @test aok("!(assertEqual (getLiterals (NOT A)) (NOT A))")
+        # getChildrenExp: keep only subexpression children (not symbols / (NOT …))
+        @test aok("!(assertEqual (getChildrenExp (AND A B (OR C D))) ((OR C D)))")
+        @test aok("!(assertEqual (getChildrenExp (AND A B)) ())")
+        # getGuardSet: AND node → its literals; OR node → ()
+        @test aok("!(assertEqual (getGuardSet (AND (NOT A) X (OR C D))) ((NOT A) X))")
+        @test aok("!(assertEqual (getGuardSet (OR A B)) ())")
+        # getLiteralChildren tuple
+        @test aok("!(assertEqual (getLiteralChildren (AND A (OR B C))) ((A) ((OR B C))))")
+        # addChildren appends subexpression children, preserving literals
+        @test aok("!(assertEqual (addChildren (AND A) ((OR B C))) (AND A (OR B C)))")
+        # findCommon across guard sets (intersection)
+        @test aok("!(assertEqual (findCommon ((A B C) (A B) (A D))) (A))")
+        @test aok("!(assertEqual (findCommonLiterals (A B C) ((A B) (B C))) (B))")
+        # the reduct-general helpers in utilities
+        @test aok("!(assertEqual (swapAndOr AND) OR)")
+        @test aok("!(assertEqual (swapAndOr OR) AND)")
+        @test aok("!(assertEqual (removeElement (B) (A B C)) (A C))")
+        @test aok("!(assertEqual (any (False True False)) True)")
+        @test aok("!(assertEqual (any (False False)) False)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
