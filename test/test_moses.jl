@@ -225,6 +225,15 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (andCut (AND A) (AND A)) ((AND A) (AND A) False))")
     end
 
+    @testset "M6-3c — promoteCommonConstraints (factor common child literals)" begin
+        @test aok("!(assertEqual (removeCommonLiterals (A) ((A B) (A C))) ((B) (C)))")
+        # A common to both children → promoted into parent; children lose A
+        @test aok("!(assertEqual (promoteCommonConstraints (AND P (OR (AND A B) (AND A C))) (OR (AND A B) (AND A C))) ((AND P A (OR (AND B) (AND C))) (OR (AND B) (AND C)) True))")
+        # no common literal → unchanged, applied False
+        @test aok("!(assertEqual (promoteCommonConstraints (AND P (OR (AND A) (AND B))) (OR (AND A) (AND B))) ((AND P (OR (AND A) (AND B))) (OR (AND A) (AND B)) False))")
+        @test aok("!(assertEqual (atomIntersection (A B C) (B C D)) (B C))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

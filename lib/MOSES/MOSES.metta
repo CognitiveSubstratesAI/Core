@@ -20,7 +20,8 @@
 ;;;;   M6-2 ✅ normalization leaf rules: propagateNot + gatherJunctors + addAND
 ;;;;   M6-3a ✅ orCut constraint rule (cut-unnecessary-or)
 ;;;;   M6-3b ✅ andCut constraint rule (cut-unnecessary-and) + removeEmptyAND
-;;;;          [M6: promote → subsumption → orchestrator → reduce-to]
+;;;;   M6-3c ✅ promoteCommonConstraints (factor common child literals up)
+;;;;          [M6: subsumption rules → orchestrator → reduce-to]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -36,3 +37,4 @@
 !(import! &self "gather_junctors.metta")
 !(import! &self "cut_unnecessary_or.metta")
 !(import! &self "cut_unnecessary_and.metta")
+!(import! &self "promote_common_constraints.metta")
