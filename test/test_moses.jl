@@ -337,6 +337,12 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (isNullVertex (first (buildLogical (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) NilMMap (a b)))) False)")
     end
 
+    @testset "M1c-2b — buildKnobs (knob-building entry point)" begin
+        # buildKnobs logicalCanonizes (AND A) → (OR (AND A)) then buildLogical walks it,
+        # building 20 knobs; returns (canonizedTreeWithKnobs mmap).
+        @test aok("!(assertEqual (MultiMap.length (second (buildKnobs (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) NilMMap (a b)))) 20)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

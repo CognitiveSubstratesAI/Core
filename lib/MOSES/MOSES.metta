@@ -31,7 +31,8 @@
 ;;;;   M1c-2b ✅ sample-logical-perms (DETERMINISTIC enumerated selection, not RNG)
 ;;;;   M1c-2b ✅ add-logical-knobs: addLogicalKnobs + pairKnobWithSpec + expToMMap
 ;;;;   M1c-2b ✅ build-logical: buildLogical + siblingit (recursive knob tree-walk)
-;;;;          [M1c-2b cont: build-knobs (logicalCanonize→buildLogical dispatch)]
+;;;;   M1c-2b ✅ build-knobs: buildKnobs entry point — KNOB-BUILDING LAYER COMPLETE
+;;;;          [M1c-3: getCandidate (Instance→Tree) + appendTo + representation ctor]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -57,3 +58,4 @@
 !(import! &self "sample_logical_perms.metta")
 !(import! &self "add_logical_knobs.metta")
 !(import! &self "build_logical.metta")
+!(import! &self "build_knobs.metta")
