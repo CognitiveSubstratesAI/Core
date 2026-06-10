@@ -21,7 +21,8 @@
 ;;;;   M6-3a ✅ orCut constraint rule (cut-unnecessary-or)
 ;;;;   M6-3b ✅ andCut constraint rule (cut-unnecessary-and) + removeEmptyAND
 ;;;;   M6-3c ✅ promoteCommonConstraints (factor common child literals up)
-;;;;          [M6: subsumption rules → orchestrator → reduce-to]
+;;;;   M6-3d ✅ subsumption: oneConstraintSubsume + zeroConstraintSubsume(')
+;;;;          [M6: oneCcSub + delete-inconsistent-handle → orchestrator → reduce-to]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -38,3 +39,4 @@
 !(import! &self "cut_unnecessary_or.metta")
 !(import! &self "cut_unnecessary_and.metta")
 !(import! &self "promote_common_constraints.metta")
+!(import! &self "subsumption.metta")

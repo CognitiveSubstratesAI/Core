@@ -234,6 +234,19 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (atomIntersection (A B C) (B C D)) (B C))")
     end
 
+    @testset "M6-3d — subsumption rules (one / zero constraint)" begin
+        # 1CS: AND POA whose guard set meets the command set → removed from parent
+        @test aok("!(assertEqual (oneConstraintSubsume (OR (AND E D) C) (AND E D) (C D)) ((OR C) () True))")
+        @test aok("!(assertEqual (oneConstraintSubsume (OR (AND E D) C) (AND E D) (X Y)) ((OR (AND E D) C) (AND E D) False))")
+        @test aok("!(assertEqual (nodeHasChildOrGuard (AND A)) True)")
+        @test aok("!(assertEqual (nodeHasChildOrGuard (AND)) False)")
+        # 0CS: drop OR children with no guard set + no children (the empty (AND))
+        @test aok("!(assertEqual (zeroConstraintSubsume (AND P (OR (AND A) (AND))) (OR (AND A) (AND))) ((AND P (OR (AND A))) (OR (AND A)) True))")
+        # 0CS': an OR containing an empty (AND) [=true] collapses to (AND) — correct
+        # boolean logic (upstream CODE; its doc comment disagrees, the code is right)
+        @test aok("!(assertEqual (zeroConstraintSubsume' (OR A C (AND) (OR A B)) (AND)) ((AND) (AND) True))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
