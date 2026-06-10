@@ -14,11 +14,14 @@
 ;;;;   M0  ✅ scaffold + Core-native list utilities
 ;;;;   M1a ✅ Instance (genotype value) + Pair
 ;;;;   M1b ✅ Map ADT + program-representation Tree/NodeId substrate
-;;;;        [M1c knobs / build-knobs / getCandidate pending]
+;;;;   M1c-1 ✅ MultiMap ADT + knob data-structure layer (knob-representation)
+;;;;          [M1c-2 build-logical / knob-mapper, then getCandidate (needs reduct, M6) pending]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
 !(import! &self "utilities.metta")
 !(import! &self "instance.metta")
 !(import! &self "map.metta")
+!(import! &self "multimap.metta")
 !(import! &self "tree.metta")
+!(import! &self "knob.metta")

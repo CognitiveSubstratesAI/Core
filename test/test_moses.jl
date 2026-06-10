@@ -113,4 +113,38 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (treeComplexity (buildTree (AND (NOT A) (OR A B)))) 3)")
         @test aok("!(assertEqual (treeComplexity (mkTree (mkNode OR) ((mkTree (mkNode AND) ((mkTree (mkNode A) ())))))) 1)")
     end
+
+    @testset "M1c-1 — MultiMap ADT" begin
+        # insert with custom comparator (discSpec<-style numeric <)
+        @test aok("!(assertEqual (MultiMap.insert (2 b) (ConsMMap (1 a) (ConsMMap (3 c) NilMMap)) <) (ConsMMap (1 a) (ConsMMap (2 b) (ConsMMap (3 c) NilMMap))))")
+        @test aok("!(assertEqual (MultiMap.findOne 2 (ConsMMap (1 a) (ConsMMap (2 b) NilMMap))) b)")
+        @test aok("!(assertEqual (MultiMap.findAll 2 (ConsMMap (2 b) (ConsMMap (1 a) (ConsMMap (2 c) NilMMap)))) (b c))")
+        @test aok("!(assertEqual (MultiMap.contains 2 (ConsMMap (1 a) (ConsMMap (2 b) NilMMap))) True)")
+        @test aok("!(assertEqual (MultiMap.length (ConsMMap (1 a) (ConsMMap (2 b) NilMMap))) 2)")
+        @test aok("!(assertEqual (MultiMap.values (ConsMMap (1 a) (ConsMMap (2 b) NilMMap))) (a b))")
+        @test aok("!(assertEqual (MultiMap.removeOne 2 (ConsMMap (1 a) (ConsMMap (2 b) (ConsMMap (2 c) NilMMap)))) (ConsMMap (1 a) (ConsMMap (2 c) NilMMap)))")
+        @test aok("!(assertEqual (MultiMap.removeAll 2 (ConsMMap (1 a) (ConsMMap (2 b) (ConsMMap (2 c) NilMMap)))) (ConsMMap (1 a) NilMMap))")
+    end
+
+    @testset "M1c-1 — knob data structures" begin
+        # inExemplar: default specifier non-zero ⇒ outside exemplar (True)
+        @test aok("!(assertEqual (inExemplar (mkDiscKnob k m (mkDiscSpec 0) (mkDiscSpec 1) ())) True)")
+        @test aok("!(assertEqual (inExemplar (mkDiscKnob k m (mkDiscSpec 0) (mkDiscSpec 0) ())) False)")
+        @test aok("!(assertEqual (getDiscKnob (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 2) (mkDiscSpec 0) (mkDiscSpec 0) ()))) (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 2) (mkDiscSpec 0) (mkDiscSpec 0) ()))")
+        @test aok("!(assertEqual (getKnobMultip (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 2) (mkDiscSpec 0) (mkDiscSpec 0) ()))) (mkMultip 2))")
+        # getKnobSpec: multip 3 minus 1 disallowed spec ⇒ (mkDiscSpec 2)
+        @test aok("!(assertEqual (getKnobSpec (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1 1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ((mkDiscSpec 1))))) (mkDiscSpec 2))")
+        @test aok("!(assertEqual (getKnobSpec (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1 1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))) (mkDiscSpec 3))")
+        @test aok("!(assertEqual (getKnobLoc (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 2) (mkDiscSpec 0) (mkDiscSpec 0) ()))) (mkNodeId (1)))")
+        @test aok("!(assertEqual (discSpec< (mkDiscSpec 2) (mkDiscSpec 3)) True)")
+        @test aok("!(assertEqual (discSpec< (mkDiscSpec 3) (mkDiscSpec 2)) False)")
+    end
+
+    @testset "M1c-1 — nodeId< lexicographic order" begin
+        @test aok("!(assertEqual (nodeId< (mkNodeId (2 1)) (mkNodeId (2 1 1))) True)")   # prefix < extension
+        @test aok("!(assertEqual (nodeId< (mkNodeId (2 1)) (mkNodeId (2 2))) True)")
+        @test aok("!(assertEqual (nodeId< (mkNodeId (2 2 3)) (mkNodeId (2 3))) True)")
+        @test aok("!(assertEqual (nodeId< (mkNodeId (2 3)) (mkNodeId (1 2))) False)")
+        @test aok("!(assertEqual (nodeId< (mkNodeId (2 3)) (mkNodeId (2 3))) False)")    # equal ⇒ not <
+    end
 end
