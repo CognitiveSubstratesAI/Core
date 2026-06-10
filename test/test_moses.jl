@@ -290,6 +290,19 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (cleanTree (mkTree (mkNode AND) ((mkTree (mkNode OR) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkTree (mkNode A) ())))) (mkTree (mkNode A) ()))")
     end
 
+    @testset "M1c-2b — lsk: logical/strategy subtree knob (uses cleanTree)" begin
+        @test aok("!(assertEqual (first (a b)) a)")
+        @test aok("!(assertEqual (updateID (mkNodeId (0 1 1))) (mkNodeId (1 1)))")
+        @test aok("!(assertEqual (updateID (mkNodeId (3))) (mkNodeId (3)))")
+        @test aok("!(assertEqual (List.contains b (a b c)) True)")
+        @test aok("!(assertEqual (getNodeId (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1 1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))) (mkNodeId (1 1)))")
+        @test aok("!(assertEqual (getDiscSpec (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 1) ()))) (0 1))")
+        # subtree A already a child of root → present knob at (mkNodeId (1)), specs (1 1)
+        @test aok("!(assertEqual (logicalSubtreeKnob (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkNodeId (0)) (mkTree (mkNode A) ())) ((mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ()))))")
+        # new subtree Z → appended under a null-vertex, absent knob (0 0) at (mkNodeId (3))
+        @test aok("!(assertEqual (logicalSubtreeKnob (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkNodeId (0)) (mkTree (mkNode Z) ())) ((mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()) (mkNullVex ((mkTree (mkNode Z) ()))))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (3))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

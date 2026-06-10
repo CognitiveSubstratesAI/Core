@@ -25,7 +25,9 @@
 ;;;;   M6-3e ✅ oneCcSub (one-constraint-complement-subtraction) + invertLiterals
 ;;;;   M6-3f ✅ deleteInconsistentHandle (+ family) — ALL constraint rules done
 ;;;;   M6-4 ✅ reduce-to-elegance orchestrator + reduce-to (boolean ENF, WORKS)
-;;;;          [M6-5: cleanTree wire-up → unblocks lsk/build-logical/getCandidate]
+;;;;   M6-5 ✅ cleanTree wired (tree.metta) — boolean-reduct engine COMPLETE
+;;;;   M1c-2b ✅ lsk: logicalSubtreeKnob/strategySubtreeKnob + accessors (USES cleanTree)
+;;;;          [M1c-2b cont: logical-probe → build-logical; appendTo deferred to M1c-3]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -46,3 +48,4 @@
 !(import! &self "complement_subtraction.metta")
 !(import! &self "delete_inconsistent_handle.metta")
 !(import! &self "reduce_to_elegance.metta")
+!(import! &self "lsk.metta")

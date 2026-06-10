@@ -110,6 +110,19 @@
        $new
        (map-atom $list $e (if (== $e $old) $new $e))))
 
+;; first / second — bare 2-tuple accessors (upstream general-helpers; `first` was
+;; commented out there but appendToLSK needs it).
+(= (first  ($a $b)) $a)
+(= (second ($a $b)) $b)
+
+;; List.contains — membership (alias of List.member; upstream name used by lsk).
+(= (List.contains $x $xs) (List.member $x $xs))
+
+;; updateID — drop a leading 0 from a NodeId path ((0 1 1) → (1 1)); the (0) root
+;; prefix is implicit elsewhere. Used when recording a knob's anchor node.
+(= (updateID (mkNodeId $id))
+   (if (== (car-atom $id) 0) (mkNodeId (cdr-atom $id)) (mkNodeId $id)))
+
 ;; Pair (utilities/pair.metta) — UNTYPED (Core dialect); constructor mkPair + accessors.
 (= (Pair.first  (mkPair $a $b)) $a)
 (= (Pair.second (mkPair $a $b)) $b)
