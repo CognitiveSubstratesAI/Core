@@ -350,6 +350,14 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (findDiscKnob (mkKbMap (mkDscKbMp (ConsMap ((mkNodeId (1)) 0) NilMap)) (mkDscMp (ConsMMap ((mkDiscSpec 3) KNOB1) NilMMap))) (mkNodeId (2))) (() -1))")
     end
 
+    @testset "M1c-3 — appendTo (apply a knob setting to the candidate)" begin
+        # LSK targets node (1)=A in the knob-tree; candidate = empty (AND); parent = root.
+        # d=1 present → append A; d=2 negated → append (NOT A); d=0 absent → no append.
+        @test aok("!(assertEqual (preOrder (car-atom (appendTo (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ())) (mkTree (mkNode AND) ()) (mkNodeId (0)) 1))) (AND A))")
+        @test aok("!(assertEqual (preOrder (car-atom (appendTo (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ())) (mkTree (mkNode AND) ()) (mkNodeId (0)) 2))) (AND (NOT A)))")
+        @test aok("!(assertEqual (preOrder (car-atom (appendTo (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ())) (mkTree (mkNode AND) ()) (mkNodeId (0)) 0))) (AND))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

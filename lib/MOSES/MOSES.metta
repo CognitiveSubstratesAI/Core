@@ -33,7 +33,8 @@
 ;;;;   M1c-2b ✅ build-logical: buildLogical + siblingit (recursive knob tree-walk)
 ;;;;   M1c-2b ✅ build-knobs: buildKnobs entry point — KNOB-BUILDING LAYER COMPLETE
 ;;;;   M1c-3 ✅ knob-mapper: findDiscKnob (KnobMap lookup by NodeId)
-;;;;          [M1c-3 cont: appendTo → representation ctor → getCandidate]
+;;;;   M1c-3 ✅ append-to: appendTo/appendToLSK/appendToSSK (apply a knob setting)
+;;;;          [M1c-3 cont: representation ctor (mkRep) → getCandidate]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -61,3 +62,4 @@
 !(import! &self "build_logical.metta")
 !(import! &self "build_knobs.metta")
 !(import! &self "knob_mapper.metta")
+!(import! &self "append_to.metta")
