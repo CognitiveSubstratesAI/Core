@@ -65,10 +65,16 @@ function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
     # Grounded literal (number, bool)
     (expr isa Number || expr isa Bool) && return expr
 
-    # Symbol — check if it's a 0-arg rule head
+    # Symbol — reduce ONLY via a genuine 0-arg (symbol-LHS) rule like (= Nil ())
+    # or (= pi 3.14). core_rules keys by functor and also returns N-arg rules
+    # (= (f $x) …) as (params=[$x], body); firing those for a BARE symbol returned
+    # the rule body with its params unbound (e.g. bare `f` → `(* $x 2)`), which both
+    # corrupts any symbol sharing a function's name AND breaks passing a function by
+    # name as a higher-order argument. Require empty params.
     if expr isa Symbol
-        rules = core_rules(space, expr)
-        !isempty(rules) && return eval_metta(rules[1][2], space)
+        for r in core_rules(space, expr)
+            isempty(r[1]) && return eval_metta(r[2], space)
+        end
         return expr
     end
 
@@ -427,9 +433,18 @@ function _eval_let(args::Vector, space::CoreSpace)
     var  = args[1]
     val  = eval_metta(args[2], space)
     body = args[3]
-    bindings = var isa Symbol && startswith(string(var), "\$") ?
-               Dict{Symbol, Any}(Symbol(string(var)[2:end]) => val) :
-               Dict{Symbol, Any}()
+    # Compound pattern: (let ($x $y) val body) or ((Ctor $x) val body) — unify the
+    # pattern against the value, exactly as let* and case do. Previously a Vector
+    # pattern fell through to an EMPTY bindings dict (bound nothing), so canonical
+    # MeTTa destructuring `let`s silently left their pattern vars unbound.
+    if var isa Vector && !isempty(var)
+        bindings = _unify(var, val)
+        bindings === nothing && (bindings = Dict{Symbol, Any}())
+        return eval_metta(_apply_bindings(body, bindings), space)
+    end
+    vname = _var_name(var)
+    bindings = vname === nothing ? Dict{Symbol, Any}() :
+               Dict{Symbol, Any}(vname => val)
     eval_metta(_apply_bindings(body, bindings), space)
 end
 
