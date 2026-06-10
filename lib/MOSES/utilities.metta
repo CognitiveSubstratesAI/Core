@@ -130,6 +130,16 @@
        ()
        (let $res (genList $l (- $u 1)) (union-atom $res ($u)))))
 
+;; expToMMap — fold a tuple of ($key $val) pairs into a MultiMap with comparator
+;; $compFunc. Upstream's base `()` + recursive clauses OVERLAP → folded; the empty-tuple
+;; base returns NilMMap (faithful upstream behavior — note it discards the passed $map).
+(= (expToMMap $tuple $map $compFunc)
+   (if (== $tuple ())
+       NilMMap
+       (let* ((($head $tail) (decons-atom $tuple))
+              ($updatedMap (MultiMap.insert $head $map $compFunc)))
+         (if (== $tail ()) $updatedMap (expToMMap $tail $updatedMap $compFunc)))))
+
 ;; Pair (utilities/pair.metta) — UNTYPED (Core dialect); constructor mkPair + accessors.
 (= (Pair.first  (mkPair $a $b)) $a)
 (= (Pair.second (mkPair $a $b)) $b)

@@ -320,6 +320,15 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (sampleLogicalPerms AND 1 (a)) (a (NOT a)))")
     end
 
+    @testset "M1c-2b — addLogicalKnobs (build + collect knobs at a node)" begin
+        @test aok("!(assertEqual (pairOne (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))) ((mkDiscSpec 3) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))))")
+        @test aok("!(assertEqual (expToMMap ((1 a) (2 b)) NilMMap discSpec<) (ConsMMap (1 a) (ConsMMap (2 b) NilMMap)))")
+        # addLogicalKnobs on (AND A) with labels (a b): 4 perms (a b (OR (NOT a) b) (OR a b))
+        # → 4 knobs collected in the MultiMap, 4 null-vertex placeholders appended.
+        @test aok("!(assertEqual (MultiMap.length (second (addLogicalKnobs (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) True NilMMap (a b)))) 4)")
+        @test aok("!(assertEqual (List.length (getChildren (first (addLogicalKnobs (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) (mkNodeId (0)) True NilMMap (a b))))) 5)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

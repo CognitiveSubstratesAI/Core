@@ -29,7 +29,8 @@
 ;;;;   M1c-2b ✅ lsk: logicalSubtreeKnob/strategySubtreeKnob + accessors (USES cleanTree)
 ;;;;   M1c-2b ✅ logical-probe: logicalProbe/strategyProbe (collect knobs over perms)
 ;;;;   M1c-2b ✅ sample-logical-perms (DETERMINISTIC enumerated selection, not RNG)
-;;;;          [M1c-2b cont: addLogicalKnobs → buildLogical → build-knobs]
+;;;;   M1c-2b ✅ add-logical-knobs: addLogicalKnobs + pairKnobWithSpec + expToMMap
+;;;;          [M1c-2b cont: buildLogical (siblingit tree-walk) → build-knobs]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -53,3 +54,4 @@
 !(import! &self "lsk.metta")
 !(import! &self "logical_probe.metta")
 !(import! &self "sample_logical_perms.metta")
+!(import! &self "add_logical_knobs.metta")
