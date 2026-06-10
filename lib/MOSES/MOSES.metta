@@ -11,10 +11,14 @@
 ;;;;   3. No `py-call` — reimplement upstream Python helpers as Core MeTTa / grounded prims.
 ;;;;
 ;;;; Build status (incremental port — see docs/specs / the algorithm queue):
-;;;;   M0 ✅ scaffold + Core-native list utilities
-;;;;   M1a ✅ Instance (genotype value) + Pair  [M1b tree substrate, M1c knobs/getCandidate pending]
+;;;;   M0  ✅ scaffold + Core-native list utilities
+;;;;   M1a ✅ Instance (genotype value) + Pair
+;;;;   M1b ✅ Map ADT + program-representation Tree/NodeId substrate
+;;;;        [M1c knobs / build-knobs / getCandidate pending]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
 !(import! &self "utilities.metta")
 !(import! &self "instance.metta")
+!(import! &self "map.metta")
+!(import! &self "tree.metta")
