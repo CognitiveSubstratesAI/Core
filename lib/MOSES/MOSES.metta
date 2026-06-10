@@ -38,7 +38,8 @@
 ;;;;   M1c-3 ✅ get-candidate: getCandidate/getCandidateRec — Instance→Tree KEYSTONE WORKS
 ;;;;          [M1 representation layer COMPLETE]
 ;;;;   M2-a ✅ deme: createInitialInstance + getKnobDefault (the default genotype)
-;;;;          [M2+ cont: scoring (fitness/bscore) → optimization (hillclimbing)]
+;;;;   M3-a ✅ scoring: evaluate/evaluateAnd/evaluateOr (boolean program evaluation)
+;;;;          [M3 cont: replaceVarsWithTruth + scoreTree (BScore over a truth table)]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -70,3 +71,4 @@
 !(import! &self "representation.metta")
 !(import! &self "get_candidate.metta")
 !(import! &self "deme.metta")
+!(import! &self "scoring.metta")

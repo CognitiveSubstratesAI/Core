@@ -386,6 +386,17 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (repInitialInstance (REP-AND-A)))) A)")
     end
 
+    @testset "M3-a — scoring: boolean evaluate" begin
+        @test aok("!(assertEqual (evaluate (AND True False)) False)")
+        @test aok("!(assertEqual (evaluate (OR True False)) True)")
+        @test aok("!(assertEqual (evaluate (NOT True)) False)")
+        @test aok("!(assertEqual (evaluate (AND (OR True False) (NOT False))) True)")
+        @test aok("!(assertEqual (evaluate (OR (AND True False) (NOT True))) False)")
+        @test aok("!(assertEqual (evaluate True) True)")
+        @test aok("!(assertEqual (evaluateAnd (True True True)) True)")
+        @test aok("!(assertEqual (evaluateOr (False False)) False)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
