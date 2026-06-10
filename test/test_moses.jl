@@ -247,6 +247,13 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (zeroConstraintSubsume' (OR A C (AND) (OR A B)) (AND)) ((AND) (AND) True))")
     end
 
+    @testset "M6-3e — oneCcSub / invertLiterals (complement subtraction)" begin
+        @test aok("!(assertEqual (invertLiterals (A (NOT B))) ((NOT A) B))")
+        @test aok("!(assertEqual (invertLiterals (A B)) ((NOT A) (NOT B)))")
+        # documented: X commanded by ¬X is redundant in the POA
+        @test aok("!(assertEqual (oneCcSub (OR (AND D) (AND B C)) (AND B C) ((NOT B) C)) (OR (AND D) (AND C)))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
