@@ -267,6 +267,21 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (deleteInconsistentHandle (AND A (NOT A)) (AND A (NOT A)) ()) ((AND) () True))")
     end
 
+    @testset "M6-4 — reduce-to (boolean elegant-normal-form, orchestrator)" begin
+        # contradiction: A ∧ ¬A = false → (AND)
+        @test aok("!(assertEqual (reduce-to (AND A B (NOT A))) (AND))")
+        # already elegant → unchanged
+        @test aok("!(assertEqual (reduce-to (AND A B)) (AND A B))")
+        # distribution+contradiction: (A∨B)∧¬A∧¬B = ¬A∧¬B
+        @test aok("!(assertEqual (reduce-to (AND (OR A B) (NOT A) (NOT B))) (AND (NOT A) (NOT B)))")
+        # (A∨B)∧¬A = ¬A∧B
+        @test aok("!(assertEqual (reduce-to (AND (OR A B) (NOT A))) (AND (NOT A) B))")
+        # top-level OR gets an AND parent
+        @test aok("!(assertEqual (reduce-to (OR A (AND B C))) (AND (OR A (AND B C))))")
+        # absorption: (A∨B)∧A = A
+        @test aok("!(assertEqual (reduce-to (AND (OR A B) A)) A)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

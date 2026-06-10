@@ -24,7 +24,8 @@
 ;;;;   M6-3d ✅ subsumption: oneConstraintSubsume + zeroConstraintSubsume(')
 ;;;;   M6-3e ✅ oneCcSub (one-constraint-complement-subtraction) + invertLiterals
 ;;;;   M6-3f ✅ deleteInconsistentHandle (+ family) — ALL constraint rules done
-;;;;          [M6: reduce-to-elegance orchestrator → reduce-to → cleanTree wire-up]
+;;;;   M6-4 ✅ reduce-to-elegance orchestrator + reduce-to (boolean ENF, WORKS)
+;;;;          [M6-5: cleanTree wire-up → unblocks lsk/build-logical/getCandidate]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -44,3 +45,4 @@
 !(import! &self "subsumption.metta")
 !(import! &self "complement_subtraction.metta")
 !(import! &self "delete_inconsistent_handle.metta")
+!(import! &self "reduce_to_elegance.metta")
