@@ -18,7 +18,8 @@
 ;;;;   M1c-2a ✅ logical-canonize (reduct-free exemplar canonicalization)
 ;;;;   M6-1 ✅ rte-helpers (reduce-to-elegance set-ops, filter-atom dialect adaptation)
 ;;;;   M6-2 ✅ normalization leaf rules: propagateNot + gatherJunctors + addAND
-;;;;          [M6: constraint rules → reduce-to-elegance orchestrator → reduce-to]
+;;;;   M6-3a ✅ orCut constraint rule (cut-unnecessary-or)
+;;;;          [M6: andCut → promote → subsumption → orchestrator → reduce-to]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -32,3 +33,4 @@
 !(import! &self "rte_helpers.metta")
 !(import! &self "propagate_not.metta")
 !(import! &self "gather_junctors.metta")
+!(import! &self "cut_unnecessary_or.metta")

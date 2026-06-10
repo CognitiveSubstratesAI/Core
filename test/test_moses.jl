@@ -191,6 +191,23 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (addAND (OR (AND A) (AND B)) True) (AND (OR (AND A) (AND B))))")
     end
 
+    @testset "M6-3a — orCut (lift single-child OR) + findAndReplace" begin
+        # documented example: (OR (AND (NOT D))) under (AND B …) → (AND B (NOT D))
+        @test aok("!(assertEqual (orCut (AND B (OR (AND (NOT D)))) (OR (AND (NOT D)))) ((AND B (NOT D)) () True))")
+        # single symbol child: (OR X) under (AND A (OR X)) → (AND A X)
+        @test aok("!(assertEqual (orCut (AND A (OR X)) (OR X)) ((AND A X) () True))")
+        # single (NOT x) child: (OR (NOT X)) under (AND A (OR (NOT X))) → (AND A (NOT X))
+        @test aok("!(assertEqual (orCut (AND A (OR (NOT X))) (OR (NOT X))) ((AND A (NOT X)) () True))")
+        # not a single-child OR → unchanged, applied False
+        @test aok("!(assertEqual (orCut (AND A (OR X Y)) (OR X Y)) ((AND A (OR X Y)) (OR X Y) False))")
+        # getSubExpression
+        @test aok("!(assertEqual (getSubExpression (AND (NOT D))) ((NOT D)))")
+        @test aok("!(assertEqual (getSubExpression (NOT D)) ())")
+        # findAndReplace: replace a child; replace the whole thing
+        @test aok("!(assertEqual (findAndReplace (OR X) Z (AND A (OR X) B)) (AND A Z B))")
+        @test aok("!(assertEqual (findAndReplace (AND A) Q (AND A)) Q)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

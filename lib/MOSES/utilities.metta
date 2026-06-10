@@ -97,6 +97,19 @@
 ;; swapAndOr — AND↔OR, anything else unchanged (the reduct's de Morgan dual).
 (= (swapAndOr $op) (case $op ((AND OR) (OR AND) ($else $op))))
 
+;; ~= / === — not-equal / strict-equal. Core lacks these (and `!=` even tokenizes as
+;; `! =`); both reduce to ==.  (Upstream uses ~= for "not equal" and === as a strict ==.)
+(= (~=  $a $b) (not (== $a $b)))
+(= (=== $a $b) (== $a $b))
+
+;; findAndReplace — replace the top-level child $old with $new inside $list. If $old
+;; IS the whole $list, return $new (root replacement). Upstream used
+;; (collapse (replace $old $new (superpose $list))); Core maps with map-atom.
+(= (findAndReplace $old $new $list)
+   (if (== $old $list)
+       $new
+       (map-atom $list $e (if (== $e $old) $new $e))))
+
 ;; Pair (utilities/pair.metta) — UNTYPED (Core dialect); constructor mkPair + accessors.
 (= (Pair.first  (mkPair $a $b)) $a)
 (= (Pair.second (mkPair $a $b)) $b)
