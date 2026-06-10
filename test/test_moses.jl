@@ -397,6 +397,16 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (evaluateOr (False False)) False)")
     end
 
+    @testset "M3-b — scoring: instantiate + fitness over a truth table" begin
+        @test aok("!(assertEqual (replaceVarsWithTruth ((a b) (AND a b)) (True False)) (AND True False))")
+        @test aok("!(assertEqual (scoreRow (AND a b) (a b) (True True) True) 0)")
+        @test aok("!(assertEqual (scoreRow (AND a b) (a b) (True False) True) -1)")
+        # full AND truth table (rows = (inputs expected)): AND program is perfect, OR is off by 2
+        @test aok("!(assertEqual (scoreProgram (AND a b) (a b) (((False False) False) ((False True) False) ((True False) False) ((True True) True))) 0)")
+        @test aok("!(assertEqual (scoreProgram (OR a b) (a b) (((False False) False) ((False True) False) ((True False) False) ((True True) True))) -2)")
+        @test aok("!(assertEqual (scoreProgram a (a b) (((False False) False) ((False True) False) ((True False) False) ((True True) True))) -1)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

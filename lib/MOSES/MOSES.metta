@@ -39,7 +39,8 @@
 ;;;;          [M1 representation layer COMPLETE]
 ;;;;   M2-a ✅ deme: createInitialInstance + getKnobDefault (the default genotype)
 ;;;;   M3-a ✅ scoring: evaluate/evaluateAnd/evaluateOr (boolean program evaluation)
-;;;;          [M3 cont: replaceVarsWithTruth + scoreTree (BScore over a truth table)]
+;;;;   M3-b ✅ scoring: replaceVarsWithTruth + scoreRow + scoreProgram (fitness vs truth table)
+;;;;          [M3 DONE — fitness function works. Next: M4 optimization (hillclimbing)]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 

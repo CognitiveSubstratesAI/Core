@@ -33,3 +33,41 @@
        (let* (($first (car-atom $args))
               ($rest  (cdr-atom $args)))
          (if (== (evaluate $first) False) False (evaluateAnd $rest)))))
+
+;; ── program instantiation + per-row scoring (bscore.metta) ───────────────────
+;; replaceVarWithTruth ($b $l) $expr — replace every occurrence of variable $l with
+;; truth value $b throughout $expr.
+(= (replaceVarWithTruth ($b $l) $boolExpr)
+   (if (== (get-metatype $boolExpr) Expression)
+       (let* ((($h $t) (decons-atom $boolExpr)))
+         (if (== $t ())
+             (replaceVarWithTruth ($b $l) $h)
+             (let* (($t' (map-atom $t $ts (replaceVarWithTruth ($b $l) $ts))))
+               (if (== $h $l) (cons-atom $b $t') (cons-atom $h $t')))))
+       (if (== $boolExpr $l) $b
+           (if (is-member $boolExpr (AND OR)) ($boolExpr) $boolExpr))))
+
+;; replaceVarsWithTruth ($lList $expr) $bList — substitute each label by its truth value.
+;; (List.zip→Core zip; List.foldl→foldl-atom with elem-first order to match
+;; replaceVarWithTruth's (pair expr) signature.)
+(= (replaceVarsWithTruth ($lList $boolExpr) $bList)
+   (let $blList (zip $bList $lList)
+     (foldl-atom $blList $boolExpr $acc $pair (replaceVarWithTruth $pair $acc))))
+
+;; compareAndScore — 0 if equal (correct row), -1 otherwise. The per-row behavioral score.
+(= (compareAndScore $a $b) (if (== $a $b) 0 -1))
+
+;; scoreRow — instantiate $expr with the row's $inputs over $labels, evaluate, and score
+;; against $expected (0 correct / -1 wrong).
+(= (scoreRow $expr $labels $inputs $expected)
+   (compareAndScore (evaluate (replaceVarsWithTruth ($labels $expr) $inputs)) $expected))
+
+;; scoreProgram — total behavioral fitness of $expr over a truth table: $rows is a list of
+;; ($inputs $expected) pairs. 0 = perfect; each wrong row contributes -1.
+(= (scoreProgram $expr $labels $rows)
+   (if (== $rows ())
+       0
+       (let* (($row (car-atom $rows))
+              (($inputs $expected) $row))
+         (+ (scoreRow $expr $labels $inputs $expected)
+            (scoreProgram $expr $labels (cdr-atom $rows))))))
