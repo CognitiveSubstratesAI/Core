@@ -310,6 +310,16 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (logicalProbe (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ()))) (mkNodeId (0)) ((mkTree (mkNode A) ())) True ()) (((mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 1) (mkDiscSpec 1) ()))) (mkTree (mkNode AND) ((mkTree (mkNode A) ()) (mkTree (mkNode B) ())))))")
     end
 
+    @testset "M1c-2b — sampleLogicalPerms (deterministic enumerated)" begin
+        @test aok("!(assertEqual (genList 2) (0 1 2))")
+        @test aok("!(assertEqual (genPairs (0 1)) ((0 1) (1 0)))")
+        @test aok("!(assertEqual (getArgsOne OR ((0 1) (1 0)) 0 (a b)) (OR (NOT a) b))")
+        # arity 2 over (a b): originals ∪ the two generated 2-literal OR perms
+        @test aok("!(assertEqual (sampleLogicalPerms AND 2 (a b)) (a b (OR (NOT a) b) (OR a b)))")
+        # arity 1 → (arg (NOT arg))
+        @test aok("!(assertEqual (sampleLogicalPerms AND 1 (a)) (a (NOT a)))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

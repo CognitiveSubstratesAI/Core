@@ -28,7 +28,8 @@
 ;;;;   M6-5 ✅ cleanTree wired (tree.metta) — boolean-reduct engine COMPLETE
 ;;;;   M1c-2b ✅ lsk: logicalSubtreeKnob/strategySubtreeKnob + accessors (USES cleanTree)
 ;;;;   M1c-2b ✅ logical-probe: logicalProbe/strategyProbe (collect knobs over perms)
-;;;;          [M1c-2b cont: sampleLogicalPerms(RNG) → addLogicalKnobs → buildLogical]
+;;;;   M1c-2b ✅ sample-logical-perms (DETERMINISTIC enumerated selection, not RNG)
+;;;;          [M1c-2b cont: addLogicalKnobs → buildLogical → build-knobs]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -51,3 +52,4 @@
 !(import! &self "reduce_to_elegance.metta")
 !(import! &self "lsk.metta")
 !(import! &self "logical_probe.metta")
+!(import! &self "sample_logical_perms.metta")

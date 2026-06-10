@@ -123,6 +123,13 @@
 (= (updateID (mkNodeId $id))
    (if (== (car-atom $id) 0) (mkNodeId (cdr-atom $id)) (mkNodeId $id)))
 
+;; genList — the integer list $l..$u (or 0..$u). Used by the perm samplers.
+(= (genList $u) (genList 0 $u))
+(= (genList $l $u)
+   (if (< $u $l)
+       ()
+       (let $res (genList $l (- $u 1)) (union-atom $res ($u)))))
+
 ;; Pair (utilities/pair.metta) — UNTYPED (Core dialect); constructor mkPair + accessors.
 (= (Pair.first  (mkPair $a $b)) $a)
 (= (Pair.second (mkPair $a $b)) $b)
