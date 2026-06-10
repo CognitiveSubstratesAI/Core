@@ -377,6 +377,15 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (mkInst (0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)))) (AND (OR A b)))")
     end
 
+    @testset "M2-a — deme: createInitialInstance (default genotype)" begin
+        @test aok("!(assertEqual (getKnobDefault (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))) 0)")
+        @test aok("!(assertEqual (getKnobDefault (mkLSK (mkDiscKnob (mkKnob (mkNodeId (1))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 1) ()))) 1)")
+        # initial instance of a small knob-MultiMap → list of defaults
+        @test aok("!(assertEqual (createInitialInstance (ConsMMap ((mkDiscSpec 3) (mkLSK (mkDiscKnob (mkKnob (mkNodeId (2))) (mkMultip 3) (mkDiscSpec 0) (mkDiscSpec 0) ()))) NilMMap)) (0))")
+        # end-to-end: REP-AND-A's initial instance maps back to the exemplar program A
+        @test aok("!(assertEqual (preOrder (getCandidate (REP-AND-A) (repInitialInstance (REP-AND-A)))) A)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

@@ -36,7 +36,9 @@
 ;;;;   M1c-3 ✅ append-to: appendTo/appendToLSK/appendToSSK (apply a knob setting)
 ;;;;   M1c-3 ✅ representation: crtDiscKnobMap + representation ctor (mkRep) + getRepTree
 ;;;;   M1c-3 ✅ get-candidate: getCandidate/getCandidateRec — Instance→Tree KEYSTONE WORKS
-;;;;          [M1 representation layer COMPLETE. Next: M2+ deme/scoring/optimization]
+;;;;          [M1 representation layer COMPLETE]
+;;;;   M2-a ✅ deme: createInitialInstance + getKnobDefault (the default genotype)
+;;;;          [M2+ cont: scoring (fitness/bscore) → optimization (hillclimbing)]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -67,3 +69,4 @@
 !(import! &self "append_to.metta")
 !(import! &self "representation.metta")
 !(import! &self "get_candidate.metta")
+!(import! &self "deme.metta")
