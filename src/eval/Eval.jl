@@ -229,6 +229,7 @@ type variables (`\$t`) match anything (generic-parameter idiom from
 function _check_arg_types(head::Symbol, expr, evaled_args::Vector, space::CoreSpace)
     sig_matches = core_match(space, [Symbol(":"), head, Symbol("\$sig")])
     isempty(sig_matches) && return nothing
+    first_err = nothing
     for m in sig_matches
         m isa Vector && length(m) == 3 || continue
         sig = m[3]
@@ -236,48 +237,117 @@ function _check_arg_types(head::Symbol, expr, evaled_args::Vector, space::CoreSp
         # sig = [->, T1, T2, ..., TN, Tret]
         expected_arg_types = sig[2:end-1]
         length(expected_arg_types) == length(evaled_args) || continue
+        # Thread a type-variable substitution across the args so a polymorphic
+        # signature like (-> $t (List $t) (List $t)) enforces cross-argument
+        # consistency: the binding $t picks up from arg 1 must hold for arg 2.
+        subst = Dict{Symbol, Any}()
+        sig_err = nothing
         for (i, (arg, expected_t)) in enumerate(zip(evaled_args, expected_arg_types))
-            actual_t = _infer_arg_type(arg, space)
-            _types_match(actual_t, expected_t) && continue
-            return Any[Symbol("Error"),
-                       expr,
-                       Any[Symbol("BadArgType"), i, expected_t, actual_t]]
+            actual_t = _infer_type(arg, space)
+            _unify_type!(subst, expected_t, actual_t) && continue
+            sig_err = Any[Symbol("Error"), expr,
+                          Any[Symbol("BadArgType"), i,
+                              _subst_type(expected_t, subst), actual_t]]
+            break
         end
-        return nothing
+        sig_err === nothing && return nothing          # this signature accepts the args
+        first_err === nothing && (first_err = sig_err)
     end
-    nothing
+    # No declared signature accepted the args (with nondeterministic typing several
+    # sigs may exist) — report the first mismatch as a spec BadArgType error.
+    first_err
 end
 
-function _types_match(actual, expected) :: Bool
-    actual === expected && return true
-    # Per spec: %Undefined% and Atom are universal in the type system
-    actual   === Symbol("%Undefined%") && return true
-    expected === Symbol("%Undefined%") && return true
-    expected === Symbol("Atom")        && return true
-    # Variable actual (at unification it'll be bound to something concrete)
+"""
+    _unify_type!(subst, expected, actual) :: Bool
+
+Unify an EXPECTED type (which may contain type-variables) against an ACTUAL type,
+recording variable bindings in `subst`. Gradual: `%Undefined%`, `Atom`, and a
+variable actual all match anything. An expected type-variable binds to the actual;
+nested type expressions (e.g. `(List \$t)` vs `(List Nat)`) unify element-wise.
+"""
+function _unify_type!(subst::Dict{Symbol, Any}, expected, actual) :: Bool
+    expected = _subst_type(expected, subst)
+    (actual   === Symbol("%Undefined%") || actual   === Symbol("Atom")) && return true
+    (expected === Symbol("%Undefined%") || expected === Symbol("Atom")) && return true
     actual === Symbol("Variable") && return true
-    # Generic parameters in the expected type — `(: id (-> $t $t))`
-    expected isa Symbol && (startswith(string(expected), "\$") ||
-                            startswith(string(expected), "__var_")) && return true
+    if expected isa Symbol && (startswith(string(expected), "\$") ||
+                               startswith(string(expected), "__var_"))
+        subst[expected] = actual
+        return true
+    end
+    if actual isa Symbol && (startswith(string(actual), "\$") ||
+                             startswith(string(actual), "__var_"))
+        return true
+    end
+    expected === actual && return true
+    if expected isa Vector && actual isa Vector && length(expected) == length(actual)
+        for (e, a) in zip(expected, actual)
+            _unify_type!(subst, e, a) || return false
+        end
+        return true
+    end
     false
 end
 
-function _infer_arg_type(atom, space::CoreSpace)
-    # Identical resolution rule as _eval_get_type:
-    # declared types in the space win, structural inference as fallback.
+"""Apply a type-variable substitution to a (possibly nested) type expression."""
+function _subst_type(t, subst::Dict{Symbol, Any})
+    t isa Symbol && return get(subst, t, t)
+    t isa Vector && return Any[_subst_type(x, subst) for x in t]
+    t
+end
+
+"""
+    _infer_type(atom, space) → type-atom
+
+Infer the MeTTa type of an (already-evaluated) atom. Gradual typing:
+  1. a declared `(: atom T)` in the space wins;
+  2. grounded literals → Number / Bool / String;
+  3. a function application `(f a…)` takes f's `(-> … Tret)` RETURN type, with
+     type-variables resolved by unifying each declared arg type against the
+     inferred argument type (so `(S Z)` : Nat, `(Cons Z Nil)` : (List Nat));
+  4. everything else (undeclared symbol, variable, untyped application) →
+     `%Undefined%`, which is universal under `_unify_type!` so untyped code is
+     never spuriously rejected.
+
+Shared by `get-type` and the runtime arg-type checker so both agree. Replaces the
+old structural fallback that typed EVERY application as the metatype `Expression`,
+which mis-typed well-typed nested expressions and caused false BadArgType errors.
+"""
+function _infer_type(atom, space::CoreSpace)
+    # 1. declared type(s) in the space — first declaration wins
     matches = core_match(space, [Symbol(":"), atom, Symbol("\$t")])
     if !isempty(matches) && matches[1] isa Vector && length(matches[1]) >= 3
         return matches[1][3]
     end
-    atom_s = to_sexpr_atom(atom)
-    s = strip(atom_s)
-    tryparse(Int, s) !== nothing     && return Symbol("Number")
-    tryparse(Float64, s) !== nothing && return Symbol("Number")
-    (s == "True" || s == "False" || s == "true" || s == "false") && return Symbol("Bool")
+    # 2. grounded literals (Bool before Number — Bool <: Integer in Julia)
+    atom isa Bool && return Symbol("Bool")
+    atom isa Number && return Symbol("Number")
+    atom isa AbstractString && return Symbol("String")
+    # 3. function-application return-type inference
+    if atom isa Vector && !isempty(atom) && atom[1] isa Symbol
+        appargs = atom[2:end]
+        for m in core_match(space, [Symbol(":"), atom[1], Symbol("\$sig")])
+            m isa Vector && length(m) == 3 || continue
+            sig = m[3]
+            sig isa Vector && length(sig) >= 2 && sig[1] === Symbol("->") || continue
+            expected = sig[2:end-1]
+            length(expected) == length(appargs) || continue
+            subst = Dict{Symbol, Any}()
+            ok = true
+            for (e, a) in zip(expected, appargs)
+                _unify_type!(subst, e, _infer_type(a, space)) || (ok = false; break)
+            end
+            ok && return _subst_type(sig[end], subst)
+        end
+    end
+    # 4. string-form fallback for atoms arriving as text (e.g. "42", "\"hi\"")
+    s = strip(to_sexpr_atom(atom))
+    (tryparse(Int, s) !== nothing || tryparse(Float64, s) !== nothing) && return Symbol("Number")
+    (s == "True" || s == "False") && return Symbol("Bool")
     startswith(s, "\"") && return Symbol("String")
-    startswith(s, "(")  && return Symbol("Expression")
-    startswith(s, "\$") && return Symbol("Variable")
-    Symbol("Symbol")
+    # 5. unknown → gradual %Undefined%
+    Symbol("%Undefined%")
 end
 
 """
@@ -349,7 +419,7 @@ function _eval_type_cast(args::Vector, space::CoreSpace)
     end
 
     # No declared types — fall back to structural inference.
-    inferred = _infer_arg_type(atom, space)
+    inferred = _infer_type(atom, space)
     _spec_types_match(inferred, requested_t) && return atom
     Any[Symbol("Error"), atom,
         Any[Symbol("BadType"), requested_t, inferred]]
@@ -985,22 +1055,9 @@ but that's a downstream consumer migration tracked in the resume notes.
 function _eval_get_type(args::Vector, space::CoreSpace)
     isempty(args) && return Symbol("%Undefined%")
     atom = eval_metta(args[1], space)
-    # Step 1 — query declared types from the space
-    matches = core_match(space, [Symbol(":"), atom, Symbol("\$t")])
-    if !isempty(matches) && matches[1] isa Vector && length(matches[1]) >= 3
-        return matches[1][3]
-    end
-    # Step 2 — fall back to structural inference (same logic as the grounded
-    # registration in Primitives.jl, kept in sync with that policy choice).
-    atom_s = to_sexpr_atom(atom)
-    s = strip(atom_s)
-    tryparse(Int, s) !== nothing     && return Symbol("Number")
-    tryparse(Float64, s) !== nothing && return Symbol("Number")
-    (s == "True" || s == "False" || s == "true" || s == "false") && return Symbol("Bool")
-    startswith(s, "\"") && return Symbol("String")
-    startswith(s, "(")  && return Symbol("Expression")
-    startswith(s, "\$") && return Symbol("Variable")
-    Symbol("Symbol")
+    # Shared inferencer: declared type wins; a function application takes its
+    # signature's return type; unknown → %Undefined% (gradual). See _infer_type.
+    _infer_type(atom, space)
 end
 
 function _eval_add_reduct(args::Vector, space::CoreSpace)

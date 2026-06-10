@@ -300,7 +300,8 @@ function _register_type_ops!()
     MORK.register_grounded!("get-metatype", args -> begin
         isempty(args) && return "Symbol"
         s = strip(args[1])
-        startswith(s, "\$")  && return "Variable"
+        # Variables arrive either as parse-time `$x` or eval-renamed `__var_x`.
+        (startswith(s, "\$") || startswith(s, "__var_")) && return "Variable"
         startswith(s, "(")   && return "Expression"
         tryparse(Float64, s) !== nothing && return "Grounded"
         (s == "True" || s == "False" || s == "true" || s == "false") && return "Grounded"

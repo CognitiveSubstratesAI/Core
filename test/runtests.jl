@@ -183,7 +183,10 @@ is_num(r, n) = r == n || r == string(n) || r == Float64(n) || r == string(Float6
     @testset "12. Type system" begin
         s = fresh()
         @test occursin("Number", string(eval_metta([Symbol("get-type"), 1], s)))
-        @test occursin("Symbol", string(eval_metta([Symbol("get-type"), :foo], s)))
+        # Undeclared symbol → %Undefined% (gradual typing), per MeTTa spec. (Was
+        # asserting "Symbol", the old structural-fallback behavior, before get-type
+        # was unified with the function-application-aware _infer_type.)
+        @test occursin("%Undefined%", string(eval_metta([Symbol("get-type"), :foo], s)))
         @test begin
             r = eval_metta([Symbol("match-types"), :Number, :Number, :yes, :no], s)
             r === :yes || r == "yes"
@@ -529,3 +532,9 @@ include("test_actpc_chem.jl")
 # MOSES algorithm tests — lib/MOSES/ (1:1 port of iCog metta-moses, Core-dialect-
 # adapted: Cons/Nil-ADT → Core-native ()-expr lists). Incremental: M0 scaffold + utils.
 include("test_moses.jl")
+
+# Type-system conformance — Core vs the metta-lang.dev types_basics tutorials,
+# grounded in hyperon-experimental's b5_types_prelim/d4_type_prop scripts: gradual
+# typing, function-application return-type inference, BadArgType checking, parametric
+# types, get-metatype, types-as-propositions, let-destructure, Atom-typed match.
+include("test_types.jl")

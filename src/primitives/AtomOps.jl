@@ -275,7 +275,9 @@ function _register_atom_ops!(eval_fn::Function)
 
     MORK.register_grounded!("is-variable", args -> begin
         isempty(args) && return "False"
-        startswith(strip(args[1]), "\$") ? "True" : "False"
+        # Variables arrive as parse-time `$x` or eval-renamed `__var_x`.
+        s = strip(args[1])
+        (startswith(s, "\$") || startswith(s, "__var_")) ? "True" : "False"
     end)
 
     MORK.register_grounded!("is-expression", args -> begin
