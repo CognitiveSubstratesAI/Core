@@ -147,4 +147,19 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (nodeId< (mkNodeId (2 3)) (mkNodeId (1 2))) False)")
         @test aok("!(assertEqual (nodeId< (mkNodeId (2 3)) (mkNodeId (2 3))) False)")    # equal ⇒ not <
     end
+
+    @testset "M1c-2a — logical-canonize (reduct-free)" begin
+        @test aok("!(assertEqual (isAnArgument A) True)")
+        @test aok("!(assertEqual (isAnArgument AND) False)")
+        @test aok("!(assertEqual (isBoolean True) True)")
+        @test aok("!(assertEqual (isBoolean A) False)")
+        # AND node → wrapped under an OR parent
+        @test aok("!(assertEqual (logicalCanonize (mkTree (mkNode AND) ((mkTree (mkNode A) ())))) (mkTree (mkNode OR) ((mkTree (mkNode AND) ((mkTree (mkNode A) ()))))))")
+        # OR node → wrapped under AND
+        @test aok("!(assertEqual (logicalCanonize (mkTree (mkNode OR) ((mkTree (mkNode A) ())))) (mkTree (mkNode AND) ((mkTree (mkNode OR) ((mkTree (mkNode A) ()))))))")
+        # argument leaf → wrapped under AND
+        @test aok("!(assertEqual (logicalCanonize (mkTree (mkNode A) ())) (mkTree (mkNode AND) ((mkTree (mkNode A) ()))))")
+        # boolean constant → (OR (AND))
+        @test aok("!(assertEqual (logicalCanonize (mkTree (mkNode True) ())) (mkTree (mkNode OR) ((mkTree (mkNode AND) ()))))")
+    end
 end

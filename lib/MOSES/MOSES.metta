@@ -15,7 +15,8 @@
 ;;;;   M1a ✅ Instance (genotype value) + Pair
 ;;;;   M1b ✅ Map ADT + program-representation Tree/NodeId substrate
 ;;;;   M1c-1 ✅ MultiMap ADT + knob data-structure layer (knob-representation)
-;;;;          [M1c-2 build-logical / knob-mapper, then getCandidate (needs reduct, M6) pending]
+;;;;   M1c-2a ✅ logical-canonize (reduct-free exemplar canonicalization)
+;;;;          [build-logical/lsk/logicalProbe + getCandidate are REDUCT-gated → need M6 first]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -25,3 +26,4 @@
 !(import! &self "multimap.metta")
 !(import! &self "tree.metta")
 !(import! &self "knob.metta")
+!(import! &self "logical_canonize.metta")
