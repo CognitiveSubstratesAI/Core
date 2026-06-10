@@ -343,6 +343,13 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (MultiMap.length (second (buildKnobs (mkTree (mkNode AND) ((mkTree (mkNode A) ()))) NilMMap (a b)))) 20)")
     end
 
+    @testset "M1c-3 — knob-mapper (findDiscKnob)" begin
+        # KnobMap: node (1) → discIdx 0; MultiMap at 0 = ((mkDiscSpec 3) KNOB1)
+        @test aok("!(assertEqual (findDiscKnob (mkKbMap (mkDscKbMp (ConsMap ((mkNodeId (1)) 0) NilMap)) (mkDscMp (ConsMMap ((mkDiscSpec 3) KNOB1) NilMMap))) (mkNodeId (1))) (KNOB1 0))")
+        # node not in the map → (() -1)
+        @test aok("!(assertEqual (findDiscKnob (mkKbMap (mkDscKbMp (ConsMap ((mkNodeId (1)) 0) NilMap)) (mkDscMp (ConsMMap ((mkDiscSpec 3) KNOB1) NilMMap))) (mkNodeId (2))) (() -1))")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")
