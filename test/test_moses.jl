@@ -407,6 +407,15 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (scoreProgram a (a b) (((False False) False) ((False True) False) ((True False) False) ((True True) True))) -1)")
     end
 
+    @testset "M4-a — optimization: hillclimb (steepest ascent)" begin
+        qm(raw"(= (sumScore $inst) (List.sum $inst))")
+        @test aok("!(assertEqual (neighborsOf (0 0) 3) ((1 0) (2 0) (0 1) (0 2)))")
+        @test aok("!(assertEqual (bestNeighbor sumScore (0 0) 0 (neighborsOf (0 0) 3)) (2 0))")
+        # steepest ascent maximizing the instance sum drives all knobs to their max (2)
+        @test aok("!(assertEqual (hillclimb sumScore (0 0 0) 3 10) (2 2 2))")
+        @test aok("!(assertEqual (hillclimb sumScore (2 2) 3 10) (2 2))")   # already optimal → unchanged
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

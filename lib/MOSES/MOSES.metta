@@ -40,7 +40,8 @@
 ;;;;   M2-a ✅ deme: createInitialInstance + getKnobDefault (the default genotype)
 ;;;;   M3-a ✅ scoring: evaluate/evaluateAnd/evaluateOr (boolean program evaluation)
 ;;;;   M3-b ✅ scoring: replaceVarsWithTruth + scoreRow + scoreProgram (fitness vs truth table)
-;;;;          [M3 DONE — fitness function works. Next: M4 optimization (hillclimbing)]
+;;;;   M4-a ✅ optimization: hillclimb (simplified steepest-ascent over the instance space)
+;;;;          [M4 cont: wire hillclimb to getCandidate+scoreProgram → end-to-end boolean learn]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -73,3 +74,4 @@
 !(import! &self "get_candidate.metta")
 !(import! &self "deme.metta")
 !(import! &self "scoring.metta")
+!(import! &self "optimization.metta")
