@@ -52,6 +52,7 @@ include("space/CoreSpaceActIO.jl")   # Stage 1 .act lifecycle (snapshot / load /
 include("parser/Parser.jl")
 include("primitives/Primitives.jl")
 include("primitives/AtomOps.jl")
+include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundation)
 include("eval/Eval.jl")
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
@@ -166,5 +167,6 @@ export parse_metta, parse_sexpr
 export eval_metta, run_metta, run_file, default_space
 export register_core_primitives!, register_all_primitives!, register_for_space!, load_stdlib!
 export register_grounded!, is_grounded, GROUNDED_REGISTRY
+export mork_unify, mork_apply, mork_rule_rewrite   # E1.0 native-engine bridge
 
 end # module MeTTaCore

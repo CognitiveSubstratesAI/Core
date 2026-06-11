@@ -542,3 +542,16 @@ include("test_no_stdlib_shadow.jl")
 # typing, function-application return-type inference, BadArgType checking, parametric
 # types, get-metatype, types-as-propositions, let-destructure, Atom-typed match.
 include("test_types.jl")
+
+@testset "MorkBridge (E1.0) — native unify + shared-var rule rewrite" begin
+    # E1.0 foundation: rewrite via MORK's verified engine (expr_unify + expr_apply), not Core's
+    # Julia-structural _unify / string-replace. The crossed-variable case is the one that breaks
+    # naive separate-parse — see the CRUX note in src/eval/MorkBridge.jl.
+    @test mork_rule_rewrite("(= (f \$x) (g \$x))", "(f bar)") == "(g bar)"
+    @test mork_rule_rewrite("(= (p \$x \$y) (q \$y \$x))", "(p a b)") == "(q b a)"   # crossed vars
+    @test mork_rule_rewrite("(= (dup \$x) (\$x \$x))", "(dup k)") == "(k k)"          # template duplication
+    @test mork_rule_rewrite("(= (p \$x \$y) (q \$y \$x))", "(z a b)") === nothing     # head mismatch
+    @test mork_rule_rewrite("(foo bar)", "(foo bar)") === nothing                     # not a (= ..) rule
+    @test mork_unify("(f \$x)", "(f bar)") isa Dict                                   # match → bindings
+    @test mork_unify("(f \$x)", "(h bar)") === nothing                                # no match
+end
