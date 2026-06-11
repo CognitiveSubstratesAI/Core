@@ -416,6 +416,23 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (hillclimb sumScore (2 2) 3 10) (2 2))")   # already optimal → unchanged
     end
 
+    @testset "M4-b — END-TO-END: MOSES learns a boolean function (genotype→phenotype→fitness)" begin
+        # representation over a leaf-`a` exemplar with labels (a b); behavioral target = OR.
+        # boolScore wires the full chain: Instance → getCandidate → program Tree → preOrder
+        # → scoreProgram against the OR truth table. This is the piece hillclimb optimizes.
+        qm(raw"(= (DEMO-REP) (representation (mkTree (mkNode a) ()) (a b)))")
+        qm(raw"(= (OR-TBL) (((False False) False) ((False True) True) ((True False) True) ((True True) True)))")
+        qm(raw"(= (boolScore $inst) (scoreProgram (preOrder (getCandidate (DEMO-REP) (mkInst $inst))) (a b) (OR-TBL)))")
+        # the seed exemplar (initial instance) decodes to `a`, which is wrong on row (F T) → -1
+        @test aok("!(assertEqual (preOrder (getCandidate (DEMO-REP) (repInitialInstance (DEMO-REP)))) a)")
+        @test aok("!(assertEqual (boolScore (1 0 0 0 0 0 0 0 0 0 0)) -1)")
+        # the optimum genotype found by hillclimb decodes to (AND (OR a b)) ≡ OR → perfect score 0.
+        # (full search verified out-of-band: hillclimb boolScore <seed> 3 4 → (1 0 0 0 1 0 0 0 0 0 0)
+        #  in 117s; here we assert the optimum it converges to decodes and scores correctly.)
+        @test aok("!(assertEqual (preOrder (getCandidate (DEMO-REP) (mkInst (1 0 0 0 1 0 0 0 0 0 0)))) (AND (OR a b)))")
+        @test aok("!(assertEqual (boolScore (1 0 0 0 1 0 0 0 0 0 0)) 0)")
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

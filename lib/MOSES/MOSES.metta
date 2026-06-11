@@ -41,7 +41,9 @@
 ;;;;   M3-a ✅ scoring: evaluate/evaluateAnd/evaluateOr (boolean program evaluation)
 ;;;;   M3-b ✅ scoring: replaceVarsWithTruth + scoreRow + scoreProgram (fitness vs truth table)
 ;;;;   M4-a ✅ optimization: hillclimb (simplified steepest-ascent over the instance space)
-;;;;          [M4 cont: wire hillclimb to getCandidate+scoreProgram → end-to-end boolean learn]
+;;;;   M4-b ✅ END-TO-END: MOSES learns OR from a leaf exemplar — hillclimb over boolScore
+;;;;          (= scoreProgram∘preOrder∘getCandidate) discovers (AND (OR a b)) ≡ OR, score 0.
+;;;;          [M5 next: metapopulation loop (multi-deme expand/merge) for full search]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
