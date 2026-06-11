@@ -54,6 +54,7 @@ include("primitives/Primitives.jl")
 include("primitives/AtomOps.jl")
 include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundation)
 include("eval/Eval.jl")
+include("eval/EvalND.jl")       # OutcomeSet evaluator (nondeterministic, binding-carrying) — foundation
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
@@ -168,5 +169,6 @@ export eval_metta, run_metta, run_file, default_space
 export register_core_primitives!, register_all_primitives!, register_for_space!, load_stdlib!
 export register_grounded!, is_grounded, GROUNDED_REGISTRY
 export mork_unify, mork_apply, mork_rule_rewrite   # E1.0 native-engine bridge
+export eval_nd, eval_nd_results                    # OutcomeSet (nondeterministic) evaluator
 
 end # module MeTTaCore

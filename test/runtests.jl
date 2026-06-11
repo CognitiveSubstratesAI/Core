@@ -555,3 +555,19 @@ include("test_types.jl")
     @test mork_unify("(f \$x)", "(f bar)") isa Dict                                   # match → bindings
     @test mork_unify("(f \$x)", "(h bar)") === nothing                                # no match
 end
+
+@testset "OutcomeSet evaluator (nondeterministic) — conformance fixtures" begin
+    # The cases legacy eval_metta gets wrong (single-value, no fan-out / no binding propagation).
+    # eval_nd returns a SET; compare order-insensitively. See docs/CONFORMANCE_AUDIT.md.
+    s = new_core_space(); load_stdlib!(s)
+    for f in parse_metta("(= (croaks Fritz) True)\n(= (eats_flies Fritz) True)\n" *
+                         "(= (croaks Sam) True)\n(= (eats_flies Sam) False)\n" *
+                         "(= (frog \$x) (and (croaks \$x) (eats_flies \$x)))\n(= (f \$x) (g \$x))\n")
+        core_add!(s, f)
+    end
+    ndset(src) = Set(to_sexpr.(eval_nd_results(parse_metta(src)[1], s)))
+    @test ndset("(croaks \$x)") == Set(["True"])                               # fan-out over facts → {True}
+    @test ndset("(f (superpose (1 2)))") == Set(["(g 1)", "(g 2)"])            # fan-out through application
+    @test ndset("(if (frog \$x) (\$x is Frog) (\$x is-not Frog))") ==
+          Set(["(Fritz is Frog)", "(Sam is-not Frog)"])                        # the frog tutorial — fan-out + binding
+end
