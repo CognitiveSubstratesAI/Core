@@ -101,6 +101,29 @@ into the result. Core evaluates once with `$x` unbound → no fan-out, wrong `if
 and the frog/green tutorial are the **conformance fixtures**. (NB: the `__var_x` rendering is the
 storage form surfacing, but the real defect is that `$x` is never bound at all.)
 
+## 2c. THE FIX MODEL — `OutcomeSet` (triangulated across hyperon / PeTTa / CeTTa)
+
+The root cause is one architectural mismatch, confirmed by **all three** reference MeTTa interpreters:
+
+| impl | eval returns | nondeterminism + bindings |
+|---|---|---|
+| hyperon-experimental | multiple reducts | nondeterministic `interpret` loop |
+| PeTTa (Prolog) | all solutions | Prolog backtracking, each with a binding env |
+| **CeTTa (C)** | **`OutcomeSet`** = set of `Outcome{atom, env}` | explicit; `ResultSet` (drop bindings) at top |
+| **Core (Julia)** | **single `Any`, no bindings** | ❌ neither fan-out nor binding propagation |
+
+**CeTTa is the cleanest blueprint** (same language-agnostic shape, no Prolog magic): every evaluator
+returns an `OutcomeSet` where each `Outcome` carries `(atom, bindings)`. Function application iterates
+the set, threads/combines each outcome's bindings, and fans out; `eval_top` drops bindings → `ResultSet`
+for the user. `metta_eval_bind` (internal, bindings-carrying) vs `metta_eval`/`ResultSet` (top, atoms).
+
+**Port to Julia (the fix):** change Core's `eval_metta(expr)::Any` to return an outcome set —
+`Vector{Tuple{value, bindings::Dict}}` (an `OutcomeSet`); `run_metta`/top-level drops bindings. The
+match-and-bind at each reduction uses MORK's `expr_unify` (E1.0's bridge already gives this); fan-out
+is "for each rule/fact that unifies, emit an outcome." This single change fixes the frog tutorial,
+`(f (superpose x))`, `(croaks $x)`, and `(ift (green $x) $x)` together — it IS E1.2 + B unified, and it's
+the *port of the interpreter's nondeterministic half* that the redesign skipped. Gate = the §2b fixtures.
+
 ## 3. Plan (E1 = phases 0–3; B deferred)
 
 ### ✅ E1.0 — Bridge module — DONE (`cda1c39`, 2026-06-11)
