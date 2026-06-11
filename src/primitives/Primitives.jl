@@ -10,6 +10,8 @@ Cross-verified against:
   Mettatron eval/builtin.rs  — arithmetic, math, *-math naming convention
   hyperon-experimental       — arithmetics.rs, math.rs, atom.rs
   PRIMUS_Core/core/StdLib.jl — adopted arithmetic, comparison, I/O, vectors
+                               (ARCHIVED — port-source quarry, not a live cross-check;
+                                see ~/PRIMUS/packages/PRIMUS_Core/STATUS.md)
 """
 
 # ── Arithmetic ────────────────────────────────────────────────────────────────

@@ -88,7 +88,8 @@ function _eval_metta_bounded(@nospecialize(expr), space::CoreSpace) :: Any
     # ── Special forms ─────────────────────────────────────────────────────────
     # Per MeTTa spec §Minimal MeTTa Instructions and cross-verified against
     # Mettatron eval/mod.rs, CeTTa grounded.c, hyperon-experimental interpreter.rs
-    # PRIMUS_Core/interpreter/SpecialForms.jl (adopted + stripped of MeTTaTerm)
+    # PRIMUS_Core/interpreter/SpecialForms.jl (adopted + stripped of MeTTaTerm;
+    #   ARCHIVED port-source — see ~/PRIMUS/packages/PRIMUS_Core/STATUS.md)
 
     head === :match       && return _eval_match(args, space)
     head === Symbol("match") && return _eval_match(args, space)
