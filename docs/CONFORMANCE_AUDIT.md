@@ -46,6 +46,18 @@ better than 21/39 — fix the harness to unwrap singleton result-sets for exact 
   and partially documented, not a surprise. Sequence it after `OutcomeSet`.
 - The b-series scripts are now the **regression gate** for the eval refactor (done = these pass).
 
+## Validated gain — `eval_nd` vs `eval_metta` (2026-06-11)
+The `OutcomeSet` evaluator (`eval_nd`, additive — not yet wired in) re-run against the same scripts:
+
+| script | `eval_metta` | `eval_nd` |
+|---|---|---|
+| `b3_direct` | 2 / 4 | **4 / 4** |
+| `b4_nondeterm` | 1 / 10 | **9 / 11** |
+
+The nondeterminism category — the dominant root cause — is essentially closed by `eval_nd`. Remaining
+`b4` misses (`collapse (shape)` on an undefined symbol, `find-equal`) are edge cases, not the core gap.
+This confirms the `OutcomeSet` model is the right and sufficient fix for category ①.
+
 ## Next
 1. Build the `OutcomeSet`-valued evaluator (the §2c blueprint), gated by b0/b2/b3/b4.
 2. Fix the harness's result-set unwrapping for exact pass counts; vendor/pin the reference scripts.

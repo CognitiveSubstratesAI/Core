@@ -186,7 +186,9 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
                 matched = true
                 append!(o, eval_nd(_nd_subst(bd2, e2), space, e2))
             end
-            matched || push!(o, (vcat([h], vals), ee))
+            # unreduced: substitute the head too (a var head may have been bound by evaluating the
+            # other elements — e.g. `($x (green $x))` → `(Fritz T)`).
+            matched || push!(o, (vcat([_nd_subst(h, ee)], vals), ee))
         end
     end
     o

@@ -563,6 +563,7 @@ end
     for f in parse_metta("(= (croaks Fritz) True)\n(= (eats_flies Fritz) True)\n" *
                          "(= (croaks Sam) True)\n(= (eats_flies Sam) False)\n" *
                          "(= (frog \$x) (and (croaks \$x) (eats_flies \$x)))\n(= (f \$x) (g \$x))\n" *
+                         "(= (green \$x) (frog \$x))\n" *
                          "(= (color) red)\n(= (color) green)\n(= (color) yellow)\n" *
                          "(= (bin) A)\n(= (bin) B)\n(= (croaks2 Fritz) T)\n(= (eat_flies Fritz) T)\n")
         core_add!(s, f)
@@ -585,4 +586,5 @@ end
     @test ndset("(unify (f 1) (g 1) yes no)") == Set(["no"])                   # unify else-branch
     @test ndset("(quote (+ 1 2))") == Set(["(+ 1 2)"])                         # quote: unevaluated
     @test ndset("(case (color) ((red R) (green G) (\$_ other)))") == Set(["R", "G", "other"])  # case + wildcard over nondeterminism
+    @test ndset("(\$x (green \$x))") == Set(["(Fritz True)", "(Sam False)"])    # var-head expr: binding from one element reaches another (b3_direct)
 end
