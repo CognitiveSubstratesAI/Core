@@ -73,6 +73,34 @@ documented, and Core↔MORK is **already integrated at the storage/query level**
 existing var bridge via `to_sexpr_query`. But E1.2 is smaller than billed (reuse the converters) and
 E1.3 is gated on a MORK arity-1 change, not free. Respect the existing deliberate design.
 
+## 2b. MEASURED PULL (2026-06-11) — hyperon `b3_direct.metta` + the frog/green tutorial
+
+Tested Core against the hyperon-experimental reference (the metta-lang.dev `recursion_vars` content is
+distilled from it). **Functional recursion is solid** — factorial, sum-to-n, Peano `add`, list-length,
+`even?`, and `(green Fritz)→T` all match hyperon. **The gap is MeTTa's nondeterministic
+query-as-evaluation over free variables**, demonstrated by two reference cases:
+
+```
+; b3_direct.metta
+!(ift (green $x) $x)              ; hyperon: Fritz   | Core: __var_x   (binding not propagated)
+; frog/green tutorial (verbatim)
+!(if (frog $x) ($x is Frog) ($x is-not Frog))
+   ; hyperon: (Fritz is Frog), (Sam is-not Frog)   | Core: (__var_x is-not Frog)   [1 result, $x unbound]
+!(if (green $x) ($x is Green) ($x is-not Green))
+   ; hyperon: (Fritz is Green)                      | Core: (__var_x is-not Green)
+```
+
+Building blocks all pass in Core (`(frog Fritz)→True`, `(frog Sam)→False`, `(and True False)→False`,
+`(green Sam)→∅`). The failure is precisely: evaluating `(frog $x)` with `$x` free should **query** the
+store, **fan out** over every binding (`$x=Fritz→True`, `$x=Sam→False`), and **thread each binding**
+into the result. Core evaluates once with `$x` unbound → no fan-out, wrong `if` branch, `$x` leaks as
+`__var_x`. Same root cause both places: **no binding-propagation + no multi-result stream.**
+
+**This is the concrete, reference-backed pull for the binding/nondeterminism work** (E1's
+`expr_unify`/`expr_apply` threading + B's result streams, via match-against-store). `b3_direct.metta`
+and the frog/green tutorial are the **conformance fixtures**. (NB: the `__var_x` rendering is the
+storage form surfacing, but the real defect is that `$x` is never bound at all.)
+
 ## 3. Plan (E1 = phases 0–3; B deferred)
 
 ### ✅ E1.0 — Bridge module — DONE (`cda1c39`, 2026-06-11)
