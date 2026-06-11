@@ -97,3 +97,55 @@ is in and the bipolar-unification work is scheduled.
 ## 5. Out of scope for E1
 Multi-result/nondeterministic rewriting, `$x=$y` binding, the optional serialize-alignment to upstream
 `VARNAMES`, and the `space_metta_calculus_in_prefix!` multi-space-calculus gap (`CoreSpace.jl:667`).
+
+## 6. Prior art — how PeTTa / CeTTa / our packages bridge MORK (2026-06-11 cross-check)
+
+Cross-checked the four other MORK consumers. Two cross a language/FFI boundary to **Rust** MORK;
+three are in-process Julia like Core.
+
+| consumer | reach | uses MORK as… | term engine (`expr_unify`/`expr_apply`) |
+|---|---|---|---|
+| **PeTTa** (Prolog) | C FFI `libmork_ffi.so` via `LD_PRELOAD` (`run.sh`, `build.sh`) | store + **match via `dump_sexpr`** + `metta_calculus`; reduction stays in Prolog | not as a primitive (it's *inside* `dump_sexpr`) |
+| **CeTTa** (C) | static C-ABI `libcetta_space_bridge.a` (`Makefile:55-66`); byte-span packets v1/v2/v3 | store + algebra (join/meet/subtract) + `query_bindings` + mm2; **unifies at the C level** | no |
+| **MORKTensorNetworks** (Julia) | `using MORK` in-process; zippers on `space.btm` | trie-backed relational datastore → CSR | no |
+| **FactorVSA** (Julia) | `using MORK: register_grounded!` (`MeTTaShim.jl:22`) | **grounded-function registry only** | no |
+| **HMH** (Julia) | via FactorVSA; no direct MORK | — | no |
+
+### What's NOT relevant to us (forced by their FFI boundary)
+PeTTa's `.so`/`LD_PRELOAD`, CeTTa's C-ABI/`catch_unwind`/byte-span packets/synthetic var renaming,
+string/byte (de)serialization — all artifacts of crossing **into Rust from another language**. Core
+and MORK are the **same Julia process**, so these vanish: call `expr_unify`/`expr_apply` directly on
+`Expr` objects, zero-copy. This confirms E1's premise. **The `.sh`+FFI machinery is not our concern.**
+
+### What IS worth learning (semantic, language-independent)
+
+1. **Nobody runs interpretation *through* MORK's term engine — and that reshapes E1.2/E1.3.** The
+   universal idiom is: **match a pattern against the STORE via the query engine** (PeTTa `dump_sexpr`,
+   CeTTa `query_bindings`, both = `space_query_multi` + `expr_apply`), keep the reducer in your own
+   layer, and use a **grounded gateway** for foreign ops. So the validated shape of E1 is *match via
+   `space_query_multi` (E1.3) + substitute via `expr_apply` (E1.1)*, **not** "swap Core's reducer out
+   for MORK term-ops." Concretely, prefer **E1.3 (query the rule-space)** over E1.2's fetch-rule-then-
+   `expr_unify`-term-vs-term — the latter is a path no consumer took; the rule lookup itself should be
+   a query. Treat standalone `expr_unify` as an internal of the query path, not Core's main verb.
+
+2. **Grounded objects: CeTTa `GV_FOREIGN` and FactorVSA's handle-arena CONVERGE — adopt it (new E1
+   concern).** Foreign/grounded values must NOT enter the symbolic trie. The proven pattern: keep the
+   Julia object in a **process-global handle-arena** (FactorVSA's `DualIndex` + `ReentrantLock`,
+   `FactorVSA.jl:142`), put only a symbolic handle atom `(VecRef h)` into MORK, and register a
+   **grounded handler** (`register_grounded!`, `MeTTaShim.jl:120`) that derefs the handle, computes in
+   Julia, and returns a fresh handle. CeTTa does the same with `void* GV_FOREIGN` + symbol→C-fn
+   dispatch (`grounded.c:207`). **Core already has `GROUNDED_REGISTRY`** (`Eval.jl:158`); when E1 moves
+   terms onto byte-`Expr`s, grounded literals (numbers — the §9 "Number model" item — and any Julia
+   objects) need this handle-arena treatment so they survive as byte-trie atoms. **Reuse FactorVSA's
+   `DualIndex` rather than reinventing.** This belongs in E1.0's bridge or as an E1.1.5 step.
+
+3. **Multi-result = bulk-enumerate then caller-iterate** (validates the deferred B phase). PeTTa
+   returns all matches as a newline-delimited string and backtracks via `member/2`; CeTTa returns a v3
+   packet with **per-factor multiplicity groups** for conjunctive `(, p1 p2 …)` queries. For B: have
+   `space_query_multi` enumerate all matches, surface them as a Core stream; borrow CeTTa's per-factor
+   grouping idea for conjunctive multi-result witnesses.
+
+**Net:** the FFI bridges teach us nothing mechanical (we're in-process), but they unanimously endorse
+*query-against-store + grounded-gateway* over *reducer-on-engine*, and they hand us a ready grounded-
+object pattern (handle-arena) that's already implemented in-repo by FactorVSA. Fold #1 and #2 into the
+plan; #3 informs B.
