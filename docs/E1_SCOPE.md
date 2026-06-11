@@ -48,7 +48,14 @@ rest of E1 builds on it. This is the single highest-risk assumption — prove it
 
 ## 3. Plan (E1 = phases 0–3; B deferred)
 
-### E1.0 — Bridge module (foundation, de-risked, unit-tested in isolation)
+### ✅ E1.0 — Bridge module — DONE (`cda1c39`, 2026-06-11)
+Shipped `src/eval/MorkBridge.jl`: `mork_unify` / `mork_apply` / `mork_rule_rewrite` (Expr + string
+forms), +7 regression tests, Core suite green. **The §2 crux is RESOLVED and validated against MORK
+directly:** separate-parse fails the crossed-variable case (`(q $y $x)` over `(p $x $y)` vs `(p a b)`
+→ wrong `(q a b)`); parsing the whole `(= head body)` as one Expr + `ee_args!` gives the correct
+`(q b a)`. Additive only — no eval path changed yet. Original plan below.
+
+
 New `src/eval/MorkBridge.jl` providing the ergonomic "unify then apply" surface MORK lacks externally:
 - `mork_unify(query::Expr, data::Expr) -> Union{Dict{ExprVar,ExprEnv}, Nothing}` (wraps ExprEnv-pair
   construction + `expr_unify`, maps `UnificationFailure`→`nothing`).
@@ -59,7 +66,17 @@ New `src/eval/MorkBridge.jl` providing the ergonomic "unify then apply" surface 
 **Verify:** unit tests for unify/apply on hand-built exprs incl. the shared-`$x` rule case, occurs-check,
 and a known capture case. No Core eval changes yet. **Risk: low.** Decides §2.
 
-### E1.1 — Hygienic grounded substitution (the live bug, high value, narrow)
+### E1.1 — Hygienic grounded substitution — REFRAMED (tested 2026-06-11: latent, not live)
+**Finding:** the string-`replace` is *provably unsafe* in isolation
+(`replace(replace("(pair __var_a __var_ab)", "__var_a"→0), "__var_ab"→1)` = `(pair 0 0b)`), but 6
+end-to-end adversarial cases (map/foldl with `$x`/`$xy`, `$a`/`$ab`, capturing bindings) all returned
+**correct** results — current inputs dodge the landmine (lambda var vs free var land in non-colliding
+forms). So E1.1 is "**harden a proven-unsafe path + de-dup onto the engine**", not "fix a firing bug".
+Still earned (a proven-unsafe substitution is a real defect, and `expr_apply` removes it while
+consolidating onto the verified engine) — but lower urgency than billed. Separately found a real minor
+bug: free/unbound vars leak as `__var_xy` into HO-op output (a de-mangling gap). Original plan below.
+
+
 Rewrite `foldl-atom`/`map-atom`/`filter-atom` (`AtomOps.jl:164,180,195`) to substitute via the bridge
 (parse body once → `mork_apply` with the bound var → serialize once) **instead of `replace(body_str, …)`**.
 Kills variable-capture / substring-collision / quoted-string corruption.
