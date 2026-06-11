@@ -1,5 +1,11 @@
 # MeTTaCore
 
+[![CI](https://github.com/CognitiveSubstratesAI/Core/actions/workflows/CI.yml/badge.svg)](https://github.com/CognitiveSubstratesAI/Core/actions/workflows/CI.yml)
+[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://cognitivesubstratesai.github.io/Core/dev/)
+[![ColPrac](https://img.shields.io/badge/ColPrac-Contributor's%20Guide-blueviolet)](https://github.com/SciML/ColPrac)
+[![Code Style: Blue](https://img.shields.io/badge/code%20style-blue-4495d1.svg)](https://github.com/invenia/BlueStyle)
+[![Julia](https://img.shields.io/badge/julia-1.12+-9558B2.svg)](https://julialang.org)
+
 A standalone, pure-Julia MeTTa interpreter built directly on [MORK](https://github.com/trueagi-io/MORK) — the MeTTa Optimal Reduction Kernel.
 
 Zero dependency on legacy PRIMUS_Core or PRIMUS_Metagraph. This is the redesigned substrate for running MeTTa cognitive programs.

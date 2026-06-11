@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['1.12']
+        os: [ubuntu-latest]
+        arch: [x64]
+    steps:
+      - uses: actions/checkout@v4
+      # MeTTaCore dev-links MORK + PathMap + MorkSupercompiler via [sources] paths
+      # (../MORK, ../PathMap, ../MorkSupercompiler); MORK in turn dev-links ../PathMap.
+      # Clone all three siblings before instantiation. AdaptiveCompression is a url-source,
+      # so Pkg fetches it automatically. NOTE: MorkSupercompiler is still on sivaji1012
+      # (repo name "Supercompiler"); repoint to CognitiveSubstratesAI when it migrates.
+      - name: Clone path [sources] dependencies as siblings
+        run: |
+          git clone --depth 1 https://github.com/CognitiveSubstratesAI/PathMap.git ../PathMap
+          git clone --depth 1 https://github.com/CognitiveSubstratesAI/MORK.git ../MORK
+          git clone --depth 1 https://github.com/sivaji1012/Supercompiler.git ../MorkSupercompiler
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
