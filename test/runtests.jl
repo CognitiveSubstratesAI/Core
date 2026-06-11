@@ -579,4 +579,10 @@ end
     @test ndset("(let \$r (color) (got \$r))") ==
           Set(["(got red)", "(got green)", "(got yellow)"])                    # let over a nondeterministic value
     @test ndset("(match &self (= (\$p Fritz) T) \$p)") == Set(["croaks2", "eat_flies"])  # multi-result match
+    @test ndset("(chain (+ 2 3) \$x (* \$x 2))") == Set(["10"])                # chain: bind then use
+    @test ndset("(let* ((\$r1 (+ 1 2)) (\$r2 (+ \$r1 1))) (foo \$r2))") == Set(["(foo 4)"])  # sequential let*
+    @test ndset("(unify (f \$x) (f 7) (got \$x) nope)") == Set(["(got 7)"])    # unify then-branch + binding
+    @test ndset("(unify (f 1) (g 1) yes no)") == Set(["no"])                   # unify else-branch
+    @test ndset("(quote (+ 1 2))") == Set(["(+ 1 2)"])                         # quote: unevaluated
+    @test ndset("(case (color) ((red R) (green G) (\$_ other)))") == Set(["R", "G", "other"])  # case + wildcard over nondeterminism
 end

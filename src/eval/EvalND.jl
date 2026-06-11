@@ -95,6 +95,8 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
     (!(x isa Vector) || isempty(x)) && return _NDOut[(x, e)]
     h = x[1]; a = x[2:end]
     (h === :empty || h === Symbol("empty")) && return _NDOut[]
+    h === :quote && return _NDOut[(length(a) >= 1 ? a[1] : nothing, e)]          # unevaluated
+    (h === :Error || h === Symbol("Error")) && return _NDOut[(vcat([Symbol("Error")], a), e)]
     if h === :superpose
         o = _NDOut[]
         for el in (isempty(a) ? [] : (a[1] isa Vector ? a[1] : [a[1]])); append!(o, eval_nd(el, space, e)); end
@@ -119,6 +121,41 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
         for (vv, ve) in eval_nd(a[2], space, e)
             e2 = _nd_uni(_nd_subst(a[1], ve), vv, ve); e2 === nothing && continue
             append!(o, eval_nd(_nd_subst(a[3], e2), space, e2))
+        end
+        return o
+    end
+    if h === :chain && length(a) >= 3
+        # (chain val var body): eval val, bind var to each outcome, eval body
+        o = _NDOut[]
+        for (vv, ve) in eval_nd(_nd_subst(a[1], e), space, e)
+            e2 = _nd_uni(_nd_subst(a[2], ve), vv, ve); e2 === nothing && continue
+            append!(o, eval_nd(_nd_subst(a[3], e2), space, e2))
+        end
+        return o
+    end
+    if h === :unify && length(a) >= 4
+        # (unify a b then else): if a unifies with b, eval `then` under the bindings, else `else`
+        e2 = _nd_uni(_nd_subst(a[1], e), _nd_subst(a[2], e), e)
+        return e2 === nothing ? eval_nd(_nd_subst(a[4], e), space, e) : eval_nd(_nd_subst(a[3], e2), space, e2)
+    end
+    if h === Symbol("let*") && length(a) >= 2
+        # (let* ((p1 v1) (p2 v2) …) body): sequential bindings, fanning out at each step
+        bs = a[1]; bd = a[2]
+        go(i, env) = i > length(bs) ? eval_nd(_nd_subst(bd, env), space, env) :
+            (o = _NDOut[]; for (vv, ve) in eval_nd(_nd_subst(bs[i][2], env), space, env)
+                 e2 = _nd_uni(_nd_subst(bs[i][1], ve), vv, ve); e2 === nothing && continue
+                 append!(o, go(i + 1, e2)); end; o)
+        return go(1, e)
+    end
+    if (h === :case || h === :switch) && length(a) >= 2
+        # (case expr ((pat1 body1) …)): per outcome of expr, eval the first matching clause's body
+        cls = a[2]; o = _NDOut[]
+        for (vv, ve) in eval_nd(_nd_subst(a[1], e), space, e)
+            for cl in cls
+                (cl isa Vector && length(cl) >= 2) || continue
+                e2 = _nd_uni(_nd_subst(cl[1], ve), vv, ve)
+                if e2 !== nothing; append!(o, eval_nd(_nd_subst(cl[2], e2), space, e2)); break; end
+            end
         end
         return o
     end
