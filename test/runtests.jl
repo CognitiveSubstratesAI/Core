@@ -562,7 +562,9 @@ end
     s = new_core_space(); load_stdlib!(s)
     for f in parse_metta("(= (croaks Fritz) True)\n(= (eats_flies Fritz) True)\n" *
                          "(= (croaks Sam) True)\n(= (eats_flies Sam) False)\n" *
-                         "(= (frog \$x) (and (croaks \$x) (eats_flies \$x)))\n(= (f \$x) (g \$x))\n")
+                         "(= (frog \$x) (and (croaks \$x) (eats_flies \$x)))\n(= (f \$x) (g \$x))\n" *
+                         "(= (color) red)\n(= (color) green)\n(= (color) yellow)\n" *
+                         "(= (bin) A)\n(= (bin) B)\n(= (croaks2 Fritz) T)\n(= (eat_flies Fritz) T)\n")
         core_add!(s, f)
     end
     ndset(src) = Set(to_sexpr.(eval_nd_results(parse_metta(src)[1], s)))
@@ -570,4 +572,11 @@ end
     @test ndset("(f (superpose (1 2)))") == Set(["(g 1)", "(g 2)"])            # fan-out through application
     @test ndset("(if (frog \$x) (\$x is Frog) (\$x is-not Frog))") ==
           Set(["(Fritz is Frog)", "(Sam is-not Frog)"])                        # the frog tutorial — fan-out + binding
+    @test ndset("(color)") == Set(["red", "green", "yellow"])                  # fan-out over multiple rules
+    @test ndset("(collapse (color))") == Set(["(red green yellow)"])           # collapse: stream → tuple
+    @test ndset("(pair (bin) (bin))") ==
+          Set(["(pair A A)", "(pair A B)", "(pair B A)", "(pair B B)"])        # nondeterministic product
+    @test ndset("(let \$r (color) (got \$r))") ==
+          Set(["(got red)", "(got green)", "(got yellow)"])                    # let over a nondeterministic value
+    @test ndset("(match &self (= (\$p Fritz) T) \$p)") == Set(["croaks2", "eat_flies"])  # multi-result match
 end

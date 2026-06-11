@@ -71,6 +71,13 @@ end
 _nd_true(v)  = v === true  || v === :True  || v == Symbol("True")
 _nd_false(v) = v === false || v === :False || v == Symbol("False")
 
+# variable hygiene: alpha-rename a term's variables to fresh names, sharing one remap across a rule's
+# params + body so each application gets independent variables (required for nested same-name recursion).
+const _ND_GENSYM = Ref(0)
+_nd_fresh(t, rm = Dict{Symbol, Symbol}()) =
+    _nd_isvar(t) ? (n = _nd_vname(t); haskey(rm, n) || (rm[n] = Symbol("_g", (_ND_GENSYM[] += 1))); Symbol("\$", rm[n])) :
+    (t isa Vector ? Any[_nd_fresh(x, rm) for x in t] : t)
+
 """
     eval_nd(expr, space, env=Dict()) -> Vector{Tuple{value, bindings}}
 
@@ -102,6 +109,29 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
         end
         return o
     end
+    if h === :collapse && length(a) >= 1
+        # gather the whole outcome set into ONE tuple result (CeTTa: stream → list)
+        return _NDOut[(Any[v for (v, _) in eval_nd(a[1], space, e)], e)]
+    end
+    if h === :let && length(a) >= 3
+        # (let pat val body): for each outcome of val, unify pat against it, eval body under the binding
+        o = _NDOut[]
+        for (vv, ve) in eval_nd(a[2], space, e)
+            e2 = _nd_uni(_nd_subst(a[1], ve), vv, ve); e2 === nothing && continue
+            append!(o, eval_nd(_nd_subst(a[3], e2), space, e2))
+        end
+        return o
+    end
+    if (h === :match || h === Symbol("match")) && length(a) >= 3
+        # (match <space> pat tpl): for each space atom unifying with pat, eval tpl under the bindings.
+        # <space> currently treated as the current space (&self); named-space lookup is future work.
+        o = _NDOut[]; pat = _nd_subst(a[2], e)
+        for cand in core_match(space, pat)
+            e2 = _nd_uni(pat, cand, e); e2 === nothing && continue
+            append!(o, eval_nd(_nd_subst(a[3], e2), space, e2))
+        end
+        return o
+    end
     # function application: fan out over args (consistent merge), then over all unifying rules
     o = _NDOut[]
     argsets = [eval_nd(_nd_subst(ai, e), space, e) for ai in a]
@@ -112,9 +142,12 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
             matched = false
             for (ps, bd) in core_rules(space, h)
                 length(ps) == length(vals) || continue
-                e2 = _nd_unify_list(ps, vals, ee); e2 === nothing && continue
+                rm = Dict{Symbol, Symbol}()                       # hygiene: fresh vars per application
+                ps2 = Any[_nd_fresh(p, rm) for p in ps]
+                bd2 = _nd_fresh(bd, rm)
+                e2 = _nd_unify_list(ps2, vals, ee); e2 === nothing && continue
                 matched = true
-                append!(o, eval_nd(_nd_subst(bd, e2), space, e2))
+                append!(o, eval_nd(_nd_subst(bd2, e2), space, e2))
             end
             matched || push!(o, (vcat([h], vals), ee))
         end
