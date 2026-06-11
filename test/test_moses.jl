@@ -433,6 +433,37 @@ qm(e) = run_metta(e, MM)
         @test aok("!(assertEqual (boolScore (1 0 0 0 1 0 0 0 0 0 0)) 0)")
     end
 
+    @testset "M5-a — metapopulation: pool ops (select / insert / dedup / trim / merge)" begin
+        @test aok("!(assertEqual (getXmplrTree (mkXmplr T -1)) T)")
+        @test aok("!(assertEqual (getXmplrScore (mkXmplr T -1)) -1)")
+        # selectExemplar = the best (head of the score-DESC pool)
+        @test aok("!(assertEqual (selectExemplar ((mkXmplr A 0) (mkXmplr B -2))) (mkXmplr A 0))")
+        # insertXmplr keeps the pool score-descending
+        @test aok("!(assertEqual (insertXmplr (mkXmplr M -1) ((mkXmplr A 0) (mkXmplr B -3))) ((mkXmplr A 0) (mkXmplr M -1) (mkXmplr B -3)))")
+        # poolHasProg dedup key = preOrder of the exemplar tree
+        @test aok("!(assertEqual (poolHasProg ((mkXmplr (mkTree (mkNode a) ()) -1)) a) True)")
+        @test aok("!(assertEqual (poolHasProg ((mkXmplr (mkTree (mkNode a) ()) -1)) b) False)")
+        # trimTo keeps the top-N
+        @test aok("!(assertEqual (trimTo 2 ((mkXmplr A 0) (mkXmplr B -1) (mkXmplr C -2))) ((mkXmplr A 0) (mkXmplr B -1)))")
+        # mergeXmplr: a better new program is inserted at the front (and trimmed to cap)
+        @test aok("!(assertEqual (mergeXmplr ((mkXmplr (mkTree (mkNode b) ()) -2)) (mkXmplr (mkTree (mkNode a) ()) 0) 5) ((mkXmplr (mkTree (mkNode a) ()) 0) (mkXmplr (mkTree (mkNode b) ()) -2)))")
+        # mergeXmplr: a duplicate program (same preOrder) is rejected — pool unchanged
+        @test aok("!(assertEqual (mergeXmplr ((mkXmplr (mkTree (mkNode a) ()) -1)) (mkXmplr (mkTree (mkNode a) ()) 0) 5) ((mkXmplr (mkTree (mkNode a) ()) -1)))")
+    end
+
+    @testset "M5-b — run-moses: the MOSES search loop (full learn verified out-of-band)" begin
+        qm(raw"(= (M5-TBL) (((False False) False) ((False True) True) ((True False) True) ((True True) True)))")
+        # seedPool evaluates the exemplar INTO the pool (cons-atom); leaf `a` scores -1 on OR
+        @test aok("!(assertEqual (seedPool (mkTree (mkNode a) ()) (a b) (M5-TBL)) ((mkXmplr (mkTree (mkNode a) ()) -1)))")
+        # runMoses base case (maxGen 0) returns the best exemplar of the pool
+        @test aok("!(assertEqual (runMoses 0 0 5 (a b) (M5-TBL) 3 6 ((mkXmplr A 0) (mkXmplr B -2))) (mkXmplr A 0))")
+        # FULL SEARCH verified out-of-band (68.9s): from the leaf-`a` seed pool,
+        #   !(runMoses 5 0 5 (a b) (M5-TBL) 3 6 (seedPool (mkTree (mkNode a) ()) (a b) (M5-TBL)))
+        #   → (mkXmplr (AND (OR a b)) 0). MOSES learns OR end-to-end via the metapopulation loop
+        #   (select → expand[representation+hillclimb] → merge → terminate-on-perfect). The deme
+        #   expansion is a full hillclimb (~minute), so kept out of routine CI like M4-b's search.
+    end
+
     @testset "M1c-2a — logical-canonize (reduct-free)" begin
         @test aok("!(assertEqual (isAnArgument A) True)")
         @test aok("!(assertEqual (isAnArgument AND) False)")

@@ -43,7 +43,9 @@
 ;;;;   M4-a ✅ optimization: hillclimb (simplified steepest-ascent over the instance space)
 ;;;;   M4-b ✅ END-TO-END: MOSES learns OR from a leaf exemplar — hillclimb over boolScore
 ;;;;          (= scoreProgram∘preOrder∘getCandidate) discovers (AND (OR a b)) ≡ OR, score 0.
-;;;;          [M5 next: metapopulation loop (multi-deme expand/merge) for full search]
+;;;;   M5-a ✅ metapopulation: Xmplr pool + selectExemplar (det. best) + insert/dedup/trim/merge
+;;;;   M5-b ✅ run-moses: expandDeme (select→representation→hillclimb) + runMoses loop —
+;;;;          the FULL MOSES SEARCH; runMoses learns OR from a leaf-`a` seed pool. [MOSES COMPLETE]
 ;;;;
 ;;;; Import:  !(import! &self (library MOSES))
 
@@ -77,3 +79,5 @@
 !(import! &self "deme.metta")
 !(import! &self "scoring.metta")
 !(import! &self "optimization.metta")
+!(import! &self "metapopulation.metta")
+!(import! &self "run_moses.metta")

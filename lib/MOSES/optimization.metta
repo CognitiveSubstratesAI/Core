@@ -51,3 +51,26 @@
          (if (== $best $inst)
              $inst
              (hillclimb $scoreFn $best $mult (- $steps 1))))))
+
+;; ── context-threaded variants ($scoreFn takes ($ctx $inst)) ──────────────────
+;; The deme search scores an instance via a fitness that depends on a (rep labels table)
+;; context, which can't be a top-level global. These thread that context through to the
+;; scorer, mirroring upstream optimizeDemes' context passing. neighborsOf is reused as-is.
+(= (bestNeighborC $scoreFn $ctx $bestInst $bestScore $nbrs)
+   (if (== $nbrs ())
+       $bestInst
+       (let* (($nbr (car-atom $nbrs))
+              ($s   ($scoreFn $ctx $nbr)))
+         (if (> $s $bestScore)
+             (bestNeighborC $scoreFn $ctx $nbr $s (cdr-atom $nbrs))
+             (bestNeighborC $scoreFn $ctx $bestInst $bestScore (cdr-atom $nbrs))))))
+
+(= (hillclimbC $scoreFn $ctx $inst $mult $steps)
+   (if (== $steps 0)
+       $inst
+       (let* (($curScore ($scoreFn $ctx $inst))
+              ($nbrs     (neighborsOf $inst $mult))
+              ($best     (bestNeighborC $scoreFn $ctx $inst $curScore $nbrs)))
+         (if (== $best $inst)
+             $inst
+             (hillclimbC $scoreFn $ctx $best $mult (- $steps 1))))))
