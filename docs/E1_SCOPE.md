@@ -46,6 +46,33 @@ share one variable namespace, then operate on its sub-spans — exactly how MORK
 bind pattern↔template (one exec atom = one expr). The bridge owns this name↔positional mapping; the
 rest of E1 builds on it. This is the single highest-risk assumption — prove it first.
 
+## 2a. VERIFIED PRIOR ART (2026-06-11) — the var bridge + storage/query integration already exist
+
+Checking the code (not memory): the `__var_x` ↔ `$x` problem was **already solved**, deliberately and
+documented, and Core↔MORK is **already integrated at the storage/query level**. This corrects §2 and §3:
+
+- **Variable bridge — DONE.** Storage form `__var_x` (a *ground* symbol) preserves variable names that
+  MORK's native `$x` would anonymize via de-Bruijn (`CoreSpace.jl:13-15`). Converters exist:
+  `to_sexpr` (`$x`→`__var_x`, store), `to_sexpr_query` (`__var_x`→`$x`, wildcard for matching,
+  `CoreSpace.jl:54`), `from_sexpr` (`__var_x`→`$x` on read, `:83`), `_var_name` (canonical normalizer,
+  `Eval.jl:1181`). **So E1.2's "representation reconciliation" is NOT new work — reuse `to_sexpr_query`
+  / `_var_name`.** (And the `__var_xy`-in-output I called a "leak" is just this storage form surfacing —
+  not a hygiene bug; over-called.)
+- **Integration is storage/query-level, NOT term-engine.** Verified: no `expr_unify`/`expr_apply` calls
+  in Core before E1.0. Core uses MORK as store (`to_sexpr`→`space_add_all_sexpr!`), match (a deliberate
+  **trie-walk**, not `space_query_multi`), and metta-calculus. This matches the PeTTa/CeTTa idiom (§6).
+- **⚠️ The trie-walk for match is a DELIBERATE, documented decision (`CoreSpace.jl:446`):**
+  `space_query_multi` **short-circuits arity-1 patterns** (`(, single)` returns the pattern without
+  iterating), so single-pattern `(match &self pat tpl)` finds nothing — this *broke* match until the
+  walk rewrite. That reason **still holds** (the arity-1 branch is live in MORK `Space.jl`). **So E1.3
+  ("match via `space_query_multi`") is NOT a clean win — it would revisit a solved problem and needs a
+  MORK change (handle arity-1 by iteration) or a different entry point first. Do not blindly replace
+  the working walk.**
+
+**Net:** E1.0 (the term-engine bridge) is genuinely new and additive; it interoperates with the
+existing var bridge via `to_sexpr_query`. But E1.2 is smaller than billed (reuse the converters) and
+E1.3 is gated on a MORK arity-1 change, not free. Respect the existing deliberate design.
+
 ## 3. Plan (E1 = phases 0–3; B deferred)
 
 ### ✅ E1.0 — Bridge module — DONE (`cda1c39`, 2026-06-11)
