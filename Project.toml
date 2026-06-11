@@ -5,12 +5,9 @@ authors = ["PRIMUS Team"]
 
 [deps]
 AdaptiveCompression = "ac000001-0000-4000-8000-000000000001"
-BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
-JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 MORK = "162375cb-4023-4ef9-895b-22c0041d5c13"
 MorkSupercompiler = "d4e7c9f0-1234-5678-abcd-ef0123456789"
 PathMap = "a8b3d4e5-f012-4567-89ab-cdef01234567"
-Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 
 [sources]
 AdaptiveCompression = {url = "https://github.com/sivaji1012/adaptive-compression"}
@@ -25,12 +22,9 @@ PathMap = {path = "../PathMap"}
 
 [compat]
 AdaptiveCompression = "0.2"
-BenchmarkTools = "1.8.0"
-JET = "0.11.3"
 MORK = "0.1"
 MorkSupercompiler = "0.1"
 PathMap = "0.3"
-Revise = "3.14.3"
 julia = "1.12"
 
 [extras]
