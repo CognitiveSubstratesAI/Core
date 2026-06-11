@@ -44,33 +44,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
 
-  jet:
-    # Static analysis via JET — runs the check that used to be done manually, WITHOUT carrying
-    # JET as a runtime [dep] (it's installed in-job). Informational for now (continue-on-error);
-    # flip `continue-on-error` to false to gate once the report is confirmed clean.
-    name: JET static analysis (informational)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - name: Clone path [sources] dependencies as siblings
-        run: |
-          git clone --depth 1 https://github.com/CognitiveSubstratesAI/PathMap.git ../PathMap
-          git clone --depth 1 https://github.com/CognitiveSubstratesAI/MORK.git ../MORK
-          git clone --depth 1 https://github.com/CognitiveSubstratesAI/MORKTensorNetworks.git ../MORKTensorNetworks
-          git clone --depth 1 https://github.com/sivaji1012/Supercompiler.git ../MorkSupercompiler
-          git clone --depth 1 https://github.com/sivaji1012/HPC.git ../HPC
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1.12'
-          arch: x64
-      - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@v1
-      - name: JET report_package (in-job install, not a runtime dep)
-        continue-on-error: true
-        run: |
-          julia --project=. -e '
-            using Pkg; Pkg.add("JET")
-            using JET, MeTTaCore
-            show(JET.report_package(MeTTaCore)); println()
-          '
+  # NOTE: a JET static-analysis job was tried here (install JET in-job, run report_package) but
+  # JET currently FAILS TO PRECOMPILE on Julia 1.12 (MethodError: add_active_gotos! — JET tracks
+  # compiler internals and lags new Julia releases). Re-add a `jet` job when JET supports 1.12.
+  # This is also why JET was dropped from [deps]: unused AND a latent precompile-breakage risk.
