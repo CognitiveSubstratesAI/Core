@@ -56,3 +56,15 @@ end
     @test ev("!(map-atom (1 2 3 4) \$v (eval (+ \$v 1)))") == Atom[E(G(2), G(3), G(4), G(5))]
     @test ev("!(filter-atom (1 2 3 4) \$v (eval (> \$v 2)))") == Atom[E(G(3), G(4))]
 end
+
+@testset "stdlib switch (real upstream def)" begin
+    sp = Space()
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String))
+    ev(src) = load_metta!(sp, src)
+    # literal match
+    @test ev("!(switch A ((A 1) (B 2)))") == Atom[Grounded(1)]
+    @test ev("!(switch B ((A 1) (B 2)))") == Atom[Grounded(2)]
+    # pattern match with variable capture
+    @test ev("!(switch (P a) (((P \$x) \$x) (\$_ none)))") == Atom[S("a")]
+    @test ev("!(switch (Q a) (((P \$x) \$x) (\$_ none)))") == Atom[S("none")]
+end

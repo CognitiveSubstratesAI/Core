@@ -61,3 +61,18 @@
                   (chain (cons-atom $head $tail-filtered) $res (return $res))
                   (return $tail-filtered) ))))))
       (return ()) ))))
+
+; ── switch / switch-internal (stdlib.metta:346 / 362) ────────────────────────
+(: switch (-> %Undefined% Expression %Undefined%))
+(= (switch $atom $cases)
+   (id (switch-minimal $atom $cases)))
+(: switch-minimal (-> Atom Expression Atom))
+(= (switch-minimal $atom $cases)
+  (function (chain (decons-atom $cases) $list
+    (chain (eval (switch-internal $atom $list)) $res
+      (chain (eval (if-equal $res NotReducible Empty $res)) $x (return $x)) ))))
+(: switch-internal (-> Atom Expression Atom))
+(= (switch-internal $atom (($pattern $template) $tail))
+  (function (unify $atom $pattern
+    (return $template)
+    (chain (eval (switch-minimal $atom $tail)) $ret (return $ret)) )))
