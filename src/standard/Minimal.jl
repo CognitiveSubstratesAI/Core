@@ -21,7 +21,7 @@ include("Atoms.jl")
 using .StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
-export metta_run, metta_results, parse_program, load_metta!, tokenize
+export metta_run, metta_results, parse_program, load_metta!, tokenize, metta_debug!
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -164,10 +164,17 @@ struct Operation
     name::String
     fn::Function          # (args::Vector{Atom}) -> ExecResult
 end
+"A grounded op that also receives the context Space (for assertEqual / context-space / etc.)."
+struct SpaceOp
+    name::String
+    fn::Function          # (args::Vector{Atom}, space) -> ExecResult
+end
 Base.show(io::IO, o::Operation) = print(io, o.name)
+Base.show(io::IO, o::SpaceOp) = print(io, o.name)
 
-is_executable(a::Atom) = a isa Grounded && a.value isa Operation
-execute(g::Grounded, opargs::Vector{Atom})::ExecResult = g.value.fn(opargs)
+is_executable(a::Atom) = a isa Grounded && (a.value isa Operation || a.value isa SpaceOp)
+execute(g::Grounded, opargs::Vector{Atom}, space)::ExecResult =
+    g.value isa SpaceOp ? g.value.fn(opargs, space) : g.value.fn(opargs)
 
 # arithmetic (normal order — eval passes args UNreduced; non-numbers ⇒ NoReduce ⇒ NotReducible)
 function _num_binop(name, f)
@@ -229,7 +236,7 @@ function eval_op(f::Frame, b::Bindings, space)
         return finished_result(error_atom(a, "expected (eval <atom>)"), b, f.prev)
     to_eval = subst(a.children[2], b)
     if to_eval isa Expression && !isempty(to_eval.children) && is_executable(to_eval.children[1])
-        r = execute(to_eval.children[1]::Grounded, Atom[to_eval.children[2:end]...])
+        r = execute(to_eval.children[1]::Grounded, Atom[to_eval.children[2:end]...], space)
         if r isa ExecOk
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
             out = Tuple{Frame,Bindings}[]
@@ -248,8 +255,8 @@ function eval_op(f::Frame, b::Bindings, space)
         results = query(space::Space, Expression(Sym("="), to_eval, X))
         out = Tuple{Frame,Bindings}[]
         for qb in results, mb in merge_bindings(b, qb)
-            x = resolve(mb, X); x === nothing && continue
-            append!(out, eval_result(subst(x, mb), mb, f.prev, f.depth + 1))
+            x = subst(X, mb)                              # value, or equality-class representative
+            append!(out, eval_result(x, mb, f.prev, f.depth + 1))
         end
         return isempty(out) ? finished_result(NOT_REDUCIBLE, b, f.prev) : out
     end
@@ -392,6 +399,9 @@ fn_ret_type(t::Expression)  = t.children[end]
 
 const _METTA_STEPS = Ref(0)
 const _METTA_MAX = 5_000_000
+const _METTA_DEBUG = Ref(false)
+"Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
+metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
 
 # the declared types of `atom`: query (: atom $T)
 function atom_types(atom::Atom, space::Space)::Vector{Atom}
@@ -402,8 +412,9 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     out
 end
 
-"Public entry: fully evaluate `atom` in `space`; returns the result set (atoms)."
-metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) = first.(metta_results(atom, space, b))
+"Public entry: fully evaluate `atom` in `space`; returns the result set (atoms, final bindings applied)."
+metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
+    Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b)]
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
     _METTA_STEPS[] = 0
@@ -497,12 +508,14 @@ end
 # metta_call (metta.md:509) — reduce: grounded → native, else → (= atom $X) query; recurse metta
 function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
     (_METTA_STEPS[] += 1) > _METTA_MAX && error("metta: step limit reached (non-termination?)")
+    a = subst(a, b)                                       # apply bindings before query/dispatch
+    _METTA_DEBUG[] && println("metta_call: ", a)
     is_error_atom(a) && return _RESULT[(a, b)]
     (a isa Expression && !isempty(a.children)) || return _RESULT[(a, b)]
     op, opargs = a.children[1], a.children[2:end]
     out = _RESULT[]
     if is_executable(op)
-        r = execute(op::Grounded, Atom[opargs...])
+        r = execute(op::Grounded, Atom[opargs...], space)
         if r isa ExecOk
             for res in r.results; append!(out, metta_eval(res, type, space, b)); end
         elseif r isa ExecNoReduce
@@ -515,7 +528,7 @@ function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RES
         qres = query(space, Expression(Sym("="), a, X))
         if !isempty(qres)
             for qb in qres, mb in merge_bindings(b, qb)
-                x = resolve(mb, X); x === nothing && continue
+                x = subst(X, mb)                          # value, or equality-class representative
                 append!(out, metta_eval(x, type, space, mb))
             end
         else
@@ -595,13 +608,41 @@ end))
 const GET_METATYPE = Grounded(Operation("get-metatype",
     xs -> length(xs) == 1 ? ExecOk(Atom[metatype_sym(xs[1])]) : ExecNoReduce()))
 
+# assertEqual / assertEqualToResult / context-space (space-aware: they call the evaluator)
+const UNIT = Expression(Atom[])     # () — unit; assert success
+_assert_fail(name, a, b) = Expression(ERROR, Expression(Sym(name), a, b), Sym("AssertionFailed"))
+const ASSERT_EQUAL = Grounded(SpaceOp("assertEqual", function (xs, space)
+    length(xs) == 2 || return ExecNoReduce()
+    Set(metta_run(xs[1], space)) == Set(metta_run(xs[2], space)) ?
+        ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertEqual", xs[1], xs[2])])
+end))
+const ASSERT_EQUAL_TO_RESULT = Grounded(SpaceOp("assertEqualToResult", function (xs, space)
+    (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
+    Set(metta_run(xs[1], space)) == Set(xs[2].children) ?
+        ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertEqualToResult", xs[1], xs[2])])
+end))
+const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
+# match (grounded): (match <space> <pattern> <template>) — for each space atom unifying with pattern,
+# return the template under those bindings. Nondeterministic. (<space> is the context &self space.)
+const MATCH = Grounded(SpaceOp("match", function (xs, space)
+    length(xs) == 3 || return ExecNoReduce()
+    pat, tmpl = xs[2], xs[3]
+    out = Atom[]
+    for atom in space.atoms, mb in match_atoms(pat, rename_fresh(atom, Dict{Var,Var}()))
+        push!(out, subst(tmpl, mb))
+    end
+    ExecOk(out)
+end))
+
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE,
     "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
     "and" => AND, "or" => OR, "not" => NOT, "id" => ID,
     "if-equal" => IF_EQUAL, "atom-subst" => ATOM_SUBST, "sealed" => SEALED,
-    "size-atom" => SIZE_ATOM, "index-atom" => INDEX_ATOM, "get-metatype" => GET_METATYPE)
+    "size-atom" => SIZE_ATOM, "index-atom" => INDEX_ATOM, "get-metatype" => GET_METATYPE,
+    "assertEqual" => ASSERT_EQUAL, "assertEqualToResult" => ASSERT_EQUAL_TO_RESULT,
+    "context-space" => CONTEXT_SPACE, "match" => MATCH)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1

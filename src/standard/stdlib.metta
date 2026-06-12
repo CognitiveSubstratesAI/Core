@@ -7,6 +7,11 @@
 ; switch/case are intentionally omitted from this subset (they additionally need the
 ; if-equal / context-space / metta grounded ops) — a follow-on.
 
+; ── assertEqual / assertEqualToResult (Atom-typed args: not pre-evaluated) ────
+(: assertEqual (-> Atom Atom (->)))
+(: assertEqualToResult (-> Atom Atom (->)))
+(: match (-> Atom Atom Atom %Undefined%))
+
 ; ── if (stdlib.metta:512) ─────────────────────────────────────────────────────
 (= (if True $then $else) $then)
 (= (if False $then $else) $else)

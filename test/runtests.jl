@@ -536,6 +536,7 @@ include("standard/test_atoms.jl")
 include("standard/test_minimal.jl")
 include("standard/test_interpreter.jl")
 include("standard/test_stdlib.jl")
+include("standard/test_conformance.jl")
 
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
