@@ -533,6 +533,7 @@ include("test_ecan_dual.jl")
 # representations, validated against docs/metta.md §Matching. Standalone subsystem
 # (does not touch eval_metta/eval_nd) — the foundation for the minimal-MeTTa port.
 include("standard/test_atoms.jl")
+include("standard/test_minimal.jl")
 
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
