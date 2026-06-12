@@ -529,6 +529,11 @@ include("test_ecan.jl")
 # tracking the divergence landscape as the long-term flip to eval_nd progresses.
 include("test_ecan_dual.jl")
 
+# Standard MeTTa (typed atom model + matcher) — faithful port of hyperon/CeTTa
+# representations, validated against docs/metta.md §Matching. Standalone subsystem
+# (does not touch eval_metta/eval_nd) — the foundation for the minimal-MeTTa port.
+include("standard/test_atoms.jl")
+
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
 include("test_actpc_chem.jl")
