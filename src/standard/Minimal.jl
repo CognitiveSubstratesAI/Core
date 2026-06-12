@@ -443,18 +443,22 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
     end
     # Expression: infer its return type from the head's function type (unify args, return ret type)
     if arg isa Expression && !isempty(arg.children)
-        for ft in atom_types(arg.children[1], space)
-            (is_function_type(ft) && length(fn_arg_types(ft)) == length(arg.children) - 1) || continue
-            r = Bindings(); ok = true
-            for i in 1:length(fn_arg_types(ft))
-                matched = false
-                for ai in arg_actual_types(arg.children[i+1], space)
-                    ms = match_types_b(fn_arg_types(ft)[i], ai, r)
-                    isempty(ms) || (r = ms[1]; matched = true; break)
+        ftypes = filter(t -> is_function_type(t) && length(fn_arg_types(t)) == length(arg.children) - 1,
+                        atom_types(arg.children[1], space))
+        if !isempty(ftypes)
+            for ft in ftypes
+                r = Bindings(); ok = true
+                for i in 1:length(fn_arg_types(ft))
+                    matched = false
+                    for ai in arg_actual_types(arg.children[i+1], space)
+                        ms = match_types_b(fn_arg_types(ft)[i], ai, r)
+                        isempty(ms) || (r = ms[1]; matched = true; break)
+                    end
+                    matched || (ok = false; break)
                 end
-                matched || (ok = false; break)
+                ok && return Atom[subst(fn_ret_type(ft), r)]
             end
-            ok && return Atom[subst(fn_ret_type(ft), r)]
+            return Atom[]                       # has function type(s) but args don't fit → ill-typed (no type)
         end
     end
     ts = atom_types(arg, space)
@@ -469,11 +473,14 @@ function type_check_errors(a::Expression, ftype::Expression, space::Space)::Vect
     for i in 1:length(ats)
         actuals = arg_actual_types(a.children[i+1], space)
         next = Bindings[]
-        for r in results, at in actuals
-            ms = match_types_b(ats[i], at, r)
-            isempty(ms) ?
-                push!(errs, Expression(ERROR, a, Expression(Sym("BadArgType"), Grounded(i), subst(ats[i], r), at))) :
-                append!(next, ms)
+        for r in results
+            isempty(actuals) && (push!(next, r); continue)   # ill-typed sub-arg: stay permissive (gradual)
+            for at in actuals
+                ms = match_types_b(ats[i], at, r)
+                isempty(ms) ?
+                    push!(errs, Expression(ERROR, a, Expression(Sym("BadArgType"), Grounded(i), subst(ats[i], r), at))) :
+                    append!(next, ms)
+            end
         end
         results = next
         isempty(results) && return errs                 # no valid path → these BadArgType errors

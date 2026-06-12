@@ -11,6 +11,8 @@
 (: assertEqual (-> Atom Atom (->)))
 (: assertEqualToResult (-> Atom Atom (->)))
 (: match (-> Atom Atom Atom %Undefined%))
+(: get-type (-> Atom %Undefined%))
+(: get-metatype (-> Atom Atom))
 (: superpose (-> Expression %Undefined%))
 (: collapse (-> Atom Atom))
 (: foldl-atom (-> Expression Atom Variable Variable Atom %Undefined%))
