@@ -51,15 +51,21 @@ function _slot_rep(b::Bindings, v::Var)
     rep
 end
 
+# Depth guard for the recursive atom-walkers. StackOverflowError CANNOT be caught in Julia (the stack is
+# already exhausted), so it must be PREVENTED: bail at a generous depth (cyclic/pathological atoms — e.g.
+# a mutable state whose value references itself — hit this instead of crashing). Real atoms are shallow.
+const _MAX_ATOM_DEPTH = 10_000
+
 "Recursively replace bound variables by their values (hyperon apply_bindings_to_atom)."
-function subst(a::Atom, b::Bindings)
+function subst(a::Atom, b::Bindings, d::Int=0)
+    d > _MAX_ATOM_DEPTH && return a
     if a isa Var
         v = resolve(b, a)
-        v !== nothing && return subst(v, b)
+        v !== nothing && return subst(v, b, d + 1)
         rep = _slot_rep(b, a)                  # unbound but maybe equal to another var → representative
         return rep == a ? a : rep
     elseif a isa Expression
-        return Expression(Atom[subst(c, b) for c in a.children])
+        return Expression(Atom[subst(c, b, d + 1) for c in a.children])
     else
         return a
     end
@@ -212,11 +218,12 @@ freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
 
 # alpha-rename every variable in `a` to a fresh one (hyperon make_variables_unique) — hygiene,
 # so a rule matched repeatedly (recursion) doesn't clash its own variables across levels.
-function rename_fresh(a::Atom, m::Dict{Var,Var})
+function rename_fresh(a::Atom, m::Dict{Var,Var}, d::Int=0)
+    d > _MAX_ATOM_DEPTH && return a
     if a isa Var
         return get!(() -> freshvar(a.name), m, a)
     elseif a isa Expression
-        return Expression(Atom[rename_fresh(c, m) for c in a.children])
+        return Expression(Atom[rename_fresh(c, m, d + 1) for c in a.children])
     else
         return a
     end
