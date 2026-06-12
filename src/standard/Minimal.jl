@@ -112,6 +112,12 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name == "function"; return setup_function(f.atom, b, f.prev, f.depth)
     elseif name == "collapse-bind";  return collapse_bind_op(f, b, space)
     elseif name == "superpose-bind"; return superpose_bind_op(f, b, space)
+    elseif name == "metta";            return metta_instr(f, b, space)            # metta driver (stack-machine)
+    elseif name == "interpret-tuple";  return interpret_tuple_instr(f, b, space)
+    elseif name == "interpret-function"; return interpret_function_instr(f, b, space)
+    elseif name == "interpret-args";   return interpret_args_instr(f, b, space)
+    elseif name == "metta-call";       return metta_call_instr(f, b, space)
+    elseif name == "return-on-error";  return return_on_error_instr(f, b)
     else
         return finished_result(f.atom, b, f.prev)              # not a minimal op → data, as-is
     end
@@ -387,6 +393,159 @@ function superpose_bind_op(f::Frame, b::Bindings, space)
     end
     out
 end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE METTA DRIVER AS STACK-MACHINE INSTRUCTIONS (hyperon interpret_expression/tuple/args/function/
+# metta_call, ported as instructions so the applicative-order DEPTH lives in the heap `plan`, NOT the
+# Julia call stack — this is what stops the StackOverflow class). Each handler builds the emitted
+# minimal-instruction program (idiomatic Julia: Expression builders, not Rust's call_native!/iterators)
+# and push_nests it. The crucial step is metta-call's "reduce-again": it pushes `(metta result)` as a
+# FRAME, never a recursive Julia call.
+_ret(x::Atom) = Expression(RETURN, x)
+_metta(atom::Atom, typ::Atom) = Expression(Sym("metta"), atom, typ)
+_op(name::String, args::Atom...) = Expression(Atom[Sym(name); collect(Atom, args)])
+_chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
+
+# (metta <atom> <type>) — interpret_expression (interpreter.rs:1110). Leaf/cast cases finish as-is; an
+# expression emits the tuple path (typed/function path added next increment).
+function metta_instr(f::Frame, b::Bindings, space)
+    a = f.atom
+    (a isa Expression && length(a.children) == 3) ||
+        return finished_result(error_atom(a, "expected (metta atom type)"), b, f.prev)
+    atom = subst(a.children[2], b); typ = a.children[3]
+    (is_empty_atom(atom) || is_error_atom(atom)) && return finished_result(atom, b, f.prev)
+    (typ == ATOM_T || typ == metatype_sym(atom) || atom isa Var) && return finished_result(atom, b, f.prev)
+    (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
+    if is_minimal_op(atom)                  # embedded minimal instruction → run it, then re-metta its result
+        r = freshvar("r")                   # (a rule body like let*'s chain rewrites to (let …) which must reduce)
+        return push_nested(_chain(atom, r, _metta(r, typ)), b, f.prev, f.depth + 1)
+    end
+    op = atom.children[1]; nargs = length(atom.children) - 1
+    ftypes = op isa Var ? Atom[] :
+        filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
+    if !isempty(ftypes)                                       # TYPED path: type-check, then interpret-function
+        out = Tuple{Frame,Bindings}[]; errs = Tuple{Frame,Bindings}[]
+        for ft in ftypes
+            te = type_check_errors(atom, ft::Expression, space)
+            if !isempty(te); for e in te; append!(errs, finished_result(e, b, f.prev)); end; continue; end
+            rt = fn_ret_type(ft::Expression); rt == Sym("Expression") && (rt = UNDEF)
+            reduced = freshvar("reduced"); result = freshvar("result")
+            prog = _chain(_op("interpret-function", atom, ft, rt), reduced,
+                     _chain(_op("metta-call", reduced, rt), result, result))
+            append!(out, push_nested(prog, b, f.prev, f.depth + 1))
+        end
+        !isempty(out) && return out                          # some function type applied
+        !isempty(errs) && return errs                        # all rejected → type errors (BadArgType)
+    end
+    reduced = freshvar("reduced"); result = freshvar("result")  # untyped tuple path
+    prog = _chain(_op("interpret-tuple", atom), reduced,
+              _chain(_op("metta-call", reduced, typ), result, result))
+    push_nested(prog, b, f.prev, f.depth + 1)
+end
+
+# (interpret-function <expr> <op_type> <ret_type>) (interpreter.rs:1224): evaluate op, then args by their
+# declared types, then build (op . evaluated-args).
+function interpret_function_instr(f::Frame, b::Bindings, space)
+    a = f.atom
+    expr = subst(a.children[2], b); op_type = a.children[3]
+    (expr isa Expression && op_type isa Expression) ||
+        return finished_result(error_atom(a, "interpret-function"), b, f.prev)
+    op = expr.children[1]; theargs = Expression(expr.children[2:end])
+    arg_types = Expression(fn_arg_types(op_type::Expression))
+    h = freshvar("h"); targs = freshvar("targs"); res = freshvar("res")
+    prog = _chain(_metta(op, UNDEF), h,
+             _op("return-on-error", h,
+               _chain(_op("interpret-args", theargs, arg_types), targs,
+                 _op("return-on-error", targs,
+                   _chain(_op("cons-atom", h, targs), res, res)))))
+    push_nested(prog, b, f.prev, f.depth + 1)
+end
+
+# (interpret-args <args-expr> <types-expr>) (interpreter.rs:1352): metta each arg by its type (Atom-typed
+# ⇒ UNEVALUATED, lazy), short-circuit on Empty/Error, cons up. Recursion on the tail is the
+# `(interpret-args tail)` FRAME. Finishes with the evaluated-args expression, or an Empty/Error.
+function interpret_args_instr(f::Frame, b::Bindings, space)
+    a = f.atom
+    argsx = subst(a.children[2], b); typesx = a.children[3]
+    (argsx isa Expression) || return finished_result(error_atom(a, "interpret-args"), b, f.prev)
+    isempty(argsx.children) && return finished_result(Expression(Atom[]), b, f.prev)   # no args → ()
+    types = typesx isa Expression ? typesx.children : Atom[]
+    ahead = argsx.children[1]; atail = Expression(argsx.children[2:end])
+    thead = isempty(types) ? UNDEF : types[1]
+    ttail = Expression(isempty(types) ? Atom[] : types[2:end])
+    rhead = freshvar("rhead"); rtail = freshvar("rtail"); res = freshvar("res")
+    recursion = _chain(_op("interpret-args", atail, ttail), rtail,
+                  _op("return-on-error", rtail,
+                    _chain(_op("cons-atom", rhead, rtail), res, res)))
+    prog = _chain(_metta(ahead, thead), rhead, _op("return-on-error", rhead, recursion))
+    push_nested(prog, b, f.prev, f.depth + 1)
+end
+
+# (interpret-tuple <expr>) — interpret_tuple (interpreter.rs:1191): metta each element, cons up, short-
+# circuit on Empty/Error. The recursion on `tail` is the `(interpret-tuple tail)` FRAME, not a Julia call.
+function interpret_tuple_instr(f::Frame, b::Bindings, space)
+    a = f.atom
+    expr = subst(a.children[2], b)
+    (expr isa Expression) || return finished_result(expr, b, f.prev)
+    isempty(expr.children) && return finished_result(expr, b, f.prev)        # () → ()
+    head = expr.children[1]; tail = Expression(expr.children[2:end])
+    rhead = freshvar("rhead"); rtail = freshvar("rtail"); res = freshvar("res")
+    prog = _chain(_metta(head, UNDEF), rhead,
+              _op("return-on-error", rhead,
+                _chain(_op("interpret-tuple", tail), rtail,
+                  _op("return-on-error", rtail,
+                    _chain(_op("cons-atom", rhead, rtail), res, res)))))
+    push_nested(prog, b, f.prev, f.depth + 1)
+end
+
+# (return-on-error <atom> <then>) (interpreter.rs:1398): Empty/Error → finish with it; else → run `then`.
+function return_on_error_instr(f::Frame, b::Bindings)
+    a = f.atom
+    atom = subst(a.children[2], b); then = a.children[3]
+    (is_empty_atom(atom) || is_error_atom(atom)) ?
+        finished_result(atom, b, f.prev) : push_nested(subst(then, b), b, f.prev, f.depth)
+end
+
+# (metta-call <atom> <type>) — metta_call (interpreter.rs:1415): grounded → execute; else → query
+# (= atom $X). Each result is RE-MET TA'd via a pushed `(metta result type)` FRAME (reduce-again) — so a
+# deep MeTTa recursion grows the heap plan, not the Julia stack. Non-reducible → finish as-is.
+function metta_call_instr(f::Frame, b::Bindings, space)
+    a = f.atom
+    atom = subst(a.children[2], b); typ = a.children[3]
+    _METTA_DEBUG[] && println("metta_call: ", atom)
+    is_error_atom(atom) && return finished_result(atom, b, f.prev)
+    (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
+    op = atom.children[1]
+    op isa Var && return finished_result(atom, b, f.prev)
+    out = Tuple{Frame,Bindings}[]
+    if is_executable(op)
+        r = execute(op::Grounded, Atom[atom.children[2:end]...], space)
+        if r isa ExecOk
+            isempty(r.results) && return finished_result(EMPTY, b, f.prev)
+            for (j, res) in enumerate(r.results)
+                bset = (j <= length(r.binds)) ? merge_bindings(b, r.binds[j]) : Bindings[b]
+                for mb in bset; append!(out, push_nested(_metta(res, typ), mb, f.prev, f.depth + 1)); end
+            end
+            return out
+        elseif r isa ExecNoReduce
+            return finished_result(atom, b, f.prev)
+        else
+            return finished_result(error_atom(atom, (r::ExecRuntime).msg), b, f.prev)
+        end
+    else
+        X = freshvar("X")
+        qres = query(space::Space, Expression(Sym("="), atom, X))
+        isempty(qres) && return finished_result(atom, b, f.prev)             # non-reducible → as-is
+        for qb in qres, mb in merge_bindings(b, qb)
+            append!(out, push_nested(_metta(subst(X, mb), typ), mb, f.prev, f.depth + 1))
+        end
+        return out
+    end
+end
+
+# Public entry for the new stack-machine driver (parallels metta_run; used to validate equivalence).
+metta_run_sm(atom::Atom, space::Space, b::Bindings=Bindings()) =
+    Atom[subst(at, bnd) for (at, bnd) in interpret(_metta(atom, UNDEF), space, b) if !is_empty_atom(at)]
 
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────
 "Run the minimal-MeTTa machine on `atom`; returns the list of (result, bindings)."
