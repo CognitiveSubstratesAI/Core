@@ -118,6 +118,7 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name == "interpret-args";   return interpret_args_instr(f, b, space)
     elseif name == "metta-call";       return metta_call_instr(f, b, space)
     elseif name == "return-on-error";  return return_on_error_instr(f, b)
+    elseif name == "args-cont";        return args_cont_instr(f, b)
     else
         return finished_result(f.atom, b, f.prev)              # not a minimal op → data, as-is
     end
@@ -477,8 +478,20 @@ function interpret_args_instr(f::Frame, b::Bindings, space)
     recursion = _chain(_op("interpret-args", atail, ttail), rtail,
                   _op("return-on-error", rtail,
                     _chain(_op("cons-atom", rhead, rtail), res, res)))
-    prog = _chain(_metta(ahead, thead), rhead, _op("return-on-error", rhead, recursion))
+    # args-cont = hyperon's `(if-equal rhead ahead <recursion> (return-on-error rhead <recursion>))`:
+    # only error-check an arg that CHANGED (was evaluated); an UNEVALUATED Atom-typed arg (rhead==ahead),
+    # even if error-shaped (e.g. assertEqual's expected (Error …) literal), is a legit value to pass on.
+    prog = _chain(_metta(ahead, thead), rhead, _op("args-cont", rhead, ahead, recursion))
     push_nested(prog, b, f.prev, f.depth + 1)
+end
+
+# (args-cont <rhead> <ahead> <recursion>): rhead unchanged (Atom-typed, unevaluated) → run recursion;
+# else rhead was evaluated → propagate if it's Empty/Error, otherwise run recursion.
+function args_cont_instr(f::Frame, b::Bindings)
+    a = f.atom
+    rhead = subst(a.children[2], b); ahead = subst(a.children[3], b); recursion = a.children[4]
+    (rhead != ahead && (is_empty_atom(rhead) || is_error_atom(rhead))) ?
+        finished_result(rhead, b, f.prev) : push_nested(subst(recursion, b), b, f.prev, f.depth)
 end
 
 # (interpret-tuple <expr>) — interpret_tuple (interpreter.rs:1191): metta each element, cons up, short-
@@ -720,8 +733,7 @@ metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
     Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b) if !is_empty_atom(at)]
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
-    _METTA_STEPS[] = 0; _REDUCE_DEPTH[] = 0
-    _reduce(atom, UNDEF, space, b)
+    interpret(_metta(atom, UNDEF), space, b)          # routed to the iterative stack machine (no overflow)
 end
 
 # ONE reduction step (metta.md:240). Returns each result tagged: is_final=true → terminal; false →
