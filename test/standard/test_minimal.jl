@@ -80,3 +80,16 @@ end
     rs = bare_eval(E(S("function"), E(S("eval"), E(S("div"), Grounded(35), Grounded(5), Grounded(0)))), spd)
     @test length(rs) == 1 && rs[1] == Grounded(7)
 end
+
+@testset "Minimal MeTTa: collapse-bind / superpose-bind (minimal-metta.md)" begin
+    # (= (xoo a) xa) (= (xoo b) xb)
+    sp = Space(Atom[E(S("="), E(S("xoo"), S("a")), S("xa")),
+                    E(S("="), E(S("xoo"), S("b")), S("xb"))])
+    # collapse the nondeterministic (eval (xoo $a)), then superpose it back, keeping $a per branch:
+    # (chain (collapse-bind (eval (xoo $a))) $c (chain (superpose-bind $c) $x ($x $a))) → [(xa a),(xb b)]
+    prog = E(S("chain"), E(S("collapse-bind"), E(S("eval"), E(S("xoo"), V("a")))), V("c"),
+              E(S("chain"), E(S("superpose-bind"), V("c")), V("x"), E(V("x"), V("a"))))
+    rs = bare_eval(prog, sp)
+    @test Set(rs) == Set(Atom[E(S("xa"), S("a")), E(S("xb"), S("b"))])
+    @test length(rs) == 2
+end

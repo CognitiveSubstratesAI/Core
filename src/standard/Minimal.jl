@@ -90,8 +90,8 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name == "eval";     return eval_op(f, b, space)
     elseif name == "chain";    return setup_chain(f.atom, b, f.prev, f.depth)
     elseif name == "function"; return setup_function(f.atom, b, f.prev, f.depth)
-    elseif name == "collapse-bind" || name == "superpose-bind"
-        return finished_result(error_atom(f.atom, "$(name) not yet ported — Phase 0d"), b, f.prev)
+    elseif name == "collapse-bind";  return collapse_bind_op(f, b, space)
+    elseif name == "superpose-bind"; return superpose_bind_op(f, b, space)
     else
         return finished_result(f.atom, b, f.prev)              # not a minimal op → data, as-is
     end
@@ -297,6 +297,41 @@ function setup_function(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, dep
     end
     fframe = Frame(atom, Set{Var}(), prev, fret, false, depth)
     push_nested(body, b, fframe, depth + 1)
+end
+
+# ── collapse-bind / superpose-bind (nondeterminism capture/restore) ───────────
+# collapse-bind (interpreter.rs:746): collect ALL alternatives of nested into one expression
+# of (atom bindings) pairs. hyperon detects "all alternatives done" via Rc::into_inner refcounting
+# on shared frames; idiomatic Julia instead runs a NESTED complete interpretation (same semantics,
+# no ownership tricks). bindings are carried as a Grounded{Bindings} atom.
+function collapse_bind_op(f::Frame, b::Bindings, space)
+    a = f.atom
+    (a isa Expression && length(a.children) == 2) ||
+        return finished_result(error_atom(a, "expected (collapse-bind <atom>)"), b, f.prev)
+    results = interpret(a.children[2], space, b)                 # all (atom, bindings) alternatives
+    pairs = Atom[Expression(atom, Grounded(bnd)) for (atom, bnd) in results]
+    finished_result(Expression(pairs), b, f.prev)               # one result = the collapsed list
+end
+
+# superpose-bind (interpreter.rs:893): the complement — put each (atom bindings) pair back into the
+# plan as a separate alternative, restoring its bindings.
+function superpose_bind_op(f::Frame, b::Bindings, space)
+    a = f.atom
+    (a isa Expression && length(a.children) == 2) ||
+        return finished_result(error_atom(a, "expected (superpose-bind <collapsed>)"), b, f.prev)
+    list = subst(a.children[2], b)
+    (list isa Expression) ||
+        return finished_result(error_atom(a, "superpose-bind: expected an expression"), b, f.prev)
+    out = Tuple{Frame,Bindings}[]
+    for pair in list.children
+        (pair isa Expression && length(pair.children) == 2) || continue
+        atom, bnd = pair.children[1], pair.children[2]
+        stored = (bnd isa Grounded && bnd.value isa Bindings) ? bnd.value : Bindings()
+        for mb in merge_bindings(b, stored)
+            append!(out, finished_result(subst(atom, mb), mb, f.prev))
+        end
+    end
+    out
 end
 
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────
