@@ -113,9 +113,13 @@ function _union_slots!(b::Bindings, a::Var, c::Var)
 end
 
 # metta.md §add_var_binding
+# occurs check: does `v` appear anywhere inside `a`? (prevents the cyclic binding $v <- (… $v …))
+_occurs(v::Var, a::Atom) = a isa Var ? a == v : (a isa Expression && any(c -> _occurs(v, c), a.children))
+
 function add_var_binding(b::Bindings, var::Var, val::Atom)::Vector{Bindings}
     prev = resolve(b, var)
     if prev === nothing
+        _occurs(var, val) && return Bindings[]      # occurs check — reject (unify $v with (… $v …) fails)
         return [_bind_value!(copy(b), var, val)]
     elseif prev == val
         return [b]

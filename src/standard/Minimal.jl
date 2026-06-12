@@ -416,6 +416,12 @@ fn_ret_type(t::Expression)  = t.children[end]
 
 const _METTA_STEPS = Ref(0)
 const _METTA_MAX = 5_000_000
+# Recursion-depth bound. metta.md's interpreter is recursive pseudocode; hyperon's ACTUAL impl is an
+# iterative stack machine with a `max_stack_depth` that returns (Error … StackOverflow) (interpreter.rs
+# :392). Julia has no TCO, so this recursive port must bound depth itself to fail safe (an uncatchable
+# StackOverflowError) on deep / non-terminating evaluation — matching hyperon's behavior, not masking it.
+const _METTA_DEPTH = Ref(0)
+const _METTA_MAX_DEPTH = 3000
 const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
 metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
@@ -506,11 +512,17 @@ end
 
 # metta(atom, type, space, bindings)  (metta.md:240)
 function metta_eval(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
-    a = subst(atom, b)
-    (is_empty_atom(a) || is_error_atom(a)) && return _RESULT[(a, b)]
-    # type == Atom, or type == metatype, or atom is a Variable ⇒ return UNEVALUATED (metta.md:255)
-    (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _RESULT[(a, b)]
-    (a isa Expression && !isempty(a.children)) ? interpret_expression(a, type, space, b) : _RESULT[(a, b)]
+    _METTA_DEPTH[] += 1                                  # bound recursion depth (hyperon max_stack_depth)
+    try
+        _METTA_DEPTH[] > _METTA_MAX_DEPTH && return _RESULT[(error_atom(atom, "StackOverflow"), b)]
+        a = subst(atom, b)
+        (is_empty_atom(a) || is_error_atom(a)) && return _RESULT[(a, b)]
+        # type == Atom, or type == metatype, or atom is a Variable ⇒ return UNEVALUATED (metta.md:255)
+        (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _RESULT[(a, b)]
+        return (a isa Expression && !isempty(a.children)) ? interpret_expression(a, type, space, b) : _RESULT[(a, b)]
+    finally
+        _METTA_DEPTH[] -= 1
+    end
 end
 
 # interpret_expression (metta.md:316) — type-directed; minimal ops run on the minimal machine
