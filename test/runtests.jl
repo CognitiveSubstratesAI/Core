@@ -525,6 +525,10 @@ include("test_metamo.jl")
 # adaptive). The slow Stability convergence probe is gated behind ECAN_SLOW_TESTS=1.
 include("test_ecan.jl")
 
+# Dual-evaluator ECAN tracker — runs examples/ecan under eval_metta AND eval_nd,
+# tracking the divergence landscape as the long-term flip to eval_nd progresses.
+include("test_ecan_dual.jl")
+
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
 include("test_actpc_chem.jl")
