@@ -155,7 +155,10 @@ end
 # ── grounded functions + space (the layer eval needs) ────────────────────────
 # Idiomatic Julia: a grounded operation is `Grounded{Operation}`; multiple dispatch +
 # parametric Grounded{T} replace hyperon's `Box<dyn GroundedAtom>` / downcast.
-struct ExecOk; results::Vector{Atom}; end
+# grounded success: result atoms, each optionally with bindings to propagate to the caller
+# (hyperon execute_bindings). `binds[i]` aligns with `results[i]`; empty `binds` = no propagation.
+struct ExecOk; results::Vector{Atom}; binds::Vector{Bindings}; end
+ExecOk(results::Vector{Atom}) = ExecOk(results, Bindings[])
 struct ExecNoReduce end
 struct ExecRuntime; msg::String; end
 const ExecResult = Union{ExecOk,ExecNoReduce,ExecRuntime}
@@ -240,7 +243,13 @@ function eval_op(f::Frame, b::Bindings, space)
         if r isa ExecOk
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
             out = Tuple{Frame,Bindings}[]
-            for res in r.results; append!(out, eval_result(res, b, f.prev, f.depth + 1)); end
+            for (j, res) in enumerate(r.results)
+                if j <= length(r.binds)
+                    for mb in merge_bindings(b, r.binds[j]); append!(out, eval_result(res, mb, f.prev, f.depth + 1)); end
+                else
+                    append!(out, eval_result(res, b, f.prev, f.depth + 1))
+                end
+            end
             return out
         elseif r isa ExecNoReduce
             return finished_result(NOT_REDUCIBLE, b, f.prev)            # NoReduce/IncorrectArgument
@@ -586,7 +595,13 @@ function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RES
     if is_executable(op)
         r = execute(op::Grounded, Atom[opargs...], space)
         if r isa ExecOk
-            for res in r.results; append!(out, metta_eval(res, type, space, b)); end
+            for (j, res) in enumerate(r.results)
+                if j <= length(r.binds)
+                    for mb in merge_bindings(b, r.binds[j]); append!(out, metta_eval(res, type, space, mb)); end
+                else
+                    append!(out, metta_eval(res, type, space, b))
+                end
+            end
         elseif r isa ExecNoReduce
             return _RESULT[(a, b)]                                       # not reducible → as-is
         else
@@ -696,11 +711,11 @@ const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(At
 const MATCH = Grounded(SpaceOp("match", function (xs, space)
     length(xs) == 3 || return ExecNoReduce()
     pat, tmpl = xs[2], xs[3]
-    out = Atom[]
+    out = Atom[]; binds = Bindings[]
     for atom in space.atoms, mb in match_atoms(pat, rename_fresh(atom, Dict{Var,Var}()))
-        push!(out, subst(tmpl, mb))
+        push!(out, subst(tmpl, mb)); push!(binds, mb)        # carry the match bindings to the caller
     end
-    ExecOk(out)
+    ExecOk(out, binds)
 end))
 # superpose (grounded): turn a tuple into a nondeterministic result (each child a separate result)
 const SUPERPOSE = Grounded(Operation("superpose",
