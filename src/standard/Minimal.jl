@@ -181,6 +181,19 @@ end
 Base.show(io::IO, o::Operation) = print(io, o.name)
 Base.show(io::IO, o::SpaceOp) = print(io, o.name)
 
+# State atom (hyperon StateAtom space.rs:38 / CeTTa StateCell atom.h:146): a MUTABLE cell wrapping a
+# value AND its `(StateMonad T)` type. Shared+mutable: change-state! mutates `value` in place, so every
+# reference (e.g. via a bound token) sees the update. `==` is by CONTENT (value+type), NOT cell identity
+# — so two distinct `(new-state (A B))` are equal (space.rs derived PartialEq compares the inner tuple).
+# Wrapped in `Grounded{StateCell}`; the Ref-like mutability comes from `mutable struct`.
+mutable struct StateCell
+    value::Atom
+    vtype::Atom          # (StateMonad T) — intrinsic type, returned by get-type
+end
+Base.:(==)(a::StateCell, b::StateCell) = a.value == b.value && a.vtype == b.vtype
+Base.hash(c::StateCell, h::UInt) = hash(c.vtype, hash(c.value, hash(:StateCell, h)))
+Base.show(io::IO, c::StateCell) = print(io, "(State ", c.value, ")")
+
 is_executable(a::Atom) = a isa Grounded && (a.value isa Operation || a.value isa SpaceOp)
 execute(g::Grounded, opargs::Vector{Atom}, space)::ExecResult =
     g.value isa SpaceOp ? g.value.fn(opargs, space) : g.value.fn(opargs)
@@ -209,8 +222,10 @@ const LT = _num_cmp("<", <)
 
 mutable struct Space
     atoms::Vector{Atom}
+    tokens::Dict{String,Atom}     # bind! token table: token-name → atom (parse-time substitution)
 end
-Space() = Space(Atom[])
+Space() = Space(Atom[], Dict{String,Atom}())
+Space(atoms::Vector{Atom}) = Space(atoms, Dict{String,Atom}())
 add_atom!(s::Space, a::Atom) = (push!(s.atoms, a); s)
 
 const _VAR_COUNTER = Ref(UInt64(0))
@@ -422,9 +437,17 @@ const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
 metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
 
-# the declared types of `atom`: query (: atom $T)
+# Intrinsic types of grounded ops (hyperon: the op's `type_()` method, NOT a stdlib atom). Kept OUT of
+# the space so they never appear in `match &self` — e.g. d4's type-reasoning rule matches every
+# `(: X (-> a b))` decl and infinite-loops on a polymorphic arrow, so state-op types as space atoms
+# would break it. Stored as source strings, parsed FRESH per lookup for variable hygiene.
+const _GROUNDED_OP_TYPES = Dict{Atom,String}()       # populated after the ops are defined (below)
+_parse_type(s::AbstractString)::Atom = parse_from(tokenize(s), Ref(1))
+
+# the declared types of `atom`: intrinsic grounded-op type (if any) + space decls (: atom $T)
 function atom_types(atom::Atom, space::Space)::Vector{Atom}
     T = freshvar("T"); out = Atom[]
+    haskey(_GROUNDED_OP_TYPES, atom) && push!(out, _parse_type(_GROUNDED_OP_TYPES[atom]))
     for qb in query(space, Expression(Sym(":"), atom, T))
         t = resolve(qb, T); t !== nothing && push!(out, t)
     end
@@ -449,6 +472,8 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
     if arg isa Grounded
         arg.value isa Bool && return Atom[Sym("Bool")]
         arg.value isa Number && return Atom[Sym("Number")]
+        arg.value isa AbstractString && return Atom[Sym("String")]
+        arg.value isa StateCell && return Atom[arg.value.vtype]   # intrinsic (StateMonad T) (space.rs:55)
     end
     # Expression: infer its return type from the head's function type (unify args, return ret type)
     if arg isa Expression && !isempty(arg.children)
@@ -799,6 +824,39 @@ const CASE = Grounded(SpaceOp("case", function (xs, space)
     ExecOk(out, binds)
 end))
 
+# ── State atoms (hyperon space.rs:55-122 / CeTTa eval.c:8323). new-state wraps a value + its
+# (StateMonad T) type; get-state reads it; change-state! MUTATES the shared cell in place. No type-check
+# inside change-state! — the generic checker emits (BadArgType 2 …) from its stdlib (-> (StateMonad $t)
+# $t (StateMonad $t)) signature (matches space.rs: BadArgType comes from the interpreter, not the op).
+const NEW_STATE = Grounded(SpaceOp("new-state", function (xs, space)
+    length(xs) == 1 || return ExecNoReduce()
+    ts = arg_actual_types(xs[1], space)
+    vt = isempty(ts) ? UNDEF : ts[1]
+    ExecOk(Atom[Grounded(StateCell(xs[1], Expression(Sym("StateMonad"), vt)))])
+end))
+const GET_STATE = Grounded(Operation("get-state", function (xs::Vector{Atom})
+    (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa StateCell) || return ExecNoReduce()
+    ExecOk(Atom[(xs[1].value::StateCell).value])
+end))
+const CHANGE_STATE = Grounded(Operation("change-state!", function (xs::Vector{Atom})
+    (length(xs) == 2 && xs[1] isa Grounded && xs[1].value isa StateCell) || return ExecNoReduce()
+    (xs[1].value::StateCell).value = xs[2]      # mutate the shared cell in place (all refs see it)
+    ExecOk(Atom[xs[1]])                          # return the state atom
+end))
+const NOP = Grounded(Operation("nop", (xs::Vector{Atom}) -> ExecOk(Atom[Expression(Atom[])])))  # arg reduced for effect → ()
+# bind! (hyperon module.rs:250): register a token → atom in the space's token table. The parser
+# substitutes the token in every SUBSEQUENT atom (parse-time, via the incremental load_metta! loop).
+const BIND_TOKEN = Grounded(SpaceOp("bind!", function (xs, space)
+    (length(xs) == 2 && xs[1] isa Sym) || return ExecNoReduce()
+    space.tokens[(xs[1]::Sym).name] = xs[2]
+    ExecOk(Atom[Expression(Atom[])])            # unit ()
+end))
+# Intrinsic state-op types (hyperon type_()): kept out of the space (see atom_types) so they don't
+# break d4's `(match &self (: $impl (-> $cause $type)) …)` reasoning rule.
+_GROUNDED_OP_TYPES[NEW_STATE]    = "(-> \$t (StateMonad \$t))"
+_GROUNDED_OP_TYPES[GET_STATE]    = "(-> (StateMonad \$t) \$t)"
+_GROUNDED_OP_TYPES[CHANGE_STATE] = "(-> (StateMonad \$t) \$t (StateMonad \$t))"
+
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE, "%" => MOD,
@@ -809,7 +867,9 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "assertEqual" => ASSERT_EQUAL, "assertEqualToResult" => ASSERT_EQUAL_TO_RESULT,
     "context-space" => CONTEXT_SPACE, "match" => MATCH,
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
-    "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE)
+    "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
+    "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
+    "bind!" => BIND_TOKEN)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
@@ -835,24 +895,26 @@ function tokenize(s::AbstractString)::Vector{String}
     toks
 end
 
-function parse_atom(tok::String)::Atom
+function parse_atom(tok::String, tokens::Dict{String,Atom}=_NO_TOKENS)::Atom
     startswith(tok, "\"") && return Grounded(tok[nextind(tok, 1):end])      # string
     startswith(tok, "\$") && return Var(tok[nextind(tok, 1):end])           # variable
+    haskey(tokens, tok) && return tokens[tok]                              # bind! token (parse-time subst)
     haskey(TOKEN_REGISTRY, tok) && return TOKEN_REGISTRY[tok]               # grounded operator
     let n = tryparse(Int, tok); n !== nothing && return Grounded(n); end     # integer
     let f = tryparse(Float64, tok); f !== nothing && return Grounded(f); end # float
     Sym(tok)
 end
+const _NO_TOKENS = Dict{String,Atom}()
 
-function parse_from(toks::Vector{String}, i::Base.RefValue{Int})::Atom
+function parse_from(toks::Vector{String}, i::Base.RefValue{Int}, tokens::Dict{String,Atom}=_NO_TOKENS)::Atom
     tok = toks[i[]]
     if tok == "("
         i[] += 1; ch = Atom[]
-        while i[] <= length(toks) && toks[i[]] != ")"; push!(ch, parse_from(toks, i)); end
+        while i[] <= length(toks) && toks[i[]] != ")"; push!(ch, parse_from(toks, i, tokens)); end
         i[] <= length(toks) && (i[] += 1)
         return Expression(ch)
     else
-        i[] += 1; return parse_atom(tok)
+        i[] += 1; return parse_atom(tok, tokens)
     end
 end
 
@@ -868,10 +930,17 @@ function parse_program(text::AbstractString)::Vector{Tuple{Bool,Atom}}
     out
 end
 
-"Load MeTTa text into `space`: add definitions/data, run `!`-directives; return directive results."
+"""Load MeTTa text into `space`: add definitions/data, run `!`-directives; return directive results.
+INCREMENTAL parse-eval (hyperon/CeTTa Tokenizer model): each atom is parsed THEN evaluated before the
+next is parsed, so a `bind!` directive registers its token in `space.tokens` in time for the parser to
+substitute that token in every following atom (parse-time substitution)."""
 function load_metta!(space::Space, text::AbstractString)::Vector{Atom}
-    results = Atom[]
-    for (directive, atom) in parse_program(text)
+    results = Atom[]; toks = tokenize(text); i = Ref(1)
+    while i[] <= length(toks)
+        directive = false
+        toks[i[]] == "!" && (directive = true; i[] += 1)
+        i[] > length(toks) && break
+        atom = parse_from(toks, i, space.tokens)        # substitute bound tokens at parse time
         directive ? append!(results, metta_run(atom, space)) : add_atom!(space, atom)
     end
     results
