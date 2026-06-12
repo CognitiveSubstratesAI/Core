@@ -777,14 +777,15 @@ end
 # all sub-patterns must match with consistent bindings (a join). Carries bindings to the caller.
 const MATCH = Grounded(SpaceOp("match", function (xs, space)
     length(xs) == 3 || return ExecNoReduce()
+    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space  # named space or &self
     pat, tmpl = xs[2], xs[3]
     binds = Bindings[Bindings()]
     if pat isa Expression && !isempty(pat.children) && pat.children[1] == Sym(",")
         for p in pat.children[2:end]                        # conjunctive: thread bindings across patterns
-            binds = Bindings[mb for r in binds for mb in _match_pat(space, p, r)]
+            binds = Bindings[mb for r in binds for mb in _match_pat(tgt, p, r)]
         end
     else
-        binds = _match_pat(space, pat, Bindings())
+        binds = _match_pat(tgt, pat, Bindings())
     end
     ExecOk(Atom[subst(tmpl, mb) for mb in binds], binds)
 end))
@@ -857,6 +858,23 @@ _GROUNDED_OP_TYPES[NEW_STATE]    = "(-> \$t (StateMonad \$t))"
 _GROUNDED_OP_TYPES[GET_STATE]    = "(-> (StateMonad \$t) \$t)"
 _GROUNDED_OP_TYPES[CHANGE_STATE] = "(-> (StateMonad \$t) \$t (StateMonad \$t))"
 
+# ── Named spaces (hyperon: new-space / add-atom; `&self` = the current space). A space is a
+# Grounded{Space}; `&self`/`&kb` resolve (parse-time tokens) to such a handle. add-atom/match take the
+# space as their first arg and operate on it (falling back to the context space when it isn't a handle).
+const NEW_SPACE = Grounded(Operation("new-space", (xs::Vector{Atom}) -> ExecOk(Atom[Grounded(Space())])))
+const ADD_ATOM = Grounded(SpaceOp("add-atom", function (xs, space)
+    length(xs) == 2 || return ExecNoReduce()
+    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+    add_atom!(tgt, xs[2])
+    ExecOk(Atom[Expression(Atom[])])             # unit ()
+end))
+const REMOVE_ATOM = Grounded(SpaceOp("remove-atom", function (xs, space)
+    length(xs) == 2 || return ExecNoReduce()
+    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+    filter!(a -> a != xs[2], tgt.atoms)
+    ExecOk(Atom[Expression(Atom[])])
+end))
+
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE, "%" => MOD,
@@ -869,7 +887,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
-    "bind!" => BIND_TOKEN)
+    "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
@@ -935,6 +953,7 @@ INCREMENTAL parse-eval (hyperon/CeTTa Tokenizer model): each atom is parsed THEN
 next is parsed, so a `bind!` directive registers its token in `space.tokens` in time for the parser to
 substitute that token in every following atom (parse-time substitution)."""
 function load_metta!(space::Space, text::AbstractString)::Vector{Atom}
+    get!(space.tokens, "&self", Grounded(space))    # `&self` (parse-time) resolves to the current space
     results = Atom[]; toks = tokenize(text); i = Ref(1)
     while i[] <= length(toks)
         directive = false

@@ -26,7 +26,7 @@ const BASELINE = Dict(
     "c1_grounded_basic.metta"=>0, "c2_spaces.metta"=>4, "c2_spaces_kb.metta"=>0, "c3_pln_stv.metta"=>0,
     "d1_gadt.metta"=>1, "d2_higherfunc.metta"=>3, "d3_deptypes.metta"=>0, "d4_type_prop.metta"=>0,
     "d5_auto_types.metta"=>3,
-    "e1_kb_write.metta"=>2, "e2_states.metta"=>0, "e3_match_states.metta"=>4,
+    "e1_kb_write.metta"=>0, "e2_states.metta"=>0, "e3_match_states.metta"=>0,
     "f1_imports.metta"=>11, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
     "g1_docs.metta"=>5)
 
