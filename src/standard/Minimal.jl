@@ -40,11 +40,24 @@ args(a::Expression) = a.children[2:end]
 
 error_atom(a::Atom, msg::AbstractString) = Expression(ERROR, a, Sym(String(msg)))
 
+# canonical representative of a var's equality class (smallest id, then name) — used when the
+# slot has no value but the var is equal to another (formal-arg = actual-arg matches as $a=$b)
+function _slot_rep(b::Bindings, v::Var)
+    haskey(b.var_to_slot, v) || return v
+    s = b.var_to_slot[v]; rep = v
+    for (vv, ss) in b.var_to_slot
+        ss == s && (vv.id < rep.id || (vv.id == rep.id && vv.name < rep.name)) && (rep = vv)
+    end
+    rep
+end
+
 "Recursively replace bound variables by their values (hyperon apply_bindings_to_atom)."
 function subst(a::Atom, b::Bindings)
     if a isa Var
         v = resolve(b, a)
-        return v === nothing ? a : subst(v, b)
+        v !== nothing && return subst(v, b)
+        rep = _slot_rep(b, a)                  # unbound but maybe equal to another var → representative
+        return rep == a ? a : rep
     elseif a isa Expression
         return Expression(Atom[subst(c, b) for c in a.children])
     else
@@ -278,7 +291,7 @@ function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth:
         isempty(pushed) ? nothing : pushed[1]
     end
     parent = Frame(atom, Set{Var}(), prev, cont, false, depth)
-    push_nested(nested, b, parent, depth + 1)
+    push_nested(subst(nested, b), b, parent, depth + 1)   # apply bindings so a var-bound minimal op evaluates
 end
 
 # function/return (interpreter.rs function_to_stack:704 / function_ret:723): loop until (return x)
@@ -419,6 +432,7 @@ function interpret_expression(a::Expression, type::Atom, space::Space, b::Bindin
         out = _RESULT[]
         for f in ftypes
             rt = fn_ret_type(f::Expression)
+            rt == Sym("Expression") && (rt = UNDEF)     # metta.md:341 — don't treat Expression like Atom
             for (fa, fb) in interpret_function(a, f, space, b)
                 (is_empty_atom(fa) || is_error_atom(fa)) ? push!(out, (fa, fb)) :
                     append!(out, metta_call(fa, rt, space, fb))
@@ -534,11 +548,60 @@ const OR  = _bool_binop("or", |)
 const NOT = Grounded(Operation("not", xs -> (length(xs) == 1 && _to_bool(xs[1]) !== nothing) ?
     ExecOk(Atom[_to_bool(xs[1]) ? Sym("False") : Sym("True")]) : ExecNoReduce()))
 const ID  = Grounded(Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce()))
+
+# if-equal (grounded): then if a==b else else (branches returned UNevaluated)
+const IF_EQUAL = Grounded(Operation("if-equal",
+    xs -> length(xs) == 4 ? ExecOk(Atom[xs[1] == xs[2] ? xs[3] : xs[4]]) : ExecNoReduce()))
+
+# structural helpers for atom-subst / sealed
+_replace_var(a::Atom, v::Var, val::Atom) =
+    a isa Var ? (a == v ? val : a) :
+    a isa Expression ? Expression(Atom[_replace_var(c, v, val) for c in a.children]) : a
+_rename_with(a::Atom, m::Dict{Var,Var}) =
+    a isa Var ? get(m, a, a) :
+    a isa Expression ? Expression(Atom[_rename_with(c, m) for c in a.children]) : a
+
+# atom-subst (grounded): replace var (2nd) by value (1st) in template (3rd)
+const ATOM_SUBST = Grounded(Operation("atom-subst", function (xs)
+    (length(xs) == 3 && xs[2] isa Var) || return ExecNoReduce()
+    ExecOk(Atom[_replace_var(xs[3], xs[2]::Var, xs[1])])
+end))
+# sealed (grounded): rename all vars in the expr to fresh ones EXCEPT the listed ones
+# (spec: "replaces every var … except list of variables to ignore"). Local scoping.
+function _seal_rename(a::Atom, ignore::Set{Var}, m::Dict{Var,Var})
+    if a isa Var
+        a in ignore && return a
+        return get!(() -> freshvar(a.name), m, a)
+    elseif a isa Expression
+        return Expression(Atom[_seal_rename(c, ignore, m) for c in a.children])
+    else
+        return a
+    end
+end
+const SEALED = Grounded(Operation("sealed", function (xs)
+    (length(xs) == 2 && xs[1] isa Expression) || return ExecNoReduce()
+    ignore = Set{Var}(v for v in xs[1].children if v isa Var)
+    ExecOk(Atom[_seal_rename(xs[2], ignore, Dict{Var,Var}())])
+end))
+# size-atom / index-atom / get-metatype (grounded)
+const SIZE_ATOM = Grounded(Operation("size-atom", xs ->
+    (length(xs) == 1 && xs[1] isa Expression) ? ExecOk(Atom[Grounded(length(xs[1].children))]) : ExecNoReduce()))
+const INDEX_ATOM = Grounded(Operation("index-atom", function (xs)
+    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Grounded && xs[2].value isa Integer) || return ExecNoReduce()
+    i = xs[2].value
+    (0 <= i < length(xs[1].children)) ? ExecOk(Atom[xs[1].children[i+1]]) :
+        ExecOk(Atom[Expression(ERROR, Expression(Sym("index-atom"), xs[1], xs[2]), Sym("IndexOutOfBounds"))])
+end))
+const GET_METATYPE = Grounded(Operation("get-metatype",
+    xs -> length(xs) == 1 ? ExecOk(Atom[metatype_sym(xs[1])]) : ExecNoReduce()))
+
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE,
     "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
-    "and" => AND, "or" => OR, "not" => NOT, "id" => ID)
+    "and" => AND, "or" => OR, "not" => NOT, "id" => ID,
+    "if-equal" => IF_EQUAL, "atom-subst" => ATOM_SUBST, "sealed" => SEALED,
+    "size-atom" => SIZE_ATOM, "index-atom" => INDEX_ATOM, "get-metatype" => GET_METATYPE)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1

@@ -26,3 +26,38 @@
         (let $pattern $atom (let* $tail $template))
         (Error (let* $pairs $template) "List of (<pattern> <atom>) pairs is expected as a second argument"))
       $template )))
+
+; ── car-atom / cdr-atom (stdlib.metta:576 / 587) ─────────────────────────────
+(= (car-atom $atom)
+  (chain (decons-atom $atom) $ht (unify ($head $_) $ht
+    $head
+    (Error (car-atom $atom) "car-atom expects a non-empty expression as an argument") )))
+(= (cdr-atom $atom)
+  (chain (decons-atom $atom) $ht (unify ($_ $tail) $ht
+    $tail
+    (Error (cdr-atom $atom) "cdr-atom expects a non-empty expression as an argument") )))
+
+; ── map-atom / filter-atom (stdlib.metta:475 / 455) ──────────────────────────
+(: map-atom (-> Expression Variable Atom Expression))
+(: filter-atom (-> Expression Variable Atom Expression))
+(= (map-atom $list $var $map)
+  (function (chain (decons-atom $list) $ht
+    (unify ($head $tail) $ht
+      (chain (eval (sealed ($var) $map)) $sealedmap
+        (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
+          (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
+            (chain $map-expr $head-mapped
+              (chain (cons-atom $head-mapped $tail-mapped) $res (return $res)) ))))
+      (return ()) ))))
+
+(= (filter-atom $list $var $filter)
+  (function (chain (decons-atom $list) $ht
+    (unify ($head $tail) $ht
+        (chain (eval (sealed ($var) $filter)) $sealedfilter
+          (chain (eval (filter-atom $tail $var $sealedfilter)) $tail-filtered
+            (chain (eval (atom-subst $head $var $sealedfilter)) $filter-expr
+              (chain $filter-expr $is-filtered
+                (eval (if $is-filtered
+                  (chain (cons-atom $head $tail-filtered) $res (return $res))
+                  (return $tail-filtered) ))))))
+      (return ()) ))))

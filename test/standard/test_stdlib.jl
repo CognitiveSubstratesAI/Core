@@ -34,3 +34,25 @@ S(x) = Sym(x); E(xs...) = Expression(collect(Atom, xs)...)
     @test ev("!(clamp0 5)")  == Atom[Grounded(5)]
     @test ev("!(clamp0 -3)") == Atom[Grounded(0)]
 end
+
+@testset "stdlib list ops — car/cdr/size/index/map/filter/get-metatype" begin
+    sp = Space()
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String))
+    ev(src) = load_metta!(sp, src)
+    G(n) = Grounded(n)
+
+    # grounded list primitives
+    @test ev("!(size-atom (a b c))")    == Atom[G(3)]
+    @test ev("!(index-atom (a b c) 1)") == Atom[S("b")]
+    @test ev("!(get-metatype foo)")     == Atom[S("Symbol")]
+    @test ev("!(get-metatype 5)")       == Atom[S("Grounded")]
+    @test ev("!(get-metatype (a b))")   == Atom[S("Expression")]
+
+    # car-atom / cdr-atom (MeTTa = rules via decons-atom/unify)
+    @test ev("!(car-atom (a b c))") == Atom[S("a")]
+    @test ev("!(cdr-atom (a b c))") == Atom[E(S("b"), S("c"))]
+
+    # map-atom / filter-atom (real upstream defs, via sealed/atom-subst/cons-atom + recursion)
+    @test ev("!(map-atom (1 2 3 4) \$v (eval (+ \$v 1)))") == Atom[E(G(2), G(3), G(4), G(5))]
+    @test ev("!(filter-atom (1 2 3 4) \$v (eval (> \$v 2)))") == Atom[E(G(3), G(4))]
+end
