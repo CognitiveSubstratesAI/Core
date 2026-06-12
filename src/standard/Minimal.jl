@@ -520,10 +520,25 @@ const DIVIDE = _num_binop("/", /)
 const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
 const EQ_OP = Grounded(Operation("==", xs ->
     length(xs) == 2 ? ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")]) : ExecNoReduce()))
+# Bool logic (grounded; True/False are symbols)
+_to_bool(a::Atom) = a == Sym("True") ? true : a == Sym("False") ? false : nothing
+function _bool_binop(name, f)
+    Grounded(Operation(name, function (xs)
+        length(xs) == 2 || return ExecNoReduce()
+        x = _to_bool(xs[1]); y = _to_bool(xs[2])
+        (x === nothing || y === nothing) ? ExecNoReduce() : ExecOk(Atom[f(x, y) ? Sym("True") : Sym("False")])
+    end))
+end
+const AND = _bool_binop("and", &)
+const OR  = _bool_binop("or", |)
+const NOT = Grounded(Operation("not", xs -> (length(xs) == 1 && _to_bool(xs[1]) !== nothing) ?
+    ExecOk(Atom[_to_bool(xs[1]) ? Sym("False") : Sym("True")]) : ExecNoReduce()))
+const ID  = Grounded(Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce()))
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE,
-    "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP)
+    "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
+    "and" => AND, "or" => OR, "not" => NOT, "id" => ID)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
