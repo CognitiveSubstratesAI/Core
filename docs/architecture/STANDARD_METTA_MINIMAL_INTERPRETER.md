@@ -34,6 +34,13 @@ So `eval_nd` fixed the *semantics* but kept the *wrong architecture*. "Adopt sta
 adopting the **minimal-core + stdlib-in-MeTTa** shape, which dissolves BOTH the evaluator duality AND
 the hardcoded-special-form problem — and the SD-2/SD-3 library workarounds along with them.
 
+**Important — `eval_nd` is NOT standard and is NOT the destination.** There is no `eval_nd` in standard
+MeTTa; the standard interpreter is the 11 named instructions below. `eval_nd` is a custom monolithic
+function whose only standard property is that its *result model* (a set of `(value, bindings)`) matches
+what the standard `eval`/`evalc` produce. It is **scaffolding**: we reuse its machinery (unify,
+env-merge, cartesian fan-out, hygiene, grounded dispatch) to BUILD the standard instructions, then
+DELETE `eval_nd` itself. Neither `eval_nd` nor `eval_metta` survives.
+
 ## Target architecture
 
 1. **Minimal OutcomeSet interpreter (Julia):** implement only the ~11 instructions. `eval_nd` already
