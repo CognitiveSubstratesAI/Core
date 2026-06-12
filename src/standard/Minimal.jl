@@ -88,8 +88,8 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name == "decons-atom"; return decons_atom(f, b)
     elseif name == "unify";    return unify_op(f, b)
     elseif name == "eval";     return eval_op(f, b, space)
-    elseif name == "chain";    return finished_result(error_atom(f.atom, "chain not yet ported — Phase 0c"), b, f.prev)
-    elseif name == "function"; return finished_result(error_atom(f.atom, "function not yet ported — Phase 0c"), b, f.prev)
+    elseif name == "chain";    return setup_chain(f.atom, b, f.prev, f.depth)
+    elseif name == "function"; return setup_function(f.atom, b, f.prev, f.depth)
     elseif name == "collapse-bind" || name == "superpose-bind"
         return finished_result(error_atom(f.atom, "$(name) not yet ported — Phase 0d"), b, f.prev)
     else
@@ -183,17 +183,30 @@ end
 Space() = Space(Atom[])
 add_atom!(s::Space, a::Atom) = (push!(s.atoms, a); s)
 
-# query (= pattern $X) → the matching binding sets (interpreter.rs query:604, naive linear match)
+const _VAR_COUNTER = Ref(UInt64(0))
+freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
+
+# alpha-rename every variable in `a` to a fresh one (hyperon make_variables_unique) — hygiene,
+# so a rule matched repeatedly (recursion) doesn't clash its own variables across levels.
+function rename_fresh(a::Atom, m::Dict{Var,Var})
+    if a isa Var
+        return get!(() -> freshvar(a.name), m, a)
+    elseif a isa Expression
+        return Expression(Atom[rename_fresh(c, m) for c in a.children])
+    else
+        return a
+    end
+end
+
+# query (= pattern $X) → the matching binding sets (interpreter.rs query:604, naive linear match).
+# Each stored atom's variables are freshened before matching (interpreter.rs make_variables_unique).
 function query(space::Space, pattern::Atom)::Vector{Bindings}
     out = Bindings[]
     for stored in space.atoms
-        append!(out, match_atoms(pattern, stored))
+        append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
     end
     out
 end
-
-const _VAR_COUNTER = Ref(UInt64(0))
-freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
 
 # eval (interpreter.rs eval_impl:504) — ONE step, normal-order
 function eval_op(f::Frame, b::Bindings, space)
@@ -206,7 +219,7 @@ function eval_op(f::Frame, b::Bindings, space)
         if r isa ExecOk
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
             out = Tuple{Frame,Bindings}[]
-            for res in r.results; append!(out, finished_result(res, b, f.prev)); end
+            for res in r.results; append!(out, eval_result(res, b, f.prev, f.depth + 1)); end
             return out
         elseif r isa ExecNoReduce
             return finished_result(NOT_REDUCIBLE, b, f.prev)            # NoReduce/IncorrectArgument
@@ -222,10 +235,68 @@ function eval_op(f::Frame, b::Bindings, space)
         out = Tuple{Frame,Bindings}[]
         for qb in results, mb in merge_bindings(b, qb)
             x = resolve(mb, X); x === nothing && continue
-            append!(out, finished_result(subst(x, mb), mb, f.prev))    # eval_result (one step)
+            append!(out, eval_result(subst(x, mb), mb, f.prev, f.depth + 1))
         end
         return isempty(out) ? finished_result(NOT_REDUCIBLE, b, f.prev) : out
     end
+end
+
+# ── pushing nested computations + continuations (chain / function) ────────────
+# Idiomatic Julia: continuations are CLOSURES stored in Frame.ret (no Rust mem::swap /
+# Rc<RefCell> placeholder dance). A frame's ret runs when the child it pushed finishes;
+# ret returns a single (Frame,Bindings) to continue, or nothing to drop. Fan-out is
+# preserved because a fanned-out child yields several finished frames, each firing ret.
+
+# set up `atom` to be evaluated (interpreter.rs atom_to_stack:640)
+function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)::Vector{Tuple{Frame,Bindings}}
+    name = head_name(atom)
+    if name == "chain";        return setup_chain(atom, b, prev, depth)
+    elseif name == "function"; return setup_function(atom, b, prev, depth)
+    else;                      return [(Frame(atom, collect_vars(atom), prev, no_handler, false, depth), b)]
+    end
+end
+
+# function-special-when-returned (interpreter.rs eval_result:559): a returned `function`
+# op is set up (looped), not treated as data.
+function eval_result(res::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
+    head_name(res) == "function" ? setup_function(res, b, prev, depth) : finished_result(res, b, prev)
+end
+
+# chain (interpreter.rs chain:687 / chain_ret:675): one-step nested, bind var, subst templ, EXECUTE it
+function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
+    (atom isa Expression && length(atom.children) == 4) ||
+        return finished_result(error_atom(atom, "expected (chain <nested> <var> <templ>)"), b, prev)
+    nested, var, templ = atom.children[2], atom.children[3], atom.children[4]
+    var isa Var ||
+        return finished_result(error_atom(atom, "chain: second argument must be a variable"), b, prev)
+    cont = function (self::Frame, result::Atom, rb::Bindings)
+        bs = add_var_binding(rb, var, result)
+        isempty(bs) && return nothing
+        nb = bs[1]
+        pushed = push_nested(subst(templ, nb), nb, self.prev, depth)
+        isempty(pushed) ? nothing : pushed[1]
+    end
+    parent = Frame(atom, Set{Var}(), prev, cont, false, depth)
+    push_nested(nested, b, parent, depth + 1)
+end
+
+# function/return (interpreter.rs function_to_stack:704 / function_ret:723): loop until (return x)
+function setup_function(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
+    (atom isa Expression && length(atom.children) == 2) ||
+        return finished_result(error_atom(atom, "expected (function <body>)"), b, prev)
+    body = atom.children[2]
+    fret = function (self::Frame, result::Atom, rb::Bindings)
+        if result isa Expression && length(result.children) == 2 && result.children[1] == RETURN
+            return (Frame(result.children[2], Set{Var}(), self.prev, no_handler, true, depth), rb)  # return x
+        elseif is_minimal_op(result)
+            pushed = push_nested(result, rb, self, depth + 1)                                        # loop
+            isempty(pushed) ? nothing : pushed[1]
+        else
+            return (Frame(error_atom(atom, "NoReturn"), Set{Var}(), self.prev, no_handler, true, depth), rb)
+        end
+    end
+    fframe = Frame(atom, Set{Var}(), prev, fret, false, depth)
+    push_nested(body, b, fframe, depth + 1)
 end
 
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────

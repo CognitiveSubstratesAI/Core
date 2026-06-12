@@ -47,3 +47,36 @@ end
     # eval does NOT recurse into subexpressions: (eval (+ (+ 1 2) 3)) → NotReducible
     @test ev(E(S("eval"), E(PLUS, E(PLUS, Grounded(1), Grounded(2)), Grounded(3)))) == S("NotReducible")
 end
+
+@testset "Minimal MeTTa: chain / function / return (minimal-metta.md)" begin
+    # chain (minimal-metta.md): (chain (eval (+ 2 3)) $x (eval (+ 1 $x))) → 6
+    @test only_result(E(S("chain"), E(S("eval"), E(PLUS, Grounded(2), Grounded(3))), V("x"),
+                        E(S("eval"), E(PLUS, Grounded(1), V("x"))))) == Grounded(6)
+
+    sp = Space(Atom[E(S("="), E(S("foo")), E(S("bar"))), E(S("="), E(S("bar")), S("a"))])
+    ev(x) = (rs = bare_eval(x, sp); @assert length(rs) == 1 "got $(length(rs)): $rs"; rs[1])
+    # (chain (eval (foo)) $x (eval $x)) → a ;  (chain (eval (foo)) $x (R $x)) → (R (bar))
+    @test ev(E(S("chain"), E(S("eval"), E(S("foo"))), V("x"), E(S("eval"), V("x")))) == S("a")
+    @test ev(E(S("chain"), E(S("eval"), E(S("foo"))), V("x"), E(S("R"), V("x")))) == E(S("R"), E(S("bar")))
+
+    # function/return: (= (foo)(eval (bar)))(= (bar)(eval (baz)))(= (baz)(return a)); (function (eval (foo)))→a
+    sp2 = Space(Atom[E(S("="), E(S("foo")), E(S("eval"), E(S("bar")))),
+                     E(S("="), E(S("bar")), E(S("eval"), E(S("baz")))),
+                     E(S("="), E(S("baz")), E(S("return"), S("a")))])
+    let r = bare_eval(E(S("function"), E(S("eval"), E(S("foo")))), sp2)
+        @test length(r) == 1 && r[1] == S("a")
+    end
+
+    # div integration (minimal-metta.md): (function (eval (div 35 5 0))) → 7
+    divrule = E(S("="),
+        E(S("div"), V("x"), V("y"), V("accum")),
+        E(S("chain"), E(S("eval"), E(MINUS, V("x"), V("y"))), V("r1"),
+          E(S("chain"), E(S("eval"), E(LT, V("r1"), Grounded(0))), V("r2"),
+            E(S("unify"), V("r2"), S("True"),
+              E(S("return"), V("accum")),
+              E(S("chain"), E(S("eval"), E(PLUS, Grounded(1), V("accum"))), V("inc"),
+                E(S("eval"), E(S("div"), V("r1"), V("y"), V("inc"))))))))
+    spd = Space(Atom[divrule])
+    rs = bare_eval(E(S("function"), E(S("eval"), E(S("div"), Grounded(35), Grounded(5), Grounded(0)))), spd)
+    @test length(rs) == 1 && rs[1] == Grounded(7)
+end
