@@ -21,6 +21,7 @@ include("Atoms.jl")
 using .StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
+export metta_run, metta_results
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -356,5 +357,96 @@ end
 
 "Convenience: run and return just the result atoms."
 bare_eval(atom::Atom, space=nothing) = first.(interpret(atom, space))
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The `metta` interpreter driver (metta.md §Interpretation) — UNTYPED (Phase 1a).
+# A direct RECURSIVE port of the pseudocode (metta / interpret_expression /
+# interpret_tuple / metta_call), treating every type as %Undefined%. This reduces
+# to normal form, in applicative order, nondeterministically. The gradual type
+# system (type_cast / check_argument_type / BadArgType) is Phase 1b.
+# ═══════════════════════════════════════════════════════════════════════════════
+const _RESULT = Tuple{Atom,Bindings}
+is_error_atom(a::Atom) = a isa Expression && !isempty(a.children) && a.children[1] == ERROR
+is_empty_atom(a::Atom) = a == EMPTY
+
+const _METTA_STEPS = Ref(0)
+const _METTA_MAX = 5_000_000
+
+"Public entry: fully evaluate `atom` in `space`; returns the result set (atoms)."
+metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) = first.(metta_results(atom, space, b))
+"Fully evaluate `atom`; returns (atom, bindings) result set."
+function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
+    _METTA_STEPS[] = 0
+    metta_eval(atom, space, b)
+end
+
+# metta(atom, %Undefined%, space, bindings)  (metta.md:240)
+function metta_eval(atom::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+    a = subst(atom, b)
+    (is_empty_atom(a) || is_error_atom(a)) && return _RESULT[(a, b)]
+    (a isa Expression && !isempty(a.children)) ? interpret_expression(a, space, b) : _RESULT[(a, b)]
+end
+
+# interpret_expression (metta.md:316) — untyped: evaluate the tuple, then metta_call each result
+function interpret_expression(a::Expression, space::Space, b::Bindings)::Vector{_RESULT}
+    out = _RESULT[]
+    for (t, tb) in interpret_tuple(a, space, b)
+        (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) : append!(out, metta_call(t, space, tb))
+    end
+    out
+end
+
+# interpret_tuple (metta.md:358) — evaluate every element (applicative order), reassemble
+function interpret_tuple(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+    (a isa Expression) || return metta_eval(a, space, b)
+    isempty(a.children) && return _RESULT[(a, b)]                       # () → ()
+    head, tail = a.children[1], Expression(a.children[2:end])
+    out = _RESULT[]
+    for (h, hb) in metta_eval(head, space, b)
+        if is_empty_atom(h) || is_error_atom(h)
+            push!(out, (h, hb)); continue
+        end
+        for (t, tb) in interpret_tuple(tail, space, hb)
+            if is_empty_atom(t) || is_error_atom(t)
+                push!(out, (t, tb))
+            else
+                tchildren = t isa Expression ? t.children : Atom[t]
+                push!(out, (Expression(Atom[h; tchildren]), tb))
+            end
+        end
+    end
+    out
+end
+
+# metta_call (metta.md:509) — reduce: grounded → native, else → (= atom $X) query; recurse metta
+function metta_call(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+    (_METTA_STEPS[] += 1) > _METTA_MAX && error("metta: step limit reached (non-termination?)")
+    is_error_atom(a) && return _RESULT[(a, b)]
+    (a isa Expression && !isempty(a.children)) || return _RESULT[(a, b)]
+    op, opargs = a.children[1], a.children[2:end]
+    out = _RESULT[]
+    if is_executable(op)
+        r = execute(op::Grounded, Atom[opargs...])
+        if r isa ExecOk
+            for res in r.results; append!(out, metta_eval(res, space, b)); end
+        elseif r isa ExecNoReduce
+            return _RESULT[(a, b)]                                       # not reducible → as-is
+        else
+            return _RESULT[(error_atom(a, (r::ExecRuntime).msg), b)]
+        end
+    else
+        X = freshvar("X")
+        qres = query(space, Expression(Sym("="), a, X))
+        if !isempty(qres)
+            for qb in qres, mb in merge_bindings(b, qb)
+                x = resolve(mb, X); x === nothing && continue
+                append!(out, metta_eval(x, space, mb))
+            end
+        else
+            push!(out, (a, b))                                          # non-reducible → as-is
+        end
+    end
+    isempty(out) ? _RESULT[(EMPTY, b)] : out
+end
 
 end # module
