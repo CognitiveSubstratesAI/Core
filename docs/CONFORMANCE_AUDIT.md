@@ -105,6 +105,31 @@ each divergence; (2) once `eval_nd`'s `collapse`/`match`/state semantics are dem
 the libraries can *drop* their SD-2/SD-3 workarounds (simpler, not more complex); (3) then flip. Do NOT
 re-attempt a standalone collapse+car-atom library refactor against the current evaluator — it regresses.
 
+## Evaluator provenance — is `eval_nd` canonical or bespoke? (verified 2026-06-12)
+
+`eval_nd` is a **custom Julia function** (an interpreter), not a "MeTTa type" — and neither is
+`eval_metta`; both are Core-internal evaluators. But the *semantic model* `eval_nd` implements is the
+**canonical MeTTa one**, verified structurally against BOTH reference interpreters by reading their
+source:
+
+| aspect | hyperon-experimental (`interpreter.rs`) | CeTTa (`eval.c/.h`) | Core `eval_nd` (`EvalND.jl`) |
+|---|---|---|---|
+| result type | `Vec<InterpretedAtom>` = `Vec<(atom, Bindings)>` :145 | `OutcomeSet` = vec of `Outcome{atom, env}` :14 | `Vector{Tuple{value, _NDEnv}}` :18 |
+| top-level | `interpret → Vec<Atom>` (bindings applied) :285 | `ResultSet` drops bindings :31, :4259 | `eval_nd_results` drops bindings :219 |
+| fan-out | `flat_map` over query matches :604 | `interpret_tuple` cartesian product :5013 | `_nd_cart` cartesian product |
+| binding merge | `b.merge(&bindings)`, fail on conflict :826 | `bindings_builder_merge_or_clone`, prune :5079 | `_nd_merge` consistent merge |
+| **empty match** | **zero results / else-branch** :836 | **empty OutcomeSet — zero outcomes** :5097 | **zero outcomes** |
+| `collapse` empty | collects alternatives :746 | single outcome wrapping `()` :6214 | single outcome, empty list `()` :124 |
+| hygiene | `make_unique()` per query/rule :612 | `rename_vars`/`*_fresh` standardize-apart | `_nd_fresh` alpha-rename |
+
+**Verdict:** `eval_nd` is a faithful implementation of the canonical OutcomeSet semantics — isomorphic to
+hyperon's `Vec<InterpretedAtom>` and CeTTa's `OutcomeSet`/`ResultSet`. **The non-standard one is
+`eval_metta`:** both references return *zero outcomes* for an empty `match` (NOT a unit `()`), so the
+libraries' `(== $old ())` bare-match convention diverges from BOTH references. This confirms the
+long-term direction — converging on `eval_nd` IS converging on reference MeTTa. Caveat: `eval_nd` is a
+faithful *foundation*, not yet complete — its header flags partial special-form coverage / hygiene; that
+gap is the hardening work, not a semantic divergence.
+
 ## Next
 1. Build the `OutcomeSet`-valued evaluator (the §2c blueprint), gated by b0/b2/b3/b4.
 2. Fix the harness's result-set unwrapping for exact pass counts; vendor/pin the reference scripts.
