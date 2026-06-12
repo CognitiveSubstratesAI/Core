@@ -223,9 +223,10 @@ const LT = _num_cmp("<", <)
 mutable struct Space
     atoms::Vector{Atom}
     tokens::Dict{String,Atom}     # bind! token table: token-name → atom (parse-time substitution)
+    imported::Set{String}         # modules already imported here — re-import is ignored (+ cycle guard)
 end
-Space() = Space(Atom[], Dict{String,Atom}())
-Space(atoms::Vector{Atom}) = Space(atoms, Dict{String,Atom}())
+Space() = Space(Atom[], Dict{String,Atom}(), Set{String}())
+Space(atoms::Vector{Atom}) = Space(atoms, Dict{String,Atom}(), Set{String}())
 add_atom!(s::Space, a::Atom) = (push!(s.atoms, a); s)
 
 const _VAR_COUNTER = Ref(UInt64(0))
@@ -529,16 +530,30 @@ const _STEP = Tuple{Atom,Atom,Bindings,Bool}   # (atom, next-type, bindings, is_
 # only by atom NESTING depth (shallow), and they call `_reduce` (iterative) for each sub-evaluation. This
 # mirrors hyperon's iterative interpret_stack and follows the Julia team's "rewrite recursion as an
 # explicit loop" guidance — replacing the recursive metta.md pseudocode port that overflowed the stack.
+# The reduce-CHAIN is iterative (the worklist), but interpret_function/args/tuple call _reduce for
+# nested sub-evaluation, so NESTED _reduce calls still grow the Julia call stack (= the atom-application
+# nesting depth of a deep MeTTa recursion). Julia's StackOverflowError is UNCATCHABLE, so — per the Julia
+# team's guidance and exactly like hyperon's interpret_stack `max_stack_depth` (interpreter.rs:392) — we
+# BOUND the nesting and fail SAFE with (Error … StackOverflow) instead of corrupting the process.
+const _REDUCE_DEPTH = Ref(0)
+const _REDUCE_MAX_DEPTH = 1200          # well under Julia's frame limit (incl. JIT frames), far above any real program
 function _reduce(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
-    work = _STEP[(atom, type, b, false)]
-    final = _RESULT[]
-    while !isempty(work)
-        (a, t, bb, _) = pop!(work)
-        for (r, nt, rb, isfinal) in metta_step(a, t, space, bb)
-            isfinal ? push!(final, (r, rb)) : push!(work, (r, nt, rb, false))
+    _REDUCE_DEPTH[] += 1
+    try
+        _REDUCE_DEPTH[] > _REDUCE_MAX_DEPTH &&
+            return _RESULT[(error_atom(atom, "StackOverflow"), b)]
+        work = _STEP[(atom, type, b, false)]
+        final = _RESULT[]
+        while !isempty(work)
+            (a, t, bb, _) = pop!(work)
+            for (r, nt, rb, isfinal) in metta_step(a, t, space, bb)
+                isfinal ? push!(final, (r, rb)) : push!(work, (r, nt, rb, false))
+            end
         end
+        return final
+    finally
+        _REDUCE_DEPTH[] -= 1
     end
-    final
 end
 
 "Public entry: fully evaluate `atom` in `space`; result set (final bindings applied, Empty filtered)."
@@ -546,7 +561,7 @@ metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
     Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b) if !is_empty_atom(at)]
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
-    _METTA_STEPS[] = 0
+    _METTA_STEPS[] = 0; _REDUCE_DEPTH[] = 0
     _reduce(atom, UNDEF, space, b)
 end
 
@@ -904,11 +919,14 @@ const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
         file !== nothing && break
     end
     file === nothing && return ExecRuntime("import!: module not found: $modname")
-    text = read(file, String)
     if target isa Grounded && target.value isa Space
-        load_metta!(target.value::Space, text)                  # &self: import into the current space
+        tgt = target.value::Space
+        modname in tgt.imported && return ExecOk(Atom[Expression(Atom[])])  # already imported → ignore (dedup + cycle guard)
+        push!(tgt.imported, modname)                            # record BEFORE loading (guards cycles)
+        load_metta!(tgt, read(file, String))                    # &self: import into the current space
     elseif target isa Sym
-        newsp = Space(); load_metta!(newsp, text)
+        newsp = Space(); push!(newsp.imported, modname)
+        load_metta!(newsp, read(file, String))
         space.tokens[(target::Sym).name] = Grounded(newsp)      # &kb: bind the token to a fresh space
     else
         return ExecRuntime("import!: first argument must be a space token")
