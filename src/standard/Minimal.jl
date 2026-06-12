@@ -707,16 +707,28 @@ const ASSERT_EQUAL_TO_RESULT = Grounded(SpaceOp("assertEqualToResult", function 
         ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertEqualToResult", xs[1], xs[2])])
 end))
 const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
-# match (grounded): (match <space> <pattern> <template>) — for each space atom unifying with pattern,
-# return the template under those bindings. Nondeterministic. (<space> is the context &self space.)
+# all binding sets under which `pat` matches some atom of `space`, extending `b0`
+function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
+    out = Bindings[]
+    for atom in space.atoms, mb in match_atoms(subst(pat, b0), rename_fresh(atom, Dict{Var,Var}()))
+        append!(out, merge_bindings(b0, mb))
+    end
+    out
+end
+# match (grounded): (match <space> <pattern> <template>). A `(, p1 p2 …)` pattern is a CONJUNCTION —
+# all sub-patterns must match with consistent bindings (a join). Carries bindings to the caller.
 const MATCH = Grounded(SpaceOp("match", function (xs, space)
     length(xs) == 3 || return ExecNoReduce()
     pat, tmpl = xs[2], xs[3]
-    out = Atom[]; binds = Bindings[]
-    for atom in space.atoms, mb in match_atoms(pat, rename_fresh(atom, Dict{Var,Var}()))
-        push!(out, subst(tmpl, mb)); push!(binds, mb)        # carry the match bindings to the caller
+    binds = Bindings[Bindings()]
+    if pat isa Expression && !isempty(pat.children) && pat.children[1] == Sym(",")
+        for p in pat.children[2:end]                        # conjunctive: thread bindings across patterns
+            binds = Bindings[mb for r in binds for mb in _match_pat(space, p, r)]
+        end
+    else
+        binds = _match_pat(space, pat, Bindings())
     end
-    ExecOk(out, binds)
+    ExecOk(Atom[subst(tmpl, mb) for mb in binds], binds)
 end))
 # superpose (grounded): turn a tuple into a nondeterministic result (each child a separate result)
 const SUPERPOSE = Grounded(Operation("superpose",
