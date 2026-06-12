@@ -413,6 +413,34 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     out
 end
 
+# match_types (metta.md:298): %Undefined%/Atom on either side matches anything
+match_types(t1::Atom, t2::Atom) =
+    (t1 == UNDEF || t1 == ATOM_T || t2 == UNDEF || t2 == ATOM_T) || !isempty(match_atoms(t1, t2))
+
+# actual type(s) of an argument (hyperon get_atom_types_internal types.rs:376):
+# Variable → %Undefined% (NOT a (: $v $T) query — that spuriously matches every decl);
+# Grounded → its grounded type; Symbol/Expression → declared types, else %Undefined%.
+function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
+    arg isa Var && return Atom[UNDEF]                            # types.rs:386 — variables have no types
+    if arg isa Grounded
+        arg.value isa Bool && return Atom[Sym("Bool")]
+        arg.value isa Number && return Atom[Sym("Number")]
+    end
+    ts = atom_types(arg, space)
+    isempty(ts) ? Atom[UNDEF] : ts
+end
+
+# check_argument_type per arg (metta.md:429) → BadArgType errors (1-based arg index)
+function type_check_errors(a::Expression, ftype::Expression, space::Space)::Vector{Atom}
+    ats = fn_arg_types(ftype); errs = Atom[]
+    for i in 1:length(ats)
+        actuals = arg_actual_types(a.children[i+1], space)
+        any(at -> match_types(ats[i], at), actuals) ||
+            push!(errs, Expression(ERROR, a, Expression(Sym("BadArgType"), Grounded(i), ats[i], actuals[1])))
+    end
+    errs
+end
+
 "Public entry: fully evaluate `atom` in `space`; result set (final bindings applied, Empty filtered)."
 metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
     Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b) if !is_empty_atom(at)]
@@ -443,8 +471,13 @@ function interpret_expression(a::Expression, type::Atom, space::Space, b::Bindin
     ftypes = op isa Var ? Atom[] :
         filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
     if !isempty(ftypes)
-        out = _RESULT[]
+        out = _RESULT[]; errs = _RESULT[]
         for f in ftypes
+            te = type_check_errors(a, f::Expression, space)    # metta.md:384 check_argument_type → BadArgType
+            if !isempty(te)
+                for e in te; push!(errs, (e, b)); end
+                continue
+            end
             rt = fn_ret_type(f::Expression)
             rt == Sym("Expression") && (rt = UNDEF)     # metta.md:341 — don't treat Expression like Atom
             for (fa, fb) in interpret_function(a, f, space, b)
@@ -452,7 +485,8 @@ function interpret_expression(a::Expression, type::Atom, space::Space, b::Bindin
                     append!(out, metta_call(fa, rt, space, fb))
             end
         end
-        return out
+        !isempty(out) && return out                     # some type applied → its results
+        !isempty(errs) && return errs                   # all types rejected the args → type errors
     end
     out = _RESULT[]                                      # no applicable function type → untyped tuple
     for (t, tb) in interpret_tuple(a, space, b)
