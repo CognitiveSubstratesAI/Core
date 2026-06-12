@@ -1,9 +1,8 @@
 # Validates the minimal-MeTTa stack machine (src/standard/Minimal.jl) against the
 # worked examples in hyperon docs/minimal-metta.md (cons-atom/decons-atom/unify).
 # eval/chain/function/collapse are Phase 0c/0d — not yet ported.
-include("../../src/standard/Minimal.jl")
-using .Minimal
-using .Minimal.StandardMeTTa
+using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Minimal.StandardMeTTa
 using Test
 
 # build helpers

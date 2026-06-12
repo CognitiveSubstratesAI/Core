@@ -877,4 +877,40 @@ function load_metta!(space::Space, text::AbstractString)::Vector{Atom}
     results
 end
 
+# ── Precompile workload ───────────────────────────────────────────────────────
+# The evaluator's hot methods (parse → load_metta! → metta_run → interpret/match/subst over the Atom
+# union + _STEP/_RESULT tuples) compile lazily on first call — ~21s of cold-start latency paid on every
+# fresh `julia` test process. Running a representative eval HERE, during precompilation, traces those
+# specializations into the package image so cold test/CI starts warm. Defensive: a workload error must
+# never break the build, so the whole region is guarded.
+using PrecompileTools: @setup_workload, @compile_workload
+@setup_workload begin
+    stdlib = try read(joinpath(@__DIR__, "stdlib.metta"), String) catch; ""; end
+    @compile_workload begin
+        try
+            sp = Space(); isempty(stdlib) || load_metta!(sp, stdlib)
+            # arithmetic / comparison / Bool — grounded dispatch
+            load_metta!(sp, "!(+ 1 (* 2 3))")
+            load_metta!(sp, "!(if (and (< 1 2) (not False)) yes no)")
+            # let / let* — chain/decons-atom/unify hygiene
+            load_metta!(sp, "!(let* ((\$x 5) (\$y (* \$x 2))) (+ \$x \$y))")
+            # list ops — car/cdr/map/filter/foldl over the Expression path
+            load_metta!(sp, "!(map-atom (1 2 3) \$v (eval (+ \$v 1)))")
+            load_metta!(sp, "!(filter-atom (1 2 3 4) \$v (eval (> \$v 2)))")
+            load_metta!(sp, "!(foldl-atom (1 2 3 4) 0 \$a \$b (+ \$a \$b))")
+            load_metta!(sp, "!(case 2 ((1 one) (2 two)))")
+            # rule rewrite + match + get-type (query path, binding propagation, type lookup)
+            load_metta!(sp, "(= (f \$x) (g \$x))")
+            load_metta!(sp, "!(f 42)")
+            load_metta!(sp, "(rel a b)")
+            load_metta!(sp, "!(match &self (rel \$x b) \$x)")
+            load_metta!(sp, "!(get-type 5)")
+            # type-checking → BadArgType, and nondeterminism → superpose/collapse
+            load_metta!(sp, "!(+ 1 foo)")
+            load_metta!(sp, "!(collapse (superpose (1 2 3)))")
+        catch
+        end
+    end
+end
+
 end # module

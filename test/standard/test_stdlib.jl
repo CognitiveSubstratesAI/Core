@@ -1,8 +1,7 @@
 # Loads the real stdlib.metta subset (verbatim from hyperon-experimental) into the
 # StandardMeTTa evaluator and runs MeTTa programs that exercise if / let / let* / and.
-include("../../src/standard/Minimal.jl")
-using .Minimal
-using .Minimal.StandardMeTTa
+using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Minimal.StandardMeTTa
 using Test
 
 S(x) = Sym(x); E(xs...) = Expression(collect(Atom, xs)...)

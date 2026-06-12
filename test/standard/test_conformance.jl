@@ -11,9 +11,8 @@
 # Current: 176/234 directives pass. Known gaps (see nonzero baseline below): c2 named spaces / import!,
 # d-series advanced types (GADT/higher-order/dependent/auto), e-series states, f-series modules, g docs,
 # and a confirmed get-type result-re-reduction bug (d3/d4). These are NOT "passing".
-include("../../src/standard/Minimal.jl")
-using .Minimal
-using .Minimal.StandardMeTTa
+using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Minimal.StandardMeTTa
 using Test
 
 const CONF_DIR = joinpath(@__DIR__, "conformance")

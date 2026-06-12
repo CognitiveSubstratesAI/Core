@@ -1,7 +1,6 @@
 # Validates the typed atom model + matcher (src/standard/Atoms.jl) against the
 # matching semantics in docs/metta.md §Matching. Standalone (no Core dependency).
-include("../../src/standard/Atoms.jl")
-using .StandardMeTTa
+using MeTTaCore.Minimal.StandardMeTTa   # precompiled submodule (was: include fresh → recompiled per file)
 using Test
 
 @testset "StandardMeTTa: typed atoms + matcher (metta.md §Matching)" begin

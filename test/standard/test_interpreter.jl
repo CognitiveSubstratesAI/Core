@@ -1,8 +1,7 @@
 # Validates the `metta` interpreter driver (metta.md §Interpretation, untyped Phase 1a) — full
 # reduction, applicative order, nondeterminism — distinct from one-step `eval`.
-include("../../src/standard/Minimal.jl")
-using .Minimal
-using .Minimal.StandardMeTTa
+using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Minimal.StandardMeTTa
 using Test
 
 S(x) = Sym(x); V(x) = Var(x); E(xs...) = Expression(collect(Atom, xs)...)

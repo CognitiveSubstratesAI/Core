@@ -56,6 +56,12 @@ include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundati
 include("eval/Eval.jl")
 include("eval/EvalND.jl")       # OutcomeSet evaluator (nondeterministic, binding-carrying) — foundation
 
+# Standard-MeTTa evaluator (faithful hyperon interpreter.rs port). Fully SELF-CONTAINED — it does NOT
+# touch eval_metta/eval_nd and shares no types with the MORK-backed engine above; it lives here only so
+# its ~28s one-time compile is BAKED INTO the precompile cache (`MeTTaCore.Minimal`) instead of being
+# recompiled on every fresh `include` from the test files. Accessed as `MeTTaCore.Minimal`.
+include("standard/Minimal.jl")
+
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
 # we just need to install the entry.  The actual `.metta` lives at
