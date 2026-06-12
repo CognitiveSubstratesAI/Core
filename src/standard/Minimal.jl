@@ -432,6 +432,22 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
         arg.value isa Bool && return Atom[Sym("Bool")]
         arg.value isa Number && return Atom[Sym("Number")]
     end
+    # Expression: infer its return type from the head's function type (unify args, return ret type)
+    if arg isa Expression && !isempty(arg.children)
+        for ft in atom_types(arg.children[1], space)
+            (is_function_type(ft) && length(fn_arg_types(ft)) == length(arg.children) - 1) || continue
+            r = Bindings(); ok = true
+            for i in 1:length(fn_arg_types(ft))
+                matched = false
+                for ai in arg_actual_types(arg.children[i+1], space)
+                    ms = match_types_b(fn_arg_types(ft)[i], ai, r)
+                    isempty(ms) || (r = ms[1]; matched = true; break)
+                end
+                matched || (ok = false; break)
+            end
+            ok && return Atom[subst(fn_ret_type(ft), r)]
+        end
+    end
     ts = atom_types(arg, space)
     isempty(ts) ? Atom[UNDEF] : ts
 end
