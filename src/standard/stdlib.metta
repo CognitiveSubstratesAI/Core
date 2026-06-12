@@ -11,6 +11,8 @@
 (: assertEqual (-> Atom Atom (->)))
 (: assertEqualToResult (-> Atom Atom (->)))
 (: match (-> Atom Atom Atom %Undefined%))
+(: superpose (-> Expression %Undefined%))
+(: collapse (-> Atom Atom))
 
 ; ── if (stdlib.metta:512) ─────────────────────────────────────────────────────
 (= (if True $then $else) $then)

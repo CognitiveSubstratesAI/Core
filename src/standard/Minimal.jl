@@ -250,7 +250,8 @@ function eval_op(f::Frame, b::Bindings, space)
     elseif is_minimal_op(to_eval)
         return [(Frame(to_eval, collect_vars(to_eval), f.prev, no_handler, false, f.depth + 1), b)]
     else
-        space === nothing && return finished_result(NOT_REDUCIBLE, b, f.prev)
+        (space === nothing || (to_eval isa Expression && !isempty(to_eval.children) && to_eval.children[1] isa Var)) &&
+            return finished_result(NOT_REDUCIBLE, b, f.prev)   # variable-headed expr not reducible
         X = freshvar("X")
         results = query(space::Space, Expression(Sym("="), to_eval, X))
         out = Tuple{Frame,Bindings}[]
@@ -412,9 +413,9 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     out
 end
 
-"Public entry: fully evaluate `atom` in `space`; returns the result set (atoms, final bindings applied)."
+"Public entry: fully evaluate `atom` in `space`; result set (final bindings applied, Empty filtered)."
 metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
-    Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b)]
+    Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b) if !is_empty_atom(at)]
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
     _METTA_STEPS[] = 0
@@ -438,7 +439,9 @@ function interpret_expression(a::Expression, type::Atom, space::Space, b::Bindin
         return isempty(out) ? _RESULT[(EMPTY, b)] : out
     end
     op = a.children[1]; nargs = length(a.children) - 1
-    ftypes = filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
+    # variable-headed expr: skip type lookup (its query would spuriously match), still evaluate the tuple
+    ftypes = op isa Var ? Atom[] :
+        filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
     if !isempty(ftypes)
         out = _RESULT[]
         for f in ftypes
@@ -513,6 +516,7 @@ function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RES
     is_error_atom(a) && return _RESULT[(a, b)]
     (a isa Expression && !isempty(a.children)) || return _RESULT[(a, b)]
     op, opargs = a.children[1], a.children[2:end]
+    op isa Var && return _RESULT[(a, b)]                 # variable-headed expr not reducible
     out = _RESULT[]
     if is_executable(op)
         r = execute(op::Grounded, Atom[opargs...], space)
@@ -633,6 +637,14 @@ const MATCH = Grounded(SpaceOp("match", function (xs, space)
     end
     ExecOk(out)
 end))
+# superpose (grounded): turn a tuple into a nondeterministic result (each child a separate result)
+const SUPERPOSE = Grounded(Operation("superpose",
+    xs -> (length(xs) == 1 && xs[1] isa Expression) ? ExecOk(collect(Atom, xs[1].children)) : ExecNoReduce()))
+# collapse (grounded SpaceOp): collect all results of evaluating the arg into one tuple
+const COLLAPSE = Grounded(SpaceOp("collapse", function (xs, space)
+    length(xs) == 1 || return ExecNoReduce()
+    ExecOk(Atom[Expression(Atom[metta_run(xs[1], space)...])])
+end))
 
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
@@ -642,7 +654,8 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "if-equal" => IF_EQUAL, "atom-subst" => ATOM_SUBST, "sealed" => SEALED,
     "size-atom" => SIZE_ATOM, "index-atom" => INDEX_ATOM, "get-metatype" => GET_METATYPE,
     "assertEqual" => ASSERT_EQUAL, "assertEqualToResult" => ASSERT_EQUAL_TO_RESULT,
-    "context-space" => CONTEXT_SPACE, "match" => MATCH)
+    "context-space" => CONTEXT_SPACE, "match" => MATCH,
+    "superpose" => SUPERPOSE, "collapse" => COLLAPSE)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
