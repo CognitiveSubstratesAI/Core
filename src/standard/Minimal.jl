@@ -875,6 +875,30 @@ const REMOVE_ATOM = Grounded(SpaceOp("remove-atom", function (xs, space)
     ExecOk(Atom[Expression(Atom[])])
 end))
 
+# import! (hyperon): load module `<name>.metta` (found on the module search path). `(import! &kb mod)`
+# loads it into a NEW space bound to the &kb token; `(import! &self mod)` loads it into the current space.
+const _MODULE_PATH = Ref(String[])               # dirs searched for `<module>.metta` (set by the loader/host)
+const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
+    length(xs) == 2 || return ExecNoReduce()
+    target, mod = xs[1], xs[2]
+    modname = mod isa Sym ? mod.name : string(mod)
+    file = nothing
+    for d in _MODULE_PATH[]
+        p = joinpath(d, modname * ".metta"); isfile(p) && (file = p; break)
+    end
+    file === nothing && return ExecRuntime("import!: module not found: $modname")
+    text = read(file, String)
+    if target isa Grounded && target.value isa Space
+        load_metta!(target.value::Space, text)                  # &self: import into the current space
+    elseif target isa Sym
+        newsp = Space(); load_metta!(newsp, text)
+        space.tokens[(target::Sym).name] = Grounded(newsp)      # &kb: bind the token to a fresh space
+    else
+        return ExecRuntime("import!: first argument must be a space token")
+    end
+    ExecOk(Atom[Expression(Atom[])])
+end))
+
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE, "%" => MOD,
@@ -887,7 +911,8 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
-    "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM)
+    "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
+    "import!" => IMPORT)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
