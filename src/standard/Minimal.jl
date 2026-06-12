@@ -628,6 +628,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════════
 const TIMES  = _num_binop("*", *)
 const DIVIDE = _num_binop("/", /)
+const MOD    = _num_binop("%", %)
 const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
 const EQ_OP = Grounded(Operation("==", xs ->
     length(xs) == 2 ? ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")]) : ExecNoReduce()))
@@ -755,7 +756,7 @@ end))
 
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
-    "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE,
+    "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE, "%" => MOD,
     "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
     "and" => AND, "or" => OR, "not" => NOT, "id" => ID,
     "if-equal" => IF_EQUAL, "atom-subst" => ATOM_SUBST, "sealed" => SEALED,

@@ -15,6 +15,12 @@
 (: collapse (-> Atom Atom))
 (: foldl-atom (-> Expression Atom Variable Variable Atom %Undefined%))
 (: case (-> Atom Expression %Undefined%))
+; arithmetic types (so wrong-typed args yield BadArgType)
+(: + (-> Number Number Number))
+(: - (-> Number Number Number))
+(: * (-> Number Number Number))
+(: / (-> Number Number Number))
+(: % (-> Number Number Number))
 
 ; ── if (stdlib.metta:512) ─────────────────────────────────────────────────────
 (= (if True $then $else) $then)

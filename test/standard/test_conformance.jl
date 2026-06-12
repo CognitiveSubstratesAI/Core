@@ -18,7 +18,10 @@ function run_script(name)
 end
 
 @testset "conformance — hyperon b-series scripts (verbatim upstream)" begin
-    for f in ["b0_chaining_prelim.metta", "b1_equal_chain.metta", "b2_backchain.metta", "b3_direct.metta", "b4_nondeterm.metta", "b5_types_prelim.metta"]
+    for f in ["a1_symbols.metta", "a2_opencoggy.metta",
+              "b0_chaining_prelim.metta", "b1_equal_chain.metta", "b2_backchain.metta",
+              "b3_direct.metta", "b4_nondeterm.metta", "b5_types_prelim.metta",
+              "c3_pln_stv.metta"]
         @testset "$f" begin
             errs = run_script(f)
             for e in errs; @info "conformance failure" script=f expr=to_sexpr_via(e); end
