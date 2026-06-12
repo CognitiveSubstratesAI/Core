@@ -21,7 +21,7 @@ include("Atoms.jl")
 using .StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
-export metta_run, metta_results
+export metta_run, metta_results, parse_program, load_metta!, tokenize
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -509,6 +509,86 @@ function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RES
         end
     end
     isempty(out) ? _RESULT[(EMPTY, b)] : out
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Parser (metta.md §Syntax) — MeTTa text → typed Atom. Grounded atoms are built by a
+# token registry (regex/string → constructor), exactly as the spec describes.
+# ═══════════════════════════════════════════════════════════════════════════════
+const TIMES  = _num_binop("*", *)
+const DIVIDE = _num_binop("/", /)
+const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
+const EQ_OP = Grounded(Operation("==", xs ->
+    length(xs) == 2 ? ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")]) : ExecNoReduce()))
+# token registry: operator words → their grounded atoms (the tokenizer constructors)
+const TOKEN_REGISTRY = Dict{String,Atom}(
+    "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE,
+    "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP)
+
+function tokenize(s::AbstractString)::Vector{String}
+    cs = collect(s); n = length(cs); toks = String[]; i = 1
+    while i <= n
+        c = cs[i]
+        if isspace(c); i += 1
+        elseif c == ';'; while i <= n && cs[i] != '\n'; i += 1; end
+        elseif c == '(' || c == ')'; push!(toks, string(c)); i += 1
+        elseif c == '"'
+            i += 1; buf = Char[]
+            while i <= n && cs[i] != '"'
+                (cs[i] == '\\' && i < n) && (i += 1)
+                push!(buf, cs[i]); i += 1
+            end
+            i += 1
+            push!(toks, "\"" * String(buf))                # leading-quote marks a string token
+        else
+            j = i
+            while j <= n && !isspace(cs[j]) && cs[j] != '(' && cs[j] != ')' && cs[j] != ';'; j += 1; end
+            push!(toks, String(cs[i:j-1])); i = j
+        end
+    end
+    toks
+end
+
+function parse_atom(tok::String)::Atom
+    startswith(tok, "\"") && return Grounded(tok[nextind(tok, 1):end])      # string
+    startswith(tok, "\$") && return Var(tok[nextind(tok, 1):end])           # variable
+    haskey(TOKEN_REGISTRY, tok) && return TOKEN_REGISTRY[tok]               # grounded operator
+    let n = tryparse(Int, tok); n !== nothing && return Grounded(n); end     # integer
+    let f = tryparse(Float64, tok); f !== nothing && return Grounded(f); end # float
+    Sym(tok)
+end
+
+function parse_from(toks::Vector{String}, i::Base.RefValue{Int})::Atom
+    tok = toks[i[]]
+    if tok == "("
+        i[] += 1; ch = Atom[]
+        while i[] <= length(toks) && toks[i[]] != ")"; push!(ch, parse_from(toks, i)); end
+        i[] <= length(toks) && (i[] += 1)
+        return Expression(ch)
+    else
+        i[] += 1; return parse_atom(tok)
+    end
+end
+
+"Parse a MeTTa program into (is_directive, atom) pairs (`!` at top level = directive)."
+function parse_program(text::AbstractString)::Vector{Tuple{Bool,Atom}}
+    toks = tokenize(text); i = Ref(1); out = Tuple{Bool,Atom}[]
+    while i[] <= length(toks)
+        directive = false
+        toks[i[]] == "!" && (directive = true; i[] += 1)
+        i[] > length(toks) && break
+        push!(out, (directive, parse_from(toks, i)))
+    end
+    out
+end
+
+"Load MeTTa text into `space`: add definitions/data, run `!`-directives; return directive results."
+function load_metta!(space::Space, text::AbstractString)::Vector{Atom}
+    results = Atom[]
+    for (directive, atom) in parse_program(text)
+        directive ? append!(results, metta_run(atom, space)) : add_atom!(space, atom)
+    end
+    results
 end
 
 end # module

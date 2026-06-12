@@ -58,3 +58,24 @@ end
     @test metta_run(E(S("let"), V("x"), E(PLUS, Grounded(1), Grounded(2)), E(S("g"), V("x"))), splet) ==
           Atom[E(S("g"), Grounded(3))]
 end
+
+@testset "metta parser + loader (metta.md §Syntax) — end to end from text" begin
+    prog = """
+    ; `if` defined as = rules, loaded from TEXT (not constructed)
+    (: if (-> Bool Atom Atom \$t))
+    (= (if True  \$t \$e) \$t)
+    (= (if False \$t \$e) \$e)
+    (= (double \$x) (+ \$x \$x))
+    !(if True a b)          ; → a
+    !(+ 1 (* 2 3))          ; → 7  (applicative: (* 2 3) first)
+    !(double 21)            ; → 42
+    """
+    results = load_metta!(Space(), prog)
+    @test results == Atom[S("a"), Grounded(7), Grounded(42)]
+
+    # tokenizer/parse spot checks
+    @test tokenize("(a \$x 1)") == ["(", "a", "\$x", "1", ")"]
+    let (d, atom) = parse_program("!(+ 1 2)")[1]
+        @test d == true && atom == E(PLUS, Grounded(1), Grounded(2))
+    end
+end
