@@ -58,6 +58,31 @@ The nondeterminism category — the dominant root cause — is essentially close
 `b4` misses (`collapse (shape)` on an undefined symbol, `find-equal`) are edge cases, not the core gap.
 This confirms the `OutcomeSet` model is the right and sufficient fix for category ①.
 
+## Wire-in diagnosis (2026-06-12) — the flip is a semantic migration, not a hardening
+
+Routing `run_metta`'s `!` through `eval_nd` broke `test_ecan`. Root cause, pinned to a minimal repro:
+
+| | bare `(match …)` on no-match | `(let $old (match…) (if (== $old ()) …))` |
+|---|---|---|
+| `eval_metta` | `()` (a value) | runs the body (`$old=()`) |
+| `eval_nd` | **no results** (empty stream — MeTTa-correct) | **body never runs** → `add-atom`/side-effect skipped |
+
+So `eval_nd` is **MeTTa-correct** (empty match = no results); **Core's libraries are written against
+`eval_metta`'s non-standard convention** that an empty match returns the value `()` (the `(== $x ())`
+empty-check idiom). `set-fluid-viscosity!`'s state-update silently no-ops under `eval_nd`.
+
+**Scope: 27 lib files** use `(== $x ())` (MOSES, PLN, ECAN, MetaMo, ActPC-Chem, hyperseed). So a global
+flip would break the library layer. Options:
+- **(A) make `eval_nd`'s empty match return `()`** — REJECTED: breaks `collapse` over an empty match
+  (`(())` vs `()`), regressing b4 conformance, and un-MeTTa-fies the engine.
+- **(B) keep `eval_nd` opt-in** (default stays `eval_metta`) — the conformance win (frog/b3/b4/streaming)
+  is real and available via `eval_nd_results`; no library migration forced. **Recommended near-term.**
+- **(C) migrate the 27 libs** to MeTTa-correct idioms (collapse-wrap empty checks), then flip — the real
+  path to default conformance, but a bounded multi-file migration that risks library correctness.
+
+**Verdict:** the flip is precisely a **library-convention migration (C)**, not days of bug-fixing. Bank
+`eval_nd` as opt-in (B) until MeTTa conformance is prioritized over the existing library conventions.
+
 ## Next
 1. Build the `OutcomeSet`-valued evaluator (the §2c blueprint), gated by b0/b2/b3/b4.
 2. Fix the harness's result-set unwrapping for exact pass counts; vendor/pin the reference scripts.
