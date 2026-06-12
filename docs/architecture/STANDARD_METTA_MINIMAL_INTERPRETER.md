@@ -1,72 +1,79 @@
-# Adopting standard MeTTa: minimal interpreter + stdlib-in-MeTTa
+# Adopting standard MeTTa: only grounded symbols + `=`-rule stdlib (no special-form layer)
 
-**Decision (2026-06-12):** Core should adopt the *standard MeTTa architecture* — a minimal interpreter
-core plus the language defined in MeTTa — not just swap its tree-walking evaluator. Verified against
-hyperon-experimental source.
+**Decision (2026-06-12):** Core should adopt the standard MeTTa architecture as it exists in
+**hyperon-experimental** (the port reference). The whole language is **typed stdlib symbols**, and there
+are exactly **two** kinds of thing — no third "interpreter special-form" category.
 
-## The finding (verified, not asserted)
+## The model (this is all there is)
 
-Standard MeTTa (hyperon-experimental) splits evaluation in two:
+Every symbol in MeTTa's corelib has a type and is realized in exactly ONE of two ways:
 
-1. **A minimal interpreter core** — `lib/src/metta/interpreter.rs` implements ONLY ~11 primitive
-   instructions: `eval`, `evalc`, `chain`, `function`, `return`, `unify`, `cons-atom`, `decons-atom`,
-   `collapse-bind`, `superpose-bind`, `metta`. That is the entire interpreter.
+1. **Grounded** — a host (Rust/Julia) function. Includes arithmetic and comparisons (`+ - * / % < == …`),
+   space ops (`add-atom remove-atom get-atoms new-space match`), expression ops (`cons-atom decons-atom
+   car-atom cdr-atom size-atom index-atom`), the evaluation primitives (`eval evalc chain unify function
+   return collapse-bind superpose-bind metta`), and reflection (`get-type get-metatype sealed quote …`).
+   These can't be expressed in pure MeTTa — they touch the host, the space, or evaluation control.
 
-2. **The language, defined IN MeTTa** — `lib/src/metta/runner/stdlib/stdlib.metta` (1421 lines) defines
-   `if`, `let`, `let*`, `case`, `switch`, `collapse`, `superpose`, `and`/`or`/`not`, `match`, list ops,
-   … as ordinary equalities on top of the minimal core:
+2. **`=`-rule** — defined IN MeTTa, in `stdlib.metta`, on top of the grounded set:
    ```metta
    (= (if True  $then $else) $then)
    (= (if False $then $else) $else)
    (= (let  $pattern $atom $template) (unify $atom $pattern $template Empty))
    (= (let* $pairs $template) (chain (decons-atom $pairs) $ht (unify ($head $tail) $ht …)))
    ```
-   `if`/`let`/`case`/`collapse` are NOT interpreter built-ins. (stdlib.metta:512,543,553,346,1204,1225.)
+   `if let let* case switch collapse superpose and or not xor foldl-atom map-atom filter-atom …` are ALL
+   here — ordinary `=` rules, NOT interpreter built-ins.
 
-## Core's divergence (both evaluators are non-standard in shape)
+**The evaluator is therefore just two rules** (this is the entire interpreter):
+1. head is **grounded** → call the host function;
+2. otherwise → query `(= (head args) $x)` and rewrite, nondeterministically (OutcomeSet).
 
-| | semantics | architecture |
+There is no `if`/`let`/`case`/`collapse` logic *in the evaluator*. Those are stdlib `=` rules that get
+loaded and bottom out in grounded ops. (Earlier framing called the grounded evaluation primitives an
+"11-instruction interpreter core" — that's misleading: `eval`/`chain`/`unify`/`function`/`collapse-bind`/
+… are just grounded stdlib symbols, same bucket as `+` and `car-atom`. They are not a separate layer.)
+
+## Core's divergence
+
+Both Core evaluators invented the illegitimate **third category** — they hardcode `if`/`let`/`let*`/
+`case`/`switch`/`collapse`/`match` as Julia branches (`EvalND.jl:110-181`, and similarly `eval_metta`):
+
+| | semantics | shape |
 |---|---|---|
-| `eval_metta` | non-standard (single-value, first-match, empty-match→`()`) | hardcoded forms in Julia |
-| `eval_nd` | **standard OutcomeSet** (verified ≡ hyperon/CeTTa) | **still hardcoded** — `if`/`let`/`let*`/`case`/`switch`/`collapse`/`match` are Julia branches (`EvalND.jl:110-181`) |
+| `eval_metta` | non-standard (single-value, first-match, empty-match→`()`) | special-form switch in Julia |
+| `eval_nd` | OutcomeSet (≡ hyperon/CeTTa result model) | **still** a special-form switch in Julia |
 
-So `eval_nd` fixed the *semantics* but kept the *wrong architecture*. "Adopt standard MeTTa" means
-adopting the **minimal-core + stdlib-in-MeTTa** shape, which dissolves BOTH the evaluator duality AND
-the hardcoded-special-form problem — and the SD-2/SD-3 library workarounds along with them.
+`eval_nd` is NOT standard and NOT the destination — there is no `eval_nd` in MeTTa. It's scaffolding; its
+only standard property is its `(value,bindings)` result model. Reuse its machinery (unify, env-merge,
+fan-out, hygiene, grounded dispatch) to build the grounded set, then DELETE both `eval_nd` and
+`eval_metta`. Neither survives.
 
-**Important — `eval_nd` is NOT standard and is NOT the destination.** There is no `eval_nd` in standard
-MeTTa; the standard interpreter is the 11 named instructions below. `eval_nd` is a custom monolithic
-function whose only standard property is that its *result model* (a set of `(value, bindings)`) matches
-what the standard `eval`/`evalc` produce. It is **scaffolding**: we reuse its machinery (unify,
-env-merge, cartesian fan-out, hygiene, grounded dispatch) to BUILD the standard instructions, then
-DELETE `eval_nd` itself. Neither `eval_nd` nor `eval_metta` survives.
+## Target = the two-rule evaluator + the two symbol categories
 
-## Target architecture
+1. **Grounded registry (Julia):** register the corelib grounded symbols as host functions (many already
+   exist in Core's grounded layer — audit against hyperon's Rust stdlib registrations).
+2. **Load `stdlib.metta` (`=` rules):** port hyperon-experimental's `stdlib.metta` into Core so
+   `if`/`let`/`case`/… are MeTTa, not Julia.
+3. **Evaluator = grounded-dispatch + rewrite-by-`=`**, returning an OutcomeSet. Delete every special-form
+   branch and both legacy evaluators; delete the SD-2/SD-3 library workarounds (correct semantics from
+   the grounded core dissolves them).
 
-1. **Minimal OutcomeSet interpreter (Julia):** implement only the ~11 instructions. `eval_nd` already
-   has the hard machinery — unify, env merge, cartesian fan-out, alpha-rename hygiene, grounded dispatch
-   — so this is a *refactor down* to the instruction set, deleting the special-form switch.
-2. **Port `stdlib.metta` into Core:** `if`/`let`/`let*`/`case`/`switch`/`collapse`/`superpose`/`match`/
-   `and`/`or`/`not`/list-ops as MeTTa definitions (Core dialect).
-3. **Retire** `eval_metta`, `eval_nd`'s special-form branches, and the library SD-2/SD-3 workarounds.
+## Port reference (hyperon-experimental — read these, don't re-derive)
 
-## Payoff
-
-- Literally hyperon's architecture → conformance by construction, not by chasing divergences.
-- Special forms become MeTTa: inspectable, overridable, portable, debuggable in MeTTa.
-- One move collapses: eval_metta/eval_nd duality + hardcoded switch + library workarounds.
+- `lib/src/metta/runner/stdlib/stdlib.metta` — the `=`-rule symbols (1421 lines).
+- `lib/src/metta/runner/stdlib/*.rs` — the grounded registrations (which symbols are host functions).
+- `lib/src/metta/interpreter.rs` — the grounded evaluation primitives (`eval`/`chain`/`unify`/…).
+- The corelib doc the user shared (the typed symbol list) — the authoritative surface to cover.
 
 ## Plan (ordered, multi-session)
 
-- **Phase 0 — prototype:** implement the instruction set (`eval`/`chain`/`unify`/`cons-atom`/
-  `decons-atom`/`function`/`return`/`collapse-bind`/`superpose-bind`); load a tiny ported stdlib
-  (`if`, `let` via `unify`); PROVE `if`/`let` work as MeTTa definitions, not Julia. Gate: the frog/b3
-  fixtures still pass with `if`/`let` removed from Julia.
-- **Phase 1 — full stdlib:** port the rest of stdlib.metta's forms; gate on hyperon b-series + the dual
-  ECAN tracker.
-- **Phase 2 — libraries + flip:** migrate Core libs off the workarounds; route `run_metta` through the
-  minimal interpreter.
-- **Phase 3 — delete:** remove `eval_metta`, the special-form branches, and the workarounds.
+- **Phase 0 — prototype the two-rule evaluator:** grounded-dispatch + rewrite-by-`=` returning an
+  OutcomeSet; load a tiny ported stdlib (`if`, `let` via `unify`); PROVE `if`/`let` evaluate as `=` rules
+  with NO `if`/`let` code in Julia. Gate: frog/b3 fixtures pass.
+- **Phase 1 — full stdlib:** port the rest of `stdlib.metta`; audit the grounded registry vs hyperon;
+  gate on hyperon b-series + the dual ECAN tracker.
+- **Phase 2 — libraries + flip:** migrate Core libs off the SD-2/SD-3 workarounds; route `run_metta`
+  through the new evaluator.
+- **Phase 3 — delete:** remove `eval_metta`, `eval_nd`, the special-form branches, the workarounds.
 
-This is the genuine "adopt standard MeTTa" — larger than swapping evaluators, but the correct foundation.
-See `CONFORMANCE_AUDIT.md` (eval_nd ≡ reference semantics) and `E1_SCOPE.md`.
+See `CONFORMANCE_AUDIT.md` (eval_nd's result model ≡ reference) and `E1_SCOPE.md`.
