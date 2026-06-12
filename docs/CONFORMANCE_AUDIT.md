@@ -83,6 +83,28 @@ flip would break the library layer. Options:
 **Verdict:** the flip is precisely a **library-convention migration (C)**, not days of bug-fixing. Bank
 `eval_nd` as opt-in (B) until MeTTa conformance is prioritized over the existing library conventions.
 
+### Migration ATTEMPTED (2026-06-12) — option C is NOT a mechanical refactor
+
+Migrated all 10 ECAN bare-match setters (`set-av!`, `set-funds-*!`, `set-fluid-*!`, tick setters, …)
+from the bare-match `()` idiom to MeTTa-correct `(collapse (match …))` + `(car-atom $olds)`. **Result:
+25 regressions** in the eval_metta acceptance suite (`CoreAV`/`Wages`/`Rent`/`Stimulate`/`Spreading`/
+`Governance`/`Fluid`/`Forgetting`). **Reverted — baseline green restored.**
+
+Why it isn't mechanical (the trap): collapse+car-atom **works in isolation** — a single atom-template
+match collapses to a true 1-element list, `car-atom` extracts the whole atom, `size-atom`→1, in BOTH
+`eval_metta` AND `eval_nd`, at top-level AND inside a rule body (all verified by probe). Yet the suite
+regresses. The breakage is an **interaction**, not a unit fault: the setters touch global `AttentionFunds`/
+`ECATick` state; under the real workload the collapse-form drifts that state (accumulation / stale reads)
+in ways the isolated component doesn't surface. The libraries' existing workarounds (`drop-collapse`,
+`find-first-number`, `Box`/`unbox` — see `SEMANTIC_DELTA.md` SD-2/SD-3) exist precisely to dodge this.
+
+**Reframed long-term path (supersedes "just migrate the libs"):** the migration is *downstream* of
+evaluator semantics. The right order is (1) **harden `eval_nd` into a provable drop-in on the full
+stateful library workloads** — stand up a permanent dual-evaluator ECAN (then MOSES) gate and root-cause
+each divergence; (2) once `eval_nd`'s `collapse`/`match`/state semantics are demonstrably consistent,
+the libraries can *drop* their SD-2/SD-3 workarounds (simpler, not more complex); (3) then flip. Do NOT
+re-attempt a standalone collapse+car-atom library refactor against the current evaluator — it regresses.
+
 ## Next
 1. Build the `OutcomeSet`-valued evaluator (the §2c blueprint), gated by b0/b2/b3/b4.
 2. Fix the harness's result-set unwrapping for exact pass counts; vendor/pin the reference scripts.
