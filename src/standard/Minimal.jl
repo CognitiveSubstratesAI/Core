@@ -132,9 +132,16 @@ function unify_op(f::Frame, b::Bindings)
     (a isa Expression && length(a.children) == 5) ||
         return finished_result(error_atom(a, "expected (unify <atom> <pattern> <then> <else>)"), b, f.prev)
     atom, pattern, then, else_ = a.children[2], a.children[3], a.children[4], a.children[5]
-    matches = match_atoms(subst(atom, b), subst(pattern, b))
+    satom = subst(atom, b)
     out = Tuple{Frame,Bindings}[]
-    for m in matches
+    # hyperon: a Grounded Space implements a custom match_ → `unify` QUERIES the space (used by get-doc)
+    if satom isa Grounded && satom.value isa Space
+        for mb in _match_pat(satom.value::Space, subst(pattern, b), b)
+            append!(out, finished_result(subst(then, mb), mb, f.prev))
+        end
+        return isempty(out) ? finished_result(subst(else_, b), b, f.prev) : out
+    end
+    for m in match_atoms(satom, subst(pattern, b))
         for mb in merge_bindings(b, m)
             append!(out, finished_result(subst(then, mb), mb, f.prev))
         end

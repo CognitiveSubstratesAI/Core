@@ -8,9 +8,8 @@
 # test; an unrecorded improvement (errors go down) ALSO fails, forcing the baseline to be updated and
 # kept honest. The matrix is printed every run so the incomplete state is always visible, never hidden.
 #
-# Current: 176/234 directives pass. Known gaps (see nonzero baseline below): c2 named spaces / import!,
-# d-series advanced types (GADT/higher-order/dependent/auto), e-series states, f-series modules, g docs,
-# and a confirmed get-type result-re-reduction bug (d3/d4). These are NOT "passing".
+# Current: 231/234 directives pass. Remaining gaps (see nonzero baseline below): d5 auto-types (1) and
+# f1 diamond-imports / get-atoms (2). These are NOT "passing".
 using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
 using MeTTaCore.Minimal.StandardMeTTa
 using Test
@@ -29,7 +28,7 @@ const BASELINE = Dict(
     "d5_auto_types.metta"=>1,
     "e1_kb_write.metta"=>0, "e2_states.metta"=>0, "e3_match_states.metta"=>0,
     "f1_imports.metta"=>2, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
-    "g1_docs.metta"=>5)
+    "g1_docs.metta"=>0)
 
 function script_errors(name)
     sp = Space(); load_metta!(sp, STDLIB)

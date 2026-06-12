@@ -94,3 +94,70 @@
   (function (unify $atom $pattern
     (return $template)
     (chain (eval (switch-minimal $atom $tail)) $ret (return $ret)) )))
+
+; ── is-function (stdlib.metta:376) ───────────────────────────────────────────
+(: is-function (-> Type Bool))
+(= (is-function $type)
+  (let $mtype (get-metatype $type)
+    (unify $mtype Expression
+      (let $size (size-atom $type)
+        (unify $size 0
+          False
+          (let ($h $t) (decons-atom $type)
+            (unify $h -> True False))))
+      False)))
+
+; ── documentation system (get-doc — 1-arg over &self; Empty when undocumented) ─
+; Ported from hyperon stdlib.metta:796-875 (the @doc/@doc-formal model). The space arg
+; is dropped (these query &self); get-type-space → get-type. `unify &self <pat> …` queries
+; the space (the Grounded Space implements custom match_, like hyperon).
+(: get-doc (-> Atom %Undefined%))
+(= (get-doc $atom)
+  (let $meta-type (get-metatype $atom)
+    (case $meta-type (
+      (Expression (get-doc-atom $atom))
+      ($_ (get-doc-single-atom $atom)) ))))
+
+(: get-doc-single-atom (-> Atom %Undefined%))
+(= (get-doc-single-atom $atom)
+  (let $type (get-type $atom)
+    (if (is-function $type)
+      (get-doc-function $atom $type)
+      (get-doc-atom $atom) )))
+
+(: get-doc-function (-> Atom Type %Undefined%))
+(= (get-doc-function $name $type)
+  (unify &self (@doc $name $desc (@params $params) $ret)
+    (let $type' (if (== $type %Undefined%) (undefined-doc-function-type $params) (cdr-atom $type))
+    (let ($params' $ret') (get-doc-params $params $ret $type')
+      (@doc-formal (@item $name) (@kind function) (@type $type) $desc (@params $params') $ret')))
+    Empty ))
+
+(: undefined-doc-function-type (-> Expression Type))
+(= (undefined-doc-function-type $params)
+  (if (== () $params) (%Undefined%)
+    (let $params-tail (cdr-atom $params)
+    (let $tail (undefined-doc-function-type $params-tail)
+      (cons-atom %Undefined% $tail) ))))
+
+(: get-doc-params (-> Expression Atom Expression (Expression Atom)))
+(= (get-doc-params $params $ret $types)
+  (let $head-type (car-atom $types)
+  (let $tail-types (cdr-atom $types)
+    (if (== () $params)
+      (let (@return $ret-desc) $ret
+        (() (@return (@type $head-type) (@desc $ret-desc))) )
+      (let (@param $param-desc) (car-atom $params)
+        (let $tail-params (cdr-atom $params)
+        (let ($params' $result-ret) (get-doc-params $tail-params $ret $tail-types)
+        (let $result-params (cons-atom (@param (@type $head-type) (@desc $param-desc)) $params')
+          ($result-params $result-ret) ))))))))
+
+(: get-doc-atom (-> Atom %Undefined%))
+(= (get-doc-atom $atom)
+  (let $type (get-type $atom)
+    (unify &self (@doc $atom $desc)
+      (@doc-formal (@item $atom) (@kind atom) (@type $type) $desc)
+      (unify &self (@doc $atom $desc' (@params $params) $ret)
+        (get-doc-function $atom %Undefined%)
+        Empty ))))
