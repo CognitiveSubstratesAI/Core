@@ -13,6 +13,7 @@
 (: match (-> Atom Atom Atom %Undefined%))
 (: get-type (-> Atom %Undefined%))
 (: get-metatype (-> Atom Atom))
+(: = (-> $t $t %Undefined%))
 (: superpose (-> Expression %Undefined%))
 (: collapse (-> Atom Atom))
 (: foldl-atom (-> Expression Atom Variable Variable Atom %Undefined%))
