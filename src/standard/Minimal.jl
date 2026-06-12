@@ -648,14 +648,17 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
         arg.value isa AbstractString && return Atom[Sym("String")]
         arg.value isa StateCell && return Atom[arg.value.vtype]   # intrinsic (StateMonad T) (space.rs:55)
     end
-    # Expression: infer its return type from the head's function type (unify args, return ret type)
+    # Expression: infer its return type by applying the HEAD's function type to the args. The head's types
+    # are got recursively (types.rs:400-403 op_value_types) — so an EXPRESSION head like `(curry +)` has
+    # its type INFERRED, enabling higher-order/curried application `((curry +) 2)`.
     if arg isa Expression && !isempty(arg.children)
-        ftypes = filter(t -> is_function_type(t) && length(fn_arg_types(t)) == length(arg.children) - 1,
-                        atom_types(arg.children[1], space))
-        if !isempty(ftypes)
-            for ft in ftypes
+        head = arg.children[1]; nargs = length(arg.children) - 1
+        head_types = head isa Expression ? arg_actual_types(head, space) : atom_types(head, space)
+        func_types = filter(is_function_type, head_types)
+        if !isempty(func_types)                 # a function application
+            for ft in filter(t -> length(fn_arg_types(t)) == nargs, func_types)
                 r = Bindings(); ok = true
-                for i in 1:length(fn_arg_types(ft))
+                for i in 1:nargs
                     matched = false
                     for ai in arg_actual_types(arg.children[i+1], space)
                         ms = match_types_b(fn_arg_types(ft)[i], ai, r)
@@ -665,7 +668,7 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
                 end
                 ok && return Atom[subst(fn_ret_type(ft), r)]
             end
-            return Atom[]                       # has function type(s) but args don't fit → ill-typed (no type)
+            return Atom[]                       # function head but no overload fits (arity/args) → ill-typed
         end
     end
     ts = atom_types(arg, space)

@@ -25,7 +25,7 @@ const BASELINE = Dict(
     "b0_chaining_prelim.metta"=>0, "b1_equal_chain.metta"=>0, "b2_backchain.metta"=>0,
     "b3_direct.metta"=>0, "b4_nondeterm.metta"=>0, "b5_types_prelim.metta"=>0,
     "c1_grounded_basic.metta"=>0, "c2_spaces.metta"=>0, "c2_spaces_kb.metta"=>0, "c3_pln_stv.metta"=>0,
-    "d1_gadt.metta"=>1, "d2_higherfunc.metta"=>3, "d3_deptypes.metta"=>0, "d4_type_prop.metta"=>0,
+    "d1_gadt.metta"=>0, "d2_higherfunc.metta"=>0, "d3_deptypes.metta"=>0, "d4_type_prop.metta"=>0,
     "d5_auto_types.metta"=>1,
     "e1_kb_write.metta"=>0, "e2_states.metta"=>0, "e3_match_states.metta"=>0,
     "f1_imports.metta"=>2, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
