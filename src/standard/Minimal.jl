@@ -413,9 +413,15 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     out
 end
 
-# match_types (metta.md:298): %Undefined%/Atom on either side matches anything
-match_types(t1::Atom, t2::Atom) =
-    (t1 == UNDEF || t1 == ATOM_T || t2 == UNDEF || t2 == ATOM_T) || !isempty(match_atoms(t1, t2))
+# match_types with bindings (metta.md:298 + binding threading): the binding sets under which the two
+# types unify (empty = no match). %Undefined%/Atom on either side matches with no new binding. Applying
+# `b` first lets a type variable bound by an earlier argument constrain a later one (polymorphism).
+function match_types_b(t1::Atom, t2::Atom, b::Bindings)::Vector{Bindings}
+    (t1 == UNDEF || t1 == ATOM_T || t2 == UNDEF || t2 == ATOM_T) && return Bindings[b]
+    out = Bindings[]
+    for m in match_atoms(subst(t1, b), subst(t2, b)); append!(out, merge_bindings(b, m)); end
+    out
+end
 
 # actual type(s) of an argument (hyperon get_atom_types_internal types.rs:376):
 # Variable → %Undefined% (NOT a (: $v $T) query — that spuriously matches every decl);
@@ -430,15 +436,24 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
     isempty(ts) ? Atom[UNDEF] : ts
 end
 
-# check_argument_type per arg (metta.md:429) → BadArgType errors (1-based arg index)
+# check_if_function_type_is_applicable arg loop (metta.md:384): thread type-variable bindings across
+# args; an arg with no matching actual type under any threaded binding → BadArgType. Returns the errors
+# only when NO valid type-assignment path survives (so a polymorphic (-> $t $t Bool) enforces same $t).
 function type_check_errors(a::Expression, ftype::Expression, space::Space)::Vector{Atom}
-    ats = fn_arg_types(ftype); errs = Atom[]
+    ats = fn_arg_types(ftype); errs = Atom[]; results = Bindings[Bindings()]
     for i in 1:length(ats)
         actuals = arg_actual_types(a.children[i+1], space)
-        any(at -> match_types(ats[i], at), actuals) ||
-            push!(errs, Expression(ERROR, a, Expression(Sym("BadArgType"), Grounded(i), ats[i], actuals[1])))
+        next = Bindings[]
+        for r in results, at in actuals
+            ms = match_types_b(ats[i], at, r)
+            isempty(ms) ?
+                push!(errs, Expression(ERROR, a, Expression(Sym("BadArgType"), Grounded(i), subst(ats[i], r), at))) :
+                append!(next, ms)
+        end
+        results = next
+        isempty(results) && return errs                 # no valid path → these BadArgType errors
     end
-    errs
+    Atom[]                                               # a path survived → applicable, no error
 end
 
 "Public entry: fully evaluate `atom` in `space`; result set (final bindings applied, Empty filtered)."
