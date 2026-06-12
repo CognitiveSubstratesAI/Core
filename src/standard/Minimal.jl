@@ -878,13 +878,30 @@ end))
 # import! (hyperon): load module `<name>.metta` (found on the module search path). `(import! &kb mod)`
 # loads it into a NEW space bound to the &kb token; `(import! &self mod)` loads it into the current space.
 const _MODULE_PATH = Ref(String[])               # dirs searched for `<module>.metta` (set by the loader/host)
+# module spec → name, accepting all the forms the reference impls take: a bare symbol (`f1_moduleA`),
+# a string (hyperon's stated target form; PeTTa coerces via atom_string), or a `(library X)` spec
+# (PeTTa/CeTTa). Cross-checked vs CeTTa eval.c resolve_import_destination + PeTTa metta.pl importer_helper.
+function _import_modname(mod::Atom)::Union{String,Nothing}
+    mod isa Sym && return mod.name
+    mod isa Grounded && mod.value isa AbstractString && return mod.value
+    if mod isa Expression && length(mod.children) == 2 && mod.children[1] == Sym("library")
+        c = mod.children[2]
+        c isa Sym && return c.name
+        c isa Grounded && c.value isa AbstractString && return c.value
+    end
+    nothing
+end
 const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
     length(xs) == 2 || return ExecNoReduce()
     target, mod = xs[1], xs[2]
-    modname = mod isa Sym ? mod.name : string(mod)
+    modname = _import_modname(mod)
+    modname === nothing && return ExecRuntime("import!: expects a module name (symbol, string, or (library X))")
     file = nothing
     for d in _MODULE_PATH[]
-        p = joinpath(d, modname * ".metta"); isfile(p) && (file = p; break)
+        for cand in (modname, modname * ".metta")            # accept a bare name or an explicit path
+            p = isabspath(cand) ? cand : joinpath(d, cand); isfile(p) && (file = p; break)
+        end
+        file !== nothing && break
     end
     file === nothing && return ExecRuntime("import!: module not found: $modname")
     text = read(file, String)
