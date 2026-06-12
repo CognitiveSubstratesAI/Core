@@ -31,3 +31,19 @@ only_result(atom) = (rs = bare_eval(atom); @assert length(rs) == 1 "got $(length
     @test only_result(E(S("foo"), a)) == E(S("foo"), a)
     @test only_result(a) == a
 end
+
+@testset "Minimal MeTTa: eval (minimal-metta.md §eval)" begin
+    # (= (foo) (bar)) (= (bar) a)
+    sp = Space(Atom[E(S("="), E(S("foo")), E(S("bar"))),
+                    E(S("="), E(S("bar")), S("a"))])
+    ev(x) = (rs = bare_eval(x, sp); @assert length(rs) == 1 "got $(length(rs)): $rs"; rs[1])
+
+    @test ev(E(S("eval"), E(S("foo")))) == E(S("bar"))     # ONE step: (foo)→(bar), not a
+    @test ev(E(S("eval"), E(S("bar")))) == S("a")
+    @test ev(E(S("eval"), E(S("baz")))) == S("NotReducible")
+    # grounded: (eval (+ 1 2)) → 3 ; (eval (+ 1 a)) → NotReducible (a not a number)
+    @test ev(E(S("eval"), E(PLUS, Grounded(1), Grounded(2)))) == Grounded(3)
+    @test ev(E(S("eval"), E(PLUS, Grounded(1), S("a"))))      == S("NotReducible")
+    # eval does NOT recurse into subexpressions: (eval (+ (+ 1 2) 3)) → NotReducible
+    @test ev(E(S("eval"), E(PLUS, E(PLUS, Grounded(1), Grounded(2)), Grounded(3)))) == S("NotReducible")
+end

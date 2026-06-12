@@ -20,7 +20,7 @@ module Minimal
 include("Atoms.jl")
 using .StandardMeTTa
 
-export interpret, bare_eval
+export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -87,7 +87,7 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     if name == "cons-atom";    return cons_atom(f, b)
     elseif name == "decons-atom"; return decons_atom(f, b)
     elseif name == "unify";    return unify_op(f, b)
-    elseif name == "eval";     return finished_result(error_atom(f.atom, "eval not yet ported — Phase 0c"), b, f.prev)
+    elseif name == "eval";     return eval_op(f, b, space)
     elseif name == "chain";    return finished_result(error_atom(f.atom, "chain not yet ported — Phase 0c"), b, f.prev)
     elseif name == "function"; return finished_result(error_atom(f.atom, "function not yet ported — Phase 0c"), b, f.prev)
     elseif name == "collapse-bind" || name == "superpose-bind"
@@ -136,6 +136,96 @@ function cons_atom(f::Frame, b::Bindings)
     (tail isa Expression) ||
         return finished_result(error_atom(a, "expected: (cons-atom <head> (: <tail> Expression))"), b, f.prev)
     finished_result(Expression(Atom[head; tail.children]), b, f.prev)
+end
+
+# ── grounded functions + space (the layer eval needs) ────────────────────────
+# Idiomatic Julia: a grounded operation is `Grounded{Operation}`; multiple dispatch +
+# parametric Grounded{T} replace hyperon's `Box<dyn GroundedAtom>` / downcast.
+struct ExecOk; results::Vector{Atom}; end
+struct ExecNoReduce end
+struct ExecRuntime; msg::String; end
+const ExecResult = Union{ExecOk,ExecNoReduce,ExecRuntime}
+
+struct Operation
+    name::String
+    fn::Function          # (args::Vector{Atom}) -> ExecResult
+end
+Base.show(io::IO, o::Operation) = print(io, o.name)
+
+is_executable(a::Atom) = a isa Grounded && a.value isa Operation
+execute(g::Grounded, opargs::Vector{Atom})::ExecResult = g.value.fn(opargs)
+
+# arithmetic (normal order — eval passes args UNreduced; non-numbers ⇒ NoReduce ⇒ NotReducible)
+function _num_binop(name, f)
+    Grounded(Operation(name, function (xs::Vector{Atom})
+        length(xs) == 2 || return ExecNoReduce()
+        x, y = xs[1], xs[2]
+        (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
+        ExecOk(Atom[Grounded(f(x.value, y.value))])
+    end))
+end
+const PLUS  = _num_binop("+", +)
+const MINUS = _num_binop("-", -)
+# comparisons return the True/False SYMBOLS (so unify against `True` works)
+function _num_cmp(name, f)
+    Grounded(Operation(name, function (xs::Vector{Atom})
+        length(xs) == 2 || return ExecNoReduce()
+        x, y = xs[1], xs[2]
+        (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
+        ExecOk(Atom[f(x.value, y.value) ? Sym("True") : Sym("False")])
+    end))
+end
+const LT = _num_cmp("<", <)
+
+mutable struct Space
+    atoms::Vector{Atom}
+end
+Space() = Space(Atom[])
+add_atom!(s::Space, a::Atom) = (push!(s.atoms, a); s)
+
+# query (= pattern $X) → the matching binding sets (interpreter.rs query:604, naive linear match)
+function query(space::Space, pattern::Atom)::Vector{Bindings}
+    out = Bindings[]
+    for stored in space.atoms
+        append!(out, match_atoms(pattern, stored))
+    end
+    out
+end
+
+const _VAR_COUNTER = Ref(UInt64(0))
+freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
+
+# eval (interpreter.rs eval_impl:504) — ONE step, normal-order
+function eval_op(f::Frame, b::Bindings, space)
+    a = f.atom
+    (a isa Expression && length(a.children) == 2) ||
+        return finished_result(error_atom(a, "expected (eval <atom>)"), b, f.prev)
+    to_eval = subst(a.children[2], b)
+    if to_eval isa Expression && !isempty(to_eval.children) && is_executable(to_eval.children[1])
+        r = execute(to_eval.children[1]::Grounded, Atom[to_eval.children[2:end]...])
+        if r isa ExecOk
+            isempty(r.results) && return finished_result(EMPTY, b, f.prev)
+            out = Tuple{Frame,Bindings}[]
+            for res in r.results; append!(out, finished_result(res, b, f.prev)); end
+            return out
+        elseif r isa ExecNoReduce
+            return finished_result(NOT_REDUCIBLE, b, f.prev)            # NoReduce/IncorrectArgument
+        else
+            return finished_result(error_atom(to_eval, (r::ExecRuntime).msg), b, f.prev)
+        end
+    elseif is_minimal_op(to_eval)
+        return [(Frame(to_eval, collect_vars(to_eval), f.prev, no_handler, false, f.depth + 1), b)]
+    else
+        space === nothing && return finished_result(NOT_REDUCIBLE, b, f.prev)
+        X = freshvar("X")
+        results = query(space::Space, Expression(Sym("="), to_eval, X))
+        out = Tuple{Frame,Bindings}[]
+        for qb in results, mb in merge_bindings(b, qb)
+            x = resolve(mb, X); x === nothing && continue
+            append!(out, finished_result(subst(x, mb), mb, f.prev))    # eval_result (one step)
+        end
+        return isempty(out) ? finished_result(NOT_REDUCIBLE, b, f.prev) : out
+    end
 end
 
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────
