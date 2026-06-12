@@ -587,4 +587,7 @@ end
     @test ndset("(quote (+ 1 2))") == Set(["(+ 1 2)"])                         # quote: unevaluated
     @test ndset("(case (color) ((red R) (green G) (\$_ other)))") == Set(["R", "G", "other"])  # case + wildcard over nondeterminism
     @test ndset("(\$x (green \$x))") == Set(["(Fritz True)", "(Sam False)"])    # var-head expr: binding from one element reaches another (b3_direct)
+    # legacy-form delegation: forms eval_nd doesn't implement delegate to eval_metta (one outcome)
+    @test ndset("(map-atom (1 2 3) \$x (g \$x))") ==
+          Set([to_sexpr(eval_metta(parse_metta("(map-atom (1 2 3) \$x (g \$x))")[1], s))])
 end

@@ -78,6 +78,16 @@ _nd_fresh(t, rm = Dict{Symbol, Symbol}()) =
     _nd_isvar(t) ? (n = _nd_vname(t); haskey(rm, n) || (rm[n] = Symbol("_g", (_ND_GENSYM[] += 1))); Symbol("\$", rm[n])) :
     (t isa Vector ? Any[_nd_fresh(x, rm) for x in t] : t)
 
+# Special forms the legacy eval_metta implements that eval_nd does NOT (yet) — delegated to eval_metta
+# as a single outcome so eval_nd is a COMPLETE evaluator (prerequisite for the wire-in). Nondeterminism
+# still flows through the forms eval_nd handles itself; these are evaluated deterministically for now.
+const _ND_LEGACY_FORMS = Set(Symbol.([
+    "function", "return", "eval", "evalc", "unquote", "noreduce-eq", "noeval", "do", "begin",
+    "import!", "git-import!", "bind!", "with-space", "add-atom", "remove-atom",
+    "decimate-importance!", "normalize-attention!", "exec", "get-atoms", "new-space",
+    "get-type-space", "get-type", "type-cast", "add-reduct", "for-each-in-atom",
+    "foldl-atom", "map-atom", "filter-atom"]))
+
 """
     eval_nd(expr, space, env=Dict()) -> Vector{Tuple{value, bindings}}
 
@@ -168,6 +178,11 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
             append!(o, eval_nd(_nd_subst(a[3], e2), space, e2))
         end
         return o
+    end
+    # legacy special forms eval_nd doesn't implement: delegate the whole bound expr to eval_metta
+    # as a single outcome (keeps eval_nd complete; nondeterminism flows through the forms above).
+    if h isa Symbol && h in _ND_LEGACY_FORMS
+        return _NDOut[(eval_metta(_nd_subst(vcat([h], a), e), space), e)]
     end
     # function application: fan out over args (consistent merge), then over all unifying rules
     o = _NDOut[]
