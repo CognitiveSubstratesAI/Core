@@ -13,6 +13,8 @@
 (: match (-> Atom Atom Atom %Undefined%))
 (: superpose (-> Expression %Undefined%))
 (: collapse (-> Atom Atom))
+(: foldl-atom (-> Expression Atom Variable Variable Atom %Undefined%))
+(: case (-> Atom Expression %Undefined%))
 
 ; ── if (stdlib.metta:512) ─────────────────────────────────────────────────────
 (= (if True $then $else) $then)

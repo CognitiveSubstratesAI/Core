@@ -68,3 +68,20 @@ end
     @test ev("!(switch (P a) (((P \$x) \$x) (\$_ none)))") == Atom[S("a")]
     @test ev("!(switch (Q a) (((P \$x) \$x) (\$_ none)))") == Atom[S("none")]
 end
+
+@testset "stdlib foldl-atom / case / get-type" begin
+    sp = Space()
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String))
+    ev(src) = load_metta!(sp, src)
+    # foldl-atom: sum and product
+    @test ev("!(foldl-atom (1 2 3 4) 0 \$a \$b (+ \$a \$b))") == Atom[Grounded(10)]
+    @test ev("!(foldl-atom (1 2 3 4) 1 \$a \$b (* \$a \$b))") == Atom[Grounded(24)]
+    # case: literal, evaluated atom, variable capture
+    @test ev("!(case 2 ((1 one) (2 two) (3 three)))") == Atom[S("two")]
+    @test ev("!(case (+ 1 1) ((1 one) (2 two)))") == Atom[S("two")]
+    @test ev("!(case foo ((bar no) (\$x (got \$x))))") == Atom[E(S("got"), S("foo"))]
+    # get-type
+    @test ev("!(get-type 5)") == Atom[S("Number")]
+    ev("(: Plato Human)")
+    @test ev("!(get-type Plato)") == Atom[S("Human")]
+end

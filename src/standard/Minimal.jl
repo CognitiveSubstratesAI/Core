@@ -725,6 +725,33 @@ const COLLAPSE = Grounded(SpaceOp("collapse", function (xs, space)
     length(xs) == 1 || return ExecNoReduce()
     ExecOk(Atom[Expression(Atom[metta_run(xs[1], space)...])])
 end))
+# get-type (grounded SpaceOp): the type(s) of the argument
+const GET_TYPE = Grounded(SpaceOp("get-type",
+    (xs, space) -> length(xs) == 1 ? ExecOk(arg_actual_types(xs[1], space)) : ExecNoReduce()))
+# foldl-atom (grounded SpaceOp): fold $op (using vars $a=accumulator, $b=item) over $list from $init
+const FOLDL_ATOM = Grounded(SpaceOp("foldl-atom", function (xs, space)
+    (length(xs) == 5 && xs[1] isa Expression && xs[3] isa Var && xs[4] isa Var) || return ExecNoReduce()
+    list, acc, avar, bvar, op = xs[1], xs[2], xs[3], xs[4], xs[5]
+    for item in list.children
+        rs = metta_run(_replace_var(_replace_var(op, avar, acc), bvar, item), space)
+        acc = isempty(rs) ? EMPTY : rs[1]
+    end
+    ExecOk(Atom[acc])
+end))
+# case (grounded SpaceOp): evaluate $atom, return the body of the first case pattern it matches
+const CASE = Grounded(SpaceOp("case", function (xs, space)
+    (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
+    results = metta_run(xs[1], space); isempty(results) && (results = Atom[Expression(Atom[])])  # Empty→()
+    out = Atom[]; binds = Bindings[]
+    for res in results, clause in xs[2].children
+        (clause isa Expression && length(clause.children) == 2) || continue
+        ms = match_atoms(clause.children[1], res)
+        if !isempty(ms)
+            push!(out, subst(clause.children[2], ms[1])); push!(binds, ms[1]); break
+        end
+    end
+    ExecOk(out, binds)
+end))
 
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
@@ -735,7 +762,8 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "size-atom" => SIZE_ATOM, "index-atom" => INDEX_ATOM, "get-metatype" => GET_METATYPE,
     "assertEqual" => ASSERT_EQUAL, "assertEqualToResult" => ASSERT_EQUAL_TO_RESULT,
     "context-space" => CONTEXT_SPACE, "match" => MATCH,
-    "superpose" => SUPERPOSE, "collapse" => COLLAPSE)
+    "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
+    "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE)
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
