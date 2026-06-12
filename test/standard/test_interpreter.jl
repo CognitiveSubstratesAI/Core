@@ -34,3 +34,27 @@ rule(lhs, rhs) = E(S("="), lhs, rhs)
     @test metta_run(S("hello"), Space()) == Atom[S("hello")]
     @test metta_run(E(S("nope"), Grounded(1)), Space()) == Atom[E(S("nope"), Grounded(1))]
 end
+
+@testset "metta driver: gradual types — if / let (lazy args, Phase 1b)" begin
+    decl(n, ty) = E(S(":"), S(n), ty)
+    arrow(xs...) = E(S("->"), xs...)
+
+    # if: (: if (-> Bool Atom Atom $t)) + the two = rules ; (boom) loops forever
+    spif = Space(Atom[
+        decl("if", arrow(S("Bool"), S("Atom"), S("Atom"), V("t"))),
+        rule(E(S("if"), S("True"),  V("then"), V("else")), V("then")),
+        rule(E(S("if"), S("False"), V("then"), V("else")), V("else")),
+        rule(E(S("boom")), E(S("boom")))])
+    # the DEAD branch (boom) must NOT be evaluated (else: infinite loop → step-limit error)
+    @test metta_run(E(S("if"), S("True"),  S("a"), E(S("boom"))), spif) == Atom[S("a")]
+    @test metta_run(E(S("if"), S("False"), E(S("boom")), S("b")), spif) == Atom[S("b")]
+
+    # let: (: let (-> Atom %Undefined% Atom %Undefined%)); body via `unify` (a minimal op)
+    splet = Space(Atom[
+        decl("let", arrow(S("Atom"), S("%Undefined%"), S("Atom"), S("%Undefined%"))),
+        rule(E(S("let"), V("p"), V("a"), V("tpl")),
+             E(S("unify"), V("a"), V("p"), V("tpl"), S("Empty")))])
+    # (let $x (+ 1 2) (g $x)) → (g 3): $a evaluated (%Undefined%), $p/$tpl lazy (Atom), unify binds $x
+    @test metta_run(E(S("let"), V("x"), E(PLUS, Grounded(1), Grounded(2)), E(S("g"), V("x"))), splet) ==
+          Atom[E(S("g"), Grounded(3))]
+end

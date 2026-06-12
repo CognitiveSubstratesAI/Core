@@ -359,67 +359,129 @@ end
 bare_eval(atom::Atom, space=nothing) = first.(interpret(atom, space))
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# The `metta` interpreter driver (metta.md §Interpretation) — UNTYPED (Phase 1a).
-# A direct RECURSIVE port of the pseudocode (metta / interpret_expression /
-# interpret_tuple / metta_call), treating every type as %Undefined%. This reduces
-# to normal form, in applicative order, nondeterministically. The gradual type
-# system (type_cast / check_argument_type / BadArgType) is Phase 1b.
+# The `metta` interpreter driver (metta.md §Interpretation) — gradual types (Phase 1b).
+# Recursive port of the type-directed pseudocode. An expected TYPE threads through: when
+# an argument's declared type is `Atom`, metta returns it UNEVALUATED (metta.md:255) — the
+# lazy-argument mechanism `if`/`let`/`case` rely on. Minimal instructions are recognized
+# as embedded ops and run on the minimal machine (normal order).
 # ═══════════════════════════════════════════════════════════════════════════════
 const _RESULT = Tuple{Atom,Bindings}
 is_error_atom(a::Atom) = a isa Expression && !isempty(a.children) && a.children[1] == ERROR
 is_empty_atom(a::Atom) = a == EMPTY
 
+const UNDEF  = Sym("%Undefined%")
+const ATOM_T = Sym("Atom")
+const ARROW  = Sym("->")
+metatype_sym(a::Atom) = Sym(String(metatype(a)))
+is_function_type(t::Atom) = t isa Expression && !isempty(t.children) && t.children[1] == ARROW
+fn_arg_types(t::Expression) = t.children[2:end-1]
+fn_ret_type(t::Expression)  = t.children[end]
+
 const _METTA_STEPS = Ref(0)
 const _METTA_MAX = 5_000_000
+
+# the declared types of `atom`: query (: atom $T)
+function atom_types(atom::Atom, space::Space)::Vector{Atom}
+    T = freshvar("T"); out = Atom[]
+    for qb in query(space, Expression(Sym(":"), atom, T))
+        t = resolve(qb, T); t !== nothing && push!(out, t)
+    end
+    out
+end
 
 "Public entry: fully evaluate `atom` in `space`; returns the result set (atoms)."
 metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) = first.(metta_results(atom, space, b))
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
     _METTA_STEPS[] = 0
-    metta_eval(atom, space, b)
+    metta_eval(atom, UNDEF, space, b)
 end
 
-# metta(atom, %Undefined%, space, bindings)  (metta.md:240)
-function metta_eval(atom::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+# metta(atom, type, space, bindings)  (metta.md:240)
+function metta_eval(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
     a = subst(atom, b)
     (is_empty_atom(a) || is_error_atom(a)) && return _RESULT[(a, b)]
-    (a isa Expression && !isempty(a.children)) ? interpret_expression(a, space, b) : _RESULT[(a, b)]
+    # type == Atom, or type == metatype, or atom is a Variable ⇒ return UNEVALUATED (metta.md:255)
+    (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _RESULT[(a, b)]
+    (a isa Expression && !isempty(a.children)) ? interpret_expression(a, type, space, b) : _RESULT[(a, b)]
 end
 
-# interpret_expression (metta.md:316) — untyped: evaluate the tuple, then metta_call each result
-function interpret_expression(a::Expression, space::Space, b::Bindings)::Vector{_RESULT}
-    out = _RESULT[]
+# interpret_expression (metta.md:316) — type-directed; minimal ops run on the minimal machine
+function interpret_expression(a::Expression, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+    if is_minimal_op(a)                                  # embedded minimal instruction (normal order)
+        out = _RESULT[]
+        for (r, rb) in interpret(a, space, b); append!(out, metta_eval(r, type, space, rb)); end
+        return isempty(out) ? _RESULT[(EMPTY, b)] : out
+    end
+    op = a.children[1]; nargs = length(a.children) - 1
+    ftypes = filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
+    if !isempty(ftypes)
+        out = _RESULT[]
+        for f in ftypes
+            rt = fn_ret_type(f::Expression)
+            for (fa, fb) in interpret_function(a, f, space, b)
+                (is_empty_atom(fa) || is_error_atom(fa)) ? push!(out, (fa, fb)) :
+                    append!(out, metta_call(fa, rt, space, fb))
+            end
+        end
+        return out
+    end
+    out = _RESULT[]                                      # no applicable function type → untyped tuple
     for (t, tb) in interpret_tuple(a, space, b)
-        (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) : append!(out, metta_call(t, space, tb))
+        (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) : append!(out, metta_call(t, type, space, tb))
     end
     out
 end
 
-# interpret_tuple (metta.md:358) — evaluate every element (applicative order), reassemble
+# interpret_function (metta.md:452): evaluate op, then the args by their declared types
+function interpret_function(a::Expression, f::Expression, space::Space, b::Bindings)::Vector{_RESULT}
+    op = a.children[1]; theargs = Atom[a.children[2:end]...]; ats = Atom[fn_arg_types(f)...]
+    out = _RESULT[]
+    for (h, hb) in metta_eval(op, UNDEF, space, b)
+        if is_empty_atom(h) || is_error_atom(h); push!(out, (h, hb)); continue; end
+        for (targs, tb) in interpret_args(theargs, ats, space, hb)
+            (is_empty_atom(targs) || is_error_atom(targs)) ? push!(out, (targs, tb)) :
+                push!(out, (Expression(Atom[h; (targs::Expression).children]), tb))
+        end
+    end
+    out
+end
+
+# interpret_args (metta.md:480): evaluate each arg with its expected type (Atom ⇒ unevaluated)
+function interpret_args(theargs::Vector{Atom}, types::Vector{Atom}, space::Space, b::Bindings)::Vector{_RESULT}
+    isempty(theargs) && return _RESULT[(Expression(Atom[]), b)]
+    arg = theargs[1]; rest = Atom[theargs[2:end]...]
+    atype = isempty(types) ? UNDEF : types[1]
+    rtypes = isempty(types) ? Atom[] : Atom[types[2:end]...]
+    out = _RESULT[]
+    for (h, hb) in metta_eval(arg, atype, space, b)
+        if (is_empty_atom(h) || is_error_atom(h)) && h != arg; push!(out, (h, hb)); continue; end
+        for (t, tb) in interpret_args(rest, rtypes, space, hb)
+            (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) :
+                push!(out, (Expression(Atom[h; (t::Expression).children]), tb))
+        end
+    end
+    out
+end
+
+# interpret_tuple (metta.md:358) — untyped fallback: evaluate every element, reassemble
 function interpret_tuple(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
-    (a isa Expression) || return metta_eval(a, space, b)
+    (a isa Expression) || return metta_eval(a, UNDEF, space, b)
     isempty(a.children) && return _RESULT[(a, b)]                       # () → ()
     head, tail = a.children[1], Expression(a.children[2:end])
     out = _RESULT[]
-    for (h, hb) in metta_eval(head, space, b)
-        if is_empty_atom(h) || is_error_atom(h)
-            push!(out, (h, hb)); continue
-        end
+    for (h, hb) in metta_eval(head, UNDEF, space, b)
+        if is_empty_atom(h) || is_error_atom(h); push!(out, (h, hb)); continue; end
         for (t, tb) in interpret_tuple(tail, space, hb)
-            if is_empty_atom(t) || is_error_atom(t)
-                push!(out, (t, tb))
-            else
-                tchildren = t isa Expression ? t.children : Atom[t]
-                push!(out, (Expression(Atom[h; tchildren]), tb))
-            end
+            (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) :
+                push!(out, (Expression(Atom[h; (t isa Expression ? t.children : Atom[t])]), tb))
         end
     end
     out
 end
 
 # metta_call (metta.md:509) — reduce: grounded → native, else → (= atom $X) query; recurse metta
-function metta_call(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
     (_METTA_STEPS[] += 1) > _METTA_MAX && error("metta: step limit reached (non-termination?)")
     is_error_atom(a) && return _RESULT[(a, b)]
     (a isa Expression && !isempty(a.children)) || return _RESULT[(a, b)]
@@ -428,7 +490,7 @@ function metta_call(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
     if is_executable(op)
         r = execute(op::Grounded, Atom[opargs...])
         if r isa ExecOk
-            for res in r.results; append!(out, metta_eval(res, space, b)); end
+            for res in r.results; append!(out, metta_eval(res, type, space, b)); end
         elseif r isa ExecNoReduce
             return _RESULT[(a, b)]                                       # not reducible → as-is
         else
@@ -440,7 +502,7 @@ function metta_call(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
         if !isempty(qres)
             for qb in qres, mb in merge_bindings(b, qb)
                 x = resolve(mb, X); x === nothing && continue
-                append!(out, metta_eval(x, space, mb))
+                append!(out, metta_eval(x, type, space, mb))
             end
         else
             push!(out, (a, b))                                          # non-reducible → as-is
