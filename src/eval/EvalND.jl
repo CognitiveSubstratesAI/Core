@@ -190,7 +190,7 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
     for (vals, ee) in _nd_cart(argsets, e)
         if h isa Symbol && is_grounded(string(h))
             push!(o, (_nd_grounded(h, vals), ee))
-        else
+        elseif h isa Symbol
             matched = false
             for (ps, bd) in core_rules(space, h)
                 length(ps) == length(vals) || continue
@@ -204,6 +204,9 @@ function eval_nd(@nospecialize(x), space::CoreSpace, e::_NDEnv = _NDEnv())
             # unreduced: substitute the head too (a var head may have been bound by evaluating the
             # other elements — e.g. `($x (green $x))` → `(Fritz T)`).
             matched || push!(o, (vcat([_nd_subst(h, ee)], vals), ee))
+        else
+            # non-symbol head (compound expr / number / bound var): not a function call — a tuple.
+            push!(o, (vcat([_nd_subst(h, ee)], vals), ee))
         end
     end
     o

@@ -438,7 +438,10 @@ function run_metta(source::String, space::CoreSpace = default_space()) :: Vector
     exprs = try parse_metta(source) catch e; @warn "run_metta: parse error" exception=e; Any[] end
     for expr in exprs
         if expr isa Vector && !isempty(expr) && expr[1] === :!
-            # Execution directive — evaluate the inner expression
+            # Execution directive — evaluate the inner expression.
+            # WIRE-IN PENDING: routing this through eval_nd_results gives MeTTa streaming, but eval_nd
+            # is not yet a faithful drop-in — it diverges from eval_metta on stateful/grounded-heavy
+            # programs (test_ecan). Keep the legacy path until eval_nd reaches parity on those.
             push!(results, eval_metta(expr[2], space))
         else
             core_add!(space, expr)
