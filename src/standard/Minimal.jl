@@ -414,14 +414,10 @@ is_function_type(t::Atom) = t isa Expression && !isempty(t.children) && t.childr
 fn_arg_types(t::Expression) = t.children[2:end-1]
 fn_ret_type(t::Expression)  = t.children[end]
 
+# Step counter — bounds NON-termination (the iterative driver can't stack-overflow, so this is the only
+# bound needed for the reduce-chain; the subst/rename_fresh depth guards remain for pathological atoms).
 const _METTA_STEPS = Ref(0)
 const _METTA_MAX = 5_000_000
-# Recursion-depth bound. metta.md's interpreter is recursive pseudocode; hyperon's ACTUAL impl is an
-# iterative stack machine with a `max_stack_depth` that returns (Error … StackOverflow) (interpreter.rs
-# :392). Julia has no TCO, so this recursive port must bound depth itself to fail safe (an uncatchable
-# StackOverflowError) on deep / non-terminating evaluation — matching hyperon's behavior, not masking it.
-const _METTA_DEPTH = Ref(0)
-const _METTA_MAX_DEPTH = 3000
 const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
 metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
@@ -501,62 +497,74 @@ function type_check_errors(a::Expression, ftype::Expression, space::Space)::Vect
     Atom[]                                               # a path survived → applicable, no error
 end
 
+const _STEP = Tuple{Atom,Atom,Bindings,Bool}   # (atom, next-type, bindings, is_final)
+
+# ITERATIVE driver. The deep reduce-chain (rewrite → re-reduce → rewrite …) is a worklist LOOP, so it
+# never grows the Julia call stack (Julia has no TCO). interpret_function/args/tuple still recurse, but
+# only by atom NESTING depth (shallow), and they call `_reduce` (iterative) for each sub-evaluation. This
+# mirrors hyperon's iterative interpret_stack and follows the Julia team's "rewrite recursion as an
+# explicit loop" guidance — replacing the recursive metta.md pseudocode port that overflowed the stack.
+function _reduce(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+    work = _STEP[(atom, type, b, false)]
+    final = _RESULT[]
+    while !isempty(work)
+        (a, t, bb, _) = pop!(work)
+        for (r, nt, rb, isfinal) in metta_step(a, t, space, bb)
+            isfinal ? push!(final, (r, rb)) : push!(work, (r, nt, rb, false))
+        end
+    end
+    final
+end
+
 "Public entry: fully evaluate `atom` in `space`; result set (final bindings applied, Empty filtered)."
 metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
     Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b) if !is_empty_atom(at)]
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
     _METTA_STEPS[] = 0
-    metta_eval(atom, UNDEF, space, b)
+    _reduce(atom, UNDEF, space, b)
 end
 
-# metta(atom, type, space, bindings)  (metta.md:240)
-function metta_eval(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
-    _METTA_DEPTH[] += 1                                  # bound recursion depth (hyperon max_stack_depth)
-    try
-        _METTA_DEPTH[] > _METTA_MAX_DEPTH && return _RESULT[(error_atom(atom, "StackOverflow"), b)]
-        a = subst(atom, b)
-        (is_empty_atom(a) || is_error_atom(a)) && return _RESULT[(a, b)]
-        # type == Atom, or type == metatype, or atom is a Variable ⇒ return UNEVALUATED (metta.md:255)
-        (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _RESULT[(a, b)]
-        return (a isa Expression && !isempty(a.children)) ? interpret_expression(a, type, space, b) : _RESULT[(a, b)]
-    finally
-        _METTA_DEPTH[] -= 1
-    end
+# ONE reduction step (metta.md:240). Returns each result tagged: is_final=true → terminal; false →
+# "reduce again" (the loop re-feeds it). No recursion into the reduce-chain.
+function metta_step(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_STEP}
+    (_METTA_STEPS[] += 1) > _METTA_MAX && error("metta: step limit reached (non-termination?)")
+    a = subst(atom, b)
+    (is_empty_atom(a) || is_error_atom(a)) && return _STEP[(a, type, b, true)]
+    (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _STEP[(a, type, b, true)]
+    (a isa Expression && !isempty(a.children)) ? interpret_expr_step(a, type, space, b) : _STEP[(a, type, b, true)]
 end
 
-# interpret_expression (metta.md:316) — type-directed; minimal ops run on the minimal machine
-function interpret_expression(a::Expression, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
+# interpret_expression (metta.md:316) as ONE step — type-directed; minimal ops + rewrites tagged "reduce"
+function interpret_expr_step(a::Expression, type::Atom, space::Space, b::Bindings)::Vector{_STEP}
     if is_minimal_op(a)                                  # embedded minimal instruction (normal order)
-        out = _RESULT[]
-        for (r, rb) in interpret(a, space, b); append!(out, metta_eval(r, type, space, rb)); end
-        return isempty(out) ? _RESULT[(EMPTY, b)] : out
+        out = _STEP[]
+        for (r, rb) in interpret(a, space, b); push!(out, (r, type, rb, false)); end
+        return isempty(out) ? _STEP[(EMPTY, type, b, true)] : out
     end
     op = a.children[1]; nargs = length(a.children) - 1
     # variable-headed expr: skip type lookup (its query would spuriously match), still evaluate the tuple
     ftypes = op isa Var ? Atom[] :
         filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
     if !isempty(ftypes)
-        out = _RESULT[]; errs = _RESULT[]
+        out = _STEP[]; errs = _STEP[]
         for f in ftypes
             te = type_check_errors(a, f::Expression, space)    # metta.md:384 check_argument_type → BadArgType
-            if !isempty(te)
-                for e in te; push!(errs, (e, b)); end
-                continue
-            end
+            if !isempty(te); for e in te; push!(errs, (e, type, b, true)); end; continue; end
             rt = fn_ret_type(f::Expression)
             rt == Sym("Expression") && (rt = UNDEF)     # metta.md:341 — don't treat Expression like Atom
-            for (fa, fb) in interpret_function(a, f, space, b)
-                (is_empty_atom(fa) || is_error_atom(fa)) ? push!(out, (fa, fb)) :
-                    append!(out, metta_call(fa, rt, space, fb))
+            for (fa, fb) in interpret_function(a, f, space, b)   # arg-eval (recursive, bounded by nesting)
+                (is_empty_atom(fa) || is_error_atom(fa)) ? push!(out, (fa, type, fb, true)) :
+                    append!(out, metta_call_step(fa, rt, space, fb))
             end
         end
         !isempty(out) && return out                     # some type applied → its results
         !isempty(errs) && return errs                   # all types rejected the args → type errors
     end
-    out = _RESULT[]                                      # no applicable function type → untyped tuple
+    out = _STEP[]                                        # no applicable function type → untyped tuple
     for (t, tb) in interpret_tuple(a, space, b)
-        (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) : append!(out, metta_call(t, type, space, tb))
+        (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, type, tb, true)) :
+            append!(out, metta_call_step(t, type, space, tb))
     end
     out
 end
@@ -565,7 +573,7 @@ end
 function interpret_function(a::Expression, f::Expression, space::Space, b::Bindings)::Vector{_RESULT}
     op = a.children[1]; theargs = Atom[a.children[2:end]...]; ats = Atom[fn_arg_types(f)...]
     out = _RESULT[]
-    for (h, hb) in metta_eval(op, UNDEF, space, b)
+    for (h, hb) in _reduce(op, UNDEF, space, b)
         if is_empty_atom(h) || is_error_atom(h); push!(out, (h, hb)); continue; end
         for (targs, tb) in interpret_args(theargs, ats, space, hb)
             (is_empty_atom(targs) || is_error_atom(targs)) ? push!(out, (targs, tb)) :
@@ -582,7 +590,7 @@ function interpret_args(theargs::Vector{Atom}, types::Vector{Atom}, space::Space
     atype = isempty(types) ? UNDEF : types[1]
     rtypes = isempty(types) ? Atom[] : Atom[types[2:end]...]
     out = _RESULT[]
-    for (h, hb) in metta_eval(arg, atype, space, b)
+    for (h, hb) in _reduce(arg, atype, space, b)
         if (is_empty_atom(h) || is_error_atom(h)) && h != arg; push!(out, (h, hb)); continue; end
         for (t, tb) in interpret_args(rest, rtypes, space, hb)
             (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) :
@@ -594,11 +602,11 @@ end
 
 # interpret_tuple (metta.md:358) — untyped fallback: evaluate every element, reassemble
 function interpret_tuple(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
-    (a isa Expression) || return metta_eval(a, UNDEF, space, b)
+    (a isa Expression) || return _reduce(a, UNDEF, space, b)
     isempty(a.children) && return _RESULT[(a, b)]                       # () → ()
     head, tail = a.children[1], Expression(a.children[2:end])
     out = _RESULT[]
-    for (h, hb) in metta_eval(head, UNDEF, space, b)
+    for (h, hb) in _reduce(head, UNDEF, space, b)
         if is_empty_atom(h) || is_error_atom(h); push!(out, (h, hb)); continue; end
         for (t, tb) in interpret_tuple(tail, space, hb)
             (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) :
@@ -608,44 +616,43 @@ function interpret_tuple(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
     out
 end
 
-# metta_call (metta.md:509) — reduce: grounded → native, else → (= atom $X) query; recurse metta
-function metta_call(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RESULT}
-    (_METTA_STEPS[] += 1) > _METTA_MAX && error("metta: step limit reached (non-termination?)")
+# metta_call (metta.md:509) as ONE rewrite — grounded → native, else → (= atom $X) query. Rewrite
+# results are tagged "reduce again" (is_final=false) and re-fed by the loop; terminals are is_final=true.
+function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector{_STEP}
     a = subst(a, b)                                       # apply bindings before query/dispatch
     _METTA_DEBUG[] && println("metta_call: ", a)
-    is_error_atom(a) && return _RESULT[(a, b)]
-    (a isa Expression && !isempty(a.children)) || return _RESULT[(a, b)]
+    is_error_atom(a) && return _STEP[(a, type, b, true)]
+    (a isa Expression && !isempty(a.children)) || return _STEP[(a, type, b, true)]
     op, opargs = a.children[1], a.children[2:end]
-    op isa Var && return _RESULT[(a, b)]                 # variable-headed expr not reducible
-    out = _RESULT[]
+    op isa Var && return _STEP[(a, type, b, true)]       # variable-headed expr not reducible
+    out = _STEP[]
     if is_executable(op)
         r = execute(op::Grounded, Atom[opargs...], space)
         if r isa ExecOk
             for (j, res) in enumerate(r.results)
                 if j <= length(r.binds)
-                    for mb in merge_bindings(b, r.binds[j]); append!(out, metta_eval(res, type, space, mb)); end
+                    for mb in merge_bindings(b, r.binds[j]); push!(out, (res, type, mb, false)); end
                 else
-                    append!(out, metta_eval(res, type, space, b))
+                    push!(out, (res, type, b, false))
                 end
             end
         elseif r isa ExecNoReduce
-            return _RESULT[(a, b)]                                       # not reducible → as-is
+            return _STEP[(a, type, b, true)]                             # not reducible → as-is
         else
-            return _RESULT[(error_atom(a, (r::ExecRuntime).msg), b)]
+            return _STEP[(error_atom(a, (r::ExecRuntime).msg), type, b, true)]
         end
     else
         X = freshvar("X")
         qres = query(space, Expression(Sym("="), a, X))
         if !isempty(qres)
             for qb in qres, mb in merge_bindings(b, qb)
-                x = subst(X, mb)                          # value, or equality-class representative
-                append!(out, metta_eval(x, type, space, mb))
+                push!(out, (subst(X, mb), type, mb, false))             # rewrite result → reduce again
             end
         else
-            push!(out, (a, b))                                          # non-reducible → as-is
+            push!(out, (a, type, b, true))                              # non-reducible → as-is
         end
     end
-    isempty(out) ? _RESULT[(EMPTY, b)] : out
+    isempty(out) ? _STEP[(EMPTY, type, b, true)] : out
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
