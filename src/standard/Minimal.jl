@@ -1124,6 +1124,10 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
 # (kept out of the space). Defined here, after the ops exist.
 _GROUNDED_OP_TYPES[ADD_ATOM]    = "(-> %Undefined% Atom (->))"
 _GROUNDED_OP_TYPES[REMOVE_ATOM] = "(-> %Undefined% Atom (->))"
+# == is polymorphic same-type (hyperon (-> $t $t Bool)) → the checker emits (BadArgType 2 …) on a
+# mismatch like (== 5 "S"). Now safe: the iterative driver doesn't overflow on the typed path (this
+# crashed the recursive driver). Intrinsic (out of the space, can't disturb match &self).
+_GROUNDED_OP_TYPES[EQ_OP]       = "(-> \$t \$t Bool)"
 
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
