@@ -532,11 +532,17 @@ include("test_ecan_dual.jl")
 # Standard MeTTa (typed atom model + matcher) — faithful port of hyperon/CeTTa
 # representations, validated against docs/metta.md §Matching. Standalone subsystem
 # (does not touch eval_metta/eval_nd) — the foundation for the minimal-MeTTa port.
-include("standard/test_atoms.jl")
-include("standard/test_minimal.jl")
-include("standard/test_interpreter.jl")
-include("standard/test_stdlib.jl")
-include("standard/test_conformance.jl")
+# Wrapped in a module so the standard tests' short helpers (S/V/E/G = Sym/Var/Expression/Grounded)
+# stay isolated — otherwise they collide with the global `S = new_core_space()` that the legacy
+# test_ecan_dual.jl / test_actpc_chem.jl leak into Main ("cannot define function S; it already has a value").
+module StandardMeTTaTests
+    using MeTTaCore, Test
+    include("standard/test_atoms.jl")
+    include("standard/test_minimal.jl")
+    include("standard/test_interpreter.jl")
+    include("standard/test_stdlib.jl")
+    include("standard/test_conformance.jl")
+end
 
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
