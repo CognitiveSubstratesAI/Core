@@ -1252,6 +1252,9 @@ function load_metta!(space::Space, text::AbstractString; as_library::Bool=false)
     results
 end
 
+# ── Core grounded extensions (additive; NOT part of the hyperon-faithful core) ──
+include("CoreExtensions.jl")
+
 # ── Precompile workload ───────────────────────────────────────────────────────
 # The evaluator's hot methods (parse → load_metta! → metta_run → interpret/match/subst over the Atom
 # union + _STEP/_RESULT tuples) compile lazily on first call — ~21s of cold-start latency paid on every
