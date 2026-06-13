@@ -986,6 +986,31 @@ function _alpha_canon(a::Atom, m::Dict{Var,Int})
     end
 end
 _alpha1(a::Atom) = _alpha_canon(a, Dict{Var,Int}())          # each atom canonicalized independently
+# Multiset set ops on collapsed-list Expressions (hyperon atom.rs UniqueAtomOp/UnionAtomOp/
+# IntersectionAtomOp/SubtractionAtomOp). Element identity = alpha-equivalence (via _alpha1). unique =
+# dedup-keep-first; union = concat; intersection/subtraction = multiset min-multiplicity / difference.
+const UNIQUE_ATOM = Grounded(Operation("unique-atom", function (xs::Vector{Atom})
+    (length(xs) == 1 && xs[1] isa Expression) || return ExecNoReduce()
+    seen = Set{Atom}(); out = Atom[]
+    for c in xs[1].children; k = _alpha1(c); (k in seen) || (push!(seen, k); push!(out, c)); end
+    ExecOk(Atom[Expression(out)])
+end))
+const UNION_ATOM = Grounded(Operation("union-atom", function (xs::Vector{Atom})
+    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) || return ExecNoReduce()
+    ExecOk(Atom[Expression(Atom[xs[1].children; xs[2].children])])
+end))
+const INTERSECTION_ATOM = Grounded(Operation("intersection-atom", function (xs::Vector{Atom})
+    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) || return ExecNoReduce()
+    cnt = Dict{Atom,Int}(); for c in xs[2].children; k = _alpha1(c); cnt[k] = get(cnt, k, 0) + 1; end
+    out = Atom[]; for c in xs[1].children; k = _alpha1(c); (get(cnt, k, 0) > 0) && (push!(out, c); cnt[k] -= 1); end
+    ExecOk(Atom[Expression(out)])
+end))
+const SUBTRACTION_ATOM = Grounded(Operation("subtraction-atom", function (xs::Vector{Atom})
+    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) || return ExecNoReduce()
+    cnt = Dict{Atom,Int}(); for c in xs[2].children; k = _alpha1(c); cnt[k] = get(cnt, k, 0) + 1; end
+    out = Atom[]; for c in xs[1].children; k = _alpha1(c); (get(cnt, k, 0) > 0) ? (cnt[k] -= 1) : push!(out, c); end
+    ExecOk(Atom[Expression(out)])
+end))
 const ASSERT_ALPHA_EQUAL_TO_RESULT = Grounded(SpaceOp("assertAlphaEqualToResult", function (xs, space)
     (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
     Set(_alpha1(x) for x in metta_run(xs[1], space)) == Set(_alpha1(x) for x in xs[2].children) ?
@@ -1180,6 +1205,8 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "assertAlphaEqualToResult" => ASSERT_ALPHA_EQUAL_TO_RESULT, "get-atoms" => GET_ATOMS,
     "context-space" => CONTEXT_SPACE, "match" => MATCH,
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
+    "unique-atom" => UNIQUE_ATOM, "union-atom" => UNION_ATOM,
+    "intersection-atom" => INTERSECTION_ATOM, "subtraction-atom" => SUBTRACTION_ATOM,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,

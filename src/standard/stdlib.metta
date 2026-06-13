@@ -170,3 +170,63 @@
       (unify &self (@doc $atom $desc' (@params $params) $ret)
         (get-doc-function $atom %Undefined%)
         Empty ))))
+
+; ── multiset set operations (hyperon stdlib.metta:629-668) ───────────────────
+; collapse the non-deterministic arg → call the grounded *-atom multiset op
+; (unique-atom/union-atom/intersection-atom/subtraction-atom, provided by the
+; evaluator, alpha-equivalence element identity) → superpose back to ND.
+(: unique (-> Atom %Undefined%))
+(= (unique $arg) (let $c (collapse $arg) (let $u (unique-atom $c) (superpose $u))))
+(: union (-> Atom Atom %Undefined%))
+(= (union $arg1 $arg2)
+   (let $c1 (collapse $arg1) (let $c2 (collapse $arg2)
+     (let $u (union-atom $c1 $c2) (superpose $u)))))
+(: intersection (-> Atom Atom %Undefined%))
+(= (intersection $arg1 $arg2)
+   (let $c1 (collapse $arg1) (let $c2 (collapse $arg2)
+     (let $u (intersection-atom $c1 $c2) (superpose $u)))))
+(: subtraction (-> Atom Atom %Undefined%))
+(= (subtraction $arg1 $arg2)
+   (let $c1 (collapse $arg1) (let $c2 (collapse $arg2)
+     (let $u (subtraction-atom $c1 $c2) (superpose $u)))))
+
+; ── noreduce-eq / for-each-in-atom (hyperon stdlib.metta:951-967) ────────────
+(: noreduce-eq (-> Atom Atom Bool))
+(= (noreduce-eq $a $b) (== (quote $a) (quote $b)))
+(: for-each-in-atom (-> Expression Atom (->)))
+(= (for-each-in-atom $expr $func)
+  (if (noreduce-eq $expr ())
+    ()
+    (let $head (car-atom $expr)
+      (let $tail (cdr-atom $expr)
+      (let $_ ($func $head)
+      (for-each-in-atom $tail $func) )))))
+
+; ── if-decons-expr / if-error / return-on-error / first-from-pair (290-432) ──
+(: if-decons-expr (-> Expression Variable Variable Atom Atom %Undefined%))
+(= (if-decons-expr $atom $head $tail $then $else)
+  (function (eval (if-equal $atom ()
+    (return $else)
+    (chain (decons-atom $atom) $list
+      (unify $list ($head $tail) (return $then) (return $else)) )))))
+(: if-error (-> Atom Atom Atom %Undefined%))
+(= (if-error $atom $then $else)
+  (function (chain (eval (get-metatype $atom)) $meta
+    (eval (if-equal $meta Expression
+      (eval (if-equal $atom ()
+        (return $else)
+        (chain (decons-atom $atom) $list
+          (unify $list ($head $tail)
+            (eval (if-equal $head Error (return $then) (return $else)))
+            (return $else) ))))
+      (return $else) )))))
+(: return-on-error (-> Atom Atom %Undefined%))
+(= (return-on-error $atom $then)
+  (function (eval (if-equal $atom Empty (return (return Empty))
+    (eval (if-error $atom (return (return $atom))
+      (return $then) ))))))
+(= (first-from-pair $pair)
+  (function
+    (unify $pair ($first $second)
+      (return $first)
+      (return (Error (first-from-pair $pair) "incorrect pair format")))))
