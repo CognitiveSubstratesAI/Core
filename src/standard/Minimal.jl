@@ -21,7 +21,7 @@ include("Atoms.jl")
 using .StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
-export metta_run, metta_results, parse_program, load_metta!, tokenize, metta_debug!
+export metta_run, metta_results, parse_program, load_metta!, load_core_stdlib!, tokenize, metta_debug!
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -572,13 +572,21 @@ metta_run_sm(atom::Atom, space::Space, b::Bindings=Bindings()) =
     Atom[subst(at, bnd) for (at, bnd) in interpret(_metta(atom, UNDEF), space, b) if !is_empty_atom(at)]
 
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────
+const _DIAG_STEPS = Ref(0)   # diagnostic: cumulative interpret() reduction steps (reset/read externally)
+
 "Run the minimal-MeTTa machine on `atom`; returns the list of (result, bindings)."
 function interpret(atom::Atom, space=nothing, b::Bindings=Bindings())::Vector{Tuple{Atom,Bindings}}
     plan = Tuple{Frame,Bindings}[(Frame(atom, collect_vars(atom), nothing, no_handler, false, 0), b)]
     out = Tuple{Atom,Bindings}[]
     steps = 0
     while !isempty(plan)
-        (steps += 1) > 100_000 && error("minimal interpreter step limit")
+        _DIAG_STEPS[] += 1                                  # diagnostic step counter (tooling for the parked perf track)
+        # Cap 100K→512K (2026-06-13): MetaMo's decision composites (metamoStep/metamoGovern) genuinely need
+        # >100K reduction steps — MEASURED convergent, not an expansion bug (magusScore ~36-46K, 1.3× across
+        # inputs; all sub-helpers + the fold bounded). The real cost is PER-STEP (let*-nesting + per-call
+        # rule-lookup overhead, the parked perf track); this cap comes back DOWN once that's optimized.
+        # Bounded-generous over measured need (~120-300K) so a real runaway still fires in minutes, not an hour.
+        (steps += 1) > 512_000 && error("minimal interpreter step limit")
         f, fb = pop!(plan)
         for (nf, nb) in interpret_stack(f, fb, space)
             if nf.finished && nf.prev === nothing
@@ -1250,6 +1258,15 @@ function load_metta!(space::Space, text::AbstractString; as_library::Bool=false)
     # dependency lives in a child space and is not returned by get-atoms of the importing space).
     as_library && (space.lib_count = length(space.atoms))
     results
+end
+
+# Load the Core MeTTa stdlib into `space` (as library content, hidden from get-atoms): the hyperon-faithful
+# stdlib.metta PLUS CoreExtensions.metta (Core-convention MeTTa-rule helpers like `member` that aren't in
+# hyperon's stdlib). The 234/234 conformance matrix must stay green with CoreExtensions.metta loaded.
+function load_core_stdlib!(space::Space)
+    load_metta!(space, read(joinpath(@__DIR__, "stdlib.metta"), String); as_library=true)
+    load_metta!(space, read(joinpath(@__DIR__, "CoreExtensions.metta"), String); as_library=true)
+    space
 end
 
 # ── Core grounded extensions (additive; NOT part of the hyperon-faithful core) ──

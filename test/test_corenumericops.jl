@@ -5,7 +5,7 @@
 using MeTTaCore, Test
 const SM = MeTTaCore.Minimal
 const _ST = read(joinpath(@__DIR__, "..", "src", "standard", "stdlib.metta"), String)
-const _SP = (s = SM.Space(); SM.load_metta!(s, _ST; as_library=true); s)
+const _SP = (s = SM.Space(); SM.load_core_stdlib!(s); s)
 _mval(a) = a isa SM.Grounded ? a.value : a isa SM.Sym ? Symbol(a.name) :
            a isa SM.Expression ? Any[_mval(c) for c in a.children] : a
 qn(src) = (r = SM.load_metta!(_SP, src); isempty(r) ? nothing : _mval(r[1]))

@@ -45,8 +45,8 @@ const _REPL_INIT = """
 # ── the persistent space + Shim boundary (the only place the loop touches the evaluator) ─────────────
 function _fresh_space()
     sp = SM.Space()
-    SM.load_metta!(sp, read(_STDLIB, String); as_library=true)   # stdlib = library, hidden from get-atoms
-    SM.load_metta!(sp, _REPL_INIT)                               # &Repl* config atoms
+    SM.load_core_stdlib!(sp)             # stdlib.metta + CoreExtensions.metta (library, hidden from get-atoms)
+    SM.load_metta!(sp, _REPL_INIT)       # &Repl* config atoms
     sp
 end
 const _SPACE = Ref(_fresh_space())
@@ -110,7 +110,7 @@ reset!() = (_SPACE[] = _fresh_space(); println("  space reset (stdlib + config r
 
 "Exec StandardMeTTa `src` in a FRESH stdlib space (stateless); return raw result atoms."
 function sm(src::AbstractString)
-    sp = SM.Space(); SM.load_metta!(sp, read(_STDLIB, String); as_library=true); SM.load_metta!(sp, src)
+    sp = SM.Space(); SM.load_core_stdlib!(sp); SM.load_metta!(sp, src)
 end
 
 "Run ONLY the StandardMeTTa testsets (fast warm iteration)."

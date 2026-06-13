@@ -32,7 +32,7 @@ const BASELINE = Dict(
     "g1_docs.metta"=>0)
 
 function script_errors(name)
-    sp = Space(); load_metta!(sp, STDLIB; as_library=true)   # stdlib = imported lib, hidden from get-atoms
+    sp = Space(); load_core_stdlib!(sp)   # stdlib.metta + CoreExtensions.metta (lib, hidden from get-atoms)
     rs = try load_metta!(sp, read(joinpath(CONF_DIR, name), String)) catch e; return (-1, "CRASH $(typeof(e))"); end
     errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
     (length(errs), "$(length(rs)-length(errs))/$(length(rs)) pass")
