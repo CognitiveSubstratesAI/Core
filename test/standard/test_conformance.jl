@@ -8,10 +8,12 @@
 # test; an unrecorded improvement (errors go down) ALSO fails, forcing the baseline to be updated and
 # kept honest. The matrix is printed every run so the incomplete state is always visible, never hidden.
 #
-# Current: 232/234 directives pass. Remaining gap (see nonzero baseline below): f1_imports (2) — the two
-# `get-atoms &self/&m` directives. `get-atoms` IS implemented, but hyperon keeps imported modules as
-# grounded CHILD-SPACE atoms whereas Core FLATTENS stdlib into &self, so `(get-atoms &self)` returns the
-# flattened rules instead of the empty/sub-space set those asserts expect. Architecture gap, NOT "passing".
+# Current: 233/234 directives pass. Remaining gap (see nonzero baseline below): f1_imports (1) — the
+# `(let $x (get-atoms &self) (get-type $x))` directive that expects an EMPTY &self at start-up. hyperon
+# keeps imported modules as grounded CHILD-SPACE atoms; Core FLATTENS stdlib into &self, so `(get-atoms
+# &self)` returns the flattened rules instead of the empty set that directive expects. Architecture gap,
+# NOT "passing". (The other get-atoms directive, `&m` + is-space, now passes since get-type of a Grounded
+# Space returns SpaceType — distinct from the rule atoms' %Undefined% — so is-space is correctly False.)
 using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
 using MeTTaCore.Minimal.StandardMeTTa
 using Test
@@ -29,7 +31,7 @@ const BASELINE = Dict(
     "d1_gadt.metta"=>0, "d2_higherfunc.metta"=>0, "d3_deptypes.metta"=>0, "d4_type_prop.metta"=>0,
     "d5_auto_types.metta"=>0,
     "e1_kb_write.metta"=>0, "e2_states.metta"=>0, "e3_match_states.metta"=>0,
-    "f1_imports.metta"=>2, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
+    "f1_imports.metta"=>1, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
     "g1_docs.metta"=>0)
 
 function script_errors(name)

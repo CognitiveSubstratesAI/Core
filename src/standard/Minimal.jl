@@ -654,6 +654,7 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
         arg.value isa Number && return Atom[Sym("Number")]
         arg.value isa AbstractString && return Atom[Sym("String")]
         arg.value isa StateCell && return Atom[arg.value.vtype]   # intrinsic (StateMonad T) (space.rs:55)
+        arg.value isa Space && return Atom[Sym("SpaceType")]      # DynSpace.type_() = ATOM_TYPE_SPACE (hyperon-space/lib.rs:18)
     end
     # Expression: infer its return type by applying the HEAD's function type to the args. The head's types
     # are got recursively (types.rs:400-403 op_value_types) — so an EXPRESSION head like `(curry +)` has
