@@ -960,6 +960,33 @@ const ASSERT_EQUAL_TO_RESULT = Grounded(SpaceOp("assertEqualToResult", function 
     Set(metta_run(xs[1], space)) == Set(xs[2].children) ?
         ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertEqualToResult", xs[1], xs[2])])
 end))
+# alpha-equality: canonicalize variables by first-encounter order so alpha-equivalent atoms compare
+# equal (a freshly-renamed $t' from type-checking ≡ the literal $t in an expected result). hyperon's
+# assertAlphaEqualToResult (stdlib.metta:1173) compares result sets up to variable renaming.
+function _alpha_canon(a::Atom, m::Dict{Var,Int})
+    if a isa Var
+        return Var("\$α", UInt64(get!(m, a, length(m))))   # name+id determined purely by encounter order
+    elseif a isa Expression
+        return Expression(Atom[_alpha_canon(c, m) for c in a.children])
+    else
+        return a
+    end
+end
+_alpha1(a::Atom) = _alpha_canon(a, Dict{Var,Int}())          # each atom canonicalized independently
+const ASSERT_ALPHA_EQUAL_TO_RESULT = Grounded(SpaceOp("assertAlphaEqualToResult", function (xs, space)
+    (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
+    Set(_alpha1(x) for x in metta_run(xs[1], space)) == Set(_alpha1(x) for x in xs[2].children) ?
+        ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertAlphaEqualToResult", xs[1], xs[2])])
+end))
+# get-atoms (hyperon space.rs:127, type (-> Space Atom)): one result per atom of the space, variables
+# freshened (make_variables_unique). NOTE: Core FLATTENS imported stdlib into &self rather than keeping
+# it as a grounded child-space (hyperon's model), so `(get-atoms &self)` here returns the flattened rules
+# — the f1 directive that expects an empty &self at start-up stays a documented known-gap.
+const GET_ATOMS = Grounded(SpaceOp("get-atoms", function (xs, space)
+    length(xs) == 1 || return ExecNoReduce()
+    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+    ExecOk(Atom[rename_fresh(a, Dict{Var,Var}()) for a in tgt.atoms])
+end))
 const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
 # all binding sets under which `pat` matches some atom of `space`, extending `b0`
 function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
@@ -1123,6 +1150,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "if-equal" => IF_EQUAL, "atom-subst" => ATOM_SUBST, "sealed" => SEALED,
     "size-atom" => SIZE_ATOM, "index-atom" => INDEX_ATOM, "get-metatype" => GET_METATYPE,
     "assertEqual" => ASSERT_EQUAL, "assertEqualToResult" => ASSERT_EQUAL_TO_RESULT,
+    "assertAlphaEqualToResult" => ASSERT_ALPHA_EQUAL_TO_RESULT, "get-atoms" => GET_ATOMS,
     "context-space" => CONTEXT_SPACE, "match" => MATCH,
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,

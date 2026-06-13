@@ -10,6 +10,7 @@
 ; ── assertEqual / assertEqualToResult (Atom-typed args: not pre-evaluated) ────
 (: assertEqual (-> Atom Atom (->)))
 (: assertEqualToResult (-> Atom Atom (->)))
+(: assertAlphaEqualToResult (-> Atom Atom (->)))
 (: match (-> Atom Atom Atom %Undefined%))
 (: get-type (-> Atom %Undefined%))
 (: get-metatype (-> Atom Atom))
