@@ -3,20 +3,24 @@
 ;;;; S-expression of AND/OR/NOT over True/False constants) to a single True/False. This is
 ;;;; the kernel a behavioral score is built on (M3-b: replaceVarsWithTruth + scoreTree).
 ;;;;
-;;;; CORE-DIALECT: clean port — get-metatype/car-atom/cdr-atom/case/not all native; in Core
-;;;; get-metatype of True/False is Grounded, so the constant check holds.
+;;;; CORE-DIALECT: clean port — get-metatype/car-atom/cdr-atom/case/not all native. PeTTa-FAITHFUL
+;;;; Bool: True/False are SYMBOLS (not Grounded, as in hyperon) — confirmed vs PeTTa lib_he/lib_pln and
+;;;; the rest of this port (e.g. `(== True (isNullVertex …))`, `(case $tree (… True))`). So a boolean
+;;;; LEAF is discriminated by "is it NOT an Expression" — an Expression recurses; anything else (a
+;;;; True/False symbol) is returned as-is. (Upstream metta-moses checks `get-metatype … Grounded`
+;;;; because hyperon grounds True/False; that idiom is wrong on the PeTTa-faithful evaluator.)
 
 ;; evaluate — reduce a constant boolean expression to True / False.
 (= (evaluate $expr)
-   (if (== (get-metatype $expr) Grounded)
-       $expr
+   (if (== (get-metatype $expr) Expression)
        (if (== (cdr-atom $expr) ())
            (evaluate (car-atom $expr))          ;; (True)/(False) wrapper → unwrap
            (case (car-atom $expr)
              ((AND (evaluateAnd (cdr-atom $expr)))
               (OR  (evaluateOr  (cdr-atom $expr)))
               (NOT (not (evaluate (cdr-atom $expr))))
-              ($_  ERROR))))))
+              ($_  ERROR))))
+       $expr))                                  ;; leaf: a True/False symbol (PeTTa-faithful Bool)
 
 ;; evaluateOr — True iff some argument is True.
 (= (evaluateOr $args)

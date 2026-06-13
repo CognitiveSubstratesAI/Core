@@ -15,3 +15,32 @@
        (if (== $x (car-atom $list))
            True
            (member $x (cdr-atom $list)))))
+
+;; ── helpers the MOSES library calls (legacy stdlib/list.metta + core.metta), ported for Minimal.
+;; The idiom-sweep (called−defined−provided over lib/MOSES/) found these four as MOSES's only
+;; undefined helpers; transitive dep `is-empty` is inlined as `(== … ())` per this file's convention.
+
+;; is-member: legacy alias over member (MOSES tree.metta / scoring.metta: `(is-member $r (AND OR))`)
+(= (is-member $x $xs) (member $x $xs))
+
+;; xor: boolean exclusive-or (MOSES propagate_not.metta)
+(= (xor $a $b) (not (== $a $b)))
+
+;; length: element count (MOSES add_logical_knobs.metta). Recursion sits in `+`'s arg position; `+`
+;; is a grounded op that evaluates its args, so the recursive call reduces — no let-bind needed.
+(= (length $list)
+   (if (== $list ())
+       0
+       (+ 1 (length (cdr-atom $list)))))
+
+;; zip: pair up two lists elementwise (MOSES scoring.metta). cons-atom is a SPECIAL FORM that does NOT
+;; reduce its tail arg, so the recursive `(zip …)` is let-bound to $rest first (the proven cons-atom-tail
+;; idiom — same fix as MetaMo's vectorAdd/listDifference); a bare `(cons-atom … (zip …))` would leave the
+;; tail unreduced.
+(= (zip $xs $ys)
+   (if (== $xs ())
+       ()
+       (if (== $ys ())
+           ()
+           (let $rest (zip (cdr-atom $xs) (cdr-atom $ys))
+             (cons-atom (cons-atom (car-atom $xs) (cons-atom (car-atom $ys) ())) $rest)))))
