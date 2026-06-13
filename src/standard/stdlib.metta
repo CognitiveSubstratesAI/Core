@@ -230,3 +230,17 @@
     (unify $pair ($first $second)
       (return $first)
       (return (Error (first-from-pair $pair) "incorrect pair format")))))
+
+; ── add-reduct / add-reducts / add-atoms (hyperon stdlib.metta:567-683) ───────
+; VERBATIM port. The "reduce" in add-reduct/add-reducts is TYPE-DRIVEN, not body-driven:
+; the %Undefined%-typed arg is EVALUATED before the rule fires (verified Core evaluates
+; %Undefined% args), then add-atom stores it; add-atoms' Expression-typed arg is stored
+; unreduced. Bodies build on add-atom + foldl-atom, both already present in Minimal.
+(: add-reduct (-> SpaceType %Undefined% (->)))
+(= (add-reduct $dst $atom) (add-atom $dst $atom))
+(: add-reducts (-> SpaceType %Undefined% (->)))
+(= (add-reducts $space $tuple)
+    (foldl-atom $tuple () $a $b (add-atom $space $b)))
+(: add-atoms (-> SpaceType Expression (->)))
+(= (add-atoms $space $tuple)
+    (foldl-atom $tuple () $a $b (add-atom $space $b)))

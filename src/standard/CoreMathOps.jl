@@ -69,11 +69,30 @@ const LOG_MATH = Grounded(Operation("log-math", function (xs::Vector{Atom})
     ExecOk(Atom[Grounded(r)])
 end))
 
+# min-atom / max-atom (hyperon atom.rs): over an expression of numbers, return the extremal ELEMENT
+# (preserving its Int/Float type). Errors: empty expression, or a non-number present. Error strings verbatim.
+function _minmax_atom(name, better)
+    Grounded(Operation(name, function (xs::Vector{Atom})
+        (length(xs) == 1 && xs[1] isa Expression) ||
+            return ExecRuntime("$name expects one argument: an expression of numbers")
+        ch = xs[1].children
+        isempty(ch) && return ExecRuntime("Empty expression")
+        all(c -> c isa Grounded && c.value isa Number, ch) ||
+            return ExecRuntime("Only numbers are allowed in expression: " * string(xs[1]))
+        best = ch[1]
+        for c in @view ch[2:end]; better(c.value, best.value) && (best = c); end
+        ExecOk(Atom[best])
+    end))
+end
+const MIN_ATOM = _minmax_atom("min-atom", <)
+const MAX_ATOM = _minmax_atom("max-atom", >)
+
 function _register_core_math_ops!()
     R = TOKEN_REGISTRY
     R["sqrt-math"]=SQRT_MATH;   R["pow-math"]=POW_MATH;     R["abs-math"]=ABS_MATH;   R["log-math"]=LOG_MATH
     R["trunc-math"]=TRUNC_MATH; R["ceil-math"]=CEIL_MATH;   R["floor-math"]=FLOOR_MATH; R["round-math"]=ROUND_MATH
     R["sin-math"]=SIN_MATH;     R["asin-math"]=ASIN_MATH;   R["cos-math"]=COS_MATH;   R["acos-math"]=ACOS_MATH
     R["tan-math"]=TAN_MATH;     R["atan-math"]=ATAN_MATH;   R["isnan-math"]=ISNAN_MATH; R["isinf-math"]=ISINF_MATH
+    R["min-atom"]=MIN_ATOM;     R["max-atom"]=MAX_ATOM
 end
 _register_core_math_ops!()

@@ -15,8 +15,20 @@ faithfulness" legible.
   corpus tests it AND it passes. Present-but-untested functions are explicitly flagged — we do not know
   they're faithful, only that they're registered.
 
+## Progress log
+- **add-reduct / add-reducts / add-atoms** — IMPLEMENTED (ported verbatim from hyperon stdlib.metta:567-683;
+  the reduce is type-driven via the `%Undefined%` arg, verified; gated in unit/stdlib_space_sugar.metta).
+  Missing 31→28.
+- **min-atom / max-atom** — IMPLEMENTED (CoreMathOps.jl, faithful to atom.rs); atom divergences 5→3.
+- **HARNESS FIX**: test_unit.jl now loads token-aware (mirrors load_metta!/hyperon's Tokenizer), so
+  `bind!`-bound spaces (&stateAB, &ns) resolve. Improved space 2→1 (state-op `&stateAB` now passes).
+- **Verified-faithful against hyperon+CeTTa this pass**: `new-space` is properly isolated; `get-atoms`
+  scopes correctly (the earlier "leak" was the non-token-aware harness, not the interpreter).
+- **NEW divergence logged**: a `let`-local `(new-space)` does NOT thread mutations in Minimal, but hyperon
+  DOES (mod.rs uses `(let $newspace (new-space) …)`). Separate fix — orthogonal to add-reduct.
+
 ## Headline numbers
-- **107 / 138 present** in source · **31 / 138 missing**.
+- **107 / 138 present** in source · **28 / 138 missing** (was 31; add-reduct family done).
 - Of present: **math 48/48 + the green atom/text cases are faithful-by-test**; the rest are
   **present-untested** (registered, behavior not yet gated) OR **divergent** (corpus fails).
 - Divergences measured by the corpus baselines: atom 5, core 8, space 2, interpreter 41(provisional).

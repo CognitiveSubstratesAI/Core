@@ -19,7 +19,7 @@ const BASELINE = Dict(
     #
     # atom: min-atom + max-atom (unimplemented) + index-atom error-form (IndexOutOfBounds symbol vs
     #   "Index is out of bounds" string) + 2 Core-added bare-predicate filter-atom regressions (chain bug).
-    "atom.metta" => 5,
+    "atom.metta" => 3,
     # math: full hyperon math library now implemented as grounded ops (src/standard/CoreMathOps.jl) —
     #   sqrt/pow/log/trig always Float, abs/trunc/ceil/floor/round preserve type, isnan/isinf → Bool.
     #   48/48 green. (Was 48 missing.)
@@ -27,9 +27,11 @@ const BASELINE = Dict(
     # core: pragma! unimplemented (~5) + case-on-Empty / unify-in-case divergence (~3).
     "core.metta" => 8,
     # space: state-op behaviour (change-state! / get-state).
-    "space.metta" => 2,
+    "space.metta" => 1,
     "text.metta" => 0,        # clean — comment-handling cases all pass
     "types.metta" => 0,       # residue-only (no MeTTa directives; gated by test_types.jl)
+    # stdlib_space_sugar: add-reduct/add-reducts/add-atoms (ported from hyperon stdlib.metta:567-683)
+    "stdlib_space_sugar.metta" => 0,
     # interpreter: PROVISIONAL — NOT yet validated-real. 43→41 after error_atom→grounded-String (only 2
     #   were pure error-format, NOT the ~16 first estimated from a since-known-buggy classifier). The bulk
     #   of the 41 are the chain bare-computed-operand bug (symptom: a free var $X where a value is expected)
@@ -41,9 +43,18 @@ const BASELINE = Dict(
 "Run one unit .metta file; return (npass, nfail, fails::Vector{String})."
 function run_unit_file(path)
     s = SM.Space(); SM.load_core_stdlib!(s)
+    get!(s.tokens, "&self", SM.Grounded(s))
     npass = 0; fails = String[]
-    for (d, a) in SM.parse_program(read(path, String))
-        d || (SM.add_atom!(s, a); continue)
+    # TOKEN-AWARE incremental parse-eval (mirrors load_metta!): parse each atom against s.tokens so a
+    # `bind!`-bound space token (&stateAB, &ns, …) substitutes to its Grounded value before the next atom
+    # is parsed. (parse_program does NOT substitute tokens, so custom bound spaces fell through to &self.)
+    toks = SM.tokenize(read(path, String)); i = Ref(1)
+    while i[] <= length(toks)
+        directive = false
+        toks[i[]] == "!" && (directive = true; i[] += 1)
+        i[] > length(toks) && break
+        a = SM.parse_from(toks, i, s.tokens)
+        directive || (SM.add_atom!(s, a); continue)
         r = try SM.metta_run(a, s) catch e; [SM.Sym("EXC:$(typeof(e))")] end
         ok = !isempty(r) && all(x -> x isa SM.Expression && isempty(x.children), r)   # () = assert passed
         if ok; npass += 1
