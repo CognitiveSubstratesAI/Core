@@ -1082,6 +1082,19 @@ const CHANGE_STATE = Grounded(Operation("change-state!", function (xs::Vector{At
     ExecOk(Atom[xs[1]])                          # return the state atom
 end))
 const NOP = Grounded(Operation("nop", (xs::Vector{Atom}) -> ExecOk(Atom[Expression(Atom[])])))  # arg reduced for effect → ()
+# println! / trace! — hyperon debug ops (string.rs PrintlnOp `(-> %Undefined% (->))` / debug.rs TraceOp
+# `(-> %Undefined% Atom %Undefined%)`). These are in HYPERON's stdlib (grounded), so they belong in
+# Minimal's CORE grounded set, not CoreExtensions. println! evaluates its arg, prints it, returns unit;
+# trace! prints arg0 (evaluated message), returns arg1 (Atom-typed = raw, then re-mettad by the driver).
+_print_form(a::Atom) = (a isa Grounded && a.value isa AbstractString) ? a.value : string(a)
+const PRINTLN_BANG = Grounded(Operation("println!", function (xs::Vector{Atom})
+    length(xs) == 1 || return ExecNoReduce()
+    println(_print_form(xs[1])); ExecOk(Atom[Expression(Atom[])])
+end))
+const TRACE_BANG = Grounded(Operation("trace!", function (xs::Vector{Atom})
+    length(xs) == 2 || return ExecNoReduce()
+    println(_print_form(xs[1])); ExecOk(Atom[xs[2]])
+end))
 # bind! (hyperon module.rs:250): register a token → atom in the space's token table. The parser
 # substitutes the token in every SUBSEQUENT atom (parse-time, via the incremental load_metta! loop).
 const BIND_TOKEN = Grounded(SpaceOp("bind!", function (xs, space)
@@ -1169,6 +1182,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
+    "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
     "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
     "import!" => IMPORT)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
@@ -1176,6 +1190,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
 # (kept out of the space). Defined here, after the ops exist.
 _GROUNDED_OP_TYPES[ADD_ATOM]    = "(-> %Undefined% Atom (->))"
 _GROUNDED_OP_TYPES[REMOVE_ATOM] = "(-> %Undefined% Atom (->))"
+_GROUNDED_OP_TYPES[TRACE_BANG]  = "(-> %Undefined% Atom %Undefined%)"   # arg1 raw so (trace! msg (quote …)) works
 # == is polymorphic same-type (hyperon (-> $t $t Bool)) → the checker emits (BadArgType 2 …) on a
 # mismatch like (== 5 "S"). Now safe: the iterative driver doesn't overflow on the typed path (this
 # crashed the recursive driver). Intrinsic (out of the space, can't disturb match &self).
