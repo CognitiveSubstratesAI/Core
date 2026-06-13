@@ -38,7 +38,10 @@ head_name(a::Atom) = (a isa Expression && !isempty(a.children) && a.children[1] 
 is_minimal_op(a::Atom) = head_name(a) in MINIMAL_OPS
 args(a::Expression) = a.children[2:end]
 
-error_atom(a::Atom, msg::AbstractString) = Expression(ERROR, a, Sym(String(msg)))
+# hyperon/CeTTa store the error message as a grounded String (not a symbol) — Expression(ERROR, a, "msg").
+# Matches the parsed string-literal form so error-asserting tests gate exactly; if-error etc. match the
+# Error HEAD so control flow is unaffected. See docs/STDLIB_FAITHFULNESS_REFERENCE.md (ERROR REPRESENTATION).
+error_atom(a::Atom, msg::AbstractString) = Expression(ERROR, a, Grounded(String(msg)))
 
 # canonical representative of a var's equality class (smallest id, then name) — used when the
 # slot has no value but the var is equal to another (formal-arg = actual-arg matches as $a=$b)

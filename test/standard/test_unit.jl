@@ -29,11 +29,12 @@ const BASELINE = Dict(
     "space.metta" => 2,
     "text.metta" => 0,        # clean — comment-handling cases all pass
     "types.metta" => 0,       # residue-only (no MeTTa directives; gated by test_types.jl)
-    # interpreter: PROVISIONAL — NOT validated-real. Calibration shows the primitives WORK (cons-atom/
-    #   decons-atom value cases pass); the 43 are MOSTLY error-result REPRESENTATION mismatches (Minimal's
-    #   error-atom format vs hyperon's grounded-string) + the already-characterised chain bug — not 43
-    #   functional bugs. Needs an error-format reconciliation pass before this becomes an honest real count.
-    "interpreter.metta" => 43,
+    # interpreter: PROVISIONAL — NOT yet validated-real. 43→41 after error_atom→grounded-String (only 2
+    #   were pure error-format, NOT the ~16 first estimated from a since-known-buggy classifier). The bulk
+    #   of the 41 are the chain bare-computed-operand bug (symptom: a free var $X where a value is expected)
+    #   — that fix is the real lever here, not error representation. Needs the corrected $X-symptom classifier
+    #   + the chain fix before this is an honest real count.
+    "interpreter.metta" => 41,
 )
 
 "Run one unit .metta file; return (npass, nfail, fails::Vector{String})."
