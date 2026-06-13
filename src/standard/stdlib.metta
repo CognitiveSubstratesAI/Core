@@ -12,6 +12,14 @@
 (: assertEqualToResult (-> Atom Atom (->)))
 (: assertAlphaEqualToResult (-> Atom Atom (->)))
 (: match (-> Atom Atom Atom %Undefined%))
+; ── quote / unquote (hyperon stdlib.metta:597) — evaluation control ──────────
+; quote = a CONSTRUCTOR: `(-> Atom Atom)` (arg raw, unevaluated) with NO equalities, so `(quote X)`
+; keeps X unreduced and is itself non-reducible (the docs' canonical "symbol without equalities" form).
+; (hyperon's stdlib also has `(= (quote $atom) NotReducible)`, but Minimal doesn't treat a NotReducible
+; rule-body specially — it'd reduce to the bare symbol — so the equivalent constructor form is used.)
+(: quote (-> Atom Atom))
+(: unquote (-> %Undefined% %Undefined%))
+(= (unquote (quote $atom)) $atom)
 (: get-type (-> Atom %Undefined%))
 (: get-metatype (-> Atom Atom))
 (: = (-> $t $t %Undefined%))
