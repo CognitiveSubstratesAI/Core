@@ -1152,7 +1152,22 @@ end))
 
 # import! (hyperon): load module `<name>.metta` (found on the module search path). `(import! &kb mod)`
 # loads it into a NEW space bound to the &kb token; `(import! &self mod)` loads it into the current space.
-const _MODULE_PATH = Ref(String[])               # dirs searched for `<module>.metta` (set by the loader/host)
+# Module search path for `import!`. Defaults to the two dirs that ship with the package — `src/standard/`
+# (stdlib.metta, CoreExtensions.metta) and `lib/` (the algorithm modules: metamo, MOSES, pln, …) — so a
+# fresh space can resolve `!(import! &self (library metamo))` with NO host setup. The host/REPL may still
+# prepend extra dirs. While a module loads, its own directory is pushed (see `_load_module_file!`) so the
+# module's relative `import!`s (e.g. metamo.metta's `(import! &self "config.metta")`) resolve self-contained.
+const _MODULE_PATH = Ref(String[
+    @__DIR__,                                              # src/standard/
+    normpath(joinpath(@__DIR__, "..", "..", "lib")),      # <pkg>/lib/
+])
+# Load a module file into `sp`, with its containing dir on the search path for the duration so the module's
+# own relative `import!`s resolve. try/finally keeps the global path balanced even if loading throws.
+function _load_module_file!(sp, file::String)
+    d = dirname(file)
+    pushed = !(d in _MODULE_PATH[]); pushed && push!(_MODULE_PATH[], d)
+    try load_metta!(sp, read(file, String)) finally pushed && filter!(!=(d), _MODULE_PATH[]) end
+end
 # module spec → name, accepting all the forms the reference impls take: a bare symbol (`f1_moduleA`),
 # a string (hyperon's stated target form; PeTTa coerces via atom_string), or a `(library X)` spec
 # (PeTTa/CeTTa). Cross-checked vs CeTTa eval.c resolve_import_destination + PeTTa metta.pl importer_helper.
@@ -1173,7 +1188,9 @@ const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
     modname === nothing && return ExecRuntime("import!: expects a module name (symbol, string, or (library X))")
     file = nothing
     for d in _MODULE_PATH[]
-        for cand in (modname, modname * ".metta")            # accept a bare name or an explicit path
+        # accept: an explicit/relative `<name>.metta` file, a bare `<name>`, or the `<name>/<name>.metta`
+        # entry-in-dir convention Core's multi-file algorithm libs use (lib/metamo/metamo.metta).
+        for cand in (modname, modname * ".metta", joinpath(modname, modname * ".metta"))
             p = isabspath(cand) ? cand : joinpath(d, cand); isfile(p) && (file = p; break)
         end
         file !== nothing && break
@@ -1183,10 +1200,10 @@ const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
         tgt = target.value::Space
         modname in tgt.imported && return ExecOk(Atom[Expression(Atom[])])  # already imported → ignore (dedup + cycle guard)
         push!(tgt.imported, modname)                            # record BEFORE loading (guards cycles)
-        load_metta!(tgt, read(file, String))                    # &self: import into the current space
+        _load_module_file!(tgt, file)                           # &self: import into the current space
     elseif target isa Sym
         newsp = Space(); push!(newsp.imported, modname)
-        load_metta!(newsp, read(file, String))
+        _load_module_file!(newsp, file)
         space.tokens[(target::Sym).name] = Grounded(newsp)      # &kb: bind the token to a fresh space
     else
         return ExecRuntime("import!: first argument must be a space token")
