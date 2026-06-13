@@ -20,9 +20,10 @@ const BASELINE = Dict(
     # atom: min-atom + max-atom (unimplemented) + index-atom error-form (IndexOutOfBounds symbol vs
     #   "Index is out of bounds" string) + 2 Core-added bare-predicate filter-atom regressions (chain bug).
     "atom.metta" => 5,
-    # math: the ENTIRE math library (sqrt-math/pow-math/sin-math/log-math/abs-math/ceil-math/…) is
-    #   unimplemented in Minimal — all 48 are clean "op missing".
-    "math.metta" => 48,
+    # math: full hyperon math library now implemented as grounded ops (src/standard/CoreMathOps.jl) —
+    #   sqrt/pow/log/trig always Float, abs/trunc/ceil/floor/round preserve type, isnan/isinf → Bool.
+    #   48/48 green. (Was 48 missing.)
+    "math.metta" => 0,
     # core: pragma! unimplemented (~5) + case-on-Empty / unify-in-case divergence (~3).
     "core.metta" => 8,
     # space: state-op behaviour (change-state! / get-state).
