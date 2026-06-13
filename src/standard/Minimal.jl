@@ -1233,8 +1233,13 @@ function tokenize(s::AbstractString)::Vector{String}
         elseif c == '"'
             i += 1; buf = Char[]
             while i <= n && cs[i] != '"'
-                (cs[i] == '\\' && i < n) && (i += 1)
-                push!(buf, cs[i]); i += 1
+                if cs[i] == '\\' && i < n                   # decode escapes (hyperon text.rs:550-573):
+                    i += 1; d = cs[i]                        #   \n \t \r → control char; \" \\ \' → literal
+                    push!(buf, d == 'n' ? '\n' : d == 't' ? '\t' : d == 'r' ? '\r' : d)
+                else
+                    push!(buf, cs[i])
+                end
+                i += 1
             end
             i += 1
             push!(toks, "\"" * String(buf))                # leading-quote marks a string token
