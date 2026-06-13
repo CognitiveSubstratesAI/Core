@@ -8,12 +8,9 @@
 # test; an unrecorded improvement (errors go down) ALSO fails, forcing the baseline to be updated and
 # kept honest. The matrix is printed every run so the incomplete state is always visible, never hidden.
 #
-# Current: 233/234 directives pass. Remaining gap (see nonzero baseline below): f1_imports (1) — the
-# `(let $x (get-atoms &self) (get-type $x))` directive that expects an EMPTY &self at start-up. hyperon
-# keeps imported modules as grounded CHILD-SPACE atoms; Core FLATTENS stdlib into &self, so `(get-atoms
-# &self)` returns the flattened rules instead of the empty set that directive expects. Architecture gap,
-# NOT "passing". (The other get-atoms directive, `&m` + is-space, now passes since get-type of a Grounded
-# Space returns SpaceType — distinct from the rule atoms' %Undefined% — so is-space is correctly False.)
+# Current: 234/234 directives pass — FULL conformance against the vendored hyperon corpus. The baseline is
+# all-zero; any future regression (errors go up) OR unrecorded change fails this test and must be
+# explained. Keep it honest: when adding a new vendored script, add its real count here, don't cherry-pick.
 using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
 using MeTTaCore.Minimal.StandardMeTTa
 using Test
@@ -31,11 +28,11 @@ const BASELINE = Dict(
     "d1_gadt.metta"=>0, "d2_higherfunc.metta"=>0, "d3_deptypes.metta"=>0, "d4_type_prop.metta"=>0,
     "d5_auto_types.metta"=>0,
     "e1_kb_write.metta"=>0, "e2_states.metta"=>0, "e3_match_states.metta"=>0,
-    "f1_imports.metta"=>1, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
+    "f1_imports.metta"=>0, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
     "g1_docs.metta"=>0)
 
 function script_errors(name)
-    sp = Space(); load_metta!(sp, STDLIB)
+    sp = Space(); load_metta!(sp, STDLIB; as_library=true)   # stdlib = imported lib, hidden from get-atoms
     rs = try load_metta!(sp, read(joinpath(CONF_DIR, name), String)) catch e; return (-1, "CRASH $(typeof(e))"); end
     errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
     (length(errs), "$(length(rs)-length(errs))/$(length(rs)) pass")

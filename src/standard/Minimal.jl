@@ -238,9 +238,13 @@ mutable struct Space
     atoms::Vector{Atom}
     tokens::Dict{String,Atom}     # bind! token table: token-name → atom (parse-time substitution)
     imported::Set{String}         # modules already imported here — re-import is ignored (+ cycle guard)
+    lib_count::Int                # leading atoms that came from an imported LIBRARY (stdlib). Core keeps
+                                  # the library flattened (so &self/match/query stay single-space), but
+                                  # `get-atoms` returns only atoms[lib_count+1:end] — the space's OWN
+                                  # atoms — mirroring hyperon where get-atoms excludes dependency spaces.
 end
-Space() = Space(Atom[], Dict{String,Atom}(), Set{String}())
-Space(atoms::Vector{Atom}) = Space(atoms, Dict{String,Atom}(), Set{String}())
+Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0)
+Space(atoms::Vector{Atom}) = Space(atoms, Dict{String,Atom}(), Set{String}(), 0)
 add_atom!(s::Space, a::Atom) = (push!(s.atoms, a); s)
 
 const _VAR_COUNTER = Ref(UInt64(0))
@@ -986,7 +990,8 @@ end))
 const GET_ATOMS = Grounded(SpaceOp("get-atoms", function (xs, space)
     length(xs) == 1 || return ExecNoReduce()
     tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
-    ExecOk(Atom[rename_fresh(a, Dict{Var,Var}()) for a in tgt.atoms])
+    own = @view tgt.atoms[(tgt.lib_count + 1):end]          # own atoms only — not the imported library
+    ExecOk(Atom[rename_fresh(a, Dict{Var,Var}()) for a in own])
 end))
 const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
 # all binding sets under which `pat` matches some atom of `space`, extending `b0`
@@ -1231,7 +1236,7 @@ end
 INCREMENTAL parse-eval (hyperon/CeTTa Tokenizer model): each atom is parsed THEN evaluated before the
 next is parsed, so a `bind!` directive registers its token in `space.tokens` in time for the parser to
 substitute that token in every following atom (parse-time substitution)."""
-function load_metta!(space::Space, text::AbstractString)::Vector{Atom}
+function load_metta!(space::Space, text::AbstractString; as_library::Bool=false)::Vector{Atom}
     get!(space.tokens, "&self", Grounded(space))    # `&self` (parse-time) resolves to the current space
     results = Atom[]; toks = tokenize(text); i = Ref(1)
     while i[] <= length(toks)
@@ -1241,6 +1246,9 @@ function load_metta!(space::Space, text::AbstractString)::Vector{Atom}
         atom = parse_from(toks, i, space.tokens)        # substitute bound tokens at parse time
         directive ? append!(results, metta_run(atom, space)) : add_atom!(space, atom)
     end
+    # mark everything loaded so far as imported-library content, hidden from `get-atoms` (hyperon: a
+    # dependency lives in a child space and is not returned by get-atoms of the importing space).
+    as_library && (space.lib_count = length(space.atoms))
     results
 end
 
