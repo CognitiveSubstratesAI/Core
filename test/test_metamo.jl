@@ -9,14 +9,19 @@
 
 using MeTTaCore, Test
 
-println("MetaMo: initialising space...")
-MS = new_core_space()
-ef_mm = e -> to_sexpr(eval_metta(from_sexpr(e), MS))
-register_core_primitives!()
-_register_atom_ops!(ef_mm)
-load_stdlib!(MS)
-run_metta("!(import! &self (library metamo))", MS)
-qmm(e) = run_metta(e, MS)
+# Harness-parametric: a Minimal runner (test_metamo_minimal.jl) can pre-define `MINIMAL_QMM = true`
+# and `qmm` (Minimal-backed) so the canonical @test assertions below run on StandardMeTTa.Minimal
+# unchanged. Default (this var undefined) = the legacy eval_metta/CoreSpace harness.
+if !@isdefined(MINIMAL_QMM)
+    println("MetaMo: initialising space...")
+    MS = new_core_space()
+    ef_mm = e -> to_sexpr(eval_metta(from_sexpr(e), MS))
+    register_core_primitives!()
+    _register_atom_ops!(ef_mm)
+    load_stdlib!(MS)
+    run_metta("!(import! &self (library metamo))", MS)
+    qmm(e) = run_metta(e, MS)
+end
 
 const _ST = "(motivation (0.25 0.75 0.5 0.5 0.5 0.5 0.5 0.5) (0.125 0.25 0.375 0.5 0.625 0.75))"
 _q(e) = qmm(replace(e, "\$st" => _ST))
@@ -173,6 +178,10 @@ _q(e) = qmm(replace(e, "\$st" => _ST))
     end
 end
 
+# M5 bridge + the 12-tick trajectory use to_sexpr/eval_metta serialization between ticks
+# (legacy-specific); they run only under the legacy harness. The Minimal runner skips them
+# pending a Minimal atom-serializer (tier-2 of the pilot).
+if !@isdefined(MINIMAL_QMM)
 # ── M5: standalone ECAN bridge (does NOT touch the live governance-step!) ──────
 @testset "MetaMo ↔ ECAN bridge (standalone demo)" begin
     qmm("!(import! &self (library ecan))")
@@ -236,5 +245,6 @@ end
     # Converged: the late-phase residual is an order of magnitude below the start.
     @test dists[1] > 0.4 && minimum(dists[6:end]) < 0.05
 end
+end  # if !@isdefined(MINIMAL_QMM)
 
 println("\n✓ MetaMo Core tests complete")

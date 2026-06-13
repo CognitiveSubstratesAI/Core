@@ -40,15 +40,15 @@
 (= (vectorAdd $a $b)
    (if (== $a ())
        ()
-       (let* ((($ah $at) (decons $a)) (($bh $bt) (decons $b)))
-         (cons-atom (+ $ah $bh) (vectorAdd $at $bt)))))
+       (let* ((($ah $at) (decons $a)) (($bh $bt) (decons $b)) ($rest (vectorAdd $at $bt)))
+         (cons-atom (+ $ah $bh) $rest))))
 
 ;; elementwise a-b
 (= (listDifference $a $b)
    (if (== $a ())
        ()
-       (let* ((($ah $at) (decons $a)) (($bh $bt) (decons $b)))
-         (cons-atom (- $ah $bh) (listDifference $at $bt)))))
+       (let* ((($ah $at) (decons $a)) (($bh $bt) (decons $b)) ($rest (listDifference $at $bt)))
+         (cons-atom (- $ah $bh) $rest))))
 
 ;; Euclidean norm: sqrt(Σ xᵢ²)
 (= (norm $arr) (sqrt (foldl-atom $arr 0.0 $acc $x (+ $acc (* $x $x)))))
@@ -67,8 +67,8 @@
 (= (_setAtIdx $arr $pos $idx $val)
    (if (== $arr ())
        ()
-       (let* ((($h $t) (decons $arr)))
-         (cons-atom (if (== $pos $idx) $val $h) (_setAtIdx $t (+ $pos 1) $idx $val)))))
+       (let* ((($h $t) (decons $arr)) ($rest (_setAtIdx $t (+ $pos 1) $idx $val)))
+         (cons-atom (if (== $pos $idx) $val $h) $rest))))
 
 ;; add $boost (capped at $maxVal) to elements whose position is in $indices
 (= (boostAtIndices $arr $indices $boost $maxVal) (_boostAtIdx $arr 0 $indices $boost $maxVal))
@@ -76,8 +76,9 @@
    (if (== $arr ())
        ()
        (let* ((($h $t) (decons $arr))
-              ($nh (if (member $pos $indices) (min $maxVal (+ $h $boost)) $h)))
-         (cons-atom $nh (_boostAtIdx $t (+ $pos 1) $indices $boost $maxVal)))))
+              ($nh (if (member $pos $indices) (min $maxVal (+ $h $boost)) $h))
+              ($rest (_boostAtIdx $t (+ $pos 1) $indices $boost $maxVal)))
+         (cons-atom $nh $rest))))
 
 ;; project goals into the safe region R = { gInd ≥ θ ∧ ‖G‖ ≤ gMax }.
 ;;
