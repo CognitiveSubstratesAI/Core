@@ -16,6 +16,37 @@ faithfulness" legible.
   they're faithful, only that they're registered.
 
 ## Progress log
+- **HARNESS BLIND-SPOT (the durable lesson, recorded above the specific gap):** a primitive used as test
+  *infrastructure* is itself untested at its edges — you only exercise the part the other tests need. `0c51e87`
+  adopted hyperon's per-module corpora that USE `assertEqualToResult`/`assertAlphaEqualToResult` as the HARNESS
+  (for car-atom/filter-atom/chain/…), so the asserts' happy path is gated but their OWN edge semantics never were.
+  Same is true of any harness-load-bearing primitive — `collapse`, `chain`, `let`, `metta`. ACTION: the corpus
+  itself names the harness verbs (grep what wraps `!(…)`); adopt each one's own edge `#[test]` cases.
+  DONE for asserts: `unit/debug.metta` adopted (baseline 2 = the message + multiplicity divergences, the failing
+  gate the grounded `.jl` fix must flip green). Still TODO: `chain`/`collapse`/`let`/`metta` edge corpora.
+- **ASSERT FAMILY — grounded-vs-rules fork RESOLVED BY MEASUREMENT (CONFIDENT):** ran hyperon's own `debug.rs`
+  assert `#[test]` cases against Core's GROUNDED asserts. The load-bearing conclusion (holds regardless of any
+  mechanism detail): **the rules-vs-grounded refactor is NOT required** — every observed gap is in the *comparison
+  logic inside the grounded op*, fixable in place. So rules-vs-grounded is architectural TASTE → **park indefinitely**.
+- **ASSERT MULTISET GAP — mechanism CONFIRMED by discriminating probe (not inferred from one outcome):** probes
+  `collapse (baz)`→`(D D D)` (collapse PRESERVES multiplicity — gap is NOT in collapse), `(baz)(D D)`→`()` &
+  `(foo)(A B B)`→`()` (multiplicity ignored both sides), `(foo)(A)`→`Error` (sees both A,B — refutes under-collapse /
+  takes-first / membership). ⇒ the grounded `assertEqualToResult`/`assertAlphaEqualToResult` compare is
+  **multiplicity-insensitive set-equality**; hyperon is MULTISET. Plus an error-message divergence (`AssertionFailed`
+  vs `\nExpected:…\nGot:…\nMissed…\nExcessive…`). Fix target (narrow, located): multiset compare + richer msg in the
+  grounded `.jl` ops. Blocked only on the `.jl` precompile path ⇒ **`@compile_workload` hang is the real next bottleneck**.
+- **assertIncludes** — IMPLEMENTED as an additive `stdlib.metta` rule, hyperon stdlib.metta:691 VERBATIM
+  (collapse/subtraction-atom/if/==; hang-safe — no `.jl`, no precompile). Gated in new `unit/asserts.metta`
+  (3/3 green, baseline 0); zero regressions. Missing 28→27; assert family 7→6.
+  - `assertAlphaEqual` was tried (CeTTa:487 wrapper) then REVERTED: it wraps the *grounded* `assertAlphaEqualToResult`,
+    which prejudges the assert-family **grounded-vs-rules** question before we've tested whether the grounded
+    floor is observably faithful. THE FORK IS A SEMANTICS QUESTION, NOT A SHAPE PREFERENCE: hyperon makes the
+    whole assert surface rules over a thin grounded floor (`_assert-results-are-equal[-msg]`, debug.rs:163/173);
+    Core grounds the `*ToResult` ops. The unit corpus gates *observable semantics*, not rules-vs-grounded. So the
+    deciding test = do hyperon's assert cases that exercise **collapse / nondeterminism / error-propagation** pass
+    against Core's grounded asserts? If yes → grounded is faithful, rules-refactor is taste (park indefinitely),
+    and `=alpha`-grounded-in-`.jl` (per debug.rs) becomes the *correct* impl, blocked only by the `@compile_workload`
+    hang. If no → that's the real (narrower) gap. Real next bottleneck = the hang, not the model vote.
 - **add-reduct / add-reducts / add-atoms** — IMPLEMENTED (ported verbatim from hyperon stdlib.metta:567-683;
   the reduce is type-driven via the `%Undefined%` arg, verified; gated in unit/stdlib_space_sugar.metta).
   Missing 31→28.
@@ -28,7 +59,7 @@ faithfulness" legible.
   DOES (mod.rs uses `(let $newspace (new-space) …)`). Separate fix — orthogonal to add-reduct.
 
 ## Headline numbers
-- **107 / 138 present** in source · **28 / 138 missing** (was 31; add-reduct family done).
+- **108 / 138 present** in source · **27 / 138 missing** (was 31; add-reduct family + assertIncludes done).
 - Of present: **math 48/48 + the green atom/text cases are faithful-by-test**; the rest are
   **present-untested** (registered, behavior not yet gated) OR **divergent** (corpus fails).
 - Divergences measured by the corpus baselines: atom 5, core 8, space 2, interpreter 41(provisional).
@@ -39,7 +70,7 @@ faithfulness" legible.
 
 | category | functions | note |
 |---|---|---|
-| **assert family** (7) | `assertEqualMsg` `assertEqualToResultMsg` `assertAlphaEqual` `assertAlphaEqualMsg` `assertAlphaEqualToResultMsg` `assertIncludes` `=alpha` | additive; Minimal has only `assertEqual`/`assertEqualToResult`/`assertAlphaEqualToResult` |
+| **assert family** (6) | `assertEqualMsg` `assertEqualToResultMsg` `assertAlphaEqual` `assertAlphaEqualMsg` `assertAlphaEqualToResultMsg` `=alpha` | `assertIncludes` DONE (verbatim hyperon rule). Remaining all need the grounded-vs-rules decision and/or `.jl`: `assertAlphaEqual` (reverted — don't wrap grounded floor until it's proven faithful); the 4 `*Msg` variants need a grounded `_assert-results-*-msg` helper (`.jl`); `=alpha` grounded upstream (hyperon debug.rs `AlphaEqOp`) → `.jl`. Deciding measurement first (collapse/nondeterm/error divergence), then the `@compile_workload` hang. |
 | **space sugar** (3) | `add-reduct` `add-reducts` `add-atoms` | additive MeTTa rules over `add-atom` (present) |
 | **help / doc display** (4) | `help!` `help-param!` `help-space!` `print-mods!` | build on `get-doc` (present) + `println!` (present) |
 | **module system** (5) | `register-module!` `mod-space!` `module-space-no-deps` `include` `git-module!` | `import!` is present; these are the rest of the module surface |

@@ -35,6 +35,13 @@ const BASELINE = Dict(
     # asserts: assertIncludes (hyperon stdlib.metta:691 verbatim). Additive stdlib rule. 3/3 green.
     #   (assertAlphaEqual/*Msg/=alpha deferred to the assert-family grounded-vs-rules decision.)
     "asserts.metta" => 0,
+    # debug: hyperon debug.rs assert-family OWN-behavior cases (the harness verbs tested at their edges).
+    #   3/5 pass; 2 EXPECTED-FAIL = the grounded-assert `.jl` fix-target, CONFIRMED by discriminating probe:
+    #   (#4) error-message form — Core bare `AssertionFailed` vs hyperon `Expected/Got/Missed/Excessive`;
+    #   (#5) MULTIPLICITY — Core compare is set-equality (multiplicity-insensitive), hyperon is multiset
+    #   (`collapse (mult)`→`(D D D)` so collapse is faithful; the gap is contained to the grounded assert ops).
+    #   Lower to 0 when the grounded multiset-compare + message fix lands (blocked on the @compile_workload hang).
+    "debug.metta" => 2,
     # interpreter: PROVISIONAL — NOT yet validated-real. 43→41 after error_atom→grounded-String (only 2
     #   were pure error-format, NOT the ~16 first estimated from a since-known-buggy classifier). The bulk
     #   of the 41 are the chain bare-computed-operand bug (symptom: a free var $X where a value is expected)
