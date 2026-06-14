@@ -11,6 +11,20 @@
 (: assertEqual (-> Atom Atom (->)))
 (: assertEqualToResult (-> Atom Atom (->)))
 (: assertAlphaEqualToResult (-> Atom Atom (->)))
+; ── assertIncludes (hyperon stdlib.metta:691, VERBATIM) — additive, hang-safe ──
+; Cross-checked: hyperon defines it as a light rule over collapse/subtraction-atom/if/== (NOT the heavy
+; metta-3-arg path); CeTTa has no rule form (grounded). All ops present in Core, so port verbatim.
+(: assertIncludes (-> Atom Expression (->)))
+(= (assertIncludes $atom $content)
+    (let $eval_atom (collapse $atom)
+        (let $diff (subtraction-atom $content $eval_atom)
+            (if (== $diff ())
+                ()
+                (Error (assertIncludes $atom $content)
+                  (assertIncludes error: $diff not included in result: $eval_atom))))))
+; NOTE: assertAlphaEqual / *Msg variants deferred — they belong to the grounded-vs-rules decision for the
+; whole assert family (hyperon = rules over _assert-results-are-equal[-msg]; Core grounds the *ToResult
+; floor). Not adding rule-wrappers over the grounded floor until that fork is resolved. See CORELIB_COVERAGE.md.
 (: match (-> Atom Atom Atom %Undefined%))
 ; ── quote / unquote (hyperon stdlib.metta:597) — evaluation control ──────────
 ; quote = a CONSTRUCTOR: `(-> Atom Atom)` (arg raw, unevaluated) with NO equalities, so `(quote X)`

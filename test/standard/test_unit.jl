@@ -32,6 +32,9 @@ const BASELINE = Dict(
     "types.metta" => 0,       # residue-only (no MeTTa directives; gated by test_types.jl)
     # stdlib_space_sugar: add-reduct/add-reducts/add-atoms (ported from hyperon stdlib.metta:567-683)
     "stdlib_space_sugar.metta" => 0,
+    # asserts: assertIncludes (hyperon stdlib.metta:691 verbatim). Additive stdlib rule. 3/3 green.
+    #   (assertAlphaEqual/*Msg/=alpha deferred to the assert-family grounded-vs-rules decision.)
+    "asserts.metta" => 0,
     # interpreter: PROVISIONAL — NOT yet validated-real. 43→41 after error_atom→grounded-String (only 2
     #   were pure error-format, NOT the ~16 first estimated from a since-known-buggy classifier). The bulk
     #   of the 41 are the chain bare-computed-operand bug (symptom: a free var $X where a value is expected)
