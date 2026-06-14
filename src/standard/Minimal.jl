@@ -309,7 +309,13 @@ function eval_op(f::Frame, b::Bindings, space)
         results = query(space::Space, Expression(Sym("="), to_eval, X))
         out = Tuple{Frame,Bindings}[]
         for qb in results, mb in merge_bindings(b, qb)
-            x = subst(X, mb)                              # value, or equality-class representative
+            # resolve-filter (mirrors hyperon interpreter.rs query:619 `resolve(&var_x)→None`): drop a query match
+            # where the rewrite-RHS X is TRULY unbound — a bare variable space atom binds itself to the whole
+            # `(= …)` query, leaving X free, which would leak as a spurious `$X` and shadow grounded ops. Uses
+            # `haskey(var_to_slot)` NOT `resolve===nothing`: Core's resolve also returns nothing for X equated to a
+            # var (no value), but those (e.g. `(= (id $x) $x)` → a var) are LEGIT and must be KEPT. (See :564, :883.)
+            haskey(mb.var_to_slot, X) || continue
+            x = subst(X, mb)
             append!(out, eval_result(x, mb, f.prev, f.depth + 1))
         end
         return isempty(out) ? finished_result(NOT_REDUCIBLE, b, f.prev) : out
@@ -562,10 +568,13 @@ function metta_call_instr(f::Frame, b::Bindings, space)
     else
         X = freshvar("X")
         qres = query(space::Space, Expression(Sym("="), atom, X))
-        isempty(qres) && return finished_result(atom, b, f.prev)             # non-reducible → as-is
+        reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
+            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Minimal.jl :309)
+            reduced = true
             append!(out, push_nested(_metta(subst(X, mb), typ), mb, f.prev, f.depth + 1))
         end
+        reduced || return finished_result(atom, b, f.prev)                   # no real rewrite survived → non-reducible
         return out
     end
 end
@@ -881,13 +890,13 @@ function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector
     else
         X = freshvar("X")
         qres = query(space, Expression(Sym("="), a, X))
-        if !isempty(qres)
-            for qb in qres, mb in merge_bindings(b, qb)
-                push!(out, (subst(X, mb), type, mb, false))             # rewrite result → reduce again
-            end
-        else
-            push!(out, (a, type, b, true))                              # non-reducible → as-is
+        reduced = false
+        for qb in qres, mb in merge_bindings(b, qb)
+            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Minimal.jl :309)
+            reduced = true
+            push!(out, (subst(X, mb), type, mb, false))                 # rewrite result → reduce again
         end
+        reduced || push!(out, (a, type, b, true))                       # no real rewrite survived → non-reducible
     end
     isempty(out) ? _STEP[(EMPTY, type, b, true)] : out
 end

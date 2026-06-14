@@ -50,26 +50,19 @@ const BASELINE = Dict(
     #   assert over multiset results (all distinct; no superpose-repeats / same-RHS; MOSES/MetaMo assert via Julia ==).
     #   So no spurious pass today; this gate protects the FUTURE. Lower to 0 when the grounded fix lands (post-hang).
     "debug.metta" => 2,
-    # interpreter: MEASURED 2026-06-14 (actual-vs-expected reconciliation, INCREMENTAL — totals exactly 41).
-    #   Honest confirmed-vs-presumed split (don't re-bucket by symptom):
-    #     12  format-only      — CONFIRMED benign (both Error, same subject, differ only in message text).
-    #     26  contamination    — ROOT-CAUSED (bisect + isolation): a stored BARE VARIABLE atom acts as a
-    #                            universal catch-all rewrite. interpreter.metta:77 intentionally stores a bare
-    #                            `$t` (mirrors hyperon's test, harmless there). In Core a bare var unifies with
-    #                            the rewrite-lookup query `(= lhs rhs)`, so EVERY eval finds a spurious rewrite
-    #                            returning a freshened `$X`, shadowing grounded ops. ISOLATED: clean+`$t`→`$X`,
-    #                            clean+`$z`→`$X`, clean+`(P x)`→correct (only bare vars contaminate). One `$t`
-    #                            poisons all 26 bare grounded-op evals below it (decons/cons/unify confirmed).
-    #                            FIX: rewrite-lookup must not treat a bare var atom as a matching `(= …)` rule
-    #                            (filter the space query to equality atoms / grounded precedence). LIKELY LATENT
-    #                            for real workloads (no static bare-var store found) but FOUNDATIONAL — a dynamic
-    #                            var-store would silently corrupt the space. See memory: project_core_bare_var_atom_bug.
-    #      2  NoReturn-subject — CONFIRMED real, distinct: `function` reports subject `(function X)` vs hyperon `(X)`.
-    #      1  step-limit       — CONFIRMED real, distinct: busy-beaver hits Core's step cap; hyperon completes.
-    #   ⇒ "chain bare-operand bug is the dominant lever" is REFUTED for the confirmed cons/decons/unify case
-    #   (it's contamination, not chain). Real next step: the 2-probe variable-freshening discriminator, then
-    #   confirm a few more $X cases before banking "26-case contamination". (Baseline stays 41.)
-    "interpreter.metta" => 41,
+    # interpreter: 15 (was 41). The 26 bare-variable-atom CONTAMINATION cases were FIXED 2026-06-14 by the
+    #   resolve-filter at the three rewrite-query sites in Minimal.jl: drop a query match where the rewrite-RHS X
+    #   is TRULY unbound (`!haskey(mb.var_to_slot, X)`) — a bare-var space atom binds itself to the whole `(= …)`
+    #   query, leaving X free; hyperon's `query` filters the same via `resolve(&var_x)→None` (interpreter.rs:619).
+    #   Verified FAITHFUL not symptom-suppressing: control.metta's `rvid` id-guard (X equated to a var → KEPT)
+    #   stays green and conformance holds 234/234. (First attempt used `resolve===nothing` — over-filtered, broke
+    #   the id-guard + b1 + debug; corrected to `haskey` since Core's resolve returns nothing for var-equivalence.)
+    #   See memory project_core_bare_var_atom_bug. Remaining 15, MEASURED (all confirmed real/benign — NOT the
+    #   contamination, NOT the chain bug):
+    #     12 format-only      — benign error-message text divergence (Core `AssertionFailed` vs hyperon detail);
+    #      2 NoReturn-subject — `function` reports subject `(function X)` vs hyperon `(X)`;
+    #      1 step-limit       — busy-beaver hits Core's step cap where hyperon completes.
+    "interpreter.metta" => 15,
 )
 
 "Run one unit .metta file; return (npass, nfail, fails::Vector{String})."
