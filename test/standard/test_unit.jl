@@ -50,11 +50,21 @@ const BASELINE = Dict(
     #   assert over multiset results (all distinct; no superpose-repeats / same-RHS; MOSES/MetaMo assert via Julia ==).
     #   So no spurious pass today; this gate protects the FUTURE. Lower to 0 when the grounded fix lands (post-hang).
     "debug.metta" => 2,
-    # interpreter: PROVISIONAL — NOT yet validated-real. 43→41 after error_atom→grounded-String (only 2
-    #   were pure error-format, NOT the ~16 first estimated from a since-known-buggy classifier). The bulk
-    #   of the 41 are the chain bare-computed-operand bug (symptom: a free var $X where a value is expected)
-    #   — that fix is the real lever here, not error representation. Needs the corrected $X-symptom classifier
-    #   + the chain fix before this is an honest real count.
+    # interpreter: MEASURED 2026-06-14 (actual-vs-expected reconciliation, INCREMENTAL — totals exactly 41).
+    #   Honest confirmed-vs-presumed split (don't re-bucket by symptom):
+    #     12  format-only      — CONFIRMED benign (both Error, same subject, differ only in message text).
+    #      1  contamination    — CONFIRMED: `(decons-atom (a b c))` → `(a (b c))` in a clean stdlib space but
+    #                            → free `$X` once interpreter.metta's defs load. Not rule-interception (no
+    #                            matching/var-headed rules), not the `_STEP` type-alias, not directive-residue.
+    #                            HYPOTHESIS (untested): insufficient variable freshening on match
+    #                            (make_variables_unique, Minimal.jl:270) — stored rules' vars leak into unrelated
+    #                            eval results once the space holds enough variable-bearing atoms.
+    #     25  presumed-contam  — share the `$X` symptom; PRESUMED same cause as the 1 confirmed, NOT yet verified.
+    #      2  NoReturn-subject — CONFIRMED real, distinct: `function` reports subject `(function X)` vs hyperon `(X)`.
+    #      1  step-limit       — CONFIRMED real, distinct: busy-beaver hits Core's step cap; hyperon completes.
+    #   ⇒ "chain bare-operand bug is the dominant lever" is REFUTED for the confirmed cons/decons/unify case
+    #   (it's contamination, not chain). Real next step: the 2-probe variable-freshening discriminator, then
+    #   confirm a few more $X cases before banking "26-case contamination". (Baseline stays 41.)
     "interpreter.metta" => 41,
 )
 
