@@ -36,11 +36,16 @@ const BASELINE = Dict(
     #   (assertAlphaEqual/*Msg/=alpha deferred to the assert-family grounded-vs-rules decision.)
     "asserts.metta" => 0,
     # debug: hyperon debug.rs assert-family OWN-behavior cases (the harness verbs tested at their edges).
-    #   3/5 pass; 2 EXPECTED-FAIL = the grounded-assert `.jl` fix-target, CONFIRMED by discriminating probe:
-    #   (#4) error-message form — Core bare `AssertionFailed` vs hyperon `Expected/Got/Missed/Excessive`;
-    #   (#5) MULTIPLICITY — Core compare is set-equality (multiplicity-insensitive), hyperon is multiset
-    #   (`collapse (mult)`→`(D D D)` so collapse is faithful; the gap is contained to the grounded assert ops).
-    #   Lower to 0 when the grounded multiset-compare + message fix lands (blocked on the @compile_workload hang).
+    #   3/5 pass; 2 EXPECTED-FAIL = the grounded-assert `.jl` fix-target, CONFIRMED by discriminating probe.
+    #   The 2 fails are DIFFERENT KINDS (don't conflate at fix-time — they can land separately):
+    #   (#5) MULTIPLICITY = CORRECTNESS (load-bearing): Core compare is set-equality (multiplicity-insensitive),
+    #        hyperon is multiset. This is the half that justifies touching the `.jl`. (`collapse (mult)`→`(D D D)`
+    #        so collapse is faithful; gap is contained to the grounded assert ops.)
+    #   (#4) error-message form = COSMETIC: Core bare `AssertionFailed` vs hyperon `Expected/Got/Missed/Excessive`.
+    #        No program's BEHAVIOR depends on the message text; exact-whitespace match is fiddly — don't let it block #5.
+    #   STATUS: the multiplicity gap is LATENT, not live — grep of the live suite (conformance/unit/lib) found NO
+    #   assert over multiset results (all distinct; no superpose-repeats / same-RHS; MOSES/MetaMo assert via Julia ==).
+    #   So no spurious pass today; this gate protects the FUTURE. Lower to 0 when the grounded fix lands (post-hang).
     "debug.metta" => 2,
     # interpreter: PROVISIONAL — NOT yet validated-real. 43→41 after error_atom→grounded-String (only 2
     #   were pure error-format, NOT the ~16 first estimated from a since-known-buggy classifier). The bulk

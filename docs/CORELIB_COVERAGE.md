@@ -23,7 +23,16 @@ faithfulness" legible.
   Same is true of any harness-load-bearing primitive — `collapse`, `chain`, `let`, `metta`. ACTION: the corpus
   itself names the harness verbs (grep what wraps `!(…)`); adopt each one's own edge `#[test]` cases.
   DONE for asserts: `unit/debug.metta` adopted (baseline 2 = the message + multiplicity divergences, the failing
-  gate the grounded `.jl` fix must flip green). Still TODO: `chain`/`collapse`/`let`/`metta` edge corpora.
+  gate the grounded `.jl` fix must flip green). TODO: `chain`/`let`/`metta` edge corpora; `collapse` is now
+  PARTIALLY validated (multiplicity-preservation confirmed: `collapse (mult)`→`(D D D)`), so its corpus is
+  "the rest of collapse", not "all of collapse".
+- **LATENT vs LIVE (grep, read-only):** the multiplicity gap is real but LATENT — grep of the live suite
+  (conformance + unit + lib) found NO assert over multiset results: all expected-sets distinct (even the
+  combinatorial `(pair (bin) (bin))`→4 distinct pairs in b4_nondeterm), no `superpose`-with-repeats, no
+  multi-rule-same-RHS, and MOSES/MetaMo assert via Julia `==` not the grounded MeTTa asserts. So NO spurious pass
+  today; `debug.metta` gates the FUTURE. ⇒ the `@compile_workload` hang is "whenever convenient", NOT urgent — it
+  fixes a gated-latent gap, not a live defect. And the 2 baseline fails split CORRECTNESS (#5 multiplicity, the
+  half that justifies the `.jl` touch) vs COSMETIC (#4 message, behaviour-independent) — they can land separately.
 - **ASSERT FAMILY — grounded-vs-rules fork RESOLVED BY MEASUREMENT (CONFIDENT):** ran hyperon's own `debug.rs`
   assert `#[test]` cases against Core's GROUNDED asserts. The load-bearing conclusion (holds regardless of any
   mechanism detail): **the rules-vs-grounded refactor is NOT required** — every observed gap is in the *comparison
