@@ -32,7 +32,7 @@ set -euo pipefail
 
 MOD="${1:-thermosensory}"
 K="${2:-1}"
-DATA="${DATA:-$HOME/PRIMUS/docs/research/fruit fly/FAFB v783}"
+DATA="${DATA:-$HOME/code/CognitiveSubstratesAI/docs/research/fruit fly/FAFB v783}"
 OUT="${OUT:-/tmp}"
 CONN="$DATA/connections_princeton.csv.gz"
 CLASS="$DATA/classification.csv.gz"

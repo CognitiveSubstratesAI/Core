@@ -16,6 +16,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Connectome substrate" => "connectome.md",
     ],
     warnonly=true
 )

@@ -26,7 +26,7 @@ using MORK: ExprArity, ExprSymbol, item_byte
 using PathMap
 using PathMap: ArenaCompactTree, act_from_zipper, act_save, act_open_mmap, set_val_at!
 
-const SKEL_DIR = "/home/shivaji1012/PRIMUS/docs/research/fruit fly/FAFB v783/sk_lod1_783_healed"
+const SKEL_DIR = "/home/shivaji1012/code/CognitiveSubstratesAI/docs/research/fruit fly/FAFB v783/sk_lod1_783_healed"
 const DEFAULT_OUT_DIR = "/home/shivaji1012/PRIMUS/data/fafb_skeletons"
 const DEFAULT_SHARD_FILES = 5000   # ≤5 GB peak RSS per shard on this box
 
