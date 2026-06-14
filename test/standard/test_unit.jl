@@ -32,6 +32,9 @@ const BASELINE = Dict(
     "types.metta" => 0,       # residue-only (no MeTTa directives; gated by test_types.jl)
     # stdlib_space_sugar: add-reduct/add-reducts/add-atoms (ported from hyperon stdlib.metta:567-683)
     "stdlib_space_sugar.metta" => 0,
+    # control: noeval (hyperon stdlib.metta:270 / CeTTa:360) + empty (hyperon:622 / CeTTa:462) — both upstreams
+    #   agree; additive stdlib rules, hang-safe. 4/4 green.
+    "control.metta" => 0,
     # asserts: assertIncludes (hyperon stdlib.metta:691 verbatim). Additive stdlib rule. 3/3 green.
     #   (assertAlphaEqual/*Msg/=alpha deferred to the assert-family grounded-vs-rules decision.)
     "asserts.metta" => 0,

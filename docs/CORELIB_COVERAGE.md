@@ -68,7 +68,7 @@ faithfulness" legible.
   DOES (mod.rs uses `(let $newspace (new-space) …)`). Separate fix — orthogonal to add-reduct.
 
 ## Headline numbers
-- **108 / 138 present** in source · **27 / 138 missing** (was 31; add-reduct family + assertIncludes done).
+- **110 / 138 present** in source · **25 / 138 missing** (was 31; add-reduct family + assertIncludes + noeval/empty done).
 - Of present: **math 48/48 + the green atom/text cases are faithful-by-test**; the rest are
   **present-untested** (registered, behavior not yet gated) OR **divergent** (corpus fails).
 - Divergences measured by the corpus baselines: atom 5, core 8, space 2, interpreter 41(provisional).
@@ -84,7 +84,7 @@ faithfulness" legible.
 | **help / doc display** (4) | `help!` `help-param!` `help-space!` `print-mods!` | build on `get-doc` (present) + `println!` (present) |
 | **module system** (5) | `register-module!` `mod-space!` `module-space-no-deps` `include` `git-module!` | `import!` is present; these are the rest of the module surface |
 | **type system** (4) | `type-cast` `match-types` `match-type-or` `get-type-space` | the type-coercion/universal-guard layer |
-| **control / misc** (6) | `pragma!` `noeval` `empty` `capture` `format-args` `sort-strings` | `pragma!` gates 5 of core's 8 corpus fails |
+| **control / misc** (4) | `pragma!` `capture` `format-args` `sort-strings` | `noeval`+`empty` DONE (additive stdlib rules, both upstreams agree, gated `unit/control.metta` 4/0). `pragma!` gates 5 of core's 8 corpus fails. |
 | **error/type symbols** (2) | `BadType` `ErrorType` | error markers; `BadArgType`/`SpaceType` ARE present (Minimal.jl:714/672) |
 
 Most of A is **additive** (new grounded ops or MeTTa rules) — the safe `math`-pattern. `pragma!` and the

@@ -25,6 +25,13 @@
 ; NOTE: assertAlphaEqual / *Msg variants deferred — they belong to the grounded-vs-rules decision for the
 ; whole assert family (hyperon = rules over _assert-results-are-equal[-msg]; Core grounds the *ToResult
 ; floor). Not adding rule-wrappers over the grounded floor until that fork is resolved. See CORELIB_COVERAGE.md.
+; ── noeval / empty (hyperon stdlib.metta:270/622 ; CeTTa lib/stdlib.metta:360/462 — both upstreams AGREE) ──
+; noeval: Atom-typed so the arg is NOT pre-evaluated; returns it unreduced (evaluation control).
+(: noeval (-> Atom Atom))
+(= (noeval $x) $x)
+; empty: nullary → the `Empty` no-results marker (CeTTa types it `(-> Atom)`; hyperon omits the decl).
+(: empty (-> Atom))
+(= (empty) Empty)
 (: match (-> Atom Atom Atom %Undefined%))
 ; ── quote / unquote (hyperon stdlib.metta:597) — evaluation control ──────────
 ; quote = a CONSTRUCTOR: `(-> Atom Atom)` (arg raw, unevaluated) with NO equalities, so `(quote X)`
