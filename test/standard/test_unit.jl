@@ -53,13 +53,17 @@ const BASELINE = Dict(
     # interpreter: MEASURED 2026-06-14 (actual-vs-expected reconciliation, INCREMENTAL — totals exactly 41).
     #   Honest confirmed-vs-presumed split (don't re-bucket by symptom):
     #     12  format-only      — CONFIRMED benign (both Error, same subject, differ only in message text).
-    #      1  contamination    — CONFIRMED: `(decons-atom (a b c))` → `(a (b c))` in a clean stdlib space but
-    #                            → free `$X` once interpreter.metta's defs load. Not rule-interception (no
-    #                            matching/var-headed rules), not the `_STEP` type-alias, not directive-residue.
-    #                            HYPOTHESIS (untested): insufficient variable freshening on match
-    #                            (make_variables_unique, Minimal.jl:270) — stored rules' vars leak into unrelated
-    #                            eval results once the space holds enough variable-bearing atoms.
-    #     25  presumed-contam  — share the `$X` symptom; PRESUMED same cause as the 1 confirmed, NOT yet verified.
+    #     26  contamination    — ROOT-CAUSED (bisect + isolation): a stored BARE VARIABLE atom acts as a
+    #                            universal catch-all rewrite. interpreter.metta:77 intentionally stores a bare
+    #                            `$t` (mirrors hyperon's test, harmless there). In Core a bare var unifies with
+    #                            the rewrite-lookup query `(= lhs rhs)`, so EVERY eval finds a spurious rewrite
+    #                            returning a freshened `$X`, shadowing grounded ops. ISOLATED: clean+`$t`→`$X`,
+    #                            clean+`$z`→`$X`, clean+`(P x)`→correct (only bare vars contaminate). One `$t`
+    #                            poisons all 26 bare grounded-op evals below it (decons/cons/unify confirmed).
+    #                            FIX: rewrite-lookup must not treat a bare var atom as a matching `(= …)` rule
+    #                            (filter the space query to equality atoms / grounded precedence). LIKELY LATENT
+    #                            for real workloads (no static bare-var store found) but FOUNDATIONAL — a dynamic
+    #                            var-store would silently corrupt the space. See memory: project_core_bare_var_atom_bug.
     #      2  NoReturn-subject — CONFIRMED real, distinct: `function` reports subject `(function X)` vs hyperon `(X)`.
     #      1  step-limit       — CONFIRMED real, distinct: busy-beaver hits Core's step cap; hyperon completes.
     #   ⇒ "chain bare-operand bug is the dominant lever" is REFUTED for the confirmed cons/decons/unify case
