@@ -1,9 +1,9 @@
-# Connectome substrate
+# Fly connectome (FAFB v783)
 
 A unified, persisted, manifest-driven representation of the **FAFB v783** adult
-*Drosophila* connectome on the MORK substrate, and the **Fig-6 information-flow**
-model (Dorkenwald, Schlegel et al., *Nature* 2024) run over it. Lives in
-`examples/connectome/`.
+*Drosophila* (fruit-fly) connectome on the MORK substrate, and the **Fig-6
+information-flow** model (Dorkenwald, Schlegel et al., *Nature* 2024) run over it.
+Lives in `examples/connectome/`.
 
 It is the first concrete instance of the PRIMUS world-modeling architecture
 ("World Modeling in Hyperon for PRIMUS", Goertzel 2025): a real heterogeneous
