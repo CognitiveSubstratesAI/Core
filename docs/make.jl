@@ -16,7 +16,6 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
-        "Fly connectome (FAFB)" => "connectome.md",
     ],
     warnonly=true
 )
