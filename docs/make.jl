@@ -16,6 +16,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Dialect gaps (porting PeTTa-targeted algorithms)" => "dialect-gaps.md",
     ],
     warnonly=true
 )
