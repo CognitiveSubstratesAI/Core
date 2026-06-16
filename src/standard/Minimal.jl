@@ -636,7 +636,13 @@ fn_ret_type(t::Expression)  = t.children[end]
 # Step counter — bounds NON-termination (the iterative driver can't stack-overflow, so this is the only
 # bound needed for the reduce-chain; the subst/rename_fresh depth guards remain for pathological atoms).
 const _METTA_STEPS = Ref(0)
-const _METTA_MAX = 5_000_000
+# Step cap for the reduce-chain. 0 = UNLIMITED, the default — mirroring hyperon (max_stack_depth default
+# 0 = unlimited) and CeTTa (fuel default -1 = unlimited); upstream does NOT cap by default. Settable via
+# `metta_max_steps!(n)` when a non-termination bound is wanted. (Previously an always-on 5_000_000, a
+# Core-specific divergence from upstream — see cross-check, project_pln_layer1_build.)
+const _METTA_MAX = Ref(0)
+"Set the reduce-chain step cap; 0 = unlimited (default). Mirrors hyperon `set_max_stack_depth` semantics."
+metta_max_steps!(n::Int=0) = (_METTA_MAX[] = n)
 const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
 metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
@@ -774,7 +780,7 @@ end
 # ONE reduction step (metta.md:240). Returns each result tagged: is_final=true → terminal; false →
 # "reduce again" (the loop re-feeds it). No recursion into the reduce-chain.
 function metta_step(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_STEP}
-    (_METTA_STEPS[] += 1) > _METTA_MAX && error("metta: step limit reached (non-termination?)")
+    _METTA_MAX[] > 0 && (_METTA_STEPS[] += 1) > _METTA_MAX[] && error("metta: step limit reached (non-termination?)")
     a = subst(atom, b)
     (is_empty_atom(a) || is_error_atom(a)) && return _STEP[(a, type, b, true)]
     (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _STEP[(a, type, b, true)]
