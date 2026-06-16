@@ -27,6 +27,7 @@ const _ECAN = joinpath(@__DIR__, "..", "lib", "ecan", "t1_core_logic.metta")
 const _POL  = joinpath(@__DIR__, "..", "lib", "ecan", "t1_ECAN_Policies.metta")
 const _FG   = joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta")
 const _CPL  = joinpath(@__DIR__, "..", "lib", "pln", "pln_ecan_coupling.metta")
+const _PLNCORE = joinpath(@__DIR__, "..", "lib", "pln", "pln_core_logic.metta")
 
 _eerrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -95,6 +96,22 @@ _setup_full() = (sp = _setup_ecan(); load_metta!(sp, read(_FG, String)); sp)
         """)
         load_metta!(sp, "!(pln-attention-tick! B 0.0)")
         rs = load_metta!(sp, "!(assertEqual (< 0.0 (get-sti B)) True)\n!(assertEqual (< 0.0 (get-sti A)) True)")
+        @test isempty(_eerrs(rs)); @test length(rs) == 2
+    end
+
+    # The REVERSE half of the synergy: ECAN attention → PLN inference priority.
+    # PLN.Derive's PriorityRank blends confidence with STI (0.5·c + 0.5·STI/100).
+    # Un-stubbed (the 0.0 get-sti stub was removed) so ECAN's real get-sti drives it.
+    @testset "T6 ECAN→PLN — attention raises PriorityRank (un-stub, no shadowing)" begin
+        sp = Space(); load_core_stdlib!(sp)
+        load_metta!(sp, read(_ECAN, String))        # ecan core: real get-sti
+        load_metta!(sp, read(_PLNCORE, String))     # PLN.Derive (get-sti stub REMOVED)
+        load_metta!(sp, "!(set-sti! hi 50.0)")      # `hi` gets attention; `lo` has none (get-sti→0)
+        rhi = load_metta!(sp, "!(PriorityRank (Sentence (hi (stv 0.6 0.5)) ev))")
+        rlo = load_metta!(sp, "!(PriorityRank (Sentence (lo (stv 0.6 0.5)) ev))")
+        @test length(rhi) == 1 && length(rlo) == 1  # single result — stub no longer shadows ECAN
+        # hi = 0.5·0.5 + 0.5·(50/100) = 0.5 ; lo = 0.25 + 0 = 0.25  (attention raised priority)
+        rs = load_metta!(sp, "!(assertEqual (PriorityRank (Sentence (hi (stv 0.6 0.5)) ev)) 0.5)\n!(assertEqual (PriorityRank (Sentence (lo (stv 0.6 0.5)) ev)) 0.25)")
         @test isempty(_eerrs(rs)); @test length(rs) == 2
     end
 end

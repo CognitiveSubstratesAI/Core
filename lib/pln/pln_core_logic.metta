@@ -1,14 +1,16 @@
 ;; ════════════════════════════════════════════════════════════════════════════
-;; ECAN stubs — silent degeneration (per packages/Core adoption plan 2026-05-22)
+;; ECAN coupling — attention-blended priority (lib/ecan/ landed; un-stubbed 2026-06-16)
 ;; ════════════════════════════════════════════════════════════════════════════
 ;; PLN.Derive's priority ranking blends confidence with ECAN STI:
 ;;   priority = 0.5 * confidence + 0.5 * (STI / 100.0)
-;; When packages/Core/lib/ecan/ lands, its rules override these stubs and the
-;; attention-blended priority comes online automatically.  Until then, PLN.Derive
-;; runs with the STI contribution = 0, i.e. confidence-only ranking.
+;; ECAN's real get-sti / boost-sti! (lib/ecan/t1_core_logic.metta, imported by pln.metta)
+;; now supply attention. get-sti defaults to 0.0 for atoms with no AV, so the blend
+;; degrades to confidence-only ranking until attention is assigned — no stub needed.
+;; The earlier `(= (get-sti _) 0.0)` / `(= (boost-sti! _ _) (empty))` stubs were REMOVED:
+;; on Core they MULTI-RESULT-SHADOW ECAN's real rules (both fire) → PriorityRank returned
+;; duplicates. This closes the ECAN→PLN half of the synergy loop (pln_ecan_coupling.metta
+;; is the PLN-demand→STI half). Validated: test_pln_ecan.jl T6.
 ;; ────────────────────────────────────────────────────────────────────────────
-(= (get-sti $uuid) 0.0)
-(= (boost-sti! $uuid $amount) (empty))
 (= (trace! $atom $level) $atom)
 ;; atom-to-str is used as a UUID derivation in PLN; identity is a safe stub
 ;; (collisions only matter for ECAN's attention bookkeeping which is also stubbed).
