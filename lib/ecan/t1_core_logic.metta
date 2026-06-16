@@ -96,17 +96,19 @@
 ;; 2. AV Mutation
 ;; -------------------------------------------------------
 
-;; Core-interpreter workaround (2026-05-22): `(collapse (match ...))` where the
-;; template is itself a Vector (atom) does NOT wrap the single-match result —
-;; Core's collapse passes Vectors through unchanged, then `car-atom $old`
-;; decomposes the atom into its head symbol instead of extracting the first
-;; list element.  Dropping the collapse and using $old directly works because
-;; match on AV (one per id by invariant) returns () for no match or the atom.
+;; Upsert: remove any existing AV for $id, then add the new one. Both-evaluator idiom:
+;;  (1) existence check via `(collapse (match ... found))` — () on no-match, (found) on hit,
+;;      identical on Minimal and the legacy full Eval;
+;;  (2) the remove runs OUTSIDE the match template (bare match-bind + remove-atom in evaluated
+;;      position). Needed because the full Eval does NOT evaluate match templates (a
+;;      remove-in-template never fires there), while Minimal's match returns EMPTY (not ()) on
+;;      no-match (a bare `(let $old (match...))` no-op's there) — so neither idiom works on both alone.
 (= (set-av! $id $new-sti $new-lti $new-vlti)
-   (let $old (match &self (AV $id $s $l $v) (AV $id $s $l $v))
-        (begin
-          (if (== $old ()) True (remove-atom &self $old))
-          (add-atom &self (AV $id $new-sti $new-lti $new-vlti)))))
+   (let $exists (collapse (match &self (AV $id $s $l $v) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (AV $id $a $b $c) (AV $id $a $b $c))
+                               (remove-atom &self $old)))
+             (add-atom &self (AV $id $new-sti $new-lti $new-vlti)))))
 
 (= (set-sti! $id $new-sti)
    (let* (($lti  (get-lti $id))
@@ -149,19 +151,20 @@
    (let $result (collapse (match &self (AttentionFunds LTI $a) $a))
         (if (== $result ()) (starting-funds-lti) (car-atom $result))))
 
-;; Same Core-interpreter workaround as set-av! above — drop the collapse so
-;; the single-match atom is captured directly, not decomposed by car-atom.
+;; Same both-evaluator upsert as set-av! above.
 (= (set-funds-sti! $amount)
-   (let $old (match &self (AttentionFunds STI $a) (AttentionFunds STI $a))
-        (begin
-          (if (== $old ()) True (remove-atom &self $old))
-          (add-atom &self (AttentionFunds STI $amount)))))
+   (let $exists (collapse (match &self (AttentionFunds STI $a) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (AttentionFunds STI $b) (AttentionFunds STI $b))
+                               (remove-atom &self $old)))
+             (add-atom &self (AttentionFunds STI $amount)))))
 
 (= (set-funds-lti! $amount)
-   (let $old (match &self (AttentionFunds LTI $a) (AttentionFunds LTI $a))
-        (begin
-          (if (== $old ()) True (remove-atom &self $old))
-          (add-atom &self (AttentionFunds LTI $amount)))))
+   (let $exists (collapse (match &self (AttentionFunds LTI $a) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (AttentionFunds LTI $b) (AttentionFunds LTI $b))
+                               (remove-atom &self $old)))
+             (add-atom &self (AttentionFunds LTI $amount)))))
 
 ;; -------------------------------------------------------
 ;; 4. Dynamic Wage Calculation

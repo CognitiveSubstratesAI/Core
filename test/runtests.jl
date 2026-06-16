@@ -529,6 +529,14 @@ include("test_ecan.jl")
 # tracking the divergence landscape as the long-term flip to eval_nd progresses.
 include("test_ecan_dual.jl")
 
+# PLN↔ECAN co-working (§4.9 "demand as backward attention") — PLN's backward demand
+# field drives ECAN STI via a damped + budget-normalized channel, on the faithful
+# Minimal evaluator. Module-wrapped (like the standard tests below) to isolate its
+# `using MeTTaCore.Minimal` + helpers from the full-Eval ECAN tests that leak into Main.
+module PLNEcanCoworkTests
+    include("test_pln_ecan.jl")
+end
+
 # Standard MeTTa (typed atom model + matcher) — faithful port of hyperon/CeTTa
 # representations, validated against docs/metta.md §Matching. Standalone subsystem
 # (does not touch eval_metta/eval_nd) — the foundation for the minimal-MeTTa port.
