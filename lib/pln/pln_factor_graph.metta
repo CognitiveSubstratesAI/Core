@@ -101,3 +101,31 @@
      (demand-quad $dv
         (sens-deduction (supply $pB) (supply $pC) (supply $pAB) (supply $pBC))
         (quad (conf (supply $pB)) (conf (supply $pC)) (conf (supply $pAB)) (conf (supply $pBC))))))
+
+;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
+;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
+;; threading each conclusion's demand down as the d_v of its producing factor. The demand
+;; FIELD is materialised AS ATOMS in the space: `(dem <node> <value>)`. Forward marginals
+;; are threaded automatically (factor sens uses `supply`, which forward-computes intermediates).
+;; NOTE: tree-shaped graphs only — a node reached by >1 path needs MAX-JOIN
+;; (dem[p] = max(old, Ψ)); add when a DAG workload requires it (§4.4 max-join).
+(= (dp-1 (dpair $a $b)) $a)
+(= (dp-2 (dpair $a $b)) $b)
+
+(= (compute-demand-field! $query)
+   (let $seed (add-atom &self (dem $query 1.0)) (propagate! $query)))
+
+(= (propagate! $node)
+   (let* (($dv (match &self (dem $node $d) $d))
+          ($f  (match &self (produces $node $ff) $ff))
+          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $a))
+          ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $b))
+          ($pair (hmp-demand $dv (supply $p1) (supply $p2)))
+          ($d1 (dp-1 $pair))                              ; bind REDUCED before add-atom
+          ($d2 (dp-2 $pair))
+          ($e1 (add-atom &self (dem $p1 $d1)))
+          ($e2 (add-atom &self (dem $p2 $d2))))
+     (let $r1 (recurse-if-produced! $p1) (recurse-if-produced! $p2))))
+
+(= (recurse-if-produced! $node)
+   (if (== (collapse (match &self (produces $node $f) $f)) ()) () (propagate! $node)))
