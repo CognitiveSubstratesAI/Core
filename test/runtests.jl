@@ -570,6 +570,12 @@ include("test_no_stdlib_shadow.jl")
 # types, get-metatype, types-as-propositions, let-destructure, Atom-typed match.
 include("test_types.jl")
 
+# Quantale foundation — lib/quantale/ (substrate-native port from PRIMUS_Core,
+# corrected per quantale_spec: scalar=Q_prob, the real paired (n+,n-)=Q_PLN §4.4.1,
+# fixed total-leaf-count program-cost). The commutative-quantale algebra PLN/MOSES/
+# WILLIAM share (truth, variation, Occam weakness). Runs on Minimal — co-works with PLN.
+include("test_quantale.jl")
+
 @testset "MorkBridge (E1.0) — native unify + shared-var rule rewrite" begin
     # E1.0 foundation: rewrite via MORK's verified engine (expr_unify + expr_apply), not Core's
     # Julia-structural _unify / string-replace. The crossed-variable case is the one that breaks
