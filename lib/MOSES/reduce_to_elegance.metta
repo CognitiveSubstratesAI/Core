@@ -160,7 +160,7 @@
       ($else
         (let* (($siblings (if (not (== $parentChildren ())) (removeElement ($child) $parentChildren) ()))
                ($filteredGuardSet (if (not (== $parentGuardSet ())) (removeElement ($child) $parentGuardSet) ()))
-               ($filteredSiblings (if (not (== $siblings ())) (filter-atom $siblings $s (isTerminalAndNode $s)) ()))
+               ($filteredSiblings (if (not (== $siblings ())) (filtP $siblings isTerminalAndNode) ()))
                ($siblingsGuardSet (if (not (== $filteredSiblings ())) (map-atom $filteredSiblings $fs (getGuardSet $fs)) ()))
                ($siblingsGuardSetF (foldl-atom $siblingsGuardSet () $acc $x (concatT $acc $x)))
                ($totalGuardSet (concatTuple $filteredGuardSet $siblingsGuardSetF))
@@ -192,7 +192,7 @@
 
 ;; removeAndNodesFromGuards — strip the wrapping ANDs left around single guard sets.
 (= (removeAndNodesFromGuards $expr)
-   (if (== (get-metatype $expr) Symbol)
+   (if (or (== (get-metatype $expr) Symbol) (== $expr ()))   ; empty () is an Expression — guard decons-atom
        $expr
        (let* ((($head $rest) (decons-atom $expr)))
          (if (and (== $head AND) (== (size-atom $rest) 1))

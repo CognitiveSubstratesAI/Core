@@ -43,7 +43,7 @@
       ((Expression $current)
        (let* (($head (car-atom $current))
               ($children (getChildrenExp $current))
-              ($updatedChildren (filter-atom $children $child (nodeHasChildOrGuard $child)))
+              ($updatedChildren (filtP $children nodeHasChildOrGuard))
               ($updatedCurrent (cons-atom $head $updatedChildren)))
          (case ($head $children)
            (((AND $_) ($parent $current False))

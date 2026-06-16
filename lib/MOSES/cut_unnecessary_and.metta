@@ -42,10 +42,10 @@
 (= (andCut $parent $current)
    (if (== $parent $current)
        ($parent $current False)
-       (let* (($parentSec  (filter-atom (map-atom $parent  $e (removeEmptyAND $e)) $x (isNotUnit $x)))
+       (let* (($parentSec  (filtP (map-atom $parent  $e (removeEmptyAND $e)) isNotUnit))
               ($currentSec  (if (=== $parent $current)
                                 $parentSec
-                                (filter-atom (map-atom $current $e (removeEmptyAND $e)) $x (isNotUnit $x))))
+                                (filtP (map-atom $current $e (removeEmptyAND $e)) isNotUnit)))
               (($guardSet $child) (getLiteralChildren $currentSec))
               ($childIsExpr (and (== (get-metatype $child) Expression) (not (== $child ()))))
               (($h $t) (if $childIsExpr (decons-atom $child) (() ())))

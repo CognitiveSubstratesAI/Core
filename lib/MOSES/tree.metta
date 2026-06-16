@@ -40,7 +40,7 @@
    (if (== $children ())
        (if (is-member $r (AND OR)) ($r) $r)
        (let* (($lc  (map-atom $children $c (preOrder $c)))
-              ($lc' (filter-atom $lc $e (isNotUnit $e)))
+              ($lc' (filtP $lc isNotUnit))
               ($exp (cons-atom $r $lc')))
          $exp)))
 

@@ -69,12 +69,31 @@
            (cons-atom (car-atom $xs) (List.replaceAt (cdr-atom $xs) (- $n 1) $elem)))))
 
 ;; concatT — concatenate two native ()-tuples (upstream general-helpers concatT).
+;; The recursive result is let-bound BEFORE cons-atom: on Minimal a nested call left
+;; in cons-atom argument position stays UNREDUCED (legacy eval_metta auto-reduced it),
+;; so the inline form produced (A concatT () (B)) instead of (A B).
 (= (concatT $a $b)
    (if (== $a ())
        $b
-       (cons-atom (car-atom $a) (concatT (cdr-atom $a) $b))))
+       (let $rest (concatT (cdr-atom $a) $b)
+            (cons-atom (car-atom $a) $rest))))
 
 ;; is-member is now a Core stdlib op (stdlib/core.metta, → member) — consolidated 2026-06-10.
+
+;; filtP — Minimal-safe higher-order filter (replaces (filter-atom $xs $e (pred $e))).
+;; The GROUNDED `filter-atom` cannot evaluate a custom FUNCTION predicate on the
+;; Minimal evaluator: it applies the predicate via atom-subst+chain and the `if`
+;; condition stays UNREDUCED → NoReturn. This is FAITHFUL to hyperon (which cascades
+;; the same way — confirmed by running both); PeTTa's Prolog `filter-atom` evaluates
+;; the predicate, and that is the dialect upstream metta-moses was written against.
+;; filtP recurses with the predicate as a function symbol and an `if` that forces
+;; full Bool reduction; the recursive result is let*-bound BEFORE cons-atom (a nested
+;; call left in cons-atom argument position stays unevaluated on Minimal).
+(= (filtP $xs $pred)
+   (if (== $xs ())
+       ()
+       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($rest (filtP $t $pred)))
+         (if ($pred $h) (cons-atom $h $rest) $rest))))
 
 ;; isUnit / isNotUnit — the named predicates that replace (compose not isUnit).
 (= (isUnit    $e) (== $e ()))

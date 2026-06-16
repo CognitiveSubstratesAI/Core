@@ -35,7 +35,7 @@
        (if (== (get-metatype $exp) Expression)
            (if (== (car-atom $exp) NOT)
                $exp
-               (filter-atom $exp $e (isLiteral $e)))
+               (filtP $exp isLiteral))
            $exp)))
 
 ;; getChildrenExp — the non-literal subexpression children of a node.
@@ -45,7 +45,7 @@
        (if (== (get-metatype $exp) Expression)
            (if (== (car-atom $exp) NOT)
                ()
-               (filter-atom $exp $e (isChild $e)))
+               (filtP $exp isChild))
            ())))
 
 ;; getGuardSet — the guard set (literals) of an AND node; OR nodes have none.
