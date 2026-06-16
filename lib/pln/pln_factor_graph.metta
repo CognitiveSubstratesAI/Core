@@ -133,6 +133,43 @@
         (sens-deduction (supply $pB) (supply $pC) (supply $pAB) (supply $pBC))
         (quad (conf (supply $pB)) (conf (supply $pC)) (conf (supply $pAB)) (conf (supply $pBC))))))
 
+;; ── rows-only rules: forward maps + inversion (3-premise) demand + negation (1-premise) demand ──
+;; Forward maps (§3.4, singular at sA→0 / sB→1; the demand sensitivities cap these — see cap-sens).
+(= (fwd-inversion (stv $sA $cA) (stv $sB $cB) (stv $sBA $cBA))                    ; eq 6/12
+   (stv (/ (* $sBA $sB) $sA) (* (* $cA $cB) $cBA)))
+(= (fwd-deduction (stv $sB $cB) (stv $sC $cC) (stv $sAB $cAB) (stv $sBC $cBC))    ; eq 6/7
+   (stv (+ (* $sAB $sBC) (/ (* (- 1.0 $sAB) (- $sC (* $sB $sBC))) (- 1.0 $sB)))
+        (* (* (* $cB $cC) $cAB) $cBC)))
+
+;; inversion sensitivity (premises [A B BA]) → (triple senA senB senBA), eqs 12-13, capped at sA→0.
+(= (sens-inversion (stv $sA $cA) (stv $sB $cB) (stv $sBA $cBA))
+   (triple (max (cap-sens (/ (* $sBA $sB) (* $sA $sA))) (cap-sens (* $cB $cBA)))
+           (max (cap-sens (/ $sBA $sA)) (cap-sens (* $cA $cBA)))
+           (max (cap-sens (/ $sB $sA)) (cap-sens (* $cA $cB)))))
+
+;; 3-premise Eq-1 adjoint
+(= (adjoint3 $dv (triple $senA $senB $senBA) (stv $a $cA) (stv $b $cB) (stv $c $cBA))
+   (let* (($S (max (max $senA $senB) $senBA))
+          ($pA  (clampu (* (* $dv (/ $senA  $S)) (- 1.0 $cA))))
+          ($pB  (clampu (* (* $dv (/ $senB  $S)) (- 1.0 $cB))))
+          ($pBA (clampu (* (* $dv (/ $senBA $S)) (- 1.0 $cBA)))))
+     (dtriple $pA $pB $pBA)))
+
+;; inversion demand — conclusion-first index, premises in role order [A B BA].
+(= (factor-demand-triple $conc $dv)
+   (let* (($f (match &self (produces $conc $ff) $ff))
+          ($pA  (match &self (factor $f inversion (premises $a $b $ba) (conclusion $conc)) $a))
+          ($pB  (match &self (factor $f inversion (premises $a $b $ba) (conclusion $conc)) $b))
+          ($pBA (match &self (factor $f inversion (premises $a $b $ba) (conclusion $conc)) $ba)))
+     (adjoint3 $dv (sens-inversion (supply $pA) (supply $pB) (supply $pBA))
+               (supply $pA) (supply $pB) (supply $pBA))))
+
+;; negation demand (1-premise, sens = 1): Ψ = clamp(dv · (1 − c)).
+(= (factor-demand-single $conc $dv)
+   (let* (($f (match &self (produces $conc $ff) $ff))
+          ($p (match &self (factor $f negation (premises $a) (conclusion $conc)) $a)))
+     (dsingle (clampu (* $dv (- 1.0 (conf (supply $p))))))))
+
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand
