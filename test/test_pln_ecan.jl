@@ -22,6 +22,7 @@
 using Test
 using MeTTaCore.Minimal
 using MeTTaCore.Minimal.StandardMeTTa
+include(joinpath(@__DIR__, "assert_guard.jl"))   # silent-test guard (shared convention)
 
 const _ECAN = joinpath(@__DIR__, "..", "lib", "ecan", "t1_core_logic.metta")
 const _POL  = joinpath(@__DIR__, "..", "lib", "ecan", "t1_ECAN_Policies.metta")
@@ -41,6 +42,16 @@ function _setup_ecan()
 end
 # full co-work: + the PLN factor graph (for pln-attention-tick!)
 _setup_full() = (sp = _setup_ecan(); load_metta!(sp, read(_FG, String)); sp)
+
+# Negative control (silent-test guard): the PLN tests gate on `_eerrs` over the Minimal harness +
+# `@test length(rs) == N`. This proves `_eerrs` + the Minimal `assertEqual` actually DISCRIMINATE
+# (a known mismatch is flagged, a known match is not) — so the count-guarded asserts below are not
+# silently vacuous. Representative for the PLN suite (all share the Minimal `load_metta!`/`_eerrs`
+# pattern). See test/assert_guard.jl.
+let sp = Space()
+    load_core_stdlib!(sp)
+    assert_harness_discriminates(e -> load_metta!(sp, e), rs -> !isempty(_eerrs(rs)); label = "PLN/Minimal")
+end
 
 @testset "§4.9 PLN↔ECAN co-working — demand as backward attention" begin
     @testset "T1 EMA golden — STI_new=(1-ρ)·STI_old+ρ·d̂" begin

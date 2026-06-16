@@ -20,6 +20,14 @@ qt(e) = run_metta(e, TY)
 # assertEqual returns () on match, (Error … AssertionFailed) on mismatch.
 ok(e) = !occursin("Error", string(qt(e))) && !occursin("AssertionFailed", string(qt(e)))
 
+# SILENT-TEST GUARD (negative control): `ok` is a string-absence predicate — vacuous if qt's
+# error output shape ever changes. Prove it discriminates before trusting the asserts below.
+# (MOSES audit 2026-06-16 + upstream scripts/run-tests.py written-vs-fired guard.)
+@testset "ok negative control (silent-test guard)" begin
+    @test ok("!(assertEqual 1 1)")       # known MATCH    → must be TRUE
+    @test !ok("!(assertEqual 1 2)")      # known MISMATCH → must be FALSE (else vacuous)
+end
+
 @testset "Type-system conformance (types_basics tutorials)" begin
     # ── seed the Nat algebra (b5_types_prelim) ──
     qt(raw"(= (Add $x Z) $x)")

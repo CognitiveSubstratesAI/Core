@@ -56,6 +56,19 @@ in here:** replace the 0/-1 step with a PLN truth-value distance (strength/confi
 divergence between predicted and expected). Note the hillclimb-epsilon divergence above will
 matter once scores become fractional.
 
+## Runtime addendum (2026-06-16, found while hardening the harness)
+
+Adding a **negative control** to `test_moses.jl`'s `aok` (proving it discriminates) and running
+`test_moses_minimal.jl` (the Minimal-harness variant) **runtime-confirmed the reduct risk above**:
+**12 reduct asserts FAIL on the Minimal evaluator** while passing on the full Eval —
+`M6-3d` (subsumption, lines 255-260), `M6-3e` (oneCcSub/invertLiterals complement-subtraction,
+270), `M6-3f` (deleteInconsistentHandle, 279-283), `M6-4` (reduce-to orchestrator, 288-292).
+The negative control passed on Minimal (aok provably discriminates — it *caught* these failures),
+so this is a genuine Minimal-vs-full-Eval divergence in reduct, not a test artifact.
+`test_moses_minimal` is not in CI, so it was latent. **Relevant to PLN-MOSES:** if MOSES is to
+run on the faithful Minimal evaluator (as PLN-ECAN does), reduct needs a Minimal port (likely the
+same evaluator-divergence class as ECAN's `begin`/match fixes). Tracked as a follow-up.
+
 ## Recommended follow-ups (priority order)
 1. **Harden the MOSES test harness** (the silent-test fix above) — highest value; the green
    count currently overstates confidence.

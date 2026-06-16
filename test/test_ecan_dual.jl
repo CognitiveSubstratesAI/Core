@@ -64,6 +64,17 @@ function _ecan_nd_fails(fname)
 end
 
 println("ECAN-dual: running examples/ecan under eval_metta AND eval_nd...")
+# SILENT-TEST GUARD (negative control): the standing `@test isempty(mfails)` green guarantee is
+# only meaningful if _ecan_dual_iserr actually CATCHES a failure. Prove it discriminates on BOTH
+# the eval_metta and eval_nd paths — else a detector/output-shape mismatch would make every file
+# report empty fails and pass vacuously. (MOSES audit 2026-06-16.)
+@testset "dual error-detection negative control" begin
+    S1 = _ecan_dual_setup()
+    @test  any(_ecan_dual_iserr, run_metta("!(assertEqual 1 2)", S1))   # eval_metta catches mismatch
+    @test !any(_ecan_dual_iserr, run_metta("!(assertEqual 1 1)", S1))   # eval_metta clean on match
+    S2 = _ecan_dual_setup()
+    @test  any(_ecan_dual_iserr, _run_metta_nd("!(assertEqual 1 2)", S2))  # eval_nd catches mismatch
+end
 @testset "ECAN dual-evaluator tracker" begin
     for f in ECAN_DUAL_FILES
         @testset "$f" begin

@@ -39,6 +39,18 @@ function run_ecan_example(fname)
 end
 
 println("ECAN: running examples/ecan acceptance suite...")
+# SILENT-TEST GUARD (negative control): run_ecan_example flags failures by string-matching
+# "AssertionFailed"/"(Error" in the output. If that error shape ever changes, `fails` would be
+# empty for every file and `isempty(fails)` would always pass vacuously. Prove the detector
+# actually catches a known mismatch (and doesn't false-positive a match) before trusting the
+# suite below. (MOSES audit 2026-06-16 + upstream scripts/run-tests.py written-vs-fired guard.)
+@testset "error-detection negative control" begin
+    S = new_core_space(); register_core_primitives!()
+    _register_atom_ops!(e -> to_sexpr(eval_metta(from_sexpr(e), S))); load_stdlib!(S)
+    detected(src) = !isempty(filter(r -> (s = strip(to_sexpr(r)); occursin("AssertionFailed", s) || startswith(s, "(Error")), run_metta(src, S)))
+    @test  detected("!(assertEqual 1 2)")    # a real mismatch MUST be detected
+    @test !detected("!(assertEqual 1 1)")    # a real match must NOT be flagged
+end
 @testset "ECAN acceptance suite (examples/ecan/*.metta)" begin
     for f in ECAN_FILES
         @testset "$f" begin
