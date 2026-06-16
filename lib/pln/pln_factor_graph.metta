@@ -19,7 +19,18 @@
 
 ;; §3.4 HMP forward map (product strength, product confidence, pi_b=0):
 ;;   B = (sA * sAB, cA * cAB)
+;; §3.4 forward maps (2-premise rules). HMP = product (pi_b=0). Each consumes two `(stv s c)`.
 (= (fwd-hmp (stv $sA $cA) (stv $sAB $cAB)) (stv (* $sA $sAB) (* $cA $cAB)))
+(= (fwd-conjunction (stv $s1 $c1) (stv $s2 $c2))                                    ; eq 21
+   (stv (* $s1 $s2) (- 1.0 (* (- 1.0 $c1) (- 1.0 $c2)))))
+(= (fwd-disjunction (stv $s1 $c1) (stv $s2 $c2))                                    ; eq 24
+   (stv (- (+ $s1 $s2) (* $s1 $s2)) (- (+ $c1 $c2) (* $c1 $c2))))
+(= (fwd-negation (stv $s $c)) (stv (- 1.0 $s) $c))                                  ; §3.4 (1-premise)
+
+;; rule-keyed forward dispatch (2-premise): supply routes on the factor's rule symbol.
+(= (apply-fwd hmp         $a $b) (fwd-hmp $a $b))
+(= (apply-fwd conjunction $a $b) (fwd-conjunction $a $b))
+(= (apply-fwd disjunction $a $b) (fwd-disjunction $a $b))
 
 ;; forward supply: a leaf returns its message; otherwise forward-evaluate the factor
 ;; that produces it. The leaf case is guarded by `collapse` (empty ⇒ no message), and
@@ -31,10 +42,11 @@
        (match &self (message $n $s) $s)))
 
 (= (supply-via-factor $n)
-   (let* (($f  (match &self (produces $n $ff) $ff))
-          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $a))
-          ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $b)))
-     (fwd-hmp (supply $p1) (supply $p2))))
+   (let* (($f    (match &self (produces $n $ff) $ff))     ; conclusion-first: prefix-cheap, binds $f
+          ($rule (match &self (factor $f $r (premises $a $b) (conclusion $n)) $r))  ; $f bound ⇒ cheap
+          ($p1   (match &self (factor $f $r (premises $a $b) (conclusion $n)) $a))
+          ($p2   (match &self (factor $f $r (premises $a $b) (conclusion $n)) $b)))
+     (apply-fwd $rule (supply $p1) (supply $p2))))
 
 ;; ── demand-driven backward chain (§3.3 Eq 1) on the §3.4 sensitivity ──────────
 ;; Built on the SAME §3.4 product map as the forward chain (decision: factor-graph layer
@@ -52,14 +64,33 @@
           ($psiAB (clampu (* (* $dv (/ $senAB $S)) (- 1.0 $cAB)))))
      (dpair $psiA $psiAB)))
 
-;; demand on a conclusion (with demand $dv) → the (Ψ_premise1, Ψ_premise2) pair of the factor
-;; that produces it. Resolves the factor via the conclusion-first `(produces $conc $f)` index —
-;; the Gate-2 prefix-cheap lookup, here under its intended BACKWARD-demand load.
+;; 2-premise sensitivities → (spair sensP1 sensP2): the ∞-norm Jacobian blocks per rule.
+(= (sens2-hmp         (stv $sA $cA) (stv $sB $cB)) (spair (max $sB $cB) (max $sA $cA)))
+(= (sens2-conjunction (stv $s1 $c1) (stv $s2 $c2))                                      ; eqs 22,23
+   (spair (max $s2 (- 1.0 $c2)) (max $s1 (- 1.0 $c1))))
+(= (sens2-disjunction (stv $s1 $c1) (stv $s2 $c2))                                      ; eqs 25,26
+   (spair (max (- 1.0 $s2) (- 1.0 $c2)) (max (- 1.0 $s1) (- 1.0 $c1))))
+(= (apply-sens2 hmp         $a $b) (sens2-hmp $a $b))
+(= (apply-sens2 conjunction $a $b) (sens2-conjunction $a $b))
+(= (apply-sens2 disjunction $a $b) (sens2-disjunction $a $b))
+
+;; rule-agnostic 2-premise Eq-1 adjoint: normalize by S=max, Ψ_i = clamp(dv·sens_i/S·(1−c_i)).
+(= (adjoint2 $dv (spair $senA $senB) (stv $sA $cA) (stv $sB $cB))
+   (let* (($S  (max $senA $senB))
+          ($pA (clampu (* (* $dv (/ $senA $S)) (- 1.0 $cA))))
+          ($pB (clampu (* (* $dv (/ $senB $S)) (- 1.0 $cB)))))
+     (dpair $pA $pB)))
+
+;; demand on a conclusion (demand $dv) → the (Ψ_p1, Ψ_p2) pair of the 2-premise factor that
+;; produces it, DISPATCHED on the factor's rule. Factor resolved via the conclusion-first
+;; `(produces $conc $f)` index — Gate-2's prefix-cheap lookup, under backward-demand load.
 (= (factor-demand-pair $conc $dv)
-   (let* (($f  (match &self (produces $conc $ff) $ff))
-          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $conc)) $a))
-          ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $conc)) $b)))
-     (hmp-demand $dv (supply $p1) (supply $p2))))
+   (let* (($f    (match &self (produces $conc $ff) $ff))     ; conclusion-first: prefix-cheap, binds $f
+          ($rule (match &self (factor $f $r (premises $a $b) (conclusion $conc)) $r))  ; $f bound ⇒ cheap
+          ($p1   (match &self (factor $f $r (premises $a $b) (conclusion $conc)) $a))
+          ($p2   (match &self (factor $f $r (premises $a $b) (conclusion $conc)) $b))
+          ($m1 (supply $p1)) ($m2 (supply $p2)))
+     (adjoint2 $dv (apply-sens2 $rule $m1 $m2) $m1 $m2)))
 
 ;; ── deduction (4-premise) demand: rows-only sens (§3.4 eqs 8-11) + Eq-1 adjoint ──────
 ;; Premises are stored in SEMANTIC ROLE ORDER (B C AB BC = premise_1..4); deduction is
@@ -116,11 +147,12 @@
    (let $seed (add-atom &self (dem $query 1.0)) (propagate! $query)))
 
 (= (propagate! $node)
-   (let* (($dv (match &self (dem $node $d) $d))
-          ($f  (match &self (produces $node $ff) $ff))
-          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $a))
-          ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $b))
-          ($pair (hmp-demand $dv (supply $p1) (supply $p2)))
+   (let* (($dv   (match &self (dem $node $d) $d))
+          ($f    (match &self (produces $node $ff) $ff))     ; conclusion-first: prefix-cheap, binds $f
+          ($rule (match &self (factor $f $r (premises $a $b) (conclusion $node)) $r))
+          ($p1   (match &self (factor $f $r (premises $a $b) (conclusion $node)) $a))
+          ($p2   (match &self (factor $f $r (premises $a $b) (conclusion $node)) $b))
+          ($pair (adjoint2 $dv (apply-sens2 $rule (supply $p1) (supply $p2)) (supply $p1) (supply $p2)))
           ($d1 (dp-1 $pair))                              ; bind REDUCED before add-atom
           ($d2 (dp-2 $pair))
           ($e1 (add-atom &self (dem $p1 $d1)))
