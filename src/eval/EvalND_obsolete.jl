@@ -1,4 +1,9 @@
-# src/eval/EvalND.jl
+# ⚠️⚠️  OBSOLETE — LEGACY OutcomeSet EVALUATOR (eval_nd), BEING RETIRED  ⚠️⚠️
+# `standard/Minimal.jl` supersedes it (docs/ARCHITECTURE_TARGET.md); the "flip to eval_nd" plan is stale.
+# Do NOT build new code on eval_nd / eval_nd_results. Its only user is test_ecan_dual (also a retirement
+# candidate). Delete once that's gone.
+#
+# src/eval/EvalND_obsolete.jl (was EvalND.jl)
 #
 # OutcomeSet evaluator — the nondeterministic, binding-carrying core that the reference MeTTa
 # interpreters all use (hyperon-experimental's `interpret`, PeTTa's Prolog backtracking, CeTTa's
