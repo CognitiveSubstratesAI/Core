@@ -170,6 +170,79 @@
           ($p (match &self (factor $f negation (premises $a) (conclusion $conc)) $a)))
      (dsingle (clampu (* $dv (- 1.0 (conf (supply $p))))))))
 
+;; ── induction + abduction (5-premise, rows-only): chain-rule sens through the inversion
+;; intermediate (ind: sAB=sBA·sB/sA; abd: sBC=sCB·sC/sB), reusing the deduction strength
+;; partials. Multiple singularities (ind sA→0 & sB→1; abd sB→0 & sB→1), all capped. Abduction
+;; sens_A = 0 (premise A absent from the formula) ⇒ dem_A is exactly 0 even at the singularity.
+(= (fwd-induction (stv $sA $cA) (stv $sB $cB) (stv $sC $cC) (stv $sBA $cBA) (stv $sBC $cBC))  ; eq 14
+   (stv (+ (/ (* (* $sBA $sBC) $sB) $sA)
+           (/ (* (- 1.0 (/ (* $sBA $sB) $sA)) (- $sC (* $sB $sBC))) (- 1.0 $sB)))
+        (* (* (* $cBA $cBC) $cB) $cC)))
+(= (fwd-abduction (stv $sA $cA) (stv $sB $cB) (stv $sC $cC) (stv $sAB $cAB) (stv $sCB $cCB))  ; eq 15
+   (stv (+ (/ (* (* $sAB $sCB) $sC) $sB)
+           (/ (* (* $sC (- 1.0 $sAB)) (- 1.0 $sCB)) (- 1.0 $sB)))
+        (* (* (* $cAB $cCB) $cB) $cC)))
+
+;; deduction strength partials → (dparts dB dC dAB dBC), shared by induction & abduction.
+(= (ded-partials $sB $sC $sAB $sBC)
+   (let* (($d (- 1.0 $sB)) ($oma (- 1.0 $sAB)))
+     (dparts (+ (/ (* (- 0.0 $oma) $sBC) $d) (/ (* $oma (- $sC (* $sB $sBC))) (* $d $d)))
+             (/ $oma $d) (- $sBC (/ (- $sC (* $sB $sBC)) $d)) (- $sAB (/ (* $oma $sB) $d)))))
+(= (dp-dB (dparts $dB $dC $dAB $dBC)) $dB)
+(= (dp-dC (dparts $dB $dC $dAB $dBC)) $dC)
+(= (dp-dAB (dparts $dB $dC $dAB $dBC)) $dAB)
+(= (dp-dBC (dparts $dB $dC $dAB $dBC)) $dBC)
+
+;; induction sensitivity (premises [A B C BA BC]). A,BA enter ONLY via sAB; B via sAB AND directly.
+(= (sens-induction (stv $sA $cA) (stv $sB $cB) (stv $sC $cC) (stv $sBA $cBA) (stv $sBC $cBC))
+   (let* (($sAB (/ (* $sBA $sB) $sA)) ($parts (ded-partials $sB $sC $sAB $sBC))
+          ($dB (dp-dB $parts)) ($dC (dp-dC $parts)) ($dAB (dp-dAB $parts)) ($dBC (dp-dBC $parts))
+          ($iA (/ (* (- 0.0 $sBA) $sB) (* $sA $sA))) ($iB (/ $sBA $sA)) ($iBA (/ $sB $sA))
+          ($psA (* $dAB $iA)) ($psBA (* $dAB $iBA)) ($psB (+ (* $dAB $iB) $dB))
+          ($pcB (* (* $cBA $cBC) $cC)) ($pcC (* (* $cBA $cBC) $cB))
+          ($pcBA (* (* $cBC $cB) $cC)) ($pcBC (* (* $cBA $cB) $cC)))
+     (quint (cap-sens $psA) (max (cap-sens $psB) (cap-sens $pcB)) (max (cap-sens $dC) (cap-sens $pcC))
+            (max (cap-sens $psBA) (cap-sens $pcBA)) (max (cap-sens $dBC) (cap-sens $pcBC)))))
+
+;; abduction sensitivity (premises [A B C AB CB]). sens_A=0 (A absent). B,C enter directly AND via sBC.
+(= (sens-abduction (stv $sA $cA) (stv $sB $cB) (stv $sC $cC) (stv $sAB $cAB) (stv $sCB $cCB))
+   (let* (($sBC (/ (* $sCB $sC) $sB)) ($parts (ded-partials $sB $sC $sAB $sBC))
+          ($dB (dp-dB $parts)) ($dC (dp-dC $parts)) ($dAB (dp-dAB $parts)) ($dBC (dp-dBC $parts))
+          ($jB (/ (* (- 0.0 $sCB) $sC) (* $sB $sB))) ($jC (/ $sCB $sB)) ($jCB (/ $sC $sB))
+          ($psB (+ $dB (* $dBC $jB))) ($psC (+ $dC (* $dBC $jC))) ($psCB (* $dBC $jCB))
+          ($pcB (* (* $cAB $cCB) $cC)) ($pcC (* (* $cAB $cCB) $cB))
+          ($pcAB (* (* $cCB $cB) $cC)) ($pcCB (* (* $cAB $cB) $cC)))
+     (quint 0.0 (max (cap-sens $psB) (cap-sens $pcB)) (max (cap-sens $psC) (cap-sens $pcC))
+            (max (cap-sens $dAB) (cap-sens $pcAB)) (max (cap-sens $psCB) (cap-sens $pcCB)))))
+
+;; 5-premise Eq-1 adjoint
+(= (adjoint5 $dv (quint $s1 $s2 $s3 $s4 $s5) (stv $a $c1) (stv $b $c2) (stv $c $c3) (stv $d $c4) (stv $e $c5))
+   (let* (($S (max (max (max $s1 $s2) (max $s3 $s4)) $s5))
+          ($p1 (clampu (* (* $dv (/ $s1 $S)) (- 1.0 $c1)))) ($p2 (clampu (* (* $dv (/ $s2 $S)) (- 1.0 $c2))))
+          ($p3 (clampu (* (* $dv (/ $s3 $S)) (- 1.0 $c3)))) ($p4 (clampu (* (* $dv (/ $s4 $S)) (- 1.0 $c4))))
+          ($p5 (clampu (* (* $dv (/ $s5 $S)) (- 1.0 $c5)))))
+     (dquint $p1 $p2 $p3 $p4 $p5)))
+
+(= (factor-demand-induction $conc $dv)
+   (let* (($f (match &self (produces $conc $ff) $ff))
+          ($pA (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $conc)) $a))
+          ($pB (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $conc)) $b))
+          ($pC (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $conc)) $c))
+          ($pBA (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $conc)) $ba))
+          ($pBC (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $conc)) $bc)))
+     (adjoint5 $dv (sens-induction (supply $pA) (supply $pB) (supply $pC) (supply $pBA) (supply $pBC))
+               (supply $pA) (supply $pB) (supply $pC) (supply $pBA) (supply $pBC))))
+
+(= (factor-demand-abduction $conc $dv)
+   (let* (($f (match &self (produces $conc $ff) $ff))
+          ($pA (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $conc)) $a))
+          ($pB (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $conc)) $b))
+          ($pC (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $conc)) $c))
+          ($pAB (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $conc)) $ab))
+          ($pCB (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $conc)) $cb)))
+     (adjoint5 $dv (sens-abduction (supply $pA) (supply $pB) (supply $pC) (supply $pAB) (supply $pCB))
+               (supply $pA) (supply $pB) (supply $pC) (supply $pAB) (supply $pCB))))
+
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand
