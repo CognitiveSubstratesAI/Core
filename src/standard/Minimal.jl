@@ -98,12 +98,60 @@ no_handler(::Frame, ::Atom, ::Bindings) = nothing   # a finished child with no_h
 finished_result(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}) =
     Tuple{Frame,Bindings}[(Frame(atom, Set{Var}(), prev, no_handler, true, 0), b)]
 
+# ── per-step binding-narrowing (the step the faithful Minimal port had OMITTED) ───────────────
+# hyperon `Bindings::apply_and_retain` (matcher.rs:693) / `narrow_vars` (:518); CeTTa eval.c
+# materialize-into-term + variant-factor. Keep only bindings for vars in `live`; drop the rest.
+# Removed vars carrying a value are materialized (via `subst`) into retained values, and the
+# result atom is independently materialized by the caller's `subst(f.atom, b)` — so nothing a
+# live var references is lost. WITHOUT this, bindings accumulate every var ever bound and
+# `copy(Bindings)` grows per step → reduce-to's O(n⁴) (see METTA_COMPILATION_INTEGRATION §6d).
+# This is NOT a 1:1 transplant of hyperon's per-stack-type var threading: it uses ONE sound
+# over-approximation (`_cumvars` below) that keeps ≥ what hyperon keeps, so it can never drop a
+# binding a pending frame still needs — it only drops fresh sub-evaluation-internal vars.
+function narrow_bindings(b::Bindings, live)::Bindings
+    slot_live = Dict{Int,Vector{Var}}()
+    any_drop = false
+    for (v, s) in b.var_to_slot
+        if v in live
+            push!(get!(slot_live, s, Var[]), v)
+        else
+            any_drop = true
+        end
+    end
+    any_drop || return b                                   # nothing dead → no allocation (fast path)
+    nb = Bindings()
+    for (s, vars) in slot_live
+        val = b.slots[s]
+        if val === nothing
+            length(vars) < 2 && continue                   # lone value-less var ≡ unbound → drop
+            v1 = vars[1]
+            for i in 2:length(vars)
+                r = add_var_equality(nb, v1, vars[i]); isempty(r) || (nb = r[1])
+            end
+        else
+            sval = subst(val, b)                           # materialize removed vars referenced in value
+            for v in vars
+                r = add_var_binding(nb, v, sval); isempty(r) || (nb = r[1])
+            end
+        end
+    end
+    nb
+end
+
+# cumulative live-var set for a frame = its atom's vars ∪ its parent's live set (hyperon
+# Stack::add_vars_it :111, but a plain union — not hyperon's per-stack-type logic). Because a
+# frame's set is fixed when it is built, fresh vars introduced by a child sub-evaluation are
+# absent from the parent's set and get dropped when the child returns (narrow_bindings above).
+_cumvars(prev::Union{Frame,Nothing}, atom::Atom)::Set{Var} =
+    prev === nothing ? collect_vars(atom) : union!(collect_vars(atom), prev.vars)
+
 # ── the dispatch step (interpreter.rs interpret_stack:374) ────────────────────
 function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindings}}
     if f.finished
         f.prev === nothing && return [(f, b)]                  # final result
-        atom = subst(f.atom, b)                                # apply bindings on the way up
-        cont = f.prev.ret(f.prev, atom, b)
+        atom = subst(f.atom, b)                                # apply bindings on the way up (materialize)
+        nb = narrow_bindings(b, f.prev.vars)                   # drop bindings no pending frame references
+        cont = f.prev.ret(f.prev, atom, nb)                    # (apply_and_retain, interpreter.rs:387)
         return cont === nothing ? Tuple{Frame,Bindings}[] : [cont]
     end
     name = head_name(f.atom)
@@ -352,7 +400,7 @@ function eval_op(f::Frame, b::Bindings, space)
             return finished_result(error_atom(to_eval, (r::ExecRuntime).msg), b, f.prev)
         end
     elseif is_minimal_op(to_eval)
-        return [(Frame(to_eval, collect_vars(to_eval), f.prev, no_handler, false, f.depth + 1), b)]
+        return [(Frame(to_eval, _cumvars(f.prev, to_eval), f.prev, no_handler, false, f.depth + 1), b)]
     else
         (space === nothing || (to_eval isa Expression && !isempty(to_eval.children) && to_eval.children[1] isa Var)) &&
             return finished_result(NOT_REDUCIBLE, b, f.prev)   # variable-headed expr not reducible
@@ -384,7 +432,7 @@ function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth:
     name = head_name(atom)
     if name == "chain";        return setup_chain(atom, b, prev, depth)
     elseif name == "function"; return setup_function(atom, b, prev, depth)
-    else;                      return [(Frame(atom, collect_vars(atom), prev, no_handler, false, depth), b)]
+    else;                      return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth), b)]
     end
 end
 
@@ -408,7 +456,7 @@ function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth:
         pushed = push_nested(subst(templ, nb), nb, self.prev, depth)
         isempty(pushed) ? nothing : pushed[1]
     end
-    parent = Frame(atom, Set{Var}(), prev, cont, false, depth)
+    parent = Frame(atom, _cumvars(prev, atom), prev, cont, false, depth)
     push_nested(subst(nested, b), b, parent, depth + 1)   # apply bindings so a var-bound minimal op evaluates
 end
 
@@ -427,7 +475,7 @@ function setup_function(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, dep
             return (Frame(error_atom(atom, "NoReturn"), Set{Var}(), self.prev, no_handler, true, depth), rb)
         end
     end
-    fframe = Frame(atom, Set{Var}(), prev, fret, false, depth)
+    fframe = Frame(atom, _cumvars(prev, atom), prev, fret, false, depth)
     push_nested(body, b, fframe, depth + 1)
 end
 
