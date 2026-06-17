@@ -43,7 +43,7 @@
    (if (== $parent $current)
        ($parent $current False)
        (let* (($parentSec  (filtP (map-atom $parent  $e (removeEmptyAND $e)) isNotUnit))
-              ($currentSec  (if (=== $parent $current)
+              ($currentSec  (if (== $parent $current)
                                 $parentSec
                                 (filtP (map-atom $current $e (removeEmptyAND $e)) isNotUnit)))
               (($guardSet $child) (getLiteralChildren $currentSec))

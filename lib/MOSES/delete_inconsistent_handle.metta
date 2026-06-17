@@ -54,7 +54,7 @@
                        (let* ((($h $t) (decons-atom $grandChild)))
                          (applyDeleteIncons6 $child $h $dominantSet $t $applied True))))
                 (($updatedCurrent $updatedchild $appliedOnCurrent)
-                   (if (=== $child $UpdatedChildren)
+                   (if (== $child $UpdatedChildren)
                        (deleteInconsistentHandle $newCurrent $child $dominantSet)
                        (let $fr (findAndReplace $child $UpdatedChildren $newCurrent)
                          ($fr $UpdatedChildren $appliedOnChild))))

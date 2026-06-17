@@ -20,4 +20,4 @@
           ($invertedCom    (invertLiterals $com))
           ($commonElements (intersection-atom $poaGuardSet $invertedCom)))
      (map-atom $parent $el
-        (if (=== $el $poa) (subtraction-atom $poa $commonElements) $el))))
+        (if (== $el $poa) (subtraction-atom $poa $commonElements) $el))))
