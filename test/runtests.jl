@@ -576,6 +576,9 @@ include("test_types.jl")
 # WILLIAM share (truth, variation, Occam weakness). Runs on Minimal — co-works with PLN.
 include("test_quantale.jl")
 
+# MorkSupercompiler tier-2 (`execute!`) integrated into Core's MORK path via `sc_execute!`.
+include("test_supercompiler_core.jl")
+
 @testset "MorkBridge (E1.0) — native unify + shared-var rule rewrite" begin
     # E1.0 foundation: rewrite via MORK's verified engine (expr_unify + expr_apply), not Core's
     # Julia-structural _unify / string-replace. The crossed-variable case is the one that breaks

@@ -35,7 +35,7 @@ using MORK: Space, new_space,
             register_grounded!, is_grounded, GROUNDED_REGISTRY,
             # .act + multi-source machinery (Stage 1 CoreSpaceActIO)
             asource_new, source_factor, ACT_PATH
-using MorkSupercompiler: plan!
+using MorkSupercompiler: plan!, execute!, SCOptions, SC_DEFAULTS, SCResult
 using PathMap: PathMap, UnitVal, UNIT_VAL,
                read_zipper_at_path, zipper_to_next_val!, zipper_path,
                set_val_at!, remove_val_at!,
@@ -164,6 +164,25 @@ function register_for_space!(space::CoreSpace; use_supercompiler::Bool = false)
     _register_atom_ops!(expr_str -> to_sexpr(eval_metta(from_sexpr(expr_str), space)))
 end
 
+"""
+    sc_execute!(space::CoreSpace, program::AbstractString; opts=SC_DEFAULTS) -> SCResult
+
+Run `program` through the **full MorkSupercompiler tier-2 pipeline** against this space's MORK
+trie and return the `SCResult`. Tier-2 is a superset of the per-space `use_supercompiler` flag
+(which uses tier-1 `plan!` — join-order + Rule-of-64 decomposition only): depending on `opts`
+it also runs the approximate-pipeline rewrite, KB saturation, the §6 supercompilation driver,
+and MM2 lowering, then loads + executes the optimized program (`SCResult.steps_executed`,
+`n_facts_derived`, `drive_results`, per-stage `timings`).
+
+Operates directly on `space.inner` (bypasses Core's prefix scoping) — pass a **root** CoreSpace
+(empty prefix, the `new_core_space()` default). This is the first-class tier-2 entry; previously
+only tier-1 `plan!` was reachable (and only via the legacy eval path). Stage opt-ins live on
+`SCOptions` (`supercompile`, `saturate`, `use_approx_pipeline`, `use_mm2_compiler`, …).
+"""
+sc_execute!(space::CoreSpace, program::AbstractString; opts::SCOptions = SC_DEFAULTS)::SCResult =
+    execute!(space.inner, program; opts = opts)
+
+export sc_execute!, SCOptions, SC_DEFAULTS, SCResult
 export CoreSpace, new_core_space, enable_sc!
 export core_add!, core_remove!, core_match, core_rules, core_atoms
 export core_calculus!, core_calculus_at!
