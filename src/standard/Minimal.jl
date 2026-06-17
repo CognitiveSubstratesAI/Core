@@ -245,10 +245,48 @@ mutable struct Space
                                   # the library flattened (so &self/match/query stay single-space), but
                                   # `get-atoms` returns only atoms[lib_count+1:end] — the space's OWN
                                   # atoms — mirroring hyperon where get-atoms excludes dependency spaces.
+    # ── first-argument index (the "Control" half of Algorithm=Logic+Control). `query` is on the hot
+    # path of every reduction; a naive O(all-atoms) scan (interpreter.rs's reference path) made deep
+    # programs (e.g. reduct) quadratic. EVERY faithful peer indexes: hyperon's AtomIndex (a
+    # discrimination trie), CeTTa's eq_idx (hash-bucketed equations), the legacy CoreSpace rule_cache
+    # (functor Dict). We index by (outer-head-sym, 2nd-child-head-sym): rules `(= (f …) …)` bucket
+    # under (=,f), type-anns `(: x T)` under (:,x). Atoms whose discriminant isn't concrete (var head,
+    # var/var-headed 2nd child, <2 children) live in `wildcard` and are checked on every query —
+    # they can match any discriminant (e.g. a var-LHS rule `(= $x …)`). `atoms` stays authoritative
+    # (get-atoms/lib_count/order); the index is a parallel acceleration kept in sync at add/remove.
+    index::Dict{Tuple{String,String},Vector{Atom}}
+    wildcard::Vector{Atom}
 end
-Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0)
-Space(atoms::Vector{Atom}) = Space(atoms, Dict{String,Atom}(), Set{String}(), 0)
-add_atom!(s::Space, a::Atom) = (push!(s.atoms, a); s)
+Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{String,String},Vector{Atom}}(), Atom[])
+Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
+
+# discriminant head of an atom-position: a Sym's name, or an Expression's Sym head; else nothing.
+_idx_head(x::Atom)::Union{String,Nothing} =
+    x isa Sym ? x.name :
+    (x isa Expression && !isempty(x.children) && x.children[1] isa Sym) ? (x.children[1]::Sym).name :
+    nothing
+# (outer-head, 2nd-child-head) discriminant; nothing ⇒ not indexable ⇒ wildcard bucket.
+function _index_key(a::Atom)::Union{Tuple{String,String},Nothing}
+    (a isa Expression && length(a.children) >= 2 && a.children[1] isa Sym) || return nothing
+    sub = _idx_head(a.children[2]); sub === nothing && return nothing
+    ((a.children[1]::Sym).name, sub)
+end
+function add_atom!(s::Space, a::Atom)
+    push!(s.atoms, a)
+    k = _index_key(a)
+    k === nothing ? push!(s.wildcard, a) : push!(get!(() -> Atom[], s.index, k), a)
+    s
+end
+function remove_atom!(s::Space, a::Atom)
+    filter!(x -> x != a, s.atoms)
+    k = _index_key(a)
+    if k === nothing
+        filter!(x -> x != a, s.wildcard)
+    else
+        b = get(s.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
+    end
+    s
+end
 
 const _VAR_COUNTER = Ref(UInt64(0))
 freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
@@ -270,7 +308,20 @@ end
 # Each stored atom's variables are freshened before matching (interpreter.rs make_variables_unique).
 function query(space::Space, pattern::Atom)::Vector{Bindings}
     out = Bindings[]
-    for stored in space.atoms
+    k = _index_key(pattern)
+    if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
+        for stored in space.atoms
+            append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
+        end
+        return out
+    end
+    b = get(space.index, k, nothing)                   # same-discriminant atoms — the (= (f …) …) rules for this f
+    if b !== nothing
+        for stored in b
+            append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
+        end
+    end
+    for stored in space.wildcard                       # + var-headed atoms, which can match any discriminant
         append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
     end
     out
@@ -1164,7 +1215,7 @@ end))
 const REMOVE_ATOM = Grounded(SpaceOp("remove-atom", function (xs, space)
     length(xs) == 2 || return ExecNoReduce()
     tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
-    filter!(a -> a != xs[2], tgt.atoms)
+    remove_atom!(tgt, xs[2])
     ExecOk(Atom[Expression(Atom[])])
 end))
 
