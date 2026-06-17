@@ -14,8 +14,8 @@
 # rule symbol — `supply`/`factor-demand-pair` are no longer HMP-hardcoded.
 
 using Test
-using MeTTaCore.Minimal
-using MeTTaCore.Minimal.StandardMeTTa
+using MeTTaCore.Interpreter
+using MeTTaCore.Interpreter.StandardMeTTa
 
 @testset "PLN rules — conjunction/disjunction/negation (forward + demand via dispatch, vs oracle)" begin
     sp = Space()

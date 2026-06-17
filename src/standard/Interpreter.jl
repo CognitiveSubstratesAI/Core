@@ -15,7 +15,7 @@
 ##
 ## Standalone — does NOT touch eval_metta / eval_nd. Built on the typed StandardMeTTa atoms.
 
-module Minimal
+module Interpreter
 
 include("Atoms.jl")
 using .StandardMeTTa
@@ -669,7 +669,7 @@ function metta_call_instr(f::Frame, b::Bindings, space)
         qres = query(space::Space, Expression(Sym("="), atom, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
-            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Minimal.jl :309)
+            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Interpreter.jl :309)
             reduced = true
             append!(out, push_nested(_metta(subst(X, mb), typ), mb, f.prev, f.depth + 1))
         end
@@ -997,7 +997,7 @@ function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector
         qres = query(space, Expression(Sym("="), a, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
-            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Minimal.jl :309)
+            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Interpreter.jl :309)
             reduced = true
             push!(out, (subst(X, mb), type, mb, false))                 # rewrite result → reduce again
         end

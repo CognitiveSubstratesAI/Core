@@ -14,8 +14,8 @@
 # test can never silently pass a transpose-invariant (i.e. broken) implementation.
 
 using Test
-using MeTTaCore.Minimal
-using MeTTaCore.Minimal.StandardMeTTa
+using MeTTaCore.Interpreter
+using MeTTaCore.Interpreter.StandardMeTTa
 
 @testset "PLN demand adjoint — single HMP factor (§3.3 Eq1 vs oracle) + transpose discrimination" begin
     sp = Space()

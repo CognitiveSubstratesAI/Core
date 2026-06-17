@@ -1,5 +1,5 @@
 # ⚠️⚠️  OBSOLETE — LEGACY OutcomeSet EVALUATOR (eval_nd), BEING RETIRED  ⚠️⚠️
-# `standard/Minimal.jl` supersedes it (docs/ARCHITECTURE_TARGET.md); the "flip to eval_nd" plan is stale.
+# `standard/Interpreter.jl` supersedes it (docs/ARCHITECTURE_TARGET.md); the "flip to eval_nd" plan is stale.
 # Do NOT build new code on eval_nd / eval_nd_results. Its only user is test_ecan_dual (also a retirement
 # candidate). Delete once that's gone.
 #

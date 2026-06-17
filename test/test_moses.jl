@@ -9,7 +9,7 @@ using MeTTaCore, Test
 
 # Harness-parametric (mirrors test_metamo.jl): the default path builds the legacy CoreSpace +
 # eval_metta harness below. test_moses_minimal.jl instead pre-defines MINIMAL_QMM + injects qm =
-# (Minimal-backed q) and includes this file, so every @test assertion runs on StandardMeTTa.Minimal.
+# (Interpreter-backed q) and includes this file, so every @test assertion runs on MeTTaCore.Interpreter.
 if !@isdefined(MINIMAL_QMM)
     println("MOSES: initialising space...")
     MM = new_core_space()

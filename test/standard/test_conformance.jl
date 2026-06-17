@@ -11,12 +11,12 @@
 # Current: 234/234 directives pass — FULL conformance against the vendored hyperon corpus. The baseline is
 # all-zero; any future regression (errors go up) OR unrecorded change fails this test and must be
 # explained. Keep it honest: when adding a new vendored script, add its real count here, don't cherry-pick.
-using MeTTaCore.Minimal                  # precompiled submodule (was: include fresh → recompiled per file)
-using MeTTaCore.Minimal.StandardMeTTa
+using MeTTaCore.Interpreter                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Interpreter.StandardMeTTa
 using Test
 
 const CONF_DIR = joinpath(@__DIR__, "conformance")
-Minimal._MODULE_PATH[] = [CONF_DIR]              # so `import! &kb c2_spaces_kb` resolves the module file
+Interpreter._MODULE_PATH[] = [CONF_DIR]              # so `import! &kb c2_spaces_kb` resolves the module file
 const STDLIB   = read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String)
 
 # baseline = expected number of error directives per script (0 = fully passing).

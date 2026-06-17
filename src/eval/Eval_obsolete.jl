@@ -1,7 +1,7 @@
 # ⚠️⚠️  OBSOLETE — LEGACY INTERPRETER, BEING RETIRED  ⚠️⚠️
-# `standard/Minimal.jl` (the 234/234 hyperon-faithful evaluator) supersedes this — see
+# `standard/Interpreter.jl` (the 234/234 hyperon-faithful evaluator) supersedes this — see
 # docs/ARCHITECTURE_TARGET.md. Do NOT build new code on eval_metta / run_metta / run_file.
-# Retained only until the ~13 full-Eval test scripts migrate to the Minimal harness, then delete.
+# Retained only until the ~13 full-Eval test scripts migrate to the Interpreter harness, then delete.
 """
 Eval — MeTTa interpreter for Core.
 

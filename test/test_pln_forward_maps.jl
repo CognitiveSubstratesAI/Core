@@ -30,8 +30,8 @@
 # to pass as `assertEqual` before being committed here.
 
 using Test
-using MeTTaCore.Minimal
-using MeTTaCore.Minimal.StandardMeTTa          # Space, load_metta!, Expression, Sym, …
+using MeTTaCore.Interpreter
+using MeTTaCore.Interpreter.StandardMeTTa          # Space, load_metta!, Expression, Sym, …
 
 @testset "PLN forward maps — book contract (lib/pln Truth_*)" begin
     sp = Space()

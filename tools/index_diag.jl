@@ -4,7 +4,7 @@
 # index. Used to compare indexing strategies (ours vs hyperon-trie vs CeTTa-hash): the discriminating
 # metric is candidates-scanned-per-query.  Run: julia --project=. tools/index_diag.jl
 using MeTTaCore
-const SM = MeTTaCore.Minimal
+const SM = MeTTaCore.Interpreter
 
 sp = SM.Space()
 SM.load_core_stdlib!(sp)

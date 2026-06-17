@@ -10,7 +10,7 @@
 using MeTTaCore, Test
 
 # Harness-parametric: a Minimal runner (test_metamo_minimal.jl) can pre-define `MINIMAL_QMM = true`
-# and `qmm` (Minimal-backed) so the canonical @test assertions below run on StandardMeTTa.Minimal
+# and `qmm` (Interpreter-backed) so the canonical @test assertions below run on MeTTaCore.Interpreter
 # unchanged. Default (this var undefined) = the legacy eval_metta/CoreSpace harness.
 if !@isdefined(MINIMAL_QMM)
     println("MetaMo: initialising space...")

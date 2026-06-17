@@ -531,8 +531,8 @@ include("test_ecan_dual.jl")
 
 # PLN↔ECAN co-working (§4.9 "demand as backward attention") — PLN's backward demand
 # field drives ECAN STI via a damped + budget-normalized channel, on the faithful
-# Minimal evaluator. Module-wrapped (like the standard tests below) to isolate its
-# `using MeTTaCore.Minimal` + helpers from the full-Eval ECAN tests that leak into Main.
+# Interpreter. Module-wrapped (like the standard tests below) to isolate its
+# `using MeTTaCore.Interpreter` + helpers from the full-Eval ECAN tests that leak into Main.
 module PLNEcanCoworkTests
     include("test_pln_ecan.jl")
 end

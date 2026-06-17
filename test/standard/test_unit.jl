@@ -7,8 +7,8 @@
 # (known divergences + bugs-to-fix + known-missing ops). A regression (fails go up) OR an unrecorded
 # improvement (a fix lands, fails go down) BOTH fail this test, forcing the baseline to stay truthful.
 # The matrix prints every run so the incomplete state is always visible.
-using MeTTaCore.Minimal, MeTTaCore.Minimal.StandardMeTTa, Test
-const SM = MeTTaCore.Minimal
+using MeTTaCore.Interpreter, MeTTaCore.Interpreter.StandardMeTTa, Test
+const SM = MeTTaCore.Interpreter
 const UNIT_DIR = joinpath(@__DIR__, "unit")
 
 # baseline = expected number of FAILING directives per module file (0 = fully green vs hyperon).
@@ -51,7 +51,7 @@ const BASELINE = Dict(
     #   So no spurious pass today; this gate protects the FUTURE. Lower to 0 when the grounded fix lands (post-hang).
     "debug.metta" => 2,
     # interpreter: 15 (was 41). The 26 bare-variable-atom CONTAMINATION cases were FIXED 2026-06-14 by the
-    #   resolve-filter at the three rewrite-query sites in Minimal.jl: drop a query match where the rewrite-RHS X
+    #   resolve-filter at the three rewrite-query sites in Interpreter.jl: drop a query match where the rewrite-RHS X
     #   is TRULY unbound (`!haskey(mb.var_to_slot, X)`) — a bare-var space atom binds itself to the whole `(= …)`
     #   query, leaving X free; hyperon's `query` filters the same via `resolve(&var_x)→None` (interpreter.rs:619).
     #   Verified FAITHFUL not symptom-suppressing: control.metta's `rvid` id-guard (X equated to a var → KEPT)

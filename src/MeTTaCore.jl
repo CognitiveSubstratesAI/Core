@@ -53,18 +53,18 @@ include("parser/Parser.jl")
 include("primitives/Primitives.jl")
 include("primitives/AtomOps.jl")
 include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundation) — NOT legacy
-# ⚠️ OBSOLETE — legacy interpreters being RETIRED (docs/ARCHITECTURE_TARGET.md: Minimal supersedes
+# ⚠️ OBSOLETE — legacy interpreters being RETIRED (docs/ARCHITECTURE_TARGET.md: the Interpreter supersedes
 # eval_metta AND eval_nd). Retained ONLY because ~13 full-Eval test scripts (test_ecan/_dual, test_types,
 # test_metamo, test_actpc_chem, test_william, test_moses full-Eval path, …) have not yet migrated to the
-# Minimal harness. DO NOT build new code on eval_metta / run_metta / eval_nd. Delete after migration.
+# Interpreter harness. DO NOT build new code on eval_metta / run_metta / eval_nd. Delete after migration.
 include("eval/Eval_obsolete.jl")     # eval_metta / run_metta / run_file (legacy tree-walker)
 include("eval/EvalND_obsolete.jl")   # eval_nd / eval_nd_results (legacy OutcomeSet experiment)
 
-# Standard-MeTTa evaluator (faithful hyperon interpreter.rs port). Fully SELF-CONTAINED — it does NOT
-# touch eval_metta/eval_nd and shares no types with the MORK-backed engine above; it lives here only so
-# its ~28s one-time compile is BAKED INTO the precompile cache (`MeTTaCore.Minimal`) instead of being
-# recompiled on every fresh `include` from the test files. Accessed as `MeTTaCore.Minimal`.
-include("standard/Minimal.jl")
+# Standard-MeTTa Interpreter (faithful hyperon interpreter.rs port of the minimal-MeTTa instruction set).
+# Fully SELF-CONTAINED — it does NOT touch eval_metta/eval_nd and shares no types with the MORK-backed
+# engine above; it lives here only so its ~28s one-time compile is BAKED INTO the precompile cache
+# (`MeTTaCore.Interpreter`) instead of being recompiled on every fresh `include`. Accessed as `MeTTaCore.Interpreter`.
+include("standard/Interpreter.jl")
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;

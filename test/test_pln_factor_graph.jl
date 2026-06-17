@@ -8,8 +8,8 @@
 # adjacency. Oracle goldens: B=(0.9405, 0.76), C=(0.893475, 0.456).
 
 using Test
-using MeTTaCore.Minimal
-using MeTTaCore.Minimal.StandardMeTTa
+using MeTTaCore.Interpreter
+using MeTTaCore.Interpreter.StandardMeTTa
 
 @testset "PLN factor graph — forward supply (§6.1 Mammal/Lassie vs oracle)" begin
     sp = Space()

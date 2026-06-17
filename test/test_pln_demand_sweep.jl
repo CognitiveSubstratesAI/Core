@@ -21,8 +21,8 @@
 # the forward-marginal threading is load-bearing, and `supply` provides it here.)
 
 using Test
-using MeTTaCore.Minimal
-using MeTTaCore.Minimal.StandardMeTTa
+using MeTTaCore.Interpreter
+using MeTTaCore.Interpreter.StandardMeTTa
 
 @testset "PLN demand sweep — multi-factor (§4.4 vs generated oracle golden) + threading control" begin
     sp = Space()

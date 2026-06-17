@@ -20,8 +20,8 @@
 #                          query + premise receive STI on ONE evaluator (the integration proof).
 
 using Test
-using MeTTaCore.Minimal
-using MeTTaCore.Minimal.StandardMeTTa
+using MeTTaCore.Interpreter
+using MeTTaCore.Interpreter.StandardMeTTa
 include(joinpath(@__DIR__, "assert_guard.jl"))   # silent-test guard (shared convention)
 
 const _ECAN = joinpath(@__DIR__, "..", "lib", "ecan", "t1_core_logic.metta")
@@ -43,7 +43,7 @@ end
 # full co-work: + the PLN factor graph (for pln-attention-tick!)
 _setup_full() = (sp = _setup_ecan(); load_metta!(sp, read(_FG, String)); sp)
 
-# Negative control (silent-test guard): the PLN tests gate on `_eerrs` over the Minimal harness +
+# Negative control (silent-test guard): the PLN tests gate on `_eerrs` over the Interpreter harness +
 # `@test length(rs) == N`. This proves `_eerrs` + the Minimal `assertEqual` actually DISCRIMINATE
 # (a known mismatch is flagged, a known match is not) — so the count-guarded asserts below are not
 # silently vacuous. Representative for the PLN suite (all share the Minimal `load_metta!`/`_eerrs`
