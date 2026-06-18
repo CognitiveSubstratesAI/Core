@@ -56,4 +56,18 @@ const MC = MeTTaCore
         @test haskey(r.timings, :saturate)
         @test r.n_kb_facts >= 0
     end
+
+    @testset "§10.3 MeTTa→MM2 lowering: (match …) ≡ hand-written (exec …)" begin
+        # The missing bridge (MeTTa-MM2-Supercompiler_v1_spec.md:502): a `match` join query lowers to
+        # exec form at execute! entry, feeds the supercompiler (join-reorder + decomposition), and
+        # produces the SAME trie output as the equivalent hand-written exec program. Before this,
+        # `match` atoms were inert (added verbatim, never fired) so nothing in lib/ could be optimized.
+        match_prog = raw"(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))"
+        trans(p) = begin
+            sp = new_core_space(); MC.space_add_all_sexpr!(sp.inner, facts); sc_execute!(sp, p)
+            sort([strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n') if occursin("trans", l)])
+        end
+        @test trans(match_prog) == trans(prog)             # match-form ≡ exec-form
+        @test trans(match_prog) == ["(trans 0 2)", "(trans 1 3)"]
+    end
 end
