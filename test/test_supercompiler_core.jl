@@ -89,4 +89,27 @@ const MC = MeTTaCore
         @test R_interp == ["(trans 0 2)", "(trans 1 3)"]   # the Interpreter actually produces this
         @test R_sc == R_interp                              # supercompiler is faithful to the Interpreter
     end
+
+    @testset "match-lowering robustness across shapes (oracle bisimulation)" begin
+        # The lowering must be faithful for more than the one 2-source case: a single-source query and
+        # a 3-source join (where Rule-of-64 decomposition engages) must each equal the Interpreter.
+        SM = MeTTaCore.Interpreter
+        function ovs(facts_s, query, tag)
+            isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts_s)
+            res = SM.load_metta!(isp, "!" * query)
+            ri = sort(unique(filter(s -> occursin(tag, s),
+                     [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+            sp = new_core_space(); MC.space_add_all_sexpr!(sp.inner, facts_s); sc_execute!(sp, query)
+            rs = sort(unique(filter(s -> occursin(tag, s),
+                     [strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')])))
+            return ri, rs
+        end
+        ri, rs = ovs("(p 1) (p 2) (p 3)", raw"(match &self (p $x) (found $x))", "found")     # single-source
+        @test ri == ["(found 1)", "(found 2)", "(found 3)"]
+        @test rs == ri
+        ri, rs = ovs("(a 1 2) (b 2 3) (c 3 4)",
+                     raw"(match &self (, (a $x $y) (b $y $z) (c $z $w)) (out $x $w))", "out")  # 3-source join
+        @test ri == ["(out 1 4)"]
+        @test rs == ri
+    end
 end
