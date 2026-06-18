@@ -112,4 +112,26 @@ const MC = MeTTaCore
         @test ri == ["(out 1 4)"]
         @test rs == ri
     end
+
+    @testset "KBSaturation wired to the live path: transitive closure (acyclic + cyclic terminates)" begin
+        # MORK's existing seminaive saturation engine (KBSaturation §7.1) now writes derived facts back
+        # to the Space. RULES come from the program (vars preserved); base FACTS from the Space. This is
+        # the recursive/transitive-query capability the tree-walker lacks — built by WIRING the engine
+        # MORK already had (no Prolog ported), after fixing var-sharing + value-based join/termination.
+        rules = raw"""
+        (==> (edge $x $y) (path $x $y))
+        (==> (, (path $x $y) (edge $y $z)) (path $x $z))
+        """
+        getp(sp) = sort([strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')
+                         if startswith(strip(l), "(path ")])
+        # acyclic chain → full transitive closure, exactly 6 (value-deduped, not 9)
+        sa = new_core_space(); MC.space_add_all_sexpr!(sa.inner, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)")
+        ra = sc_execute!(sa, rules; opts = SCOptions(saturate = true))
+        @test getp(sa) == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
+        @test ra.n_facts_derived == 6
+        # cyclic → MUST TERMINATE with the correct closure (a NodeID-only gate would loop forever)
+        scyc = new_core_space(); MC.space_add_all_sexpr!(scyc.inner, "(edge 0 1)\n(edge 1 0)")
+        sc_execute!(scyc, rules; opts = SCOptions(saturate = true))
+        @test getp(scyc) == ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
+    end
 end
