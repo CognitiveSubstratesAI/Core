@@ -228,7 +228,7 @@ end
 """
     metta"..."  →  String
 
-Non-interpolating MeTTa source literal.  MeTTa's `\$x` variable syntax
+Non-interpolating MeTTa source literal.  MeTTa's dollar-variable syntax
 collides with Julia's string interpolation, so MeTTa source embedded in
 Julia code must use this macro (or `raw"..."`) to survive verbatim:
 

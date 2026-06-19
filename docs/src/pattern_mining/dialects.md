@@ -56,11 +56,7 @@ counter, documented in [MORK-Native Miner](mork_miner.md).
 
 ## API
 
-```@docs
-mine_frequent
-pattern_support
-pattern_support_interp
-pattern_support_native
-```
+Full docstrings in the [API Reference](../api.md): [`mine_frequent`](@ref), [`pattern_support`](@ref),
+[`pattern_support_interp`](@ref), [`pattern_support_native`](@ref).
 
 [MeTTa-IL]: https://github.com/CognitiveSubstratesAI/Core/blob/main/src/standard/MeTTaIL.jl

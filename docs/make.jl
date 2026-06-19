@@ -16,12 +16,17 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
-        "Dialect gaps (porting PeTTa-targeted algorithms)" => "dialect-gaps.md",
+        "MeTTa-IL" => [
+            "MeTTa-IL Lane" => "mettail.md",
+            "GSLT Theory Algebra" => "gslt.md",
+        ],
         "Pattern Mining" => [
             "Overview" => "pattern_mining/overview.md",
             "Mining Dialects" => "pattern_mining/dialects.md",
             "MORK-Native Miner" => "pattern_mining/mork_miner.md",
         ],
+        "Dialect gaps (porting PeTTa-targeted algorithms)" => "dialect-gaps.md",
+        "API Reference" => "api.md",
     ],
     warnonly=true
 )

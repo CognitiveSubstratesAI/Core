@@ -486,7 +486,7 @@ end
 """
     core_match(s, pattern) → Vector{Any}
 
-Query the trie for atoms matching `pattern`. Variables (\$x) act as wildcards.
+Query the trie for atoms matching `pattern`. Dollar-prefixed variables act as wildcards.
 Returns a list of CANDIDATE atoms — callers (typically `_eval_match`) apply
 `_unify` for the final binding-correct filter.
 

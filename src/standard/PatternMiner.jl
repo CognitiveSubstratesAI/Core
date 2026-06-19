@@ -24,7 +24,7 @@
 #     conjunction; a bare pattern matches nothing — see space.rs `dump_sexpr`).
 
 "Support via the RAW-MeTTa interpreter dialect: `(size-atom (collapse (match &self P P)))` over `data`.
-`pattern` uses dollar-vars (e.g. `(drink \$x Coke)`); counts distinct matching atoms."
+`pattern` uses dollar-prefixed query variables; counts distinct matching atoms."
 function pattern_support_interp(data::AbstractString, pattern::AbstractString)::Int
     sp = Interpreter.Space(); Interpreter.load_core_stdlib!(sp); Interpreter.load_metta!(sp, data)
     r = Interpreter.load_metta!(sp, "!(size-atom (collapse (match &self $pattern $pattern)))")

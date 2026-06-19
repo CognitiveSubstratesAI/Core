@@ -57,12 +57,6 @@ scoping model — not a pattern-prefix counter — so it is not the right tool h
 
 ## API
 
-```@docs
-mine_prefix_patterns
-grow_prefix
-prefix_support
-PrefixCounter
-prefix_insert!
-prefix_counter
-prefix_count_support
-```
+Full docstrings in the [API Reference](../api.md): [`mine_prefix_patterns`](@ref), [`grow_prefix`](@ref),
+[`prefix_support`](@ref), [`PrefixCounter`](@ref), [`prefix_insert!`](@ref), [`prefix_counter`](@ref),
+[`prefix_count_support`](@ref).
