@@ -208,6 +208,8 @@ export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, the
 export theory_orient_equations
 # Frequent-pattern miner (Hyperon Pattern Miner core) on def/match/emit
 export pattern_support, mine_frequent
+# MORK-native prefix-locality miner (MORK-Miner)
+export prefix_support, mine_prefix_patterns, grow_prefix
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix

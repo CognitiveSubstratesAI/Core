@@ -46,3 +46,62 @@ function mine_frequent(cs::CoreSpace, abstract_pipeline::AbstractString, minsup:
     end
     sort(unique(kept))
 end
+
+# --- MORK-native prefix-locality miner (MORK-Miner.pdf) ----------------------------------------------
+# A complementary miner that exploits MORK PathMap LOCALITY: atoms stored as token-paths share byte-trie
+# prefixes, so atoms with a common leading-token prefix are "nearby"/semantically related. Patterns are
+# LEFT-ANCHORED prefixes `(head t1 … tk _)` (vs mine_frequent's any-position `_` wildcards), and support
+# is the count of atoms under a prefix — the MORK-Miner's "in-place prefix counter". The pipeline:
+#   (1) SEED — distinct prefixes at a given depth; (2) SUPPORT — count atoms under each prefix;
+#   (3) GROW — extend a frequent prefix one token deeper.
+# This realizes the prefix-locality CONCEPT; the production O(1) optimization (counters incremented at
+# trie nodes on insert, read via a zipper at the prefix node) refines the dump-scan support here.
+
+"Prefix support: count of atoms in `cs` whose leading tokens equal `prefix` (the MORK prefix counter)."
+function prefix_support(cs::CoreSpace, prefix::AbstractVector{<:AbstractString})::Int
+    n = 0
+    for line in split(space_dump_all_sexpr(cs.inner), '\n')
+        atom = strip(line)
+        (isempty(atom) || !startswith(atom, "(")) && continue
+        toks = mm2_expr_args(atom)
+        length(toks) >= length(prefix) && all(((p, t),) -> p == t, zip(prefix, toks)) && (n += 1)
+    end
+    n
+end
+
+"""
+    mine_prefix_patterns(cs, depth, minsup) -> Vector{Tuple{String,Int}}
+
+MORK-native seed extraction + support: group atoms by their leading `depth` tokens (trie prefix), count
+atoms under each prefix, and keep prefixes with support ≥ `minsup`, returned as `(t1 … _)` patterns.
+"""
+function mine_prefix_patterns(cs::CoreSpace, depth::Integer, minsup::Integer)
+    counts = Dict{Vector{String}, Int}()
+    for line in split(space_dump_all_sexpr(cs.inner), '\n')
+        atom = strip(line)
+        (isempty(atom) || !startswith(atom, "(")) && continue
+        toks = mm2_expr_args(atom)
+        length(toks) > depth || continue                 # proper prefix: atom extends past `depth`
+        counts[toks[1:depth]] = get(counts, toks[1:depth], 0) + 1
+    end
+    sort(Tuple{String, Int}[("(" * join(p, " ") * " _)", n) for (p, n) in counts if n >= minsup])
+end
+
+"""
+    grow_prefix(cs, prefix, minsup) -> Vector{Tuple{String,Int}}
+
+MORK-native growth: extend a frequent `prefix` (token vector) by one token via prefix proximity, keeping
+the deeper prefixes whose support ≥ `minsup`.
+"""
+function grow_prefix(cs::CoreSpace, prefix::AbstractVector{<:AbstractString}, minsup::Integer)
+    counts = Dict{String, Int}()
+    for line in split(space_dump_all_sexpr(cs.inner), '\n')
+        atom = strip(line)
+        (isempty(atom) || !startswith(atom, "(")) && continue
+        toks = mm2_expr_args(atom)
+        (length(toks) > length(prefix) && all(((p, t),) -> p == t, zip(prefix, toks))) || continue
+        counts[toks[length(prefix) + 1]] = get(counts, toks[length(prefix) + 1], 0) + 1
+    end
+    sort(Tuple{String, Int}[("(" * join(vcat(prefix, [t]), " ") * " _)", n)
+                            for (t, n) in counts if n >= minsup])
+end

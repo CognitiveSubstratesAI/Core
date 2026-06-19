@@ -31,4 +31,21 @@ using Test
         @test kept[raw"(drink Bob _)"]   == 2
         @test !haskey(kept, raw"(drink Carol _)")   # support 1 < minsup 2 → dropped
     end
+
+    @testset "MORK-native prefix-locality miner" begin
+        cs = MC.new_core_space(); MC.space_add_all_sexpr!(cs.inner, data)
+        # prefix support = atoms under a leading-token prefix (the in-place prefix counter)
+        @test prefix_support(cs, ["drink", "Alice"]) == 2
+        @test prefix_support(cs, ["drink"]) == 5
+        @test prefix_support(cs, ["drink", "Carol"]) == 1
+        # seed extraction at depth 2 (head + subject), minsup 2 → left-anchored frequent prefixes
+        seeds = Dict(mine_prefix_patterns(cs, 2, 2))
+        @test seeds[raw"(drink Alice _)"] == 2
+        @test seeds[raw"(drink Bob _)"]   == 2
+        @test !haskey(seeds, raw"(drink Carol _)")    # support 1
+        @test !haskey(seeds, raw"(inherit Alice _)")  # support 1
+        # growth: extend (drink) by one token → frequent subjects
+        grown = Dict(grow_prefix(cs, ["drink"], 2))
+        @test grown[raw"(drink Alice _)"] == 2 && grown[raw"(drink Bob _)"] == 2
+    end
 end
