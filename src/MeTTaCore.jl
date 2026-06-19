@@ -70,6 +70,7 @@ include("standard/Interpreter.jl")
 # MORK-backed engine), NOT inside the self-contained `Interpreter` submodule above.
 include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
+include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
@@ -197,6 +198,8 @@ export mm2_route!, mm2_match!, mm2_lower_match, mm2_expr_args
 # Reflectable HE small-step rule-table (CeTTa-adopted)
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest
+# MeTTa-IL lane (F1R3FLY layered track)
+export metta_il_lower, metta_il_lower_def, metta_il_run!
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
