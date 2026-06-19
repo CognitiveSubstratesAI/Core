@@ -227,7 +227,7 @@ Returns `nothing` (allow eval to continue) if:
   - All args' types pass the lenient `_types_match` check.
 
 Lenient by design — `Atom` and `%Undefined%` match anything (per spec),
-type variables (`\$t`) match anything (generic-parameter idiom from
+type variables (dollar-prefixed) match anything (generic-parameter idiom from
 `(: == (-> \$t \$t Bool))`), and Variable-typed actual args match anything
 (since the var will be bound at unification).
 """
@@ -269,7 +269,7 @@ end
 Unify an EXPECTED type (which may contain type-variables) against an ACTUAL type,
 recording variable bindings in `subst`. Gradual: `%Undefined%`, `Atom`, and a
 variable actual all match anything. An expected type-variable binds to the actual;
-nested type expressions (e.g. `(List \$t)` vs `(List Nat)`) unify element-wise.
+nested type expressions (e.g. `(List T)` vs `(List Nat)`) unify element-wise.
 """
 function _unify_type!(subst::Dict{Symbol, Any}, expected, actual) :: Bool
     expected = _subst_type(expected, subst)
@@ -377,12 +377,12 @@ end
 """
     _eval_type_cast(args, space) → Atom | Error-expression
 
-Special-form implementation of `(type-cast \$atom \$type \$space)`. Per the
+Special-form implementation of `(type-cast ATOM TYPE SPACE)`. Per the
 spec's type_cast algorithm:
 
     \$types = <list of the types of \$atom from the \$space>
     \$no_match = []
-    for \$t in \$types:
+    for each candidate type:
         if match_types(\$t, \$type) succeeds: return \$atom
         else: \$no_match += [\$t]
     return [(Error \$atom (BadType \$type \$t)) for \$t in \$no_match]
@@ -1047,8 +1047,8 @@ end
 """
     _eval_get_type(args, space) → Symbol
 
-Special-form implementation of `(get-type \$atom)`. Resolves the type by:
-  1. Querying the space for `(: \$atom \$t)` declarations — declared types win.
+Special-form implementation of `(get-type ATOM)`. Resolves the type by:
+  1. Querying the space for `(: ATOM T)` declarations — declared types win.
   2. Falling back to structural inference if no declaration exists.
 
 Closes the historic three-oracle disagreement on declared-but-non-structural

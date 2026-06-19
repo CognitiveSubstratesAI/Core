@@ -15,7 +15,7 @@
     mork_unify(query, data) -> Union{Dict, Nothing}
 
 Robinson MGU (with occurs-check) of `query` (source 0) against `data` (source 1) via MORK's
-`expr_unify`. Accepts `MORK.Expr`s or MORK-syntax s-expression strings (`\$x` native). Returns the
+`expr_unify`. Accepts `MORK.Expr`s or MORK-syntax s-expression strings (dollar-variable syntax). Returns the
 bindings `Dict{ExprVar,ExprEnv}` on success, `nothing` on no match.
 """
 function mork_unify(query::MORK.Expr, data::MORK.Expr)

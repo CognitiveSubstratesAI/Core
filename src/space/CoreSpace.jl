@@ -10,11 +10,11 @@ S-expression strings are the interchange format between Julia and MORK.
 """
 Convert any Julia value to a MORK-compatible S-expression string.
 
-Variables (Symbol starting with '\$') are encoded as ground symbols `__var_NAME`
-so they survive the MORK byte-trie round-trip. MORK's native \$x syntax
+Variables (Symbol starting with a dollar sign) are encoded as ground symbols `__var_NAME`
+so they survive the MORK byte-trie round-trip. MORK's native dollar-variable syntax
 anonymises variable names (de Bruijn); __var_x preserves them.
 
-For query patterns, call `to_sexpr_query` which uses \$x directly.
+For query patterns, call `to_sexpr_query` which uses dollar-variables directly.
 """
 function to_sexpr(x::Any) :: String
     if x isa Symbol
@@ -47,7 +47,7 @@ function to_sexpr_atom(x::Any) :: String
 end
 
 """
-Convert a pattern to S-expression, keeping \$x as MORK wildcards.
+Convert a pattern to S-expression, keeping dollar-variables as MORK wildcards.
 Use for `core_match` queries — do NOT use for storage (variable names lost).
 """
 function to_sexpr_query(x::Any) :: String
@@ -399,7 +399,7 @@ end
 """
     _is_var_symbol(x) → Bool
 
-Variable check: `\$name` or storage form `__var_name`.  Used by the structural
+Variable check: a dollar-prefixed name or storage form `__var_name`.  Used by the structural
 pre-filter to know which positions are wildcards.
 """
 _is_var_symbol(x) =
@@ -671,7 +671,7 @@ function core_calculus!(s::CoreSpace, steps::Int = typemax(Int))
 end
 
 """Like `core_calculus!` but anchored at an explicit thread-id `loc`
-(an `AbstractString`).  Uses MORK's `(exec (loc \$) \$ \$)` thread-scoping
+(an `AbstractString`).  Uses MORK's the exec loc-scoping form thread-scoping
 convention for finer-grained execution.
 
 For root-prefix spaces, this is the pre-Stage-1 behavior unchanged.
