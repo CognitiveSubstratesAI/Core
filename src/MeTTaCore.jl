@@ -199,7 +199,7 @@ export mm2_route!, mm2_match!, mm2_lower_match, mm2_expr_args
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest
 # MeTTa-IL lane (F1R3FLY layered track)
-export metta_il_lower, metta_il_lower_def, metta_il_run!
+export metta_il_lower, metta_il_lower_rewrite, metta_il_run!
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
