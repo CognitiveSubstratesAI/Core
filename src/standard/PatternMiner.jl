@@ -84,6 +84,42 @@ end
 # This realizes the prefix-locality CONCEPT; the production O(1) optimization (counters incremented at
 # trie nodes on insert, read via a zipper at the prefix node) refines the dump-scan support here.
 
+# --- MORK-Miner IN-PLACE prefix counters (the ACTUAL §2.3 mechanism) ---------------------------------
+# §2.3: "Whenever a new data item is STORED, the miner increments a counter at each prefix node along its
+# key path. The support of any pattern is obtained by READING the counter — no separate counting pass."
+# So support is O(1) (a counter read), maintained at INSERT time — that is the source of the paper's
+# "orders of magnitude / no global scans" speedup. (A post-hoc query/scan is the WRONG mechanism — the
+# very "separate counting pass" §2.3 says you don't do; benchmarking that mis-read the claim as negative.)
+
+struct PrefixCounter
+    counts::Dict{Vector{String}, Int}
+end
+PrefixCounter() = PrefixCounter(Dict{Vector{String}, Int}())
+
+"Store an atom: increment the counter at EVERY prefix node along its key path (MORK-Miner §2.3 insert)."
+function prefix_insert!(pc::PrefixCounter, atom::AbstractString)
+    toks = mm2_expr_args(atom)
+    @inbounds for k in 1:length(toks)
+        key = toks[1:k]
+        pc.counts[key] = get(pc.counts, key, 0) + 1
+    end
+    pc
+end
+
+"Build the in-place prefix counters from a newline-separated atom set (the one-time storage pass)."
+function prefix_counter(data::AbstractString)::PrefixCounter
+    pc = PrefixCounter()
+    for line in split(data, '\n')
+        a = strip(line); (isempty(a) || !startswith(a, "(")) && continue
+        prefix_insert!(pc, a)
+    end
+    pc
+end
+
+"O(1) support: READ the in-place counter at `prefix`'s node (no scan, no query pass) — MORK-Miner §2.3."
+prefix_count_support(pc::PrefixCounter, prefix::AbstractVector{<:AbstractString})::Int =
+    get(pc.counts, collect(String, prefix), 0)
+
 "Prefix support: count of atoms in `cs` whose leading tokens equal `prefix` (the MORK prefix counter)."
 function prefix_support(cs::CoreSpace, prefix::AbstractVector{<:AbstractString})::Int
     n = 0

@@ -210,6 +210,7 @@ export theory_orient_equations
 export pattern_support, pattern_support_interp, pattern_support_native, mine_frequent
 # MORK-native prefix-locality miner (MORK-Miner)
 export prefix_support, mine_prefix_patterns, grow_prefix
+export PrefixCounter, prefix_insert!, prefix_counter, prefix_count_support   # in-place counters (§2.3)
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix

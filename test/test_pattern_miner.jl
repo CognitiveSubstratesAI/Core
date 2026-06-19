@@ -49,6 +49,17 @@ using Test
         @test grown[raw"(drink Alice _)"] == 2 && grown[raw"(drink Bob _)"] == 2
     end
 
+    @testset "MORK-Miner §2.3 in-place prefix counters (O(1) support, agrees with scan)" begin
+        # the ACTUAL mechanism: counters incremented at insert, support = O(1) counter read.
+        pc = prefix_counter(data)
+        cs = MC.new_core_space(); MC.space_add_all_sexpr!(cs.inner, data)
+        @test prefix_count_support(pc, ["drink", "Alice"]) == prefix_support(cs, ["drink", "Alice"]) == 2
+        @test prefix_count_support(pc, ["drink"])          == prefix_support(cs, ["drink"])          == 5
+        @test prefix_count_support(pc, ["drink", "Carol"]) == 1
+        @test prefix_count_support(pc, ["inherit", "Alice"]) == 1
+        @test prefix_count_support(pc, ["nonexistent"]) == 0     # absent prefix → 0
+    end
+
     @testset "three-dialect support cross-validation (interp ≡ scan ≡ MORK-native)" begin
         # §9 methodology: the SAME support across ALL THREE dialects must AGREE on the same data.
         cs = MC.new_core_space(); MC.space_add_all_sexpr!(cs.inner, data)
