@@ -72,6 +72,29 @@ using Test
         @test metta_il_normalize(bool, raw"(not (not T))") == "T"           # nested redex
         @test metta_il_normalize(bool, raw"(pair (not T) (not F))") == "(pair F T)"  # both args
     end
+    @testset "def/match/emit pipeline surface (§9.1 → §9.2)" begin
+        @testset "lowering: def → (exec PRIORITY (, PATS) (, EMITS)) per §9.2" begin
+            @test metta_il_lower_def(raw"(def s () (match (a $x) (emit (b $x))))", 1) ==
+                  raw"(exec 1 (, (a $x)) (, (b $x)))"
+            # multiple patterns + multiple emits (extract-skeleton shape)
+            @test metta_il_lower_def(raw"(def x () (match (p $x) (emit (q $x)) (emit (r $x))))", 2) ==
+                  raw"(exec 2 (, (p $x)) (, (q $x) (r $x)))"
+            # when guard folds into the source conjunction
+            @test metta_il_lower_def(raw"(def m () (match (c $x $n) (when (== $n hi) (emit (k $x)))))", 4) ==
+                  raw"(exec 4 (, (c $x $n) (== $n hi)) (, (k $x)))"
+        end
+
+        @testset "run a staged pipeline (stage 2 consumes stage 1's output)" begin
+            cs = MC.new_core_space()
+            pipe = raw"""
+            (def s1 () (match (edge $x $y) (emit (reach $x $y))))
+            (def s2 () (match (reach $x $y) (edge $y $z) (emit (far $x $z))))
+            """
+            R = metta_il_run_pipeline!(cs, facts, pipe)
+            @test "(reach 0 1)" in R                        # stage 1
+            @test "(far 0 2)" in R && "(far 1 3)" in R      # stage 2 consumes stage 1's output
+        end
+    end
     # NOTE: the GSLT theory algebra (composition/parameterization) lives in GSLT.jl / test_gslt.jl;
     # equations-as-rewrite orientation (Knuth-Bendix) is the remaining (a)-tail item.
 end

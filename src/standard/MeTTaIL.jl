@@ -104,3 +104,71 @@ function metta_il_normalize(program::AbstractString, term::AbstractString)::Stri
                    for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"]
     _normalize_subterm(rules, term)
 end
+
+# --- def/match/emit pipeline surface (scalable-infra §9.1, lowered to MM2 per §9.2) ------------------
+# The paper's higher-level MeTTa-IL surface for STAGED relational pipelines (pattern-miners, agent
+# loops). A `def` is a named stage; `match PAT…` binds inputs (conjunction); `when` guards; `emit`
+# produces the next stage's facts (multiple allowed). The paper's own §9.2 lowering is `defreact`/
+# `(exec PRIORITY (, PATS) [:guard G] (, EMITS))` — so each def becomes an exec whose PRIORITY is its
+# stage order (the pipeline sequencing). This is sugar over the relational (additive) derivation mode
+# (metta_il_run!), NOT term reduction — but it adds named, priority-ordered staging + multiple emits.
+
+# parse `(def NAME (params) (match PAT… [(emit …)|(when G (emit …)…)]…))` → (pats, emits, guards)
+function _parse_def_match(def::AbstractString)
+    a = mm2_expr_args(def)
+    (a[1] == "def" && length(a) >= 4) ||
+        error("def: expected (def NAME (params) (match …)), got: $def")
+    m = mm2_expr_args(a[4])
+    m[1] == "match" || error("def body must be (match …), got '$(m[1])'")
+    pats = String[]; emits = String[]; guards = String[]
+    for arg in m[2:end]
+        h = mm2_head(arg)
+        if h == "emit"
+            push!(emits, mm2_expr_args(arg)[2])
+        elseif h == "when"                              # (when GUARD (emit …)…)
+            wa = mm2_expr_args(arg)
+            push!(guards, wa[2])
+            for e in wa[3:end]
+                mm2_head(e) == "emit" && push!(emits, mm2_expr_args(e)[2])
+            end
+        else
+            push!(pats, arg)                            # a match pattern
+        end
+    end
+    (pats = pats, emits = emits, guards = guards)
+end
+
+"Lower one `def/match/emit` stage to MM2 `(exec PRIORITY (, PATS GUARDS) (, EMITS))` (§9.2 `defreact`)."
+function metta_il_lower_def(def::AbstractString, priority::Integer = 0)::String
+    p = _parse_def_match(def)
+    isempty(p.emits) && error("metta_il_lower_def: (match …) has no (emit …)")
+    "(exec $priority (, $(join(vcat(p.pats, p.guards), " "))) (, $(join(p.emits, " "))))"
+end
+
+"Lower a `def/match/emit` pipeline → MM2 exec program; each def's PRIORITY is its stage order."
+metta_il_lower_pipeline(program::AbstractString)::String =
+    join([metta_il_lower_def(strip(f), i)
+          for (i, (bang, f)) in enumerate(mm2_split_forms(program)) if !bang && mm2_head(f) == "def"],
+         "\n")
+
+_pipeline_emit_heads(program) = Set{String}(
+    mm2_head(e) for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "def"
+                for e in _parse_def_match(strip(f)).emits)
+
+"""
+    metta_il_run_pipeline!(cs, data, program; steps=1_000_000) -> Vector{String}
+
+Run a `def/match/emit` pipeline (§9.1) over `data`: lower each stage to a priority-ordered MM2 exec
+rule (§9.2), step the calculus, return the emitted atoms (by every stage's emit head).
+"""
+function metta_il_run_pipeline!(cs::CoreSpace, data::AbstractString, program::AbstractString;
+                                steps::Int = 1_000_000)
+    isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
+    exec = metta_il_lower_pipeline(program)
+    isempty(exec) && return String[]
+    space_add_all_sexpr!(cs.inner, exec)
+    space_metta_calculus!(cs.inner, steps)
+    heads = _pipeline_emit_heads(program)
+    sort(unique(String[strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
+                        if mm2_head(strip(l)) in heads]))
+end
