@@ -23,6 +23,7 @@
 struct Theory
     name::String
     base::Tuple{Symbol, Vector{String}}            # (:none,[]) | (:extends,[P]) | (:union,[A,B,…])
+    params::Vector{Tuple{String, String}}          # (param-name, default-theory) — GSLT `Theory T(p: P)`
     terms::Vector{String}
     equations::Vector{String}
     rewrites::Vector{String}
@@ -49,7 +50,13 @@ function parse_theory(def::AbstractString)::Theory
         (ra[1] == "=>" && length(ra) == 3) || error("replacement must be (=> Old New), got: $r")
         push!(reps, (ra[2], ra[3]))
     end
-    Theory(name, base,
+    params = Tuple{String, String}[]
+    for p in _theory_section(sections, "params")
+        pa = mm2_expr_args(p)
+        length(pa) == 2 || error("param must be (name Theory), got: $p")
+        push!(params, (pa[1], pa[2]))
+    end
+    Theory(name, base, params,
            _theory_section(sections, "terms"),
            _theory_section(sections, "equations"),
            _theory_section(sections, "rewrites"),
@@ -71,20 +78,28 @@ _rename_ctor(s::AbstractString, old::AbstractString, new::AbstractString) =
     replace(s, Regex("(?<![\\w\\-])" * Base.escape_string(old) * "(?![\\w\\-])") => new)
 
 """
-    theory_flatten(name, env) -> (; terms, equations, rewrites)
+    theory_flatten(name, env; bindings=Dict()) -> (; terms, equations, rewrites)
 
 Resolve the theory algebra: collect the base's content (extension chain / union), append this theory's
 own content, then apply this theory's replacements (constructor renames) across the whole result.
+Base references that name a PARAMETER (`Theory T(p: P)`) resolve through `bindings` (an instantiation
+override), else the param's default theory, else the reference is taken as a direct theory name.
 """
-function theory_flatten(name::AbstractString, env::Dict{String, Theory})
+function theory_flatten(name::AbstractString, env::Dict{String, Theory};
+                        bindings::Dict{String, String} = Dict{String, String}())
     haskey(env, name) || error("theory_flatten: unknown theory '$name'")
     t = env[name]
+    function resolve(ref)                                   # param override > param default > direct name
+        haskey(bindings, ref) && return bindings[ref]
+        i = findfirst(p -> p[1] == ref, t.params)
+        i === nothing ? ref : t.params[i][2]
+    end
     terms = String[]; eqs = String[]; rws = String[]
     if t.base[1] == :extends
-        b = theory_flatten(t.base[2][1], env); append!(terms, b.terms); append!(eqs, b.equations); append!(rws, b.rewrites)
+        b = theory_flatten(resolve(t.base[2][1]), env); append!(terms, b.terms); append!(eqs, b.equations); append!(rws, b.rewrites)
     elseif t.base[1] == :union
         for p in t.base[2]
-            b = theory_flatten(p, env); append!(terms, b.terms); append!(eqs, b.equations); append!(rws, b.rewrites)
+            b = theory_flatten(resolve(p), env); append!(terms, b.terms); append!(eqs, b.equations); append!(rws, b.rewrites)
         end
     end
     append!(terms, t.terms); append!(eqs, t.equations); append!(rws, t.rewrites)
@@ -99,6 +114,15 @@ end
 "The flattened rewrites of a theory (the executable reduction relation)."
 theory_rewrites(name::AbstractString, env::Dict{String, Theory})::Vector{String} =
     theory_flatten(name, env).rewrites
+
+"""
+    theory_instantiate(name, env, overrides) -> (; terms, equations, rewrites)
+
+Flatten a parameterized theory with its parameters bound to concrete theories (`overrides`, a
+param-name→theory map). Unbound params fall back to their declared default theory.
+"""
+theory_instantiate(name::AbstractString, env::Dict{String, Theory}, overrides::Dict{String, String}) =
+    theory_flatten(name, env; bindings = overrides)
 
 """
     theory_run!(cs, data, program, name; steps=1_000_000) -> Vector{String}

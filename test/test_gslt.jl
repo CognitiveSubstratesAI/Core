@@ -113,3 +113,34 @@ end
         @test raw"(= (Mult $x (Plus $y $z)) (Plus (Mult $x $y) (Mult $x $z)))" in f.equations  # distributivity
     end
 end
+
+# Theory parameterization — GSLT `Theory T(p: P)`: a theory is generic over its parameter theories,
+# bound by default to their declared type and overridable at instantiation.
+@testset "GSLT parameterization (Theory T(p: P))" begin
+    prog = raw"""
+    (theory PA () (rewrites (~> (edge $x $y) (ra $x $y))))
+    (theory PB () (rewrites (~> (edge $x $y) (rb $x $y))))
+    (theory Generic  (extends p) (params (p PA)))
+    (theory Combined (union a b) (params (a PA) (b PB)))
+    """
+    env = load_theories(prog)
+
+    @testset "param parse: base references the PARAM name" begin
+        @test env["Generic"].params  == [("p", "PA")]
+        @test env["Combined"].params == [("a", "PA"), ("b", "PB")]
+        @test env["Generic"].base    == (:extends, ["p"])
+    end
+
+    @testset "default binding: param → its declared type" begin
+        @test theory_rewrites("Generic", env) == [raw"(~> (edge $x $y) (ra $x $y))"]      # p defaults PA
+        @test Set(theory_flatten("Combined", env).rewrites) ==
+              Set([raw"(~> (edge $x $y) (ra $x $y))", raw"(~> (edge $x $y) (rb $x $y))"])
+    end
+
+    @testset "instantiation override: bind a param to a different theory" begin
+        @test theory_instantiate("Generic", env, Dict("p" => "PB")).rewrites ==
+              [raw"(~> (edge $x $y) (rb $x $y))"]                                          # p := PB
+        @test theory_instantiate("Combined", env, Dict("a" => "PB")).rewrites ==
+              [raw"(~> (edge $x $y) (rb $x $y))"]                                          # a:=PB, b=PB → dedup
+    end
+end
