@@ -19,9 +19,9 @@
 # is the heart. Three ways to count a pattern's support:
 #   * RAW-MeTTa (interpreter): `(size-atom (collapse (match …)))` — MeTTa-level aggregation [this fn].
 #   * RELATIONAL (MeTTa-IL→MM2): structural trie-dump wildcard match [pattern_support below].
-#   * MORK-NATIVE (trie index): `space_query_multi` would give O(matches) counting, BUT requires the
-#     correct query-pattern encoding to align with `space_add_all_sexpr!` storage (a MORK var-encoding
-#     convention — `sexpr_to_expr` patterns currently miss even ground atoms) — the documented next step.
+#   * MORK-NATIVE (trie index): `space_query_multi` on the comma-wrapped pattern `(, P)` — O(matches),
+#     no full scan [pattern_support_native]. The wrapper is REQUIRED (query_multi processes a `(, …)`
+#     conjunction; a bare pattern matches nothing — see space.rs `dump_sexpr`).
 
 "Support via the RAW-MeTTa interpreter dialect: `(size-atom (collapse (match &self P P)))` over `data`.
 `pattern` uses dollar-vars (e.g. `(drink \$x Coke)`); counts distinct matching atoms."
@@ -30,6 +30,15 @@ function pattern_support_interp(data::AbstractString, pattern::AbstractString)::
     r = Interpreter.load_metta!(sp, "!(size-atom (collapse (match &self $pattern $pattern)))")
     vs = [string(x) for rr in r for x in (rr isa AbstractVector ? rr : [rr])]
     isempty(vs) ? 0 : something(tryparse(Int, vs[1]), 0)
+end
+
+"Support via the MORK-NATIVE trie-index query: `space_query_multi` on the comma-wrapped pattern — counts
+matches by walking the index (O(matches)), no O(N) scan. `pattern` uses dollar-vars."
+function pattern_support_native(cs::CoreSpace, pattern::AbstractString)::Int
+    pat = sexpr_to_expr("(, $pattern)")        # comma-functor wrapper REQUIRED by query_multi
+    n = Ref(0)
+    space_query_multi(cs.inner, pat, (_b, _l) -> (n[] += 1; true))
+    n[]
 end
 
 "Support of a `_`-wildcard `pattern`: the count of distinct ground atoms in `cs` that it matches."

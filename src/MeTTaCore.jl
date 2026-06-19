@@ -207,7 +207,7 @@ export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # d
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
 export theory_orient_equations
 # Frequent-pattern miner (Hyperon Pattern Miner core) on def/match/emit
-export pattern_support, pattern_support_interp, mine_frequent
+export pattern_support, pattern_support_interp, pattern_support_native, mine_frequent
 # MORK-native prefix-locality miner (MORK-Miner)
 export prefix_support, mine_prefix_patterns, grow_prefix
 # Stage 1 multi-space + .act lifecycle

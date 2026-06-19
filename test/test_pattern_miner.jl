@@ -49,12 +49,17 @@ using Test
         @test grown[raw"(drink Alice _)"] == 2 && grown[raw"(drink Bob _)"] == 2
     end
 
-    @testset "three-dialect support cross-validation (raw-MeTTa interp ≡ relational scan)" begin
-        # §9 methodology: the SAME support, computed in two dialects, must AGREE on the same data.
+    @testset "three-dialect support cross-validation (interp ≡ scan ≡ MORK-native)" begin
+        # §9 methodology: the SAME support across ALL THREE dialects must AGREE on the same data.
         cs = MC.new_core_space(); MC.space_add_all_sexpr!(cs.inner, data)
-        @test pattern_support_interp(data, raw"(drink $x Coke)")     == pattern_support(cs, raw"(drink _ Coke)")     == 2
-        @test pattern_support_interp(data, raw"(drink $x Tea)")      == pattern_support(cs, raw"(drink _ Tea)")      == 3
-        @test pattern_support_interp(data, raw"(drink Alice $y)")    == pattern_support(cs, raw"(drink Alice _)")    == 2
-        @test pattern_support_interp(data, raw"(inherit $x American)") == pattern_support(cs, raw"(inherit _ American)") == 1
+        for (dvar, scan, expect) in [(raw"(drink $x Coke)",      raw"(drink _ Coke)",      2),
+                                     (raw"(drink $x Tea)",       raw"(drink _ Tea)",       3),
+                                     (raw"(drink Alice $y)",     raw"(drink Alice _)",     2),
+                                     (raw"(inherit $x American)", raw"(inherit _ American)", 1)]
+            @test pattern_support_interp(data, dvar) ==      # raw-MeTTa interpreter
+                  pattern_support(cs, scan) ==               # relational dump-scan
+                  pattern_support_native(cs, dvar) ==        # MORK-native trie index
+                  expect
+        end
     end
 end
