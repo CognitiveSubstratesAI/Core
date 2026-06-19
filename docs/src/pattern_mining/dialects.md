@@ -54,4 +54,13 @@ convention is in `space.rs dump_sexpr`). It is **correct** but **O(N)** — it i
 prefix-anchoring, so it does *not* provide the MORK-Miner speedup. That speedup comes from the in-place
 counter, documented in [MORK-Native Miner](mork_miner.md).
 
+## API
+
+```@docs
+mine_frequent
+pattern_support
+pattern_support_interp
+pattern_support_native
+```
+
 [MeTTa-IL]: https://github.com/CognitiveSubstratesAI/Core/blob/main/src/standard/MeTTaIL.jl

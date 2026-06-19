@@ -54,3 +54,15 @@ measured result contradicts a serious paper, assume **we** erred and find it bef
 
 `space_query_multi_at` (the prefix-anchored query variant) is for the multi-space "spaces as prefixes"
 scoping model — not a pattern-prefix counter — so it is not the right tool here; the in-place counter is.
+
+## API
+
+```@docs
+mine_prefix_patterns
+grow_prefix
+prefix_support
+PrefixCounter
+prefix_insert!
+prefix_counter
+prefix_count_support
+```

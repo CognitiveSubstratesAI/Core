@@ -91,6 +91,14 @@ end
 # "orders of magnitude / no global scans" speedup. (A post-hoc query/scan is the WRONG mechanism — the
 # very "separate counting pass" §2.3 says you don't do; benchmarking that mis-read the claim as negative.)
 
+"""
+    PrefixCounter()
+
+In-place prefix-support counters (MORK-Miner §2.3). Holds an integer counter at every prefix node of every
+stored atom's key path, maintained at insert time by [`prefix_insert!`](@ref); support is then an O(1)
+read via [`prefix_count_support`](@ref) — no scan or query pass. Build one from a dataset with
+[`prefix_counter`](@ref).
+"""
 struct PrefixCounter
     counts::Dict{Vector{String}, Int}
 end
