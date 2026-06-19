@@ -65,3 +65,51 @@ using Test
         @test "(connected 0 1)" in R_q && !any(s -> occursin("reach", s), R_q)
     end
 end
+
+# Faithfulness against the CANONICAL upstream example — F1R3FLY/MeTTaIL GSLT/src/test/module/UnivAlg.module
+# (EmptySet → Monoid → CommutativeMonoid/Group → Rig), encoded PRIMUS-native (terms as type-sigs).
+@testset "GSLT UnivAlg.module faithfulness (the real theory hierarchy)" begin
+    univ = raw"""
+    (theory EmptySet ())
+    (theory Monoid (extends EmptySet)
+      (terms (: One Elem) (: Mult (-> Elem Elem Elem)))
+      (equations (= (Mult (Mult $x $y) $z) (Mult $x (Mult $y $z)))
+                 (= (Mult $x One) $x)
+                 (= (Mult One $x) $x)))
+    (theory CommutativeMonoid (extends Monoid)
+      (replacements (=> One Zero) (=> Mult Plus))
+      (equations (= (Plus $x $y) (Plus $y $x))))
+    (theory Group (extends Monoid)
+      (terms (: Inv (-> Elem Elem)))
+      (equations (= (Mult $x (Inv $x)) One) (= (Inv (Inv $x)) $x)))
+    (theory Rig (union CommutativeMonoid Monoid)
+      (equations (= (Mult $x (Plus $y $z)) (Plus (Mult $x $y) (Mult $x $z)))))
+    """
+    env = load_theories(univ)
+
+    @testset "Monoid: own terms + equations" begin
+        f = theory_flatten("Monoid", env)
+        @test Set(f.terms) == Set([raw"(: One Elem)", raw"(: Mult (-> Elem Elem Elem))"])
+        @test length(f.equations) == 3
+    end
+
+    @testset "CommutativeMonoid: Monoid renamed One→Zero, Mult→Plus + commutativity" begin
+        f = theory_flatten("CommutativeMonoid", env)
+        @test Set(f.terms) == Set([raw"(: Zero Elem)", raw"(: Plus (-> Elem Elem Elem))"])  # renamed
+        @test raw"(= (Plus $x $y) (Plus $y $x))" in f.equations                              # own comm
+        @test raw"(= (Mult (Mult $x $y) $z) (Mult $x (Mult $y $z)))" ∉ f.equations           # no stray Mult
+        @test raw"(= (Plus (Plus $x $y) $z) (Plus $x (Plus $y $z)))" in f.equations           # assoc renamed
+    end
+
+    @testset "Group: extends Monoid + Inv" begin
+        @test Set(theory_flatten("Group", env).terms) ==
+              Set([raw"(: One Elem)", raw"(: Mult (-> Elem Elem Elem))", raw"(: Inv (-> Elem Elem))"])
+    end
+
+    @testset "Rig: union has BOTH additive (Zero/Plus) and multiplicative (One/Mult) structure" begin
+        f = theory_flatten("Rig", env)
+        @test Set(f.terms) == Set([raw"(: Zero Elem)", raw"(: Plus (-> Elem Elem Elem))",
+                                   raw"(: One Elem)",  raw"(: Mult (-> Elem Elem Elem))"])
+        @test raw"(= (Mult $x (Plus $y $z)) (Plus (Mult $x $y) (Mult $x $z)))" in f.equations  # distributivity
+    end
+end
