@@ -32,6 +32,24 @@ const EMPTY = Sym("Empty"); const NOT_REDUCIBLE = Sym("NotReducible"); const ERR
 const MINIMAL_OPS = Set(String[ "eval","evalc","chain","function","unify",
                                  "cons-atom","decons-atom","collapse-bind","superpose-bind" ])
 
+# ── LangDef disable-to-prove hook (CeTTa-adopted, langdef_pack.{c,h}) ───────────
+# A covered HE-rule branch fires ONLY when its rule is enabled, so disabling a rule (via
+# CORE_LANGDEF_DISABLED_RULES — comma-separated rule names — or the test helpers below) cannot be
+# compensated by a legacy code path. Default (env empty) → all enabled → each dispatch condition is
+# IDENTICAL to before → the 234 conformance matrix is unaffected at default by construction.
+const _LANGDEF_DISABLED = Ref{Union{Nothing, Set{String}}}(nothing)
+function _langdef_disabled()::Set{String}
+    s = _LANGDEF_DISABLED[]
+    s === nothing || return s
+    e = get(ENV, "CORE_LANGDEF_DISABLED_RULES", "")
+    s = isempty(e) ? Set{String}() : Set(String.(strip.(split(e, ','))))
+    _LANGDEF_DISABLED[] = s
+    s
+end
+@inline rule_enabled(name::String)::Bool = !(name in _langdef_disabled())
+langdef_disable!(names::String...) = (_LANGDEF_DISABLED[] = Set(collect(names)); nothing)  # disable-to-prove
+langdef_reset!() = (_LANGDEF_DISABLED[] = nothing; nothing)                                 # re-read env on next check
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 head_name(a::Atom) = (a isa Expression && !isempty(a.children) && a.children[1] isa Sym) ?
                      (a.children[1]::Sym).name : ""
@@ -159,7 +177,7 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name == "decons-atom"; return decons_atom(f, b)
     elseif name == "unify";    return unify_op(f, b)
     elseif name == "eval";     return eval_op(f, b, space)
-    elseif name == "chain";    return setup_chain(f.atom, b, f.prev, f.depth)
+    elseif name == "chain" && rule_enabled("HES_Chain"); return setup_chain(f.atom, b, f.prev, f.depth)
     elseif name == "function"; return setup_function(f.atom, b, f.prev, f.depth)
     elseif name == "collapse-bind";  return collapse_bind_op(f, b, space)
     elseif name == "superpose-bind"; return superpose_bind_op(f, b, space)
@@ -430,7 +448,7 @@ end
 # set up `atom` to be evaluated (interpreter.rs atom_to_stack:640)
 function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)::Vector{Tuple{Frame,Bindings}}
     name = head_name(atom)
-    if name == "chain";        return setup_chain(atom, b, prev, depth)
+    if name == "chain" && rule_enabled("HES_Chain"); return setup_chain(atom, b, prev, depth)
     elseif name == "function"; return setup_function(atom, b, prev, depth)
     else;                      return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth), b)]
     end
