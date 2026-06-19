@@ -38,6 +38,25 @@ using Test
         @test "(reach 0 1)" in R && "(reach 1 2)" in R && "(reach 2 3)" in R
         @test "(hop2 0 2)" in R && "(hop2 1 3)" in R
     end
-    # NOTE: congruence rewrites (`let Src ~> Tgt in …`) + recursive closure (saturation) + the full GSLT
-    # theory front-end (Terms/grammar/Equations/Replacements/composition) are the follow-on increments.
+
+    @testset "recursive closure via saturation (saturate=true)" begin
+        # RECURSIVE rewrite (path is both a body premise and a head): single-step does one generation;
+        # saturate=true runs KBSaturation to FIXPOINT → full transitive closure.
+        il = raw"""
+        (~> (edge $x $y) (path $x $y))
+        (~> (, (path $x $y) (edge $y $z)) (path $x $z))
+        """
+        cs = MC.new_core_space()
+        R_sat = metta_il_run!(cs, facts, il; saturate = true)
+        @test R_sat == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
+        # the SAME program single-step (default) does NOT reach the 3-hop closure — proves saturation is needed
+        cs2 = MC.new_core_space()
+        @test "(path 0 3)" ∉ metta_il_run!(cs2, facts, il)
+        # cyclic input TERMINATES with the correct closure (value-dedup gate, not an infinite loop)
+        cs3 = MC.new_core_space()
+        @test metta_il_run!(cs3, "(edge 0 1)\n(edge 1 0)", il; saturate = true) ==
+              ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
+    end
+    # NOTE: congruence rewrites (`let Src ~> Tgt in …`) are the remaining (b) follow-on; the GSLT theory
+    # algebra (composition/parameterization) lives in GSLT.jl / test_gslt.jl.
 end

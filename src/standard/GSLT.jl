@@ -125,12 +125,13 @@ theory_instantiate(name::AbstractString, env::Dict{String, Theory}, overrides::D
     theory_flatten(name, env; bindings = overrides)
 
 """
-    theory_run!(cs, data, program, name; steps=1_000_000) -> Vector{String}
+    theory_run!(cs, data, program, name; steps=1_000_000, saturate=false) -> Vector{String}
 
-Flatten theory `name` from `program`, lower its rewrites to MM2, run over `data` on native MORK.
+Flatten theory `name` from `program`, lower its rewrites, run over `data` on native MORK. `saturate=true`
+runs the rewrites to fixpoint (recursive closure) via KBSaturation; default does one exec generation.
 """
 function theory_run!(cs::CoreSpace, data::AbstractString, program::AbstractString, name::AbstractString;
-                     steps::Int = 1_000_000)
+                     steps::Int = 1_000_000, saturate::Bool = false)
     env = load_theories(program)
-    metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps = steps)
+    metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps = steps, saturate = saturate)
 end

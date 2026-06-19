@@ -9,9 +9,9 @@
 #
 # This lane lowers the BASE rewrites `(~> LHS RHS)` → MM2 `(exec 0 (, LHS) (, RHS))`, run on the native
 # MORK CoreSpace via the router's machinery (no surface→IR rewrite, no FFI), bisimulation-gated ≡ the
-# interpreter-spec. NOT yet covered (the larger GSLT front-end / follow-ons): the full theory algebra
-# (Terms/grammar, Equations, Replacements, composition), congruence rules (`let Src ~> Tgt in …`), and
-# recursive closure (needs the saturation engine, KBSaturation — the single-step exec does one generation).
+# interpreter-spec. RECURSIVE closure is handled by `saturate=true` (KBSaturation to fixpoint). NOT yet
+# covered: congruence rules (`let Src ~> Tgt in …`); equations-as-rewrite orientation. The GSLT theory
+# algebra (Terms/Equations/Replacements/composition/parameterization) lives in GSLT.jl.
 
 "Lower one MeTTa-IL base rewrite `(~> LHS RHS)` (GSLT `Name : LHS ~> RHS`) to an MM2 `(exec …)` rule.
 LHS may be a single pattern or a conjunction `(, P1 P2 …)`."
@@ -29,20 +29,34 @@ metta_il_lower(program::AbstractString)::String =
     join([metta_il_lower_rewrite(strip(f)) for (bang, f) in mm2_split_forms(program)
           if !bang && mm2_head(f) == "~>"], "\n")
 
-"""
-    metta_il_run!(cs::CoreSpace, data, program; steps=1_000_000) -> Vector{String}
+"Lower a MeTTa-IL program's rewrites to KBSaturation forward rules `(==> LHS RHS)` (for recursive
+closure). `(~> LHS RHS)` and `(==> BODY HEAD)` are the same forward-derivation; `==>` runs to fixpoint."
+metta_il_lower_saturation(program::AbstractString)::String =
+    join(["(==> $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))"
+          for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"], "\n")
 
-Run a MeTTa-IL program's rewrites over `data` on the native MORK `cs`: lower `(~> LHS RHS)` → MM2 exec
-rules, add data + rules to the trie, step the calculus, return the rewritten atoms (by each RHS head).
+"""
+    metta_il_run!(cs::CoreSpace, data, program; steps=1_000_000, saturate=false) -> Vector{String}
+
+Run a MeTTa-IL program's rewrites over `data` on the native MORK `cs`, returning the rewritten atoms
+(by each RHS head). Two engines:
+  * `saturate=false` (default): lower `(~> LHS RHS)` → MM2 `(exec …)`, step the calculus ONE generation.
+  * `saturate=true`: lower → KBSaturation rules `(==> LHS RHS)`, run `sc_execute!` to FIXPOINT — needed
+    for RECURSIVE rewrites (a rewrite whose RHS head also appears in a body), e.g. transitive closure.
 """
 function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractString;
-                       steps::Int = 1_000_000)
+                       steps::Int = 1_000_000, saturate::Bool = false)
     isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
-    exec = metta_il_lower(program)
-    isempty(exec) && return String[]
-    space_add_all_sexpr!(cs.inner, exec)
-    # single-step exec calculus (one generation); recursive closure needs the saturation engine.
-    space_metta_calculus!(cs.inner, steps)
+    if saturate
+        rules = metta_il_lower_saturation(program)
+        isempty(rules) && return String[]
+        sc_execute!(cs, rules; opts = SCOptions(saturate = true))   # seminaive saturation → fixpoint
+    else
+        exec = metta_il_lower(program)
+        isempty(exec) && return String[]
+        space_add_all_sexpr!(cs.inner, exec)
+        space_metta_calculus!(cs.inner, steps)                      # single generation
+    end
     heads = Set{String}()
     for (bang, f) in mm2_split_forms(program)
         (bang || mm2_head(f) != "~>") && continue

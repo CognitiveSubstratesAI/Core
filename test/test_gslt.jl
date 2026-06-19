@@ -144,3 +144,16 @@ end
               [raw"(~> (edge $x $y) (rb $x $y))"]                                          # a:=PB, b=PB → dedup
     end
 end
+
+# Composition + recursive closure end-to-end: a theory inherits a base rule and adds a recursive one;
+# theory_run! with saturate=true runs the flattened rewrites to fixpoint.
+@testset "GSLT theory_run! recursive closure (saturate=true)" begin
+    prog = raw"""
+    (theory Graph () (rewrites (~> (edge $x $y) (path $x $y))))
+    (theory TransGraph (extends Graph)
+      (rewrites (~> (, (path $x $y) (edge $y $z)) (path $x $z))))
+    """
+    cs = MC.new_core_space()
+    R = theory_run!(cs, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)", prog, "TransGraph"; saturate = true)
+    @test R == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
+end
