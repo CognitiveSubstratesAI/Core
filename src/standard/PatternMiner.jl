@@ -14,6 +14,24 @@
 # Follow-ons (per the tutorial): build-specialization, conjunction expansion (do-conjunct → `(and …)`),
 # and I-surprisingness ranking (needs grounded arithmetic: P_obs/P_exp/I).
 
+# --- Three-dialect support comparison (scalable-infra §9: same algorithm, compare the dialects) ------
+# §9 implements the SAME miner across language dialects to COMPARE them. `support` (the §7.3 stream op)
+# is the heart. Three ways to count a pattern's support:
+#   * RAW-MeTTa (interpreter): `(size-atom (collapse (match …)))` — MeTTa-level aggregation [this fn].
+#   * RELATIONAL (MeTTa-IL→MM2): structural trie-dump wildcard match [pattern_support below].
+#   * MORK-NATIVE (trie index): `space_query_multi` would give O(matches) counting, BUT requires the
+#     correct query-pattern encoding to align with `space_add_all_sexpr!` storage (a MORK var-encoding
+#     convention — `sexpr_to_expr` patterns currently miss even ground atoms) — the documented next step.
+
+"Support via the RAW-MeTTa interpreter dialect: `(size-atom (collapse (match &self P P)))` over `data`.
+`pattern` uses dollar-vars (e.g. `(drink \$x Coke)`); counts distinct matching atoms."
+function pattern_support_interp(data::AbstractString, pattern::AbstractString)::Int
+    sp = Interpreter.Space(); Interpreter.load_core_stdlib!(sp); Interpreter.load_metta!(sp, data)
+    r = Interpreter.load_metta!(sp, "!(size-atom (collapse (match &self $pattern $pattern)))")
+    vs = [string(x) for rr in r for x in (rr isa AbstractVector ? rr : [rr])]
+    isempty(vs) ? 0 : something(tryparse(Int, vs[1]), 0)
+end
+
 "Support of a `_`-wildcard `pattern`: the count of distinct ground atoms in `cs` that it matches."
 function pattern_support(cs::CoreSpace, pattern::AbstractString)::Int
     pt = mm2_expr_args(pattern)
