@@ -203,6 +203,7 @@ export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langde
 export metta_il_lower, metta_il_lower_rewrite, metta_il_lower_saturation, metta_il_run!, metta_il_normalize
 # GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
+export theory_orient_equations
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix

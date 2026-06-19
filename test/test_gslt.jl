@@ -157,3 +157,38 @@ end
     R = theory_run!(cs, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)", prog, "TransGraph"; saturate = true)
     @test R == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
 end
+
+# Equation orientation (a-tail): orient the terminating fragment, flag the rest honestly.
+@testset "GSLT equation orientation (sound terminating fragment)" begin
+    prog = raw"""
+    (theory Monoid ()
+      (terms (: One Elem) (: Mult (-> Elem Elem Elem)))
+      (equations (= (Mult (Mult $x $y) $z) (Mult $x (Mult $y $z)))
+                 (= (Mult $x One) $x)
+                 (= (Mult One $x) $x)))
+    (theory CMonoid (extends Monoid)
+      (replacements (=> Mult Plus) (=> One Zero))
+      (equations (= (Plus $x $y) (Plus $y $x))))
+    """
+    env = load_theories(prog)
+
+    @testset "Monoid: unit laws oriented, associativity flagged" begin
+        o = theory_orient_equations("Monoid", env)
+        @test raw"(~> (Mult $x One) $x)" in o.oriented
+        @test raw"(~> (Mult One $x) $x)" in o.oriented
+        @test raw"(= (Mult (Mult $x $y) $z) (Mult $x (Mult $y $z)))" in o.flagged   # equal size → not oriented
+        @test !any(s -> occursin("Mult (Mult", s), o.oriented)
+    end
+
+    @testset "CMonoid: commutativity NON-orientable (flagged), renamed unit law oriented" begin
+        oc = theory_orient_equations("CMonoid", env)
+        @test raw"(= (Plus $x $y) (Plus $y $x))" in oc.flagged                       # commutativity loops
+        @test raw"(~> (Plus $x Zero) $x)" in oc.oriented                             # unit law (renamed)
+    end
+
+    @testset "oriented equations REDUCE a term via the normalizer" begin
+        o = theory_orient_equations("Monoid", env)
+        @test metta_il_normalize(join(o.oriented, "\n"), raw"(Mult a One)") == "a"   # unit simplification
+        @test metta_il_normalize(join(o.oriented, "\n"), raw"(f (Mult One b))") == "(f b)"  # + congruence
+    end
+end

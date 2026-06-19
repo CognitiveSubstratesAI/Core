@@ -124,6 +124,38 @@ param-name→theory map). Unbound params fall back to their declared default the
 theory_instantiate(name::AbstractString, env::Dict{String, Theory}, overrides::Dict{String, String}) =
     theory_flatten(name, env; bindings = overrides)
 
+# --- Equation orientation (a-tail) -------------------------------------------------------------------
+# Knuth-Bendix orientation is undecidable in general; this is the SOUND, INCOMPLETE fragment: orient
+# `(= L R)` as `(~> L R)` only when every application STRICTLY shrinks the term (fewer function symbols
+# on the RHS) and the RHS introduces no new variables — which guarantees termination. This orients
+# unit/simplification laws and FLAGS the rest (commutativity, associativity, distributivity — equal-or-
+# larger RHS) as non-orientable; those need AC-matching or an explicit reduction order (LPO/KBO), the
+# deeper follow-on. Oriented rewrites are usable directly by `metta_il_normalize`.
+_eq_tokens(s::AbstractString) = filter(!isempty, split(replace(String(s), '(' => ' ', ')' => ' ')))
+_eq_vars(s::AbstractString) = Set(t for t in _eq_tokens(s) if startswith(t, "\$"))
+_eq_symbols(s::AbstractString) = count(t -> !startswith(t, "\$"), _eq_tokens(s))
+
+"""
+    theory_orient_equations(name, env) -> (; oriented, flagged)
+
+Orient a flattened theory's equations into terminating rewrites where provable. `oriented` are
+`(~> L R)` rewrites (RHS strictly fewer symbols, no new vars); `flagged` are equations left
+un-oriented (commutativity/associativity/…), reported honestly rather than silently dropped.
+"""
+function theory_orient_equations(name::AbstractString, env::Dict{String, Theory})
+    oriented = String[]; flagged = String[]
+    for eq in theory_flatten(name, env).equations
+        a = mm2_expr_args(eq)
+        if length(a) == 3 && a[1] == "=" &&
+           _eq_symbols(a[3]) < _eq_symbols(a[2]) && issubset(_eq_vars(a[3]), _eq_vars(a[2]))
+            push!(oriented, "(~> $(a[2]) $(a[3]))")
+        else
+            push!(flagged, eq)
+        end
+    end
+    (oriented = oriented, flagged = flagged)
+end
+
 """
     theory_run!(cs, data, program, name; steps=1_000_000, saturate=false) -> Vector{String}
 
