@@ -9,9 +9,13 @@
 #
 # This lane lowers the BASE rewrites `(~> LHS RHS)` → MM2 `(exec 0 (, LHS) (, RHS))`, run on the native
 # MORK CoreSpace via the router's machinery (no surface→IR rewrite, no FFI), bisimulation-gated ≡ the
-# interpreter-spec. RECURSIVE closure is handled by `saturate=true` (KBSaturation to fixpoint). NOT yet
-# covered: congruence rules (`let Src ~> Tgt in …`); equations-as-rewrite orientation. The GSLT theory
-# algebra (Terms/Equations/Replacements/composition/parameterization) lives in GSLT.jl.
+# interpreter-spec. RECURSIVE closure → `saturate=true` (KBSaturation to fixpoint). CONGRUENCE / calculus
+# reduction → `metta_il_normalize` (subterm rewriting). NOT yet covered: equations-as-rewrite orientation.
+# The GSLT theory algebra (Terms/Equations/Replacements/composition/parameterization) lives in GSLT.jl.
+#
+# Two distinct `~>` execution modes (pick by workload): metta_il_run! = additive forward-derivation
+# (relational/Datalog — transitive closure, deductive queries); metta_il_normalize = term reduction with
+# congruence (calculi — rho/lambda, equational reduction). Same surface, different semantics.
 
 "Lower one MeTTa-IL base rewrite `(~> LHS RHS)` (GSLT `Name : LHS ~> RHS`) to an MM2 `(exec …)` rule.
 LHS may be a single pattern or a conjunction `(, P1 P2 …)`."
@@ -64,4 +68,39 @@ function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractStr
     end
     sort(unique(String[strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
                         if mm2_head(strip(l)) in heads]))
+end
+
+# --- Congruence: calculus reduction via subterm rewriting --------------------------------------------
+# GSLT/mettail-rust `~>` for CALCULI is term REDUCTION WITH CONGRUENCE (a redex reduces inside any
+# context), NOT the additive forward-derivation of metta_il_run!. Neither existing engine gives it free:
+# the relational lane is additive; the interpreter does NOT reduce constructor/undefined-head subterms
+# (verified — `(and (not T) Y)` stays unreduced). So congruence is BUILT here as a subterm-rewriting
+# normalizer: rewrite any subterm matching a base-rewrite LHS, innermost, to fixpoint. The subterm
+# descent IS the congruence — mettail-rust spells it out as explicit `rw_cat` rules ONLY because
+# Ascent/Datalog is relational and cannot descend into subterms; on a term engine it is structural.
+
+function _normalize_subterm(rules::Vector{String}, term::AbstractString)::String
+    term = strip(term)
+    if startswith(term, "(")                          # compound: normalize children first (← congruence)
+        term = "(" * join([_normalize_subterm(rules, a) for a in mm2_expr_args(term)], " ") * ")"
+    end
+    for rule in rules                                 # then a top-level reduction; renormalize on success
+        r = mork_rule_rewrite(rule, term)
+        r !== nothing && r != term && return _normalize_subterm(rules, r)
+    end
+    term
+end
+
+"""
+    metta_il_normalize(program, term) -> String
+
+Reduce `term` to normal form under a MeTTa-IL calculus (the program's base rewrites `(~> LHS RHS)` as
+reduction rules), rewriting subterms innermost to fixpoint. Congruence (reduction inside contexts) is
+the subterm traversal — so GSLT/mettail-rust explicit congruence rules (`let Src ~> Tgt in …`), needed
+only by relational backends, are unnecessary here.
+"""
+function metta_il_normalize(program::AbstractString, term::AbstractString)::String
+    rules = String["(= $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))"
+                   for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"]
+    _normalize_subterm(rules, term)
 end

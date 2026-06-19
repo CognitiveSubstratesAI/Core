@@ -57,6 +57,21 @@ using Test
         @test metta_il_run!(cs3, "(edge 0 1)\n(edge 1 0)", il; saturate = true) ==
               ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
     end
-    # NOTE: congruence rewrites (`let Src ~> Tgt in …`) are the remaining (b) follow-on; the GSLT theory
-    # algebra (composition/parameterization) lives in GSLT.jl / test_gslt.jl.
+    @testset "congruence via subterm reduction (metta_il_normalize)" begin
+        # CALCULUS `~>` = term reduction with congruence (reduce inside contexts), NOT additive derivation.
+        bool = raw"""
+        (~> (not T) F)
+        (~> (not F) T)
+        (~> (and T $x) $x)
+        (~> (and F $x) F)
+        """
+        # pure congruence: a redex reduces inside a context whose head has NO rule (wrap)
+        @test metta_il_normalize(bool, raw"(wrap (not T))") == "(wrap F)"
+        # congruence in multiple positions + top-level reductions → full normal form
+        @test metta_il_normalize(bool, raw"(and (not F) (not T))") == "F"   # children → (and T F) → F
+        @test metta_il_normalize(bool, raw"(not (not T))") == "T"           # nested redex
+        @test metta_il_normalize(bool, raw"(pair (not T) (not F))") == "(pair F T)"  # both args
+    end
+    # NOTE: the GSLT theory algebra (composition/parameterization) lives in GSLT.jl / test_gslt.jl;
+    # equations-as-rewrite orientation (Knuth-Bendix) is the remaining (a)-tail item.
 end
