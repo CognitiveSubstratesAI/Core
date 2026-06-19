@@ -72,6 +72,7 @@ include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
+include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
@@ -205,6 +206,8 @@ export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # d
 # GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
 export theory_orient_equations
+# Frequent-pattern miner (Hyperon Pattern Miner core) on def/match/emit
+export pattern_support, mine_frequent
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
