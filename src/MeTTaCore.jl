@@ -71,6 +71,7 @@ include("standard/Interpreter.jl")
 include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
+include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
@@ -200,6 +201,8 @@ export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest
 # MeTTa-IL lane (F1R3FLY layered track)
 export metta_il_lower, metta_il_lower_rewrite, metta_il_run!
+# GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
+export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix

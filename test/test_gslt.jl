@@ -1,0 +1,67 @@
+# GSLT theory front-end (src/standard/GSLT.jl) — the MeTTa-IL theory algebra (F1R3FLY layered track):
+# extends / union / replacement → flatten → MeTTa-IL rewrite lane → MM2 → MORK, bisimulation-gated.
+using MeTTaCore
+const MC = MeTTaCore
+using Test
+
+@testset "GSLT theory front-end (theory algebra → MeTTa-IL)" begin
+    facts = "(edge 0 1)\n(edge 1 2)\n(edge 2 3)"
+
+    prog = raw"""
+    (theory Base ()
+      (terms (: edge (-> Node Node Bool)))
+      (rewrites (~> (edge $x $y) (reach $x $y))))
+    (theory Ext (extends Base)
+      (rewrites (~> (, (edge $x $y) (edge $y $z)) (hop2 $x $z))))
+    (theory A () (rewrites (~> (edge $x $y) (ra $x $y))))
+    (theory B () (rewrites (~> (edge $x $y) (rb $x $y))))
+    (theory U (union A B) (rewrites (~> (edge $x $y) (ru $x $y))))
+    (theory Q (extends Base) (replacements (=> reach connected)))
+    """
+    env = load_theories(prog)
+
+    @testset "parse: base / extends / union / replacements" begin
+        @test Set(keys(env)) == Set(["Base", "Ext", "A", "B", "U", "Q"])
+        @test env["Base"].base == (:none, String[])
+        @test env["Ext"].base  == (:extends, ["Base"])
+        @test env["U"].base    == (:union, ["A", "B"])
+        @test env["Q"].replacements == [("reach", "connected")]
+        @test env["Base"].terms == [raw"(: edge (-> Node Node Bool))"]
+    end
+
+    @testset "flatten: extension chain (inherits parent rewrites)" begin
+        rw = theory_rewrites("Ext", env)
+        @test raw"(~> (edge $x $y) (reach $x $y))" in rw                  # inherited from Base
+        @test raw"(~> (, (edge $x $y) (edge $y $z)) (hop2 $x $z))" in rw  # own
+        @test length(rw) == 2
+    end
+
+    @testset "flatten: union (merges all parents)" begin
+        @test Set(theory_rewrites("U", env)) == Set([
+            raw"(~> (edge $x $y) (ra $x $y))",
+            raw"(~> (edge $x $y) (rb $x $y))",
+            raw"(~> (edge $x $y) (ru $x $y))"])
+    end
+
+    @testset "flatten: replacement (whole-token rename, not substring)" begin
+        @test theory_rewrites("Q", env) == [raw"(~> (edge $x $y) (connected $x $y))"]
+        # substring guard: renaming `reach` must NOT corrupt `reachable`
+        env2 = load_theories(raw"""
+            (theory P2 () (rewrites (~> (a $x) (reachable $x)) (~> (b $x) (reach $x))))
+            (theory R2 (extends P2) (replacements (=> reach connected)))
+        """)
+        rw2 = theory_rewrites("R2", env2)
+        @test raw"(~> (a $x) (reachable $x))" in rw2     # untouched
+        @test raw"(~> (b $x) (connected $x))" in rw2     # renamed
+    end
+
+    @testset "theory_run! ≡ MeTTa-IL on flattened rewrites (bisimulation)" begin
+        cs1 = MC.new_core_space(); R_theory = theory_run!(cs1, facts, prog, "Ext")
+        cs2 = MC.new_core_space(); R_flat = metta_il_run!(cs2, facts, join(theory_rewrites("Ext", env), "\n"))
+        @test R_theory == R_flat                                          # theory lane ≡ flattened MeTTa-IL
+        @test "(reach 0 1)" in R_theory && "(hop2 0 2)" in R_theory
+        # replacement end-to-end: theory Q derives `connected`, never `reach`
+        cs3 = MC.new_core_space(); R_q = theory_run!(cs3, facts, prog, "Q")
+        @test "(connected 0 1)" in R_q && !any(s -> occursin("reach", s), R_q)
+    end
+end
