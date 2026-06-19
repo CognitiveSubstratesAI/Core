@@ -66,6 +66,10 @@ include("eval/EvalND_obsolete.jl")   # eval_nd / eval_nd_results (legacy Outcome
 # (`MeTTaCore.Interpreter`) instead of being recompiled on every fresh `include`. Accessed as `MeTTaCore.Interpreter`.
 include("standard/Interpreter.jl")
 
+# Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
+# MORK-backed engine), NOT inside the self-contained `Interpreter` submodule above.
+include("standard/MM2Router.jl")
+
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
 # `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
 # we just need to install the entry.  The actual `.metta` lives at
@@ -186,6 +190,9 @@ export sc_execute!, SCOptions, SC_DEFAULTS, SCResult
 export CoreSpace, new_core_space, enable_sc!
 export core_add!, core_remove!, core_match, core_rules, core_atoms
 export core_calculus!, core_calculus_at!
+# Dual-lane MM2 program routing (CeTTa-adopted)
+export mm2_run!, mm2_partition, mm2_is_exec_rule, mm2_split_forms
+export mm2_route!, mm2_match!, mm2_lower_match, mm2_expr_args
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
