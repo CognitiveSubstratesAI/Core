@@ -72,6 +72,7 @@ include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
+include("standard/DualTrack.jl")     # dual-track capstone: mc_run unified entry (auto-dispatch by form)
 include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
 # Point `(library william)` resolution at the AdaptiveCompression package dir.
@@ -206,6 +207,8 @@ export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # d
 # GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
 export theory_orient_equations
+# Dual-track capstone — one entry over both execution lanes
+export mc_run
 # Frequent-pattern miner (Hyperon Pattern Miner core) on def/match/emit
 export pattern_support, pattern_support_interp, pattern_support_native, mine_frequent
 # MORK-native prefix-locality miner (MORK-Miner)
