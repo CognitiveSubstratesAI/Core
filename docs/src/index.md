@@ -6,6 +6,26 @@
 eager and single-result; numbers are `Float64`. Dispatch is three-tier: special forms →
 grounded operations → rule rewriting.
 
+## Architecture
+
+Programs (MeTTa-IL rewrites / `def`-`match`-`emit` pipelines / GSLT theories, or direct MM2/MeTTa) enter
+through the [`mc_run`](@ref) dual-track entry, lower to the **MM2 exec calculus**, and run on the
+**MORK / PathMap** byte-trie via the ZAM zipper. See [Execution Backends](backends.md) and the
+[MeTTa-IL Lane](mettail.md).
+
+```mermaid
+flowchart TD
+    subgraph FE["Front-ends"]
+      IL["MeTTa-IL: rewrites / def-match-emit / GSLT theories"]
+      DP["Direct: MM2 programs / MeTTa"]
+    end
+    IL --> MCR["mc_run (dual-track entry)"]
+    DP --> MCR
+    MCR --> MM2["MM2 exec calculus"]
+    MM2 --> MORK["MORK / PathMap (ZAM zipper)"]
+    MORK --> BK["Backends: supercompiler / Prolog spike / Tensor Logic (MORKTensorNetworks)"]
+```
+
 ```julia
 using MeTTaCore
 space = new_core_space()
@@ -36,6 +56,4 @@ In-repo design and architecture documents live under [`docs/`](https://github.co
 architecture, and per-algorithm specs). The cross-cutting research corpus and source-paper
 map live in the shared `CognitiveSubstratesAI/docs` repository.
 
-!!! note
-    The API reference is a work in progress; this page will grow `@autodocs` sections as the
-    public surface stabilizes.
+The full [API Reference](api.md) renders every public symbol via `@autodocs`.

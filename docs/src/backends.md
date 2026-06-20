@@ -21,6 +21,16 @@ shrinks it to a small reflective meta-kernel and routes the hot paths to special
 | numeric / typed hot kernels | native (FabricPC / Reactant / typed-Julia) | external packages |
 | meta / control tail (`function`/`return`, type-cast, reflection) | small interpreted **meta-kernel** | the current Interpreter |
 
+```mermaid
+flowchart LR
+    W["Workload"] --> Q{"computational grain"}
+    Q -->|"symbolic joins / match"| ZAM["ZAM / MORK zipper<br/>(integrated)"]
+    Q -->|"whole-program opt"| SC["MorkSupercompiler<br/>sc_execute! (integrated)"]
+    Q -->|"backward tabled recursion"| PL["Prolog SWI<br/>(spike, not wired)"]
+    Q -->|"numeric / typed kernels"| NK["FabricPC / Reactant"]
+    Q -->|"meta / control tail"| IK["Interpreter meta-kernel"]
+```
+
 ## MORK / ZAM — the substrate backend (integrated)
 
 Every Core atom is a byte-path in a **MORK PathMap** trie; matching and joins run on the **ZAM (Zipper

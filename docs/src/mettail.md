@@ -57,6 +57,20 @@ Rather than calling each lane's function directly, [`mc_run`](@ref) is the singl
 **dispatches by program form** — the lanes are different front-ends over the same MM2/MORK substrate, so
 which one runs is determined by what you wrote, not by an engine switch:
 
+```mermaid
+flowchart TD
+    P["Program + data"] --> MC{"mc_run<br/>dispatch by form"}
+    MC -->|"(theory ...)"| T["GSLT theory lane<br/>theory_run!"]
+    MC -->|"(def ...)"| D["def/match/emit<br/>metta_il_run_pipeline!"]
+    MC -->|"(~&gt; ...)"| R["rewrite lane<br/>metta_il_run!"]
+    MC -->|"exec / data / !"| DIR["direct lane<br/>mm2_route!"]
+    T --> MM2["MM2 exec rules"]
+    D --> MM2
+    R --> MM2
+    DIR --> MM2
+    MM2 --> MORK["MORK / PathMap trie (ZAM zipper)"]
+```
+
 | Program contains | Lane | Runs |
 |---|---|---|
 | `(theory …)` | GSLT theory | [`theory_run!`](@ref) (use `theory=NAME` to pick one) |

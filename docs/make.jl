@@ -1,4 +1,5 @@
 using Documenter
+using DocumenterMermaid
 using MeTTaCore
 
 DocMeta.setdocmeta!(MeTTaCore, :DocTestSetup, :(using MeTTaCore); recursive=true)
