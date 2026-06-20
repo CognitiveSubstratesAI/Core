@@ -16,6 +16,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Execution Backends" => "backends.md",
         "MeTTa-IL" => [
             "MeTTa-IL Lane" => "mettail.md",
             "GSLT Theory Algebra" => "gslt.md",
