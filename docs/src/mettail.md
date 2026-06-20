@@ -1,8 +1,9 @@
 # MeTTa-IL Lane
 
-MeTTaCore supports **two execution tracks**, selected by infrastructure: a CeTTa-style **direct** lane
+MeTTaCore supports **two execution lanes** over one MM2/MORK substrate: a CeTTa-style **direct** lane
 (interpreter-spec + MM2 router) and the F1R3FLY **MeTTa-IL** layered pipeline documented here
-(`MeTTa → MeTTa-IL → MM2 → MORK`). Both bisimulate against the interpreter-spec.
+(`MeTTa → MeTTa-IL → MM2 → MORK`). Both bisimulate against the interpreter-spec. A single entry,
+[`mc_run`](@ref) (see [below](#Unified-entry-mc_run)), dispatches to the right lane by program form.
 
 The MeTTa-IL lane (`src/standard/MeTTaIL.jl`) lowers a theory's **rewrites** to MM2 `exec` rules and runs
 them on the native MORK substrate — no surface→IR rewrite, no FFI. It is grounded in the *actual* F1R3FLY
@@ -49,3 +50,25 @@ stage; `match` binds inputs; `when` guards; `emit` produces the next stage's fac
 [`metta_il_lower_def`](@ref) / [`metta_il_lower_pipeline`](@ref) / [`metta_il_run_pipeline!`](@ref). The
 [Pattern Mining](pattern_mining/overview.md) section uses this surface; see also the
 [GSLT Theory Algebra](gslt.md), whose flattened rewrites feed this lane.
+
+## Unified entry (`mc_run`)
+
+Rather than calling each lane's function directly, [`mc_run`](@ref) is the single dual-track entry. It
+**dispatches by program form** — the lanes are different front-ends over the same MM2/MORK substrate, so
+which one runs is determined by what you wrote, not by an engine switch:
+
+| Program contains | Lane | Runs |
+|---|---|---|
+| `(theory …)` | GSLT theory | [`theory_run!`](@ref) (use `theory=NAME` to pick one) |
+| `(def …)` | def/match/emit pipeline | [`metta_il_run_pipeline!`](@ref) |
+| `(~> …)` | rewrite | [`metta_il_run!`](@ref) (`saturate=true` for recursive closure) |
+| otherwise (`exec`/data/`!`) | direct | [`mm2_route!`](@ref) |
+
+`mode ∈ (:direct, :rewrite, :pipeline, :theory)` forces a lane. The call returns `(; lane, results)` — the
+chosen lane plus its native result (a `Vector{String}` for the MeTTa-IL lanes; the route NamedTuple for
+`:direct`).
+
+```julia
+mc_run(cs, facts, raw"(~> (, (edge $x $y) (edge $y $z)) (trans $x $z))")
+# → (lane = :rewrite, results = ["(trans 0 2)", "(trans 1 3)"])
+```
