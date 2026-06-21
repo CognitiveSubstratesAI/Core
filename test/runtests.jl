@@ -576,6 +576,13 @@ include("test_types.jl")
 # WILLIAM share (truth, variation, Occam weakness). Runs on Minimal — co-works with PLN.
 include("test_quantale.jl")
 
+# SubRep (lib/subrep/{cds,pds,store}.metta) — the §4 goal-loop option-admission
+# stage. CDS: uniform improvement over the whole motive cone (simplex/box/vertex).
+# PDS: weaker — ε budget (PDS-ε) or componentwise Pareto over a cover (§2.3).
+# store: atom-native certificate storage + zero-shot reuse under motive shift
+# (whitepaper §5.9 "neurosymbolically native"; iCog Quarter Plan Phase 4). Minimal-native.
+include("test_subrep.jl")
+
 # MorkSupercompiler tier-2 (`execute!`) integrated into Core's MORK path via `sc_execute!`.
 include("test_supercompiler_core.jl")
 
