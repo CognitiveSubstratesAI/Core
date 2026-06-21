@@ -26,6 +26,7 @@ const _ATTN = joinpath(@__DIR__, "..", "lib", "subrep", "attention.metta")
 const _CAT = joinpath(@__DIR__, "..", "lib", "subrep", "category.metta")
 const _ANY = joinpath(@__DIR__, "..", "lib", "subrep", "anytime.metta")
 const _GEN = joinpath(@__DIR__, "..", "lib", "subrep", "generators.metta")
+const _MC = joinpath(@__DIR__, "..", "lib", "subrep", "motive_cone.metta")
 
 _serrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -38,6 +39,7 @@ function _setup_subrep()
     load_metta!(sp, read(_CAT, String))     # §8 categorical backbone (join + CDS⊣PDS adjunction)
     load_metta!(sp, read(_ANY, String))     # §2.4 anytime gate + §2.3.7 conformal certificates
     load_metta!(sp, read(_GEN, String))     # §4 cross-paradigm generators (uniform (r̂,n̂) screening)
+    load_metta!(sp, read(_MC, String))      # end-to-end: consume the MDN's (motive-cone …) atom
     sp
 end
 
@@ -257,6 +259,22 @@ end
         !(assertEqual (gen-summary logicMacro) (1.0 (0.5 0.5)))
         !(assertEqual (screen-generator logicMacro 0.5 (0.25 0.25) 0.0) True)
         !(assertEqual (screen-generator mosesProg 0.5 (0.25 0.25) 0.0) False)
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 3
+    end
+
+    @testset "end-to-end — Core gate consumes the MDN's (motive-cone …) atom (§2.4)" begin
+        sp = _setup_subrep()
+        # The FabricPC MDN learned cone for the "raid" context is exactly this atom
+        # (examples/subrep_mdn.jl emits (motive-cone raid (lo 0.0 0.0) (hi 1.0 0.2))).
+        # The Core gate consumes it: a safety-favouring option (helps motive-1, hurts
+        # motive-2) is ADMITTED under the learned cone but REJECTED by the naive simplex
+        # — the MDN's co-learned geometry, carried by the atom, enables the admission.
+        load_metta!(sp, "!(store-cone! raid (0.0 0.0) (1.0 0.2))")
+        rs = load_metta!(sp, """
+        !(assertEqual (lookup-cone raid) ((0.0 0.0) (1.0 0.2)))
+        !(assertEqual (admit-under-cone raid 0.0 (0.3 -0.2) 0.05) True)
+        !(assertEqual (cds-admit (cds-margin-simplex 0.0 (0.3 -0.2)) 0.0) False)
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 3
     end
