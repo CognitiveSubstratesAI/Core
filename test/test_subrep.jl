@@ -23,6 +23,7 @@ const _CDS = joinpath(@__DIR__, "..", "lib", "subrep", "cds.metta")
 const _PDS = joinpath(@__DIR__, "..", "lib", "subrep", "pds.metta")
 const _STORE = joinpath(@__DIR__, "..", "lib", "subrep", "store.metta")
 const _ATTN = joinpath(@__DIR__, "..", "lib", "subrep", "attention.metta")
+const _CAT = joinpath(@__DIR__, "..", "lib", "subrep", "category.metta")
 
 _serrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -32,6 +33,7 @@ function _setup_subrep()
     load_metta!(sp, read(_PDS, String))     # PDS gates (depend on cds.metta)
     load_metta!(sp, read(_STORE, String))   # atom-native certificate storage + zero-shot reuse
     load_metta!(sp, read(_ATTN, String))    # conservative attention (runtime allocation)
+    load_metta!(sp, read(_CAT, String))     # §8 categorical backbone (join + CDS⊣PDS adjunction)
     sp
 end
 
@@ -204,5 +206,20 @@ end
         !(assertEqual (>= (cds-margin-box 0.0 (0.30 -0.05) (0 0) (0.5 0.5)) (cds-margin-box 0.0 (0.30 -0.05) (0 0) (1 1))) True)
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 4
+    end
+
+    @testset "categorical backbone — planner join + CDS⊣PDS adjunction (§8)" begin
+        sp = _setup_subrep()
+        # planner join ⋁_o T_o = per-state max over options' backed-up values;
+        # F: box cone [0,u] → its extreme rays (axis vertices u_i·e_i);
+        # CDS⊣PDS adjunction (Thm 8.8): CDS over the cone EQUALS CDS over its extreme
+        # rays (inf over the box = min over the axis vertices) — so the cone test and
+        # the finite vertex-cover test coincide.
+        rs = load_metta!(sp, """
+        !(assertEqual (transformer-join (0.5 1.2 0.8)) 1.2)
+        !(assertEqual (cone-extreme-rays (1.0 0.5)) ((1.0 0) (0 0.5)))
+        !(assertEqual (cds-margin-via-rays 0.0 (0.30 -0.05) (1.0 0.5)) (cds-margin-box 0.0 (0.30 -0.05) (0 0) (1.0 0.5)))
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 3
     end
 end

@@ -582,7 +582,9 @@ include("test_quantale.jl")
 # store: atom-native certificate storage + zero-shot reuse under motive shift
 # (whitepaper §5.9 "neurosymbolically native"; iCog Quarter Plan Phase 4). attention:
 # conservative attention — conserved (Σa=A_total) margin-proportional runtime allocation
-# over admitted options (§10, a streamlined RFS). Minimal-native.
+# over admitted options (§10, a streamlined RFS). category: §8 planning quantale —
+# planner join (⋁) + CDS⊣PDS adjunction (CDS over a cone = CDS over its extreme rays).
+# Plus §7 theorem checks (join-safety, monotone persistence). Minimal-native.
 include("test_subrep.jl")
 
 # MorkSupercompiler tier-2 (`execute!`) integrated into Core's MORK path via `sc_execute!`.
