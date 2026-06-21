@@ -24,6 +24,7 @@ const _PDS = joinpath(@__DIR__, "..", "lib", "subrep", "pds.metta")
 const _STORE = joinpath(@__DIR__, "..", "lib", "subrep", "store.metta")
 const _ATTN = joinpath(@__DIR__, "..", "lib", "subrep", "attention.metta")
 const _CAT = joinpath(@__DIR__, "..", "lib", "subrep", "category.metta")
+const _ANY = joinpath(@__DIR__, "..", "lib", "subrep", "anytime.metta")
 
 _serrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -34,6 +35,7 @@ function _setup_subrep()
     load_metta!(sp, read(_STORE, String))   # atom-native certificate storage + zero-shot reuse
     load_metta!(sp, read(_ATTN, String))    # conservative attention (runtime allocation)
     load_metta!(sp, read(_CAT, String))     # §8 categorical backbone (join + CDS⊣PDS adjunction)
+    load_metta!(sp, read(_ANY, String))     # §2.4 anytime gate + §2.3.7 conformal certificates
     sp
 end
 
@@ -221,5 +223,22 @@ end
         !(assertEqual (cds-margin-via-rays 0.0 (0.30 -0.05) (1.0 0.5)) (cds-margin-box 0.0 (0.30 -0.05) (0 0) (1.0 0.5)))
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 3
+    end
+
+    @testset "anytime gate (§2.4) + conformal certificates (§2.3.7)" begin
+        sp = _setup_subrep()
+        # §2.4 anytime: a clearly-negative cached-ray margin (over-estimate of the true
+        # inf) decisively REJECTS cheaply (−0.5); an inconclusive cached margin falls
+        # through to the exact box solve (−0.025 for Δn=(0.30 −0.05)).
+        # §2.3.7 conformal: subtract the 0.9-quantile of calibration residuals (0.1) — a
+        # margin 0.15 survives (admit), but 0.08 (within the calibration noise) is rejected.
+        rs = load_metta!(sp, """
+        !(assertEqual (anytime-margin 0.0 (-0.5 -0.5) ((1 0)) (0 0) (1 1) 0.1) -0.5)
+        !(assertEqual (anytime-margin 0.0 (0.30 -0.05) ((1 0)) (0 0) (1 1) 0.1) (cds-margin-box 0.0 (0.30 -0.05) (0 0) (1 1)))
+        !(assertEqual (quantile (0.01 0.02 0.05 0.1) 0.9) 0.1)
+        !(assertEqual (>= (conformal-margin 0.15 (0.01 0.02 0.05 0.1) 0.9) 0.0) True)
+        !(assertEqual (>= (conformal-margin 0.08 (0.01 0.02 0.05 0.1) 0.9) 0.0) False)
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 5
     end
 end
