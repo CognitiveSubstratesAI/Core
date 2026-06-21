@@ -25,6 +25,7 @@ const _STORE = joinpath(@__DIR__, "..", "lib", "subrep", "store.metta")
 const _ATTN = joinpath(@__DIR__, "..", "lib", "subrep", "attention.metta")
 const _CAT = joinpath(@__DIR__, "..", "lib", "subrep", "category.metta")
 const _ANY = joinpath(@__DIR__, "..", "lib", "subrep", "anytime.metta")
+const _GEN = joinpath(@__DIR__, "..", "lib", "subrep", "generators.metta")
 
 _serrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -36,6 +37,7 @@ function _setup_subrep()
     load_metta!(sp, read(_ATTN, String))    # conservative attention (runtime allocation)
     load_metta!(sp, read(_CAT, String))     # §8 categorical backbone (join + CDS⊣PDS adjunction)
     load_metta!(sp, read(_ANY, String))     # §2.4 anytime gate + §2.3.7 conformal certificates
+    load_metta!(sp, read(_GEN, String))     # §4 cross-paradigm generators (uniform (r̂,n̂) screening)
     sp
 end
 
@@ -240,5 +242,22 @@ end
         !(assertEqual (>= (conformal-margin 0.08 (0.01 0.02 0.05 0.1) 0.9) 0.0) False)
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 5
+    end
+
+    @testset "cross-paradigm generators — (r̂,n̂) screened uniformly (§4)" begin
+        sp = _setup_subrep()
+        # A LOGIC macro and an EVO program, each exporting an (r̂,n̂) summary, screened by
+        # the SAME CDS gate. The logic macro helps both motives (admit); the evo program
+        # hurts motive-2 badly (reject) — same algebra, paradigm (KIND) is metadata only.
+        load_metta!(sp, """
+        !(store-generator! logicMacro LOGIC 1.0 (0.5 0.5))
+        !(store-generator! mosesProg EVO 0.5 (0.3 -0.4))
+        """)
+        rs = load_metta!(sp, """
+        !(assertEqual (gen-summary logicMacro) (1.0 (0.5 0.5)))
+        !(assertEqual (screen-generator logicMacro 0.5 (0.25 0.25) 0.0) True)
+        !(assertEqual (screen-generator mosesProg 0.5 (0.25 0.25) 0.0) False)
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 3
     end
 end
