@@ -188,4 +188,21 @@ end
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 3
     end
+
+    @testset "theoretical guarantees — join-safety + monotone persistence (§7)" begin
+        sp = _setup_subrep()
+        # Prop 7.1 (join-safety): a CDS-admitted option (margin ≥ 0) DOMINATES the
+        # baseline backed-up value at every weight in the cone, so adding it can never
+        # lower the planner's max. Option (1.0,(0.5 0.5)) vs baseline (0.5,(0.25 0.25)):
+        # margin 0.75 ≥ 0 ⟹ B_o(w) ≥ B_base(w) at each tested vertex weight.
+        # Prop 7.2 (monotone persistence): a TIGHTER cone W₂⊆W₁ yields a margin ≥ that of
+        # W₁ — so as the MDN tightens the geometry, prior admissions persist (margins rise).
+        rs = load_metta!(sp, """
+        !(assertEqual (cds-admit (cds-margin-simplex 0.5 (0.25 0.25)) 0.0) True)
+        !(assertEqual (>= (backed-up 1.0 (0.5 0.5) (1 0)) (backed-up 0.5 (0.25 0.25) (1 0))) True)
+        !(assertEqual (>= (backed-up 1.0 (0.5 0.5) (0 1)) (backed-up 0.5 (0.25 0.25) (0 1))) True)
+        !(assertEqual (>= (cds-margin-box 0.0 (0.30 -0.05) (0 0) (0.5 0.5)) (cds-margin-box 0.0 (0.30 -0.05) (0 0) (1 1))) True)
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 4
+    end
 end
