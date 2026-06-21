@@ -22,6 +22,7 @@ include(joinpath(@__DIR__, "assert_guard.jl"))
 const _CDS = joinpath(@__DIR__, "..", "lib", "subrep", "cds.metta")
 const _PDS = joinpath(@__DIR__, "..", "lib", "subrep", "pds.metta")
 const _STORE = joinpath(@__DIR__, "..", "lib", "subrep", "store.metta")
+const _ATTN = joinpath(@__DIR__, "..", "lib", "subrep", "attention.metta")
 
 _serrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -30,6 +31,7 @@ function _setup_subrep()
     load_metta!(sp, read(_CDS, String))     # CDS gate + vector prims + vertex cone + certificate
     load_metta!(sp, read(_PDS, String))     # PDS gates (depend on cds.metta)
     load_metta!(sp, read(_STORE, String))   # atom-native certificate storage + zero-shot reuse
+    load_metta!(sp, read(_ATTN, String))    # conservative attention (runtime allocation)
     sp
 end
 
@@ -173,5 +175,17 @@ end
         !(assertEqual (reuse-under-weight (0 1) 0.0) (skillB))
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 4
+    end
+
+    @testset "conservative attention — conserved margin-proportional allocation (§10)" begin
+        sp = _setup_subrep()
+        # equal margins → equal conserved split (exact); the highest-margin option gets
+        # the most attention; total allocation = A_total (conservation, Σ a(o)=A_total).
+        rs = load_metta!(sp, """
+        !(assertEqual (attention-alloc (0.0 0.0) 1.0 1.0) (0.5 0.5))
+        !(assertEqual (> (car-atom (attention-alloc (1.0 0.0 -1.0) 1.0 1.0)) 0.5) True)
+        !(assertEqual (within (lsum (attention-alloc (2.0 0.5 -1.0) 4.0 1.0)) 4.0 0.001) True)
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 3
     end
 end

@@ -580,7 +580,9 @@ include("test_quantale.jl")
 # stage. CDS: uniform improvement over the whole motive cone (simplex/box/vertex).
 # PDS: weaker — ε budget (PDS-ε) or componentwise Pareto over a cover (§2.3).
 # store: atom-native certificate storage + zero-shot reuse under motive shift
-# (whitepaper §5.9 "neurosymbolically native"; iCog Quarter Plan Phase 4). Minimal-native.
+# (whitepaper §5.9 "neurosymbolically native"; iCog Quarter Plan Phase 4). attention:
+# conservative attention — conserved (Σa=A_total) margin-proportional runtime allocation
+# over admitted options (§10, a streamlined RFS). Minimal-native.
 include("test_subrep.jl")
 
 # MorkSupercompiler tier-2 (`execute!`) integrated into Core's MORK path via `sc_execute!`.
