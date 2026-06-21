@@ -581,10 +581,12 @@ include("test_quantale.jl")
 # PDS: weaker — ε budget (PDS-ε) or componentwise Pareto over a cover (§2.3).
 # store: atom-native certificate storage + zero-shot reuse under motive shift
 # (whitepaper §5.9 "neurosymbolically native"; iCog Quarter Plan Phase 4). attention:
-# conservative attention — conserved (Σa=A_total) margin-proportional runtime allocation
-# over admitted options (§10, a streamlined RFS). category: §8 planning quantale —
-# planner join (⋁) + CDS⊣PDS adjunction (CDS over a cone = CDS over its extreme rays).
-# Plus §7 theorem checks (join-safety, monotone persistence). Minimal-native.
+# Full SubRep stack (lib/subrep/): CDS/PDS gates + certificates + atom storage/zero-shot
+# (§2.2/§2.3/§5.9) · anytime gate + conformal certs (§2.4/§2.3.7) · cross-paradigm
+# generators (§4) · MDN cone consumption / end-to-end (§2.4) · conservative attention
+# (§10) · categorical backbone (§8) · EASA chart gluing (§9) · Waveformer budget-weighted
+# attention (§11) · §7 theorem checks (join-safety, monotone persistence). Minimal-native.
+# (Neural MDN + admission-coupling + CVaR + PC-native gate live in FabricPC examples/subrep_mdn.jl.)
 include("test_subrep.jl")
 
 # MorkSupercompiler tier-2 (`execute!`) integrated into Core's MORK path via `sc_execute!`.

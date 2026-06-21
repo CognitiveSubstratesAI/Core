@@ -28,6 +28,7 @@ const _ANY = joinpath(@__DIR__, "..", "lib", "subrep", "anytime.metta")
 const _GEN = joinpath(@__DIR__, "..", "lib", "subrep", "generators.metta")
 const _MC = joinpath(@__DIR__, "..", "lib", "subrep", "motive_cone.metta")
 const _EASA = joinpath(@__DIR__, "..", "lib", "subrep", "easa.metta")
+const _WF = joinpath(@__DIR__, "..", "lib", "subrep", "waveformer.metta")
 
 _serrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 
@@ -42,6 +43,7 @@ function _setup_subrep()
     load_metta!(sp, read(_GEN, String))     # §4 cross-paradigm generators (uniform (r̂,n̂) screening)
     load_metta!(sp, read(_MC, String))      # end-to-end: consume the MDN's (motive-cone …) atom
     load_metta!(sp, read(_EASA, String))    # §9 EASA — fuzzy-guarded chart gluing, certified
+    load_metta!(sp, read(_WF, String))      # §11 Waveformer — budget-weighted attention routing
     sp
 end
 
@@ -295,5 +297,19 @@ end
         !(assertEqual (easa-admit2 0.5 0.5 1.0 (0.5 0.5) 0.5 (0.5 0.25) 0.5 (0.25 0.25) 0.0) True)
         """)
         @test isempty(_serrs(rs)); @test length(rs) == 5
+    end
+
+    @testset "Waveformer control plane — budget-weighted attention (§11.5)" begin
+        sp = _setup_subrep()
+        # Two keys with EQUAL raw logits (1.0 1.0) but very different conservative-attention
+        # budgets (1.0 vs 0.001): the budget routes the attention so the high-budget key
+        # gets almost all the weight (> 0.99) and the negligible-budget key is suppressed
+        # (anti-spam). Equal budgets → equal split (conservation Σ=1).
+        rs = load_metta!(sp, """
+        !(assertEqual (budget-weighted-attn (1.0 1.0) (1.0 1.0) 0.0001) (0.5 0.5))
+        !(assertEqual (> (car-atom (budget-weighted-attn (1.0 1.0) (1.0 0.001) 0.0001)) 0.99) True)
+        !(assertEqual (within (lsum (budget-weighted-attn (2.0 0.5 1.0) (1.0 0.5 0.2) 0.0001)) 1.0 0.001) True)
+        """)
+        @test isempty(_serrs(rs)); @test length(rs) == 3
     end
 end
