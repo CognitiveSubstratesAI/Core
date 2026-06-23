@@ -112,4 +112,30 @@ using MORK   # space dump for the supercompiler-opt-in test
         d2 = dumpall(cs2)
         @test "(path 0 3)" in d2 && "(path 1 3)" in d2 && "(path 2 3)" in d2   # complete closure, nothing dropped
     end
+
+    @testset "saturation guard premises — comparison filters (Phase 1)" begin
+        # A comparison premise (`< > <= >= == !=`) in a saturation rule body is EVALUATED as a guard
+        # (filter), not looked up as a fact (a `(< $x 3)` premise has no `(< …)` fact, so pre-fix it
+        # silently blocked the rule). Semantics mirror GROUNDED_REGISTRY (numbers parse as Syms whose
+        # text is read as Float64). Guards bind no vars / add no facts ⇒ always-terminating filters.
+        facts = "(num 1)\n(num 2)\n(num 3)\n(num 5)"
+        der(cs, p) = sort([strip(l) for l in split(MORK.space_dump_all_sexpr(cs.inner), '\n')
+                           if startswith(strip(l), "($p ")])
+        sat(rule) = (cs = MC.new_core_space();
+                     mc_run(cs, facts, rule; supercompile = true, sc_opts = MC.SCOptions(saturate = true)); cs)
+
+        # (a) `<` fires AND filters to the in-range subset (proves the guard is evaluated, not looked up)
+        @test der(sat(raw"(==> (, (num $x) (< $x 3)) (small $x))"), "small") == ["(small 1)", "(small 2)"]
+        # (b) `<=` includes the boundary — distinct from `<` (precise boundary semantics)
+        @test der(sat(raw"(==> (, (num $x) (<= $x 3)) (le $x))"), "le") == ["(le 1)", "(le 2)", "(le 3)"]
+        # (c) `!=` (IR-layer guard, no GROUNDED_REGISTRY counterpart) drops exactly the equal one
+        @test der(sat(raw"(==> (, (num $x) (!= $x 3)) (keep $x))"), "keep") == ["(keep 1)", "(keep 2)", "(keep 5)"]
+        # (d) two conjoined guards form a range: 1 < x <= 3 ⇒ {2,3}
+        @test der(sat(raw"(==> (, (num $x) (> $x 1) (<= $x 3)) (mid $x))"), "mid") == ["(mid 2)", "(mid 3)"]
+        # (e) metamorphic order-invariance (Vibe §12.1): reversed fact order ⇒ identical fixpoint
+        csR = MC.new_core_space()
+        mc_run(csR, "(num 5)\n(num 3)\n(num 2)\n(num 1)", raw"(==> (, (num $x) (< $x 3)) (small $x))";
+               supercompile = true, sc_opts = MC.SCOptions(saturate = true))
+        @test der(csR, "small") == ["(small 1)", "(small 2)"]
+    end
 end
