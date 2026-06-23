@@ -293,19 +293,19 @@
        ()))
 
 ;; ── §4.7 GATED demand expansion ──────────────────────────────────────────────
-;; SCOPE: still tree-oriented — uses raw `add-atom (dem ...)`, NOT the §4.4 `dem-join!`
-;; max-join. On a DAG it can write duplicate (dem p _) atoms. Folding max-join in here also
-;; requires re-expanding a premise whose demand crosses $tau on a later path (gate × increase),
-;; which is unvalidated; left as follow-up. Use `compute-demand-field!` for DAG workloads.
 ;; The sweep + a gate: HALT recursion past a premise whose demand < $tau, but RETAIN it in the
 ;; `active` set (Design Commitment #2) unless $retain is False — a high-confidence boundary has
 ;; tiny demand yet still SEEDS forward supply, so dropping it starves the marginal. Writes
 ;; (dem node val) + (active node) atoms. $tau=0 ⇒ nothing halts ⇒ active = full support set.
 ;; $retain=False ⇒ DC#2 off (drop halted boundaries — the load-bearing toggle).
+;; §4.4 MAX-JOIN (DAG-safe): premise demand is upserted via `dem-join!` (max over paths, one
+;; (dem _ _) atom), and a premise is re-expanded only when its demand INCREASES on this visit
+;; AND meets $tau — so a boundary that crosses $tau on a later path gets expanded, while the
+;; monotone-increase guard keeps recursion finite on DAGs. Activation is dedup-guarded.
 (= (is-active $n) (if (== (collapse (match &self (active $n) $n)) ()) False True))
 
 (= (gated-demand-field! $query $tau $retain)
-   (let $s (add-atom &self (dem $query 1.0))
+   (let $s (dem-join! $query 1.0)
      (let $a (add-atom &self (active $query)) (gated-propagate! $query $tau $retain))))
 
 (= (gated-propagate! $node $tau $retain)
@@ -316,27 +316,28 @@
    (let* (($rule (match &self (factor $f $r (premises $a $b) (conclusion $node)) $r))
           ($p1 (match &self (factor $f $r (premises $a $b) (conclusion $node)) $a))
           ($p2 (match &self (factor $f $r (premises $a $b) (conclusion $node)) $b))
-          ($pair (adjoint2 (match &self (dem $node $d) $d)
+          ($pair (adjoint2 (car-atom (dem-cur $node))
                            (apply-sens2 $rule (supply $p1) (supply $p2)) (supply $p1) (supply $p2)))
           ($d1 (dp-1 $pair)) ($d2 (dp-2 $pair))
-          ($e1 (add-atom &self (dem $p1 $d1))) ($e2 (add-atom &self (dem $p2 $d2)))
-          ($af (add-atom &self (active $f))))
-     (let $g1 (gate! $p1 $d1 $tau $retain) (gate! $p2 $d2 $tau $retain))))
+          ($c1 (dem-join! $p1 $d1)) ($c2 (dem-join! $p2 $d2))    ; upsert max, capture increase
+          ($af (if (is-active $f) () (add-atom &self (active $f)))))
+     (let $g1 (gate! $p1 $d1 $c1 $tau $retain) (gate! $p2 $d2 $c2 $tau $retain))))
 
 ;; 1-premise (negation): sens = 1 ⇒ demand = clamp(dv · (1 − c)). The other-arity match fails,
 ;; so only the matching clause fires.
 (= (gated-arity! $node $f $tau $retain)
    (let* (($rule (match &self (factor $f $r (premises $a) (conclusion $node)) $r))
           ($p (match &self (factor $f $r (premises $a) (conclusion $node)) $a))
-          ($du (clampu (* (match &self (dem $node $d) $d) (- 1.0 (conf (supply $p))))))
-          ($ed (add-atom &self (dem $p $du))) ($af (add-atom &self (active $f))))
-     (gate! $p $du $tau $retain)))
+          ($du (clampu (* (car-atom (dem-cur $node)) (- 1.0 (conf (supply $p))))))
+          ($c (dem-join! $p $du)) ($af (if (is-active $f) () (add-atom &self (active $f)))))
+     (gate! $p $du $c $tau $retain)))
 
-;; gate: activate the premise (DC#2 when $retain, else only if it meets $tau), then recurse PAST
-;; it iff its demand ≥ $tau.
-(= (gate! $u $du $tau $retain)
-   (let $m (if (if $retain True (>= $du $tau)) (add-atom &self (active $u)) ())
-     (if (>= $du $tau) (recurse-gated! $u $tau $retain) ())))
+;; gate: activate the premise (DC#2 when $retain, else only if it meets $tau), dedup-guarded;
+;; then recurse PAST it iff its demand INCREASED on this visit AND its demand ≥ $tau.
+(= (gate! $u $du $changed $tau $retain)
+   (let $m (if (is-active $u) ()
+               (if (if $retain True (>= $du $tau)) (add-atom &self (active $u)) ()))
+     (if (if $changed (>= $du $tau) False) (recurse-gated! $u $tau $retain) ())))
 
 (= (recurse-gated! $node $tau $retain)
    (if (== (collapse (match &self (produces $node $f) $f)) ()) () (gated-propagate! $node $tau $retain)))

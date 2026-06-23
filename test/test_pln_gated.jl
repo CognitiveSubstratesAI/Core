@@ -55,4 +55,15 @@ end
             "!(assertEqual (is-active Y) True)\n!(assertEqual (is-active Yn) True)\n!(assertEqual (is-active Xn) False)\n!(assertEqual (is-active fx) False)")
         @test isempty(_gerrs(rs)); @test length(rs) == 4
     end
+    # T-DAG  §4.4 max-join under gating: diamond C<-f0(P,Q); P<-f1(S,X); Q<-f2(S,Y); S shared.
+    # S reached via 2 paths must keep ONE (dem S _) atom = max over paths, and the gated walk
+    # must TERMINATE (monotone-increase recursion guard). tau=0 ⇒ full expansion, S active.
+    _GDIA = "(message S (stv 0.9 0.5)) (message X (stv 0.8 0.9)) (message Y (stv 0.7 0.3)) (factor f1 hmp (premises S X) (conclusion P)) (factor f2 hmp (premises S Y) (conclusion Q)) (factor f0 hmp (premises P Q) (conclusion C)) (produces P f1) (produces Q f2) (produces C f0)"
+    @testset "T-DAG max-join under gating: dedup + max + terminates" begin
+        rs = _gscen(_GDIA, "!(gated-demand-field! C 0.0 True)",
+            "!(assertEqual (size-atom (collapse (match &self (dem S \$d) \$d))) 1)\n" *
+            "!(assertEqual (is-active S) True)\n" *
+            "!(assertEqual (match &self (dem S \$d) \$d) (max (dp-1 (factor-demand-pair P (match &self (dem P \$e) \$e))) (dp-1 (factor-demand-pair Q (match &self (dem Q \$g) \$g)))))")
+        @test isempty(_gerrs(rs)); @test length(rs) == 3
+    end
 end
