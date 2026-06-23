@@ -248,31 +248,55 @@
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand
 ;; FIELD is materialised AS ATOMS in the space: `(dem <node> <value>)`. Forward marginals
 ;; are threaded automatically (factor sens uses `supply`, which forward-computes intermediates).
-;; NOTE: tree-shaped graphs only — a node reached by >1 path needs MAX-JOIN
-;; (dem[p] = max(old, Ψ)); add when a DAG workload requires it (§4.4 max-join).
+;; §4.4 MAX-JOIN: a node reached by >1 path keeps dem = max over paths. `dem-join!` upserts
+;; (remove old, add max) and returns True iff demand INCREASED; recursion continues past a
+;; premise only on an increase — a monotone relaxation that converges on DAGs. (Cyclic graphs
+;; still need the §4.3 ε_d tolerance + λ_d damping; not handled here.)
 (= (dp-1 (dpair $a $b)) $a)
 (= (dp-2 (dpair $a $b)) $b)
 
+;; current demand for a node (single value, post-upsert), or () if unset.
+(= (dem-cur $node) (collapse (match &self (dem $node $d) $d)))
+
+;; upsert (dem node) := max(old, new). Returns True iff it increased (or was newly set).
+;; both-evaluator upsert idiom (match-bind old OUTSIDE template → remove-atom → add-atom).
+(= (dem-join! $node $new)
+   (let $cur (dem-cur $node)
+     (if (== $cur ())
+         (let $e (add-atom &self (dem $node $new)) True)
+         (let $old (car-atom $cur)
+           (if (> $new $old)
+               (let* (($r (remove-atom &self (dem $node $old)))
+                      ($a (add-atom &self (dem $node $new)))) True)
+               False)))))
+
 (= (compute-demand-field! $query)
-   (let $seed (add-atom &self (dem $query 1.0)) (propagate! $query)))
+   (let $seed (dem-join! $query 1.0) (propagate! $query)))
 
 (= (propagate! $node)
-   (let* (($dv   (match &self (dem $node $d) $d))
+   (let* (($dv   (car-atom (dem-cur $node)))            ; node's current (possibly max-joined) demand
           ($f    (match &self (produces $node $ff) $ff))     ; conclusion-first: prefix-cheap, binds $f
           ($rule (match &self (factor $f $r (premises $a $b) (conclusion $node)) $r))
           ($p1   (match &self (factor $f $r (premises $a $b) (conclusion $node)) $a))
           ($p2   (match &self (factor $f $r (premises $a $b) (conclusion $node)) $b))
           ($pair (adjoint2 $dv (apply-sens2 $rule (supply $p1) (supply $p2)) (supply $p1) (supply $p2)))
-          ($d1 (dp-1 $pair))                              ; bind REDUCED before add-atom
+          ($d1 (dp-1 $pair))                              ; bind REDUCED before upsert
           ($d2 (dp-2 $pair))
-          ($e1 (add-atom &self (dem $p1 $d1)))
-          ($e2 (add-atom &self (dem $p2 $d2))))
-     (let $r1 (recurse-if-produced! $p1) (recurse-if-produced! $p2))))
+          ($c1 (dem-join! $p1 $d1))                       ; True iff p1's demand increased (max-join)
+          ($c2 (dem-join! $p2 $d2)))
+     (let $r1 (recurse-if-increased! $p1 $c1) (recurse-if-increased! $p2 $c2))))
 
-(= (recurse-if-produced! $node)
-   (if (== (collapse (match &self (produces $node $f) $f)) ()) () (propagate! $node)))
+;; recurse past a premise iff its demand increased on this visit AND it has producers.
+(= (recurse-if-increased! $node $changed)
+   (if $changed
+       (if (== (collapse (match &self (produces $node $f) $f)) ()) () (propagate! $node))
+       ()))
 
 ;; ── §4.7 GATED demand expansion ──────────────────────────────────────────────
+;; SCOPE: still tree-oriented — uses raw `add-atom (dem ...)`, NOT the §4.4 `dem-join!`
+;; max-join. On a DAG it can write duplicate (dem p _) atoms. Folding max-join in here also
+;; requires re-expanding a premise whose demand crosses $tau on a later path (gate × increase),
+;; which is unvalidated; left as follow-up. Use `compute-demand-field!` for DAG workloads.
 ;; The sweep + a gate: HALT recursion past a premise whose demand < $tau, but RETAIN it in the
 ;; `active` set (Design Commitment #2) unless $retain is False — a high-confidence boundary has
 ;; tiny demand yet still SEEDS forward supply, so dropping it starves the marginal. Writes
