@@ -31,6 +31,28 @@ flowchart LR
     Q -->|"meta / control tail"| IK["Interpreter meta-kernel"]
 ```
 
+## Three orthogonal layers — substrate vs engines vs cognitive processes
+
+"Engine-per-workload" is a statement about the **middle** layer only. Keep three axes distinct
+(collapsing them is a recurring framing error):
+
+1. **Cognitive processes** — forward-chaining, backward-chaining (PLN demand / tabling), abduction,
+   MOSES evolution, ECAN attention, concept blending. These are **distinct reasoning paradigms** that
+   synergize through the shared AtomSpace (OpenCog "cognitive synergy"), **not** interchangeable
+   backends. Promote them as first-class modes.
+2. **Execution engines** — ZAM zipper, MorkSupercompiler, native-tabling-over-PathMap, numeric
+   kernels. **Semantics-preserving** executors chosen by the γ̂ diagnostic. "Backend" is the right word
+   *only here* — it's about speed, not meaning.
+3. **Substrate** — MORK / PathMap: the **one** shared metagraph memory + base rewriting/query. It is
+   neither a cognitive architecture nor "a backend among others"; keeping it **singular** is what makes
+   the cognitive synergy possible (every process reasons over the *same* atoms).
+
+So **Prolog** is a *backward-tabled reasoning strategy* (layer 1) best realized as *native tabling over
+PathMap* (layer 2) — **not** a parallel cognitive architecture with its own store (that would fork the
+substrate, which is explicitly ruled out). The positive/stratified fragment of that strategy already
+runs on the forward engine (semi-naive saturation + magic-sets + stratified NAF); the only genuinely
+distinct residual is **WFS recursion-through-negation**.
+
 ## MORK / ZAM — the substrate backend (integrated)
 
 Every Core atom is a byte-path in a **MORK PathMap** trie; matching and joins run on the **ZAM (Zipper
@@ -85,6 +107,17 @@ workloads actually need backward tabling versus the forward zipper. That diagnos
 (`MORK/tools/zam_diagnostic.jl` — `γ̂ = −log_N(|P(p)|/N)` with the Σγ̂ regime split, self-checked) but is
 a standalone REPL tool, **not yet wired** into any routing decision. Until a measured workload demands it,
 Prolog stays an exploration.
+
+!!! note "Prolog as a complementary interim engine (decision in progress)"
+    The plan endorses SWI **now** → native-tabling-over-PathMap **later**. To use it as a complementary
+    interim engine *without* forking the substrate, three guardrails: (1) **scope to the residual** — WFS
+    recursion-through-negation only (the forward engine already covers positive/stratified); (2) **marshall,
+    don't mirror** — atoms→Prolog terms per query, answers back, drop Prolog state (MORK stays the single
+    source of truth); (3) **concrete exit** — retire when native WFS passes SWI's conformance set (parity)
+    and γ̂ says the workload doesn't need it, else it acquires permanent lock-in. **Highest-value first step
+    is the differential ORACLE, not the engine**: wire SWI as ground truth to validate native WFS against
+    (the pattern that de-risked the PLN chainer via `PLNDemand.jl`), and promote oracle→engine only if a
+    measured WFS workload arrives before native is ready.
 
 !!! note "Positive-fragment coverage (what the forward engine already tables)"
     Semi-naive `saturate!` (live) + magic-sets goal-direction (opt-in) cover **positive recursive closure**
