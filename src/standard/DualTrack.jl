@@ -47,11 +47,13 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
     results = if lane === :theory
         tname = theory !== nothing ? String(theory) : _last_theory_name(program)
         tname === nothing && error("mc_run: :theory lane needs a (theory …) in the program or theory=NAME")
-        theory_run!(cs, data, program, tname; steps = steps, saturate = saturate)
+        theory_run!(cs, data, program, tname; steps = steps, saturate = saturate,
+            use_magic_sets = sc_opts.use_magic_sets, magic_query = sc_opts.magic_query, magic_bound = sc_opts.magic_bound)
     elseif lane === :pipeline
         metta_il_run_pipeline!(cs, data, program; steps = steps)
     elseif lane === :rewrite
-        metta_il_run!(cs, data, program; steps = steps, saturate = saturate)
+        metta_il_run!(cs, data, program; steps = steps, saturate = saturate,
+            use_magic_sets = sc_opts.use_magic_sets, magic_query = sc_opts.magic_query, magic_bound = sc_opts.magic_bound)
     elseif lane === :direct
         isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
         # opt-in (OFF by default): route the Direct lane through the MorkSupercompiler (join-planning /

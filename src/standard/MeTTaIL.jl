@@ -49,12 +49,15 @@ Run a MeTTa-IL program's rewrites over `data` on the native MORK `cs`, returning
     for RECURSIVE rewrites (a rewrite whose RHS head also appears in a body), e.g. transitive closure.
 """
 function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractString;
-                       steps::Int = 1_000_000, saturate::Bool = false)
+                       steps::Int = 1_000_000, saturate::Bool = false,
+                       use_magic_sets::Bool = false, magic_query::AbstractString = "", magic_bound::Int = 0)
     isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
     if saturate
         rules = metta_il_lower_saturation(program)
         isempty(rules) && return String[]
-        sc_execute!(cs, rules; opts = SCOptions(saturate = true))   # seminaive saturation → fixpoint
+        # opt-in magic-sets goal-direction (same shared SCOptions stage the Direct lane reaches)
+        sc_execute!(cs, rules; opts = SCOptions(saturate = true, use_magic_sets = use_magic_sets,
+            magic_query = String(magic_query), magic_bound = magic_bound))
     else
         exec = metta_il_lower(program)
         isempty(exec) && return String[]

@@ -163,7 +163,9 @@ Flatten theory `name` from `program`, lower its rewrites, run over `data` on nat
 runs the rewrites to fixpoint (recursive closure) via KBSaturation; default does one exec generation.
 """
 function theory_run!(cs::CoreSpace, data::AbstractString, program::AbstractString, name::AbstractString;
-                     steps::Int = 1_000_000, saturate::Bool = false)
+                     steps::Int = 1_000_000, saturate::Bool = false,
+                     use_magic_sets::Bool = false, magic_query::AbstractString = "", magic_bound::Int = 0)
     env = load_theories(program)
-    metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps = steps, saturate = saturate)
+    metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps = steps, saturate = saturate,
+        use_magic_sets = use_magic_sets, magic_query = magic_query, magic_bound = magic_bound)
 end
