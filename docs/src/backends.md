@@ -89,10 +89,13 @@ Prolog stays an exploration.
 !!! note "Positive-fragment coverage (what the forward engine already tables)"
     Semi-naive `saturate!` (live) + magic-sets goal-direction (opt-in) cover **positive recursive closure**
     (transitive closure / ancestor / path) — the bottom-up equivalent of top-down SLG tabling for the
-    positive fragment. What they do **not** cover, and what still routes to no engine: **negation** of any
-    kind (NAF, stratified, or well-founded), **arithmetic/comparison guards** in rule bodies (with no
-    termination story for value-generating rules), **relational aggregation**, and **incremental
-    retraction / TMS**. These are the genuine residual gaps in the forward tabling story.
+    positive fragment. **Arithmetic/comparison guard premises** (`< > <= >= == != + - * / %`) are now
+    EVALUATED in rule bodies (mirroring `GROUNDED_REGISTRY` so they bisimulate the MM2 calculus lane):
+    comparisons filter; a 3-arg `(op a b c)` binds its output. A value-generating rule needs a bounding
+    guard to terminate — an unbounded one is truncated at the round cap with a warning (the pragmatic
+    stand-in for the supercompilation homeomorphic-embedding whistle). What still routes to no engine:
+    **negation** of any kind (NAF, stratified, or well-founded), **relational aggregation**, and
+    **incremental retraction / TMS** — the genuine residual gaps.
 
 ## The Interpreter as meta-kernel
 

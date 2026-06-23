@@ -138,4 +138,32 @@ using MORK   # space dump for the supercompiler-opt-in test
                supercompile = true, sc_opts = MC.SCOptions(saturate = true))
         @test der(csR, "small") == ["(small 1)", "(small 2)"]
     end
+
+    @testset "saturation arithmetic premises + termination (Phase 2)" begin
+        # A 3-arg `(op a b c)` premise (`+ - * / %`) BINDS its output c from bound inputs (the moded
+        # lowering of `(= c (op a b))`; matches GROUNDED_REGISTRY: Float64 then Int-narrowed). A value-
+        # generating rule needs a bounding comparison guard to terminate; an unbounded one is truncated
+        # at the round cap with a warning (the homeomorphic-embedding whistle's pragmatic stand-in).
+        der(cs, p) = sort([strip(l) for l in split(MORK.space_dump_all_sexpr(cs.inner), '\n')
+                           if startswith(strip(l), "($p ")])
+        runr(data, rule) = (cs = MC.new_core_space();
+                            mc_run(cs, data, rule; supercompile = true, sc_opts = MC.SCOptions(saturate = true)); cs)
+
+        # (a) bounded counter terminates via the (< $n 5) guard; `(+ $n 1 $m)` binds the next value
+        c = runr("(count 0)", raw"(==> (, (count $n) (< $n 5) (+ $n 1 $m)) (count $m))")
+        @test der(c, "count") == ["(count 0)", "(count 1)", "(count 2)", "(count 3)", "(count 4)", "(count 5)"]
+
+        # (b) arithmetic binds the output, Int-narrowed (GROUNDED_REGISTRY parity): $y = $x + 10
+        r = runr("(val 1)\n(val 2)", raw"(==> (, (val $x) (+ $x 10 $y)) (r $x $y))")
+        @test der(r, "r") == ["(r 1 11)", "(r 2 12)"]
+
+        # (c) CHECK mode — output already bound: keep iff consistent (2+2==4 kept, 2+2≠5 dropped)
+        d = runr("(p 2 4)\n(p 2 5)", raw"(==> (, (p $x $y) (+ $x $x $y)) (dbl $x))")
+        @test der(d, "dbl") == ["(dbl 2)"]
+
+        # (d) UNBOUNDED generating rule still TERMINATES via the round-cap whistle (would hang without it)
+        u = runr("(c 0)", raw"(==> (, (c $n) (+ $n 1 $m)) (c $m))")
+        nc = length(der(u, "c"))
+        @test 2 <= nc <= 200            # produced a capped prefix and returned — did not hang
+    end
 end
