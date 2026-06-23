@@ -52,9 +52,12 @@ uses via `saturate=true`), the §6 supercompilation driver, and MM2 lowering. St
 `SCOptions`.
 
 !!! note "Materializing, not streaming"
-    The supercompiler **materializes** intermediate join results as trie atoms — measured at a ~40× join
-    regression versus streaming. It is an *optimization/closure* layer, not the fast match path; the
-    streaming fast path is lean selective probing on the zipper (ZAM). Use it for saturation and
+    The supercompiler **materializes** intermediate join results as `_sc_tmp` trie atoms — measured **~5–30×
+    slower than streaming** (`docs/specs/execution_model_architecture.md`: 771ms vs 24ms ≈ 32×, 2389ms vs
+    504ms ≈ 4.7×). It is an *optimization/closure* layer, not the fast match path. The **streaming fast path
+    is lean selective probing on the zipper (ZAM)** (`space_query_multi` / the connectome `info_flow`), which
+    realizes the MORK selectivity result — **O(1) candidates vs a WAM's Ω(N) per leg** under Σγ>1
+    (`Mork-theory`), an *asymptotic* advantage, not a fixed factor. Use the supercompiler for saturation and
     whole-program rewriting, not as a general query accelerator.
 
 ## Prolog — the tabled-recursion backend (exploration, not wired)
