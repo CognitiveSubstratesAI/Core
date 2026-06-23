@@ -144,7 +144,11 @@ When `use_supercompiler=true`, all exec atoms evaluated in this space are
 routed through `MorkSupercompiler.plan!` which applies join-order reordering
 and Rule-of-64 source decomposition before running MORK calculus.  Output
 contract is identical to the default path (same trie mutations, no approx
-pipeline engaged).
+pipeline engaged).  NOTE: this tier-1 `plan!` route fires only through the
+LEGACY eval path (`Eval_obsolete.jl`) — the modern `mc_run` lanes do not read
+this flag.  The first-class tier-2 entry is [`sc_execute!`](@ref)
+(reached via `mc_run(...; supercompile=true)` on the Direct lane, or
+`saturate=true` on the MeTTa-IL lane).
 
 Opt-in rationale: SET semantics is safe by construction (PipelineDecompose's
 flow_vars carries every final-template variable through every intermediate

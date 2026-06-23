@@ -48,8 +48,11 @@ The MM2 exec-calculus (`(exec …)`) and the [MeTTa-IL lane](mettail.md) both lo
 [`sc_execute!`](@ref) runs a program through the **tier-2 MorkSupercompiler** against the space's trie:
 join-order + Rule-of-64 decomposition (tier-1 `plan!`), plus opt-in stages — error-bounded approximate
 rewrite, **KBSaturation** (seminaive fixpoint — the recursive-closure engine the [MeTTa-IL lane](mettail.md)
-uses via `saturate=true`), the §6 supercompilation driver, and MM2 lowering. Stage opt-ins live on
-`SCOptions`.
+uses via `saturate=true`), **magic-sets goal-direction** (`use_magic_sets` — a bottom-up surrogate for
+top-down SLG tabling that rewrites the rules toward a query so saturation tables only goal-relevant facts;
+sound for the single-predicate / self-recursive / bound-first fragment, falls back to full closure
+otherwise), the §6 supercompilation driver, and MM2 lowering. Stage opt-ins live on `SCOptions` and are
+reachable identically from both lanes (Direct via `supercompile=true`, MeTTa-IL via `saturate=true`).
 
 !!! note "Materializing, not streaming"
     The supercompiler **materializes** intermediate join results as `_sc_tmp` trie atoms — measured **~5–30×
@@ -78,8 +81,18 @@ What exists today (in the cross-cutting `docs/specs/prolog/`, **not** in this re
 - `spike/` — a runnable FFI spike (`swipl_ffi_spike.{pl,jl}`, `PrologBackend.jl`, `test_prolog_backend.jl`, 5/5) proving the Julia ↔ SWI bridge and the adapter shape.
 
 Before any wiring, the discipline is **measure first** — the γ̂ selectivity diagnostic determines which
-workloads actually need backward tabling versus the forward zipper. Until a measured workload demands it,
+workloads actually need backward tabling versus the forward zipper. That diagnostic is **built**
+(`MORK/tools/zam_diagnostic.jl` — `γ̂ = −log_N(|P(p)|/N)` with the Σγ̂ regime split, self-checked) but is
+a standalone REPL tool, **not yet wired** into any routing decision. Until a measured workload demands it,
 Prolog stays an exploration.
+
+!!! note "Positive-fragment coverage (what the forward engine already tables)"
+    Semi-naive `saturate!` (live) + magic-sets goal-direction (opt-in) cover **positive recursive closure**
+    (transitive closure / ancestor / path) — the bottom-up equivalent of top-down SLG tabling for the
+    positive fragment. What they do **not** cover, and what still routes to no engine: **negation** of any
+    kind (NAF, stratified, or well-founded), **arithmetic/comparison guards** in rule bodies (with no
+    termination story for value-generating rules), **relational aggregation**, and **incremental
+    retraction / TMS**. These are the genuine residual gaps in the forward tabling story.
 
 ## The Interpreter as meta-kernel
 
