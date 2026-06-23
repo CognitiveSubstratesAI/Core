@@ -2,6 +2,7 @@
 using MeTTaCore
 const MC = MeTTaCore
 using Test
+using MORK   # space dump for the supercompiler-opt-in test
 
 @testset "dual-track unified entry (mc_run)" begin
     facts = "(edge 0 1)\n(edge 1 2)\n(edge 2 3)"
@@ -49,5 +50,19 @@ using Test
         r2 = mc_run(MC.new_core_space(), facts, prog; theory = "Graph")
         @test r2.lane == :theory
         @test "(path 0 1)" in r2.results && !("(path 0 3)" in r2.results)
+    end
+
+    @testset "direct lane: supercompiler opt-in (semantics-preserving)" begin
+        # `supercompile=true` routes the Direct lane through the MorkSupercompiler instead of the lean
+        # streaming calculus — closing the gap that the SC was only reachable via the MeTTa-IL saturate
+        # lane. It must derive the SAME atoms (the SC is a planning/decomposition layer, not a different
+        # semantics — just materializing, so opt-in).
+        prog = raw"!(match &self (, (edge $x $y) (edge $y $z)) (path $x $z))"
+        derived(cs) = sort([strip(l) for l in split(MORK.space_dump_all_sexpr(cs.inner), '\n')
+                            if occursin("(path", l)])
+        cs1 = MC.new_core_space(); r1 = mc_run(cs1, facts, prog)                       # streaming default
+        cs2 = MC.new_core_space(); r2 = mc_run(cs2, facts, prog; supercompile = true)  # SC opt-in
+        @test r1.lane == :direct && r2.lane == :direct
+        @test !isempty(derived(cs1)) && derived(cs1) == derived(cs2)   # opt-in derives the same atoms
     end
 end
