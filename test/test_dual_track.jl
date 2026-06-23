@@ -166,4 +166,26 @@ using MORK   # space dump for the supercompiler-opt-in test
         nc = length(der(u, "c"))
         @test 2 <= nc <= 200            # produced a capped prefix and returned — did not hang
     end
+
+    @testset "saturation stratified negation-as-failure (NAF)" begin
+        # A `(not (p …))` premise succeeds iff no fact matches `p` — sound under STRATIFIED evaluation
+        # (negated predicate is in a strictly-lower, completed stratum). Canonical case: a node is a
+        # `source` iff nothing reaches it — needs `reachable` fully derived (stratum 0) before `source`
+        # (stratum 1) tests `(not (reachable $x))`.
+        der(cs, p) = sort([strip(l) for l in split(MORK.space_dump_all_sexpr(cs.inner), '\n')
+                           if startswith(strip(l), "($p ")])
+        facts = "(node a)\n(node b)\n(node c)\n(edge a b)\n(edge b c)"
+        rules = raw"(==> (edge $x $y) (reachable $y))" * "\n" *
+                raw"(==> (, (node $x) (not (reachable $x))) (source $x))"
+        cs = MC.new_core_space()
+        mc_run(cs, facts, rules; supercompile = true, sc_opts = MC.SCOptions(saturate = true))
+        @test der(cs, "reachable") == ["(reachable b)", "(reachable c)"]   # stratum 0 closure
+        @test der(cs, "source")    == ["(source a)"]                       # NAF over completed `reachable`
+
+        # non-stratifiable (recursion through negation) falls back to flat saturation + warns — no hang/crash
+        ns = raw"(==> (not (q a)) (p a))" * "\n" * raw"(==> (not (p a)) (q a))"
+        cs2 = MC.new_core_space()
+        mc_run(cs2, "(seed s)", ns; supercompile = true, sc_opts = MC.SCOptions(saturate = true))
+        @test "(seed s)" in [strip(l) for l in split(MORK.space_dump_all_sexpr(cs2.inner), '\n')]  # terminated
+    end
 end
