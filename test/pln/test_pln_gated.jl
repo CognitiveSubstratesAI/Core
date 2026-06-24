@@ -79,4 +79,32 @@ end
         rs2 = _gscen(gmh, "!(gated-demand-field! G 0.0 True)", "!(assertEqual (is-active x1) True)")
         @test isempty(_gerrs(rs2)); @test length(rs2) == 1
     end
+    # T-ARITY-GATED  the gated inversion/induction/abduction clauses (gated-inv!/ind!/abd!) had ZERO
+    # coverage. At tau=0 the gate never halts, so gated demand == plain — cross-check vs the
+    # factor-demand-* oracle (catches a premise-slot transposition in the hand-copied gated clauses).
+    @testset "T-ARITY-GATED inversion/induction/abduction clauses + real-tau gate decision" begin
+        ginv = "(message iA (stv 0.6 0.7)) (message iB (stv 0.8 0.7)) (message iBA (stv 0.9 0.7)) (factor fi inversion (premises iA iB iBA) (conclusion GI)) (produces GI fi)"
+        rs = _gscen(ginv, "!(gated-demand-field! GI 0.0 True)",
+            "!(assertEqual (match &self (dem iA \$d) \$d) (dt-1 (factor-demand-triple GI 1.0)))\n" *
+            "!(assertEqual (match &self (dem iBA \$d) \$d) (dt-3 (factor-demand-triple GI 1.0)))\n" *
+            "!(assertEqual (is-active iB) True)")
+        @test isempty(_gerrs(rs)); @test length(rs) == 3
+        gind = "(message uA (stv 0.7 0.7)) (message uB (stv 0.6 0.7)) (message uC (stv 0.5 0.7)) (message uBA (stv 0.8 0.7)) (message uBC (stv 0.75 0.7)) (factor fu induction (premises uA uB uC uBA uBC) (conclusion GU)) (produces GU fu)"
+        rs2 = _gscen(gind, "!(gated-demand-field! GU 0.0 True)",
+            "!(assertEqual (match &self (dem uA \$d) \$d) (dn-1 (factor-demand-induction GU 1.0)))\n" *
+            "!(assertEqual (is-active uBC) True)")
+        @test isempty(_gerrs(rs2)); @test length(rs2) == 2
+        gabd = "(message aA (stv 0.7 0.7)) (message aB (stv 0.6 0.7)) (message aC (stv 0.5 0.7)) (message aAB (stv 0.8 0.7)) (message aCB (stv 0.75 0.7)) (factor fa abduction (premises aA aB aC aAB aCB) (conclusion GA)) (produces GA fa)"
+        rs3 = _gscen(gabd, "!(gated-demand-field! GA 0.0 True)",
+            "!(assertEqual (match &self (dem aA \$d) \$d) 0.0)\n" *
+            "!(assertEqual (match &self (dem aB \$d) \$d) (dn-2 (factor-demand-abduction GA 1.0)))")
+        @test isempty(_gerrs(rs3)); @test length(rs3) == 2
+        # real-tau gate DECISION for a 4-premise rule (was untested): high tau ⇒ premise sub-tau ⇒ halt;
+        # retain=True keeps it active (DC#2), retain=False drops it.
+        gded2 = "(message B (stv 0.8 0.8)) (message C (stv 0.7 0.7)) (message AB (stv 0.9 0.9)) (message BC (stv 0.85 0.85)) (factor fd deduction (premises B C AB BC) (conclusion G)) (produces G fd)"
+        rsr = _gscen(gded2, "!(gated-demand-field! G 0.99 True)", "!(assertEqual (is-active C) True)")
+        @test isempty(_gerrs(rsr)); @test length(rsr) == 1
+        rsd = _gscen(gded2, "!(gated-demand-field! G 0.99 False)", "!(assertEqual (is-active C) False)")
+        @test isempty(_gerrs(rsd)); @test length(rsd) == 1
+    end
 end

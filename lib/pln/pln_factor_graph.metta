@@ -498,7 +498,11 @@
 (= (fm->m2 (fmat $a $b $c)) (m2 $a $b $b $c))
 (= (m2-det (m2 $a $b $c $d)) (- (* $a $d) (* $b $c)))
 (= (m2-tr  (m2 $a $b $c $d)) (+ $a $d))
-(= (m2-inv (m2 $a $b $c $d)) (let $det (- (* $a $d) (* $b $c)) (m2 (/ $d $det) (/ (- 0.0 $b) $det) (/ (- 0.0 $c) $det) (/ $a $det))))
+;; det floored away from 0 (a proper PD Beta-Fisher is non-singular; the floor guards a degenerate
+;; Iin (n→0) from a silent Inf/NaN — the same defensiveness as m2-lammax's discriminant clamp).
+(= (m2-inv (m2 $a $b $c $d))
+   (let* (($d0 (- (* $a $d) (* $b $c))) ($det (if (< (absf $d0) 0.000000000001) 0.000000000001 $d0)))
+     (m2 (/ $d $det) (/ (- 0.0 $b) $det) (/ (- 0.0 $c) $det) (/ $a $det))))
 (= (m2-mul (m2 $a $b $c $d) (m2 $e $f $g $h)) (m2 (+ (* $a $e)(* $b $g)) (+ (* $a $f)(* $b $h)) (+ (* $c $e)(* $d $g)) (+ (* $c $f)(* $d $h))))
 (= (m2-T (m2 $a $b $c $d)) (m2 $a $c $b $d))
 ;; largest (real) eigenvalue of a 2×2: (tr+√(tr²−4det))/2. disc clamped ≥0 (real Fisher M has real
@@ -569,6 +573,8 @@
 ;; (dtv μ n) (§5.2), so a histogram premise plugs straight into the Layer-2/3 DTV machinery —
 ;; "Beta is an efficient projection, not an exact closure" (Remark 4). Exact rule transforms on
 ;; the grid (pushforward/convolution) are the remaining exact-forward piece.
+;; PRECONDITION: weights must be normalized (Σ wⱼ = 1) — hist-mean/hist-var/need-hist assume it and
+;; do not renormalize; a non-normalized vector yields wrong moments with no error.
 (= (neg-wlogw $w) (if (> $w 0.0) (- 0.0 (* $w (log $w))) 0.0))
 (= (hentropy $h) (if (== $h ()) 0.0 (+ (neg-wlogw (car-atom $h)) (hentropy (cdr-atom $h)))))
 (= (need-hist $h) (if (< (size-atom $h) 2) 0.0 (/ (hentropy $h) (log (size-atom $h)))))  ; eq32 ∈[0,1]; K<2 ⇒ certain ⇒ 0 (guards log1=0)
