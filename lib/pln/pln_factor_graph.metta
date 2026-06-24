@@ -243,6 +243,46 @@
      (adjoint5 $dv (sens-abduction (supply $pA) (supply $pB) (supply $pC) (supply $pAB) (supply $pCB))
                (supply $pA) (supply $pB) (supply $pC) (supply $pAB) (supply $pCB))))
 
+;; ═══════════════════════════════════════════════════════════════════════════
+;; §5 DISTRIBUTIONAL TRUTH VALUES — Layer 2 (Beta DTVs in (μ,n) coordinates)
+;; A DTV (dtv μ n) summarises Beta(α,β) with mean μ=α/(α+β), concentration n=α+β.
+;; The §3 demand construction lifts UNCHANGED (§5.5): only `need` and the sensitivity
+;; change. Validated against the §6.2 worked example. SCOPE: heuristic-MP/product rule
+;; (the §6.2 chain) + the STV-recovery limit; other rules apply STV formulas at the
+;; sample level (§5.6) — follow-up. The demand SWEEP is STV-only so far (slice 2).
+;; ═══════════════════════════════════════════════════════════════════════════
+(= (dtv-mu (dtv $mu $n)) $mu)
+(= (dtv-n  (dtv $mu $n)) $n)
+
+;; §5.3 eq31 information need: need_β = 12·μ(1−μ)/(n+1)  (the α,β≥1 regime)
+(= (need-dtv (dtv $mu $n)) (/ (* 12.0 (* $mu (- 1.0 $mu))) (+ $n 1.0)))
+
+;; §5.6 forward heuristic-MP / product map (π_b=0): μ_out=μ1·μ2, concentration moment-
+;; matched from the product variance (eq37-41). beta-ex2 = E[X²] for Beta(μn,(1−μ)n).
+(= (beta-ex2 $mu $n) (/ (* $mu (+ (* $mu $n) 1.0)) (+ $n 1.0)))
+(= (fwd-hmp-dtv (dtv $mu1 $n1) (dtv $mu2 $n2))
+   (let* (($muo (* $mu1 $mu2))
+          ($var (- (* (beta-ex2 $mu1 $n1) (beta-ex2 $mu2 $n2)) (* $muo $muo)))
+          ($no  (- (/ (* $muo (- 1.0 $muo)) $var) 1.0)))
+     (dtv $muo $no)))
+
+;; §5.4 eq35 practical sensitivity (mean-Jacobian ∞-norm): ∂μ_out/∂μ1=μ2, ∂μ_out/∂μ2=μ1
+(= (sens2-hmp-dtv (dtv $mu1 $n1) (dtv $mu2 $n2)) (spair $mu2 $mu1))
+
+;; §5.5 eq36 DTV demand adjoint — identical SHAPE to the STV adjoint, DTV need + sens
+(= (adjoint2-dtv $dv (spair $sA $sB) $pA $pB)
+   (let* (($S (max $sA $sB))
+          ($dA (clampu (* (* $dv (/ $sA $S)) (need-dtv $pA))))
+          ($dB (clampu (* (* $dv (/ $sB $S)) (need-dtv $pB)))))
+     (dpair $dA $dB)))
+
+;; §5.7 STV→Beta embedding (STV recovery as a limit): α=s·nc+1, β=(1−s)·nc+1, nc=k·c/(1−c).
+;; As nc grows, μ→s and need_β→ the STV confidence-shortfall — DTV reduces to STV.
+(= (stv->dtv $s $c $k)
+   (let* (($nc (/ (* $k $c) (- 1.0 $c)))
+          ($al (+ (* $s $nc) 1.0)) ($be (+ (* (- 1.0 $s) $nc) 1.0)) ($n (+ $al $be)))
+     (dtv (/ $al $n) $n)))
+
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand
