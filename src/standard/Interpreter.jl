@@ -567,7 +567,9 @@ function metta_instr(f::Frame, b::Bindings, space)
     if !isempty(ftypes)                                       # TYPED path: type-check, then interpret-function
         out = Tuple{Frame,Bindings}[]; errs = Tuple{Frame,Bindings}[]
         for ft in ftypes
-            te = type_check_errors(atom, ft::Expression, space)
+            # ftypes non-empty ⇒ line-565 guard took the filter branch ⇒ space was non-nothing ⇒ a real
+            # Space. The ::Space narrow is a runtime no-op that lets the checker resolve type_check_errors.
+            te = type_check_errors(atom, ft::Expression, space::Space)
             if !isempty(te); for e in te; append!(errs, finished_result(e, b, f.prev)); end; continue; end
             rt = fn_ret_type(ft::Expression); rt == Sym("Expression") && (rt = UNDEF)
             reduced = freshvar("reduced"); result = freshvar("result")
