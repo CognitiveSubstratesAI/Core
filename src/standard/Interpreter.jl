@@ -559,7 +559,10 @@ function metta_instr(f::Frame, b::Bindings, space)
         return push_nested(_chain(atom, r, _metta(r, typ)), b, f.prev, f.depth + 1)
     end
     op = atom.children[1]; nargs = length(atom.children) - 1
-    ftypes = op isa Var ? Atom[] :
+    # No space ⇒ no type system (bare/minimal eval, e.g. interpret(atom)/bare_eval(atom) with the
+    # space=nothing default): skip the typed-function path entirely (atom_types/type_check_errors
+    # require ::Space). Falls through to the untyped tuple/grounded path below.
+    ftypes = (op isa Var || space === nothing) ? Atom[] :
         filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
     if !isempty(ftypes)                                       # TYPED path: type-check, then interpret-function
         out = Tuple{Frame,Bindings}[]; errs = Tuple{Frame,Bindings}[]
@@ -684,7 +687,8 @@ function metta_call_instr(f::Frame, b::Bindings, space)
         end
     else
         X = freshvar("X")
-        qres = query(space::Space, Expression(Sym("="), atom, X))
+        # No space ⇒ no `=` rule base to query (bare/minimal eval): no rewrites, atom returned as-is.
+        qres = space === nothing ? Bindings[] : query(space::Space, Expression(Sym("="), atom, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
             haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Interpreter.jl :309)
@@ -1045,8 +1049,8 @@ function _bool_binop(name, f)
 end
 const AND = _bool_binop("and", &)
 const OR  = _bool_binop("or", |)
-const NOT = Grounded(Operation("not", xs -> (length(xs) == 1 && _to_bool(xs[1]) !== nothing) ?
-    ExecOk(Atom[_to_bool(xs[1]) ? Sym("False") : Sym("True")]) : ExecNoReduce()))
+const NOT = Grounded(Operation("not", xs -> (length(xs) == 1 && (tb = _to_bool(xs[1])) !== nothing) ?
+    ExecOk(Atom[tb ? Sym("False") : Sym("True")]) : ExecNoReduce()))
 const ID  = Grounded(Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce()))
 
 # if-equal (grounded): then if a==b else else (branches returned UNevaluated)

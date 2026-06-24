@@ -55,7 +55,9 @@ const ISINF_MATH = _math_un_bool("isinf-math", isinf, "isinf-math expects one ar
 
 # pow-math (base power) → Float; a negative or > u32::MAX Integer power is rejected (Rust uses u32 int-pow).
 const POW_MATH = Grounded(Operation("pow-math", function (xs::Vector{Atom})
-    (length(xs) == 2 && (b = _mnum(xs[1])) !== nothing && (p = _mnum(xs[2])) !== nothing) ||
+    length(xs) == 2 || return ExecRuntime("pow-math expects two arguments: number (base) and number (power)")
+    b = _mnum(xs[1]); p = _mnum(xs[2])     # assign unconditionally (not inside the && — keeps locals defined)
+    (b === nothing || p === nothing) &&
         return ExecRuntime("pow-math expects two arguments: number (base) and number (power)")
     (p isa Integer && (p < 0 || p > typemax(UInt32))) &&
         return ExecRuntime("power argument is too big, try using float value")
@@ -63,7 +65,9 @@ const POW_MATH = Grounded(Operation("pow-math", function (xs::Vector{Atom})
 end))
 # log-math (base input) → Float; log_base(input) = log(input)/log(base)
 const LOG_MATH = Grounded(Operation("log-math", function (xs::Vector{Atom})
-    (length(xs) == 2 && (base = _mnum(xs[1])) !== nothing && (input = _mnum(xs[2])) !== nothing) ||
+    length(xs) == 2 || return ExecRuntime("log-math expects two arguments: base (number) and input value (number)")
+    base = _mnum(xs[1]); input = _mnum(xs[2])
+    (base === nothing || input === nothing) &&
         return ExecRuntime("log-math expects two arguments: base (number) and input value (number)")
     r = try log(Float64(base), Float64(input)) catch e; e isa DomainError ? NaN : rethrow() end
     ExecOk(Atom[Grounded(r)])
