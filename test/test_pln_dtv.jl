@@ -115,3 +115,32 @@ end
     rs2 = load_metta!(sp2, "!(assertEqual (> (match &self (dem x1 \$d) \$d) 0.0) True)")
     @test isempty(_derrs(rs2))
 end
+
+@testset "§5.6 DTV term-logic — inversion/induction/abduction/negation sweeps" begin
+    function _dscen(graph, query, asserts)
+        sp = Space(); load_core_stdlib!(sp)
+        load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+        load_metta!(sp, graph); load_metta!(sp, "!(compute-demand-field-dtv! $query)")
+        load_metta!(sp, asserts)
+    end
+    @testset "inversion (3-premise) demand reaches premises" begin
+        rs = _dscen("(message iA (dtv 0.7 8.0)) (message iB (dtv 0.6 8.0)) (message iBA (dtv 0.8 8.0)) (factor fi inversion (premises iA iB iBA) (conclusion GI)) (produces GI fi)",
+            "GI", "!(assertEqual (> (match &self (dem iA \$d) \$d) 0.0) True)\n!(assertEqual (> (match &self (dem iBA \$d) \$d) 0.0) True)")
+        @test isempty(_derrs(rs)); @test length(rs) == 2
+    end
+    @testset "induction (5-premise) demand reaches premises" begin
+        rs = _dscen("(message uA (dtv 0.7 8.0)) (message uB (dtv 0.6 8.0)) (message uC (dtv 0.5 8.0)) (message uBA (dtv 0.8 8.0)) (message uBC (dtv 0.75 8.0)) (factor fu induction (premises uA uB uC uBA uBC) (conclusion GU)) (produces GU fu)",
+            "GU", "!(assertEqual (> (match &self (dem uC \$d) \$d) 0.0) True)")
+        @test isempty(_derrs(rs))
+    end
+    @testset "abduction (5-premise) — sens_A=0 ⇒ dem aA=0, others propagate" begin
+        rs = _dscen("(message aA (dtv 0.7 8.0)) (message aB (dtv 0.6 8.0)) (message aC (dtv 0.5 8.0)) (message aAB (dtv 0.8 8.0)) (message aCB (dtv 0.75 8.0)) (factor fa abduction (premises aA aB aC aAB aCB) (conclusion GA)) (produces GA fa)",
+            "GA", "!(assertEqual (match &self (dem aA \$d) \$d) 0.0)\n!(assertEqual (> (match &self (dem aB \$d) \$d) 0.0) True)")
+        @test isempty(_derrs(rs)); @test length(rs) == 2
+    end
+    @testset "negation (1-premise) demand reaches premise" begin
+        rs = _dscen("(message np (dtv 0.4 8.0)) (factor fn negation (premises np) (conclusion GN)) (produces GN fn)",
+            "GN", "!(assertEqual (> (match &self (dem np \$d) \$d) 0.0) True)")
+        @test isempty(_derrs(rs))
+    end
+end
