@@ -526,6 +526,23 @@
           ($J (jac1 $a1 $b1 $a2 $b2)))
      (vscale (* $dv (need-dtv (dtv $m1 $n1))) (vmul (m2-T $J) $gout))))
 
+;; ── §5.1 / §5.3 HISTOGRAM DTV — the exact finite representation (vs the Beta projection) ──
+;; A histogram is an expression of K bin-weights (w1 … wK) on a uniform [0,1] grid; bin center
+;; = (k−0.5)/K. need = normalized Shannon entropy (§5.3 eq32). hist->dtv moment-matches to a Beta
+;; (dtv μ n) (§5.2), so a histogram premise plugs straight into the Layer-2/3 DTV machinery —
+;; "Beta is an efficient projection, not an exact closure" (Remark 4). Exact rule transforms on
+;; the grid (pushforward/convolution) are the remaining exact-forward piece.
+(= (neg-wlogw $w) (if (> $w 0.0) (- 0.0 (* $w (log $w))) 0.0))
+(= (hentropy $h) (if (== $h ()) 0.0 (+ (neg-wlogw (car-atom $h)) (hentropy (cdr-atom $h)))))
+(= (need-hist $h) (/ (hentropy $h) (log (size-atom $h))))         ; eq32, always in [0,1]
+;; moments over bin centers (i = 1-based bin index, K = nbins)
+(= (hmean-go $h $i $K) (if (== $h ()) 0.0 (+ (* (/ (- $i 0.5) $K) (car-atom $h)) (hmean-go (cdr-atom $h) (+ $i 1.0) $K))))
+(= (hex2-go  $h $i $K) (if (== $h ()) 0.0 (let $c (/ (- $i 0.5) $K) (+ (* (* $c $c) (car-atom $h)) (hex2-go (cdr-atom $h) (+ $i 1.0) $K)))))
+(= (hist-mean $h) (hmean-go $h 1.0 (size-atom $h)))
+(= (hist-var  $h) (let $m (hist-mean $h) (- (hex2-go $h 1.0 (size-atom $h)) (* $m $m))))
+;; §5.2 histogram → Beta DTV projection (moment match): n = μ(1−μ)/Var − 1
+(= (hist->dtv $h) (let* (($m (hist-mean $h)) ($v (hist-var $h))) (dtv $m (- (/ (* $m (- 1.0 $m)) $v) 1.0))))
+
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand
