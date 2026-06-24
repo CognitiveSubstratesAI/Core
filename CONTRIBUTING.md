@@ -43,5 +43,12 @@ run_metta("!(+ 2 3)", space)
 ## Code style
 
 - Cognitive logic belongs in MeTTa (`lib/`, `stdlib/`); Julia is the hardware-primitive layer.
-- MeTTa functions: type + one-line description + `;; (name args) → result` example +
+- MeTTa functions: one-line description + `;; (name args) → result` example +
   head-destructured clauses + an immediate test.
+- **Type declarations are tier-dependent.** MeTTa is gradually typed (declarations optional;
+  no auto-checking pass). Fully type the *stdlib / grounded-op* tier (`src/standard/stdlib.metta`);
+  keep *domain-algorithm libraries* (`lib/**`, e.g. PLN/ECAN/quantale) **bare** — bare symbolic
+  constructors, reuse built-in types (`Number`/`Bool`/`Atom`/`Expression`), and **no custom
+  `(: X Type)`** unless the algorithm is *about* types (GADT/dependent dispatch). Over-typing a
+  domain lib is non-idiomatic (verified against the MeTTa spec + hyperon-experimental + CeTTa).
+  See [MeTTa Typing Conventions](docs/src/typing-conventions.md).

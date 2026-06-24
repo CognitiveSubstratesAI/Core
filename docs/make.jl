@@ -28,6 +28,7 @@ makedocs(;
             "MORK-Native Miner" => "pattern_mining/mork_miner.md",
         ],
         "Dialect gaps (porting PeTTa-targeted algorithms)" => "dialect-gaps.md",
+        "MeTTa Typing Conventions" => "typing-conventions.md",
         "API Reference" => "api.md",
     ],
     warnonly=true
