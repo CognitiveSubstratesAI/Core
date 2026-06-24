@@ -81,3 +81,37 @@ end
     rs3 = load_metta!(sp2, "!(assertEqual (size-atom (collapse (match &self (dem S \$d) \$d))) 1)")
     @test isempty(_derrs(rs3))
 end
+
+@testset "§5.6 DTV term-logic — deduction sweep (forward-μ + threading + multi-hop)" begin
+    sp = Space(); load_core_stdlib!(sp)
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    # forward μ = STV deduction strength on means (independently the chaining-repo formula)
+    rs0 = load_metta!(sp, "!(assertEqual (fwd-mu-ded 0.8 0.7 0.9 0.85) 0.7749999999999999)")
+    @test isempty(_derrs(rs0))
+
+    # single-hop deduction demand sweep + internal consistency vs demand-quad-dtv
+    load_metta!(sp, """
+    (message B (dtv 0.8 8.0)) (message C (dtv 0.7 8.0)) (message AB (dtv 0.9 8.0)) (message BC (dtv 0.85 8.0))
+    (factor fd deduction (premises B C AB BC) (conclusion G)) (produces G fd)
+    """)
+    load_metta!(sp, "!(compute-demand-field-dtv! G)")
+    rs = load_metta!(sp, """
+    !(assertEqual (match &self (dem B \$d) \$d)
+                  (dq-1 (demand-quad-dtv 1.0 (sens-ded-dtv 0.8 0.7 0.9 0.85) (dtv 0.8 8.0)(dtv 0.7 8.0)(dtv 0.9 8.0)(dtv 0.85 8.0))))
+    !(assertEqual (> (match &self (dem BC \$d) \$d) 0.0) True)
+    """)
+    @test isempty(_derrs(rs)); @test length(rs) == 2
+
+    # multi-hop: deduction premise B produced by hmp → demand recurses past deduction to x1
+    sp2 = Space(); load_core_stdlib!(sp2)
+    load_metta!(sp2, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp2, """
+    (message C (dtv 0.7 8.0)) (message AB (dtv 0.9 8.0)) (message BC (dtv 0.85 8.0))
+    (message x1 (dtv 0.9 8.0)) (message x2 (dtv 0.8 8.0))
+    (factor fd deduction (premises B C AB BC) (conclusion G)) (factor fb hmp (premises x1 x2) (conclusion B))
+    (produces G fd) (produces B fb)
+    """)
+    load_metta!(sp2, "!(compute-demand-field-dtv! G)")
+    rs2 = load_metta!(sp2, "!(assertEqual (> (match &self (dem x1 \$d) \$d) 0.0) True)")
+    @test isempty(_derrs(rs2))
+end

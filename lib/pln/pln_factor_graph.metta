@@ -283,32 +283,79 @@
           ($al (+ (* $s $nc) 1.0)) ($be (+ (* (- 1.0 $s) $nc) 1.0)) ($n (+ $al $be)))
      (dtv (/ $al $n) $n)))
 
-;; ── DTV demand sweep (hmp scope) ──────────────────────────────────────────────
-;; The DTV analogue of compute-demand-field!: forward DTV marginals via `supply-dtv`,
-;; backward demand via `adjoint2-dtv`. Demand values are scalars, so it REUSES dem-join!/
-;; dem-cur/dp-1/dp-2 — max-join (DAG support) carries over for free. Messages are
-;; (message N (dtv μ n)). NOTE: like the STV sweep it threads FORWARD marginals, so the
-;; materialised field differs from §6.2's prior-marginal hand-computation at intermediates;
-;; validated by internal consistency + the §5.7 STV-recovery cross-check. SCOPE: hmp rule.
+;; ── §5.6 DTV term-logic rules: STV strength formulas at the sample (mean) level ──
+;; forward μ = STV strength on means; sensitivity = strength partials (mean-Jacobian, capped);
+;; forward concentration n via delta-method (Var_out = Σ (∂μ/∂μ_i)²·var_i). Deduction shown;
+;; inversion/induction/abduction follow the identical pattern (reuse fwd-*/sens-* strength parts).
+(= (stv-s (stv $s $c)) $s)
+(= (beta-var (dtv $mu $n)) (/ (* $mu (- 1.0 $mu)) (+ $n 1.0)))   ; Var of a Beta mean
+(= (fwd-mu-ded $mB $mC $mAB $mBC) (stv-s (fwd-deduction (stv $mB 1.0) (stv $mC 1.0) (stv $mAB 1.0) (stv $mBC 1.0))))
+(= (sens-ded-dtv $mB $mC $mAB $mBC)
+   (let $p (ded-partials $mB $mC $mAB $mBC)
+     (quad (cap-sens (dp-dB $p)) (cap-sens (dp-dC $p)) (cap-sens (dp-dAB $p)) (cap-sens (dp-dBC $p)))))
+(= (fwd-deduction-dtv (dtv $mB $nB) (dtv $mC $nC) (dtv $mAB $nAB) (dtv $mBC $nBC))
+   (let* (($mo (fwd-mu-ded $mB $mC $mAB $mBC)) ($p (ded-partials $mB $mC $mAB $mBC))
+          ($sB (cap-sens (dp-dB $p))) ($sC (cap-sens (dp-dC $p))) ($sAB (cap-sens (dp-dAB $p))) ($sBC (cap-sens (dp-dBC $p)))
+          ($var (+ (+ (* (* $sB $sB) (beta-var (dtv $mB $nB))) (* (* $sC $sC) (beta-var (dtv $mC $nC))))
+                   (+ (* (* $sAB $sAB) (beta-var (dtv $mAB $nAB))) (* (* $sBC $sBC) (beta-var (dtv $mBC $nBC))))))
+          ($no (- (/ (* $mo (- 1.0 $mo)) $var) 1.0)))
+     (dtv $mo $no)))
+;; DTV demand for a 4-premise (deduction) factor: Ψ_i = clip(dv·sens_i/S·need-dtv(p_i))
+(= (demand-quad-dtv $dv (quad $sB $sC $sAB $sBC) $pB $pC $pAB $pBC)
+   (let* (($S (max (max $sB $sC) (max $sAB $sBC)))
+          ($dB (clampu (* (* $dv (/ $sB $S)) (need-dtv $pB)))) ($dC (clampu (* (* $dv (/ $sC $S)) (need-dtv $pC))))
+          ($dAB (clampu (* (* $dv (/ $sAB $S)) (need-dtv $pAB)))) ($dBC (clampu (* (* $dv (/ $sBC $S)) (need-dtv $pBC)))))
+     (dquad $dB $dC $dAB $dBC)))
+
+;; ── DTV demand sweep (arity dispatch: hmp + deduction) ────────────────────────
+;; Forward DTV marginals via supply-dtv, backward demand via the DTV adjoints. Demand values
+;; are scalars → REUSES dem-join!/dem-cur/dp-/dq- (max-join DAG support carries over). Messages
+;; are (message N (dtv μ n)). Like the STV sweep it threads FORWARD marginals, so the field
+;; differs from §6.2's prior-marginal hand-computation at intermediates; validated by internal
+;; consistency + §5.7 STV-recovery. SCOPE: hmp + deduction (others = same dispatch pattern).
 (= (supply-dtv $n)
    (if (== (collapse (match &self (message $n $s) $s)) ())
        (supply-dtv-via-factor $n)
        (match &self (message $n $s) $s)))
 (= (supply-dtv-via-factor $n)
-   (let* (($f  (match &self (produces $n $ff) $ff))
-          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $a))
+   (let* (($f (match &self (produces $n $ff) $ff))
+          ($rule (match &self (factor $f $rr $prem (conclusion $n)) $rr)))
+     (supply-dtv-rule $n $f $rule)))
+(= (supply-dtv-rule $n $f hmp)
+   (let* (($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $a))
           ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $b)))
      (fwd-hmp-dtv (supply-dtv $p1) (supply-dtv $p2))))
+(= (supply-dtv-rule $n $f deduction)
+   (let* (($pB (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $n)) $b))
+          ($pC (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $n)) $c))
+          ($pAB (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $n)) $ab))
+          ($pBC (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $n)) $bc)))
+     (fwd-deduction-dtv (supply-dtv $pB) (supply-dtv $pC) (supply-dtv $pAB) (supply-dtv $pBC))))
 
 (= (compute-demand-field-dtv! $query) (let $seed (dem-join! $query 1.0) (propagate-dtv! $query)))
 (= (propagate-dtv! $node)
    (let* (($dv (car-atom (dem-cur $node)))
-          ($f  (match &self (produces $node $ff) $ff))
-          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $a))
+          ($f (match &self (produces $node $ff) $ff))
+          ($rule (match &self (factor $f $rr $prem (conclusion $node)) $rr)))
+     (propagate-dtv-rule! $node $f $rule $dv)))
+(= (propagate-dtv-rule! $node $f hmp $dv)
+   (let* (($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $a))
           ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $b))
           ($pair (adjoint2-dtv $dv (sens2-hmp-dtv (supply-dtv $p1) (supply-dtv $p2)) (supply-dtv $p1) (supply-dtv $p2)))
           ($c1 (dem-join! $p1 (dp-1 $pair))) ($c2 (dem-join! $p2 (dp-2 $pair))))
      (let $r1 (recurse-dtv! $p1 $c1) (recurse-dtv! $p2 $c2))))
+(= (propagate-dtv-rule! $node $f deduction $dv)
+   (let* (($pB (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $b))
+          ($pC (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $c))
+          ($pAB (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $ab))
+          ($pBC (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $bc))
+          ($sB (supply-dtv $pB)) ($sC (supply-dtv $pC)) ($sAB (supply-dtv $pAB)) ($sBC (supply-dtv $pBC))
+          ($s (sens-ded-dtv (dtv-mu $sB) (dtv-mu $sC) (dtv-mu $sAB) (dtv-mu $sBC)))
+          ($q (demand-quad-dtv $dv $s $sB $sC $sAB $sBC))
+          ($cB (dem-join! $pB (dq-1 $q))) ($cC (dem-join! $pC (dq-2 $q)))
+          ($cAB (dem-join! $pAB (dq-3 $q))) ($cBC (dem-join! $pBC (dq-4 $q))))
+     (let* (($r1 (recurse-dtv! $pB $cB)) ($r2 (recurse-dtv! $pC $cC)) ($r3 (recurse-dtv! $pAB $cAB)))
+       (recurse-dtv! $pBC $cBC))))
 (= (recurse-dtv! $node $changed)
    (if $changed (if (== (collapse (match &self (produces $node $f) $f)) ()) () (propagate-dtv! $node)) ()))
 
