@@ -15,6 +15,9 @@
 ;;   (produces <conclusion> <factor>)                             ; INVERTED index — conclusion
 ;;                                                                ; FIRST so `(produces X $f)`
 ;;                                                                ; is a prefix-cheap lookup.
+;; ASSUMPTION: exactly ONE producing factor per conclusion. The sweeps match `(produces $node $f)`
+;; in template position, so >1 producer for one conclusion fans out nondeterministically and would
+;; double-count demand — not currently guarded (every factor graph here is single-producer).
 ;; ═══════════════════════════════════════════════════════════════════════════
 
 ;; §3.4 HMP forward map (product strength, product confidence, pi_b=0):
@@ -134,7 +137,10 @@
         (quad (conf (supply $pB)) (conf (supply $pC)) (conf (supply $pAB)) (conf (supply $pBC))))))
 
 ;; ── rows-only rules: forward maps + inversion (3-premise) demand + negation (1-premise) demand ──
-;; Forward maps (§3.4, singular at sA→0 / sB→1; the demand sensitivities cap these — see cap-sens).
+;; Forward maps (§3.4). NOTE: the forward maps are GENUINELY SINGULAR at sA→0 / sB→1 and return
+;; ±Inf/NaN there (the true math value) — only the DEMAND sensitivities are capped (cap-sens), NOT
+;; the forward maps. The §6 worked examples are strictly interior so this never fires; callers that
+;; may feed boundary strengths should pre-clamp.
 (= (fwd-inversion (stv $sA $cA) (stv $sB $cB) (stv $sBA $cBA))                    ; eq 6/12
    (stv (/ (* $sBA $sB) $sA) (* (* $cA $cB) $cBA)))
 (= (fwd-deduction (stv $sB $cB) (stv $sC $cC) (stv $sAB $cAB) (stv $sBC $cBC))    ; eq 6/7
@@ -495,8 +501,10 @@
 (= (m2-inv (m2 $a $b $c $d)) (let $det (- (* $a $d) (* $b $c)) (m2 (/ $d $det) (/ (- 0.0 $b) $det) (/ (- 0.0 $c) $det) (/ $a $det))))
 (= (m2-mul (m2 $a $b $c $d) (m2 $e $f $g $h)) (m2 (+ (* $a $e)(* $b $g)) (+ (* $a $f)(* $b $h)) (+ (* $c $e)(* $d $g)) (+ (* $c $f)(* $d $h))))
 (= (m2-T (m2 $a $b $c $d)) (m2 $a $c $b $d))
-;; largest (real) eigenvalue of a 2×2: (tr+√(tr²−4det))/2
-(= (m2-lammax $M) (let* (($t (m2-tr $M)) ($dt (m2-det $M))) (/ (+ $t (sqrt (- (* $t $t) (* 4.0 $dt)))) 2.0)))
+;; largest (real) eigenvalue of a 2×2: (tr+√(tr²−4det))/2. disc clamped ≥0 (real Fisher M has real
+;; spectrum; the clamp only guards pathological non-PSD inputs from a sqrt DomainError).
+(= (m2-lammax $M) (let* (($t (m2-tr $M)) ($dt (m2-det $M)) ($disc (- (* $t $t) (* 4.0 $dt))))
+   (/ (+ $t (sqrt (if (< $disc 0.0) 0.0 $disc))) 2.0)))
 
 ;; product forward in (α,β) (reuse the Layer-2 (μ,n) map); numerical natural-param Jacobian J1.
 (= (prod-ab $a1 $b1 $a2 $b2)
@@ -563,14 +571,17 @@
 ;; the grid (pushforward/convolution) are the remaining exact-forward piece.
 (= (neg-wlogw $w) (if (> $w 0.0) (- 0.0 (* $w (log $w))) 0.0))
 (= (hentropy $h) (if (== $h ()) 0.0 (+ (neg-wlogw (car-atom $h)) (hentropy (cdr-atom $h)))))
-(= (need-hist $h) (/ (hentropy $h) (log (size-atom $h))))         ; eq32, always in [0,1]
+(= (need-hist $h) (if (< (size-atom $h) 2) 0.0 (/ (hentropy $h) (log (size-atom $h)))))  ; eq32 ∈[0,1]; K<2 ⇒ certain ⇒ 0 (guards log1=0)
 ;; moments over bin centers (i = 1-based bin index, K = nbins)
 (= (hmean-go $h $i $K) (if (== $h ()) 0.0 (+ (* (/ (- $i 0.5) $K) (car-atom $h)) (hmean-go (cdr-atom $h) (+ $i 1.0) $K))))
 (= (hex2-go  $h $i $K) (if (== $h ()) 0.0 (let $c (/ (- $i 0.5) $K) (+ (* (* $c $c) (car-atom $h)) (hex2-go (cdr-atom $h) (+ $i 1.0) $K)))))
 (= (hist-mean $h) (hmean-go $h 1.0 (size-atom $h)))
 (= (hist-var  $h) (let $m (hist-mean $h) (- (hex2-go $h 1.0 (size-atom $h)) (* $m $m))))
-;; §5.2 histogram → Beta DTV projection (moment match): n = μ(1−μ)/Var − 1
-(= (hist->dtv $h) (let* (($m (hist-mean $h)) ($v (hist-var $h))) (dtv $m (- (/ (* $m (- 1.0 $m)) $v) 1.0))))
+;; §5.2 histogram → Beta DTV projection (moment match): n = μ(1−μ)/Var − 1. Var→0 (near point-mass)
+;; ⇒ clamp to a high-concentration Beta instead of Inf.
+(= (hist->dtv $h)
+   (let* (($m (hist-mean $h)) ($v (hist-var $h)))
+     (if (< $v 0.000001) (dtv $m 1000000.0) (dtv $m (- (/ (* $m (- 1.0 $m)) $v) 1.0)))))
 
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),

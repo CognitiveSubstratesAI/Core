@@ -27,4 +27,11 @@ _herrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[
     !(assertEqual (> (need-dtv (hist->dtv (0.1 0.2 0.4 0.3))) 0.0) True)
     """)
     @test isempty(_herrs(rs)); @test length(rs) == 7
+
+    # degenerate / guarded boundaries (previously NaN/Inf — fixed by the size<2 and Var→0 guards)
+    rs2 = load_metta!(sp, """
+    !(assertEqual (need-hist (1.0)) 0.0)
+    !(assertEqual (hist->dtv (1.0)) (dtv 0.5 1000000.0))
+    """)
+    @test isempty(_herrs(rs2)); @test length(rs2) == 2
 end
