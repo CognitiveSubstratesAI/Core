@@ -254,6 +254,12 @@
 ;; still need the §4.3 ε_d tolerance + λ_d damping; not handled here.)
 (= (dp-1 (dpair $a $b)) $a)
 (= (dp-2 (dpair $a $b)) $b)
+;; demand-tuple accessors (role order matches each factor-demand-* premise order):
+;; triple=inversion[A B BA], quad=deduction[B C AB BC], quint=ind[A B C BA BC]/abd[A B C AB CB], single=negation.
+(= (dt-1 (dtriple $a $b $c)) $a) (= (dt-2 (dtriple $a $b $c)) $b) (= (dt-3 (dtriple $a $b $c)) $c)
+(= (dq-1 (dquad $a $b $c $d)) $a) (= (dq-2 (dquad $a $b $c $d)) $b) (= (dq-3 (dquad $a $b $c $d)) $c) (= (dq-4 (dquad $a $b $c $d)) $d)
+(= (dn-1 (dquint $a $b $c $d $e)) $a) (= (dn-2 (dquint $a $b $c $d $e)) $b) (= (dn-3 (dquint $a $b $c $d $e)) $c) (= (dn-4 (dquint $a $b $c $d $e)) $d) (= (dn-5 (dquint $a $b $c $d $e)) $e)
+(= (ds-1 (dsingle $a)) $a)
 
 ;; current demand for a node (single value, post-upsert), or () if unset.
 (= (dem-cur $node) (collapse (match &self (dem $node $d) $d)))
@@ -273,18 +279,89 @@
 (= (compute-demand-field! $query)
    (let $seed (dem-join! $query 1.0) (propagate! $query)))
 
+;; ARITY-COMPLETE dispatch: read the producing factor's rule (arity-agnostic match — $prem
+;; binds the whole (premises …) sub-expr), then thread demand through ALL 8 rule families,
+;; not just the 2-premise ones. Each arity reuses its tested `factor-demand-*` function.
 (= (propagate! $node)
    (let* (($dv   (car-atom (dem-cur $node)))            ; node's current (possibly max-joined) demand
           ($f    (match &self (produces $node $ff) $ff))     ; conclusion-first: prefix-cheap, binds $f
-          ($rule (match &self (factor $f $r (premises $a $b) (conclusion $node)) $r))
+          ($rule (match &self (factor $f $rr $prem (conclusion $node)) $rr)))  ; rule symbol, any arity
+     (propagate-rule! $node $f $rule $dv)))
+
+(= (propagate-rule! $node $f hmp $dv)         (propagate-2! $node $f $dv))
+(= (propagate-rule! $node $f conjunction $dv) (propagate-2! $node $f $dv))
+(= (propagate-rule! $node $f disjunction $dv) (propagate-2! $node $f $dv))
+(= (propagate-rule! $node $f negation $dv)    (propagate-neg! $node $f $dv))
+(= (propagate-rule! $node $f inversion $dv)   (propagate-inv! $node $f $dv))
+(= (propagate-rule! $node $f deduction $dv)   (propagate-ded! $node $f $dv))
+(= (propagate-rule! $node $f induction $dv)   (propagate-ind! $node $f $dv))
+(= (propagate-rule! $node $f abduction $dv)   (propagate-abd! $node $f $dv))
+
+;; 2-premise (hmp / conjunction / disjunction)
+(= (propagate-2! $node $f $dv)
+   (let* (($rule (match &self (factor $f $r (premises $a $b) (conclusion $node)) $r))
           ($p1   (match &self (factor $f $r (premises $a $b) (conclusion $node)) $a))
           ($p2   (match &self (factor $f $r (premises $a $b) (conclusion $node)) $b))
           ($pair (adjoint2 $dv (apply-sens2 $rule (supply $p1) (supply $p2)) (supply $p1) (supply $p2)))
-          ($d1 (dp-1 $pair))                              ; bind REDUCED before upsert
-          ($d2 (dp-2 $pair))
-          ($c1 (dem-join! $p1 $d1))                       ; True iff p1's demand increased (max-join)
-          ($c2 (dem-join! $p2 $d2)))
+          ($c1 (dem-join! $p1 (dp-1 $pair))) ($c2 (dem-join! $p2 (dp-2 $pair))))
      (let $r1 (recurse-if-increased! $p1 $c1) (recurse-if-increased! $p2 $c2))))
+
+;; 1-premise (negation)
+(= (propagate-neg! $node $f $dv)
+   (let* (($p (match &self (factor $f negation (premises $a) (conclusion $node)) $a))
+          ($c (dem-join! $p (ds-1 (factor-demand-single $node $dv)))))
+     (recurse-if-increased! $p $c)))
+
+;; 3-premise (inversion: A B BA)
+(= (propagate-inv! $node $f $dv)
+   (let* (($t  (factor-demand-triple $node $dv))
+          ($pA  (match &self (factor $f inversion (premises $a $b $ba) (conclusion $node)) $a))
+          ($pB  (match &self (factor $f inversion (premises $a $b $ba) (conclusion $node)) $b))
+          ($pBA (match &self (factor $f inversion (premises $a $b $ba) (conclusion $node)) $ba))
+          ($cA (dem-join! $pA (dt-1 $t))) ($cB (dem-join! $pB (dt-2 $t))) ($cBA (dem-join! $pBA (dt-3 $t))))
+     (let* (($r1 (recurse-if-increased! $pA $cA)) ($r2 (recurse-if-increased! $pB $cB)))
+       (recurse-if-increased! $pBA $cBA))))
+
+;; 4-premise (deduction: B C AB BC)
+(= (propagate-ded! $node $f $dv)
+   (let* (($q (factor-demand-quad $node $dv))
+          ($pB  (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $b))
+          ($pC  (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $c))
+          ($pAB (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $ab))
+          ($pBC (match &self (factor $f deduction (premises $b $c $ab $bc) (conclusion $node)) $bc))
+          ($cB (dem-join! $pB (dq-1 $q))) ($cC (dem-join! $pC (dq-2 $q)))
+          ($cAB (dem-join! $pAB (dq-3 $q))) ($cBC (dem-join! $pBC (dq-4 $q))))
+     (let* (($r1 (recurse-if-increased! $pB $cB)) ($r2 (recurse-if-increased! $pC $cC))
+            ($r3 (recurse-if-increased! $pAB $cAB)))
+       (recurse-if-increased! $pBC $cBC))))
+
+;; 5-premise (induction: A B C BA BC)
+(= (propagate-ind! $node $f $dv)
+   (let* (($q (factor-demand-induction $node $dv))
+          ($pA  (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $node)) $a))
+          ($pB  (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $node)) $b))
+          ($pC  (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $node)) $c))
+          ($pBA (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $node)) $ba))
+          ($pBC (match &self (factor $f induction (premises $a $b $c $ba $bc) (conclusion $node)) $bc))
+          ($cA (dem-join! $pA (dn-1 $q))) ($cB (dem-join! $pB (dn-2 $q))) ($cC (dem-join! $pC (dn-3 $q)))
+          ($cBA (dem-join! $pBA (dn-4 $q))) ($cBC (dem-join! $pBC (dn-5 $q))))
+     (let* (($r1 (recurse-if-increased! $pA $cA)) ($r2 (recurse-if-increased! $pB $cB))
+            ($r3 (recurse-if-increased! $pC $cC)) ($r4 (recurse-if-increased! $pBA $cBA)))
+       (recurse-if-increased! $pBC $cBC))))
+
+;; 5-premise (abduction: A B C AB CB); sens_A = 0 ⇒ dem A is exactly 0
+(= (propagate-abd! $node $f $dv)
+   (let* (($q (factor-demand-abduction $node $dv))
+          ($pA  (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $node)) $a))
+          ($pB  (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $node)) $b))
+          ($pC  (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $node)) $c))
+          ($pAB (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $node)) $ab))
+          ($pCB (match &self (factor $f abduction (premises $a $b $c $ab $cb) (conclusion $node)) $cb))
+          ($cA (dem-join! $pA (dn-1 $q))) ($cB (dem-join! $pB (dn-2 $q))) ($cC (dem-join! $pC (dn-3 $q)))
+          ($cAB (dem-join! $pAB (dn-4 $q))) ($cCB (dem-join! $pCB (dn-5 $q))))
+     (let* (($r1 (recurse-if-increased! $pA $cA)) ($r2 (recurse-if-increased! $pB $cB))
+            ($r3 (recurse-if-increased! $pC $cC)) ($r4 (recurse-if-increased! $pAB $cAB)))
+       (recurse-if-increased! $pCB $cCB))))
 
 ;; recurse past a premise iff its demand increased on this visit AND it has producers.
 (= (recurse-if-increased! $node $changed)
