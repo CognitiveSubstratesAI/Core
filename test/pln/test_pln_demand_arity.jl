@@ -18,7 +18,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 _aerrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 function _ascen(graph, query, asserts)
     sp = Space(); load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
     load_metta!(sp, graph)
     load_metta!(sp, "!(compute-demand-field! $query)")
     load_metta!(sp, asserts)

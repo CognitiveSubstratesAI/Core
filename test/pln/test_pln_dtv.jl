@@ -19,7 +19,7 @@ _derrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[
 
 @testset "§5 Layer-2 DTV — Beta truth values vs §6.2 worked example" begin
     sp = Space(); load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     rs = load_metta!(sp, """
     ;; §5.3 need (eq31) — all four match §6.2
@@ -50,7 +50,7 @@ end
 
 @testset "§5 DTV demand sweep — supply + threading + DAG (vs §6.2 forward + internal consistency)" begin
     sp = Space(); load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
     load_metta!(sp, """
     (message A (dtv 0.9047619047619048 21.0)) (message AB (dtv 0.8 10.0)) (message BC (dtv 0.8823529411764706 17.0))
     (factor f1 hmp (premises A AB) (conclusion B)) (factor f2 hmp (premises B BC) (conclusion C))
@@ -71,7 +71,7 @@ end
 
     # DAG diamond: max-join reuse — exactly one (dem S _) atom, sweep terminates
     sp2 = Space(); load_core_stdlib!(sp2)
-    load_metta!(sp2, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp2, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
     load_metta!(sp2, """
     (message S (dtv 0.6 5.0)) (message X (dtv 0.8 5.0)) (message Y (dtv 0.7 5.0))
     (factor f1 hmp (premises S X) (conclusion P)) (factor f2 hmp (premises S Y) (conclusion Q)) (factor f0 hmp (premises P Q) (conclusion C))
@@ -84,7 +84,7 @@ end
 
 @testset "§5.6 DTV term-logic — deduction sweep (forward-μ + threading + multi-hop)" begin
     sp = Space(); load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
     # forward μ = STV deduction strength on means (independently the chaining-repo formula)
     rs0 = load_metta!(sp, "!(assertEqual (fwd-mu-ded 0.8 0.7 0.9 0.85) 0.7749999999999999)")
     @test isempty(_derrs(rs0))
@@ -104,7 +104,7 @@ end
 
     # multi-hop: deduction premise B produced by hmp → demand recurses past deduction to x1
     sp2 = Space(); load_core_stdlib!(sp2)
-    load_metta!(sp2, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp2, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
     load_metta!(sp2, """
     (message C (dtv 0.7 8.0)) (message AB (dtv 0.9 8.0)) (message BC (dtv 0.85 8.0))
     (message x1 (dtv 0.9 8.0)) (message x2 (dtv 0.8 8.0))
@@ -119,7 +119,7 @@ end
 @testset "§5.6 DTV term-logic — inversion/induction/abduction/negation sweeps" begin
     function _dscen(graph, query, asserts)
         sp = Space(); load_core_stdlib!(sp)
-        load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+        load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
         load_metta!(sp, graph); load_metta!(sp, "!(compute-demand-field-dtv! $query)")
         load_metta!(sp, asserts)
     end

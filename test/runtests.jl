@@ -529,12 +529,19 @@ include("test_ecan.jl")
 # tracking the divergence landscape as the long-term flip to eval_nd progresses.
 include("test_ecan_dual.jl")
 
-# PLN↔ECAN co-working (§4.9 "demand as backward attention") — PLN's backward demand
-# field drives ECAN STI via a damped + budget-normalized channel, on the faithful
-# Interpreter. Module-wrapped (like the standard tests below) to isolate its
-# `using MeTTaCore.Interpreter` + helpers from the full-Eval ECAN tests that leak into Main.
-module PLNEcanCoworkTests
-    include("test_pln_ecan.jl")
+# PLN factor-graph suite (test/pln/) — demand-driven backward chaining on the lib/pln substrate:
+# STV engine (DAG + arity-complete, all 8 rules), Layer-2 DTV (core + sweep + all rules), Layer-3
+# (Fisher-weighted sensitivity + demand vectors, §5.4/§5.8), and §4.9 PLN↔ECAN coupling. Each file
+# is wrapped in its own (gensym) module to isolate `using MeTTaCore.Interpreter` and per-file
+# helpers (_derrs / const _FG / …) from each other and from Main. Auto-discovers pln/*.jl.
+let _plndir = joinpath(@__DIR__, "pln")
+    for _plnf in sort(readdir(_plndir))
+        endswith(_plnf, ".jl") || continue
+        _plnpath = joinpath(_plndir, _plnf)
+        @eval module $(gensym("PLN"))
+            include($_plnpath)
+        end
+    end
 end
 
 # Standard MeTTa (typed atom model + matcher) — faithful port of hyperon/CeTTa

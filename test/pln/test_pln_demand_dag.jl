@@ -22,7 +22,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 @testset "PLN demand sweep — DAG max-join (§4.4): dedup + max-over-paths" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     load_metta!(sp, """
     (message S (stv 0.9 0.5))

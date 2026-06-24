@@ -23,7 +23,7 @@ using Test
 using MeTTaCore.Interpreter
 using MeTTaCore.Interpreter.StandardMeTTa
 
-const _GFG = joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta")
+const _GFG = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta")
 const _GML = "(message A (stv 0.95 0.95)) (message AB (stv 0.99 0.80)) (message BC (stv 0.95 0.60)) (factor f1 hmp (premises A AB) (conclusion B)) (factor f2 hmp (premises B BC) (conclusion C)) (produces B f1) (produces C f2)"
 const _GG2 = "(message X (stv 0.9 0.95)) (message Y (stv 0.6 0.3)) (message Xn (stv 0.1 0.95)) (message Yn (stv 0.4 0.3)) (factor f1 conjunction (premises X Y) (conclusion Q)) (factor fx negation (premises Xn) (conclusion X)) (factor fy negation (premises Yn) (conclusion Y)) (produces Q f1) (produces X fx) (produces Y fy)"
 

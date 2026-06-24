@@ -27,7 +27,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 @testset "PLN demand sweep — multi-factor (§4.4 vs generated oracle golden) + threading control" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     load_metta!(sp, """
     (message A  (stv 0.95 0.95))

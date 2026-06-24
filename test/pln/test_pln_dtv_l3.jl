@@ -15,7 +15,7 @@ _l3errs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children
 
 @testset "§5.4/§5.8 Layer-3 DTV — Fisher sensitivity + demand vectors" begin
     sp = Space(); load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     @testset "foundations vs known math" begin
         rs = load_metta!(sp, """

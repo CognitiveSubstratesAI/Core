@@ -22,13 +22,13 @@
 using Test
 using MeTTaCore.Interpreter
 using MeTTaCore.Interpreter.StandardMeTTa
-include(joinpath(@__DIR__, "assert_guard.jl"))   # silent-test guard (shared convention)
+include(joinpath(@__DIR__, "..", "assert_guard.jl"))   # silent-test guard (shared convention)
 
-const _ECAN = joinpath(@__DIR__, "..", "lib", "ecan", "t1_core_logic.metta")
-const _POL  = joinpath(@__DIR__, "..", "lib", "ecan", "t1_ECAN_Policies.metta")
-const _FG   = joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta")
-const _CPL  = joinpath(@__DIR__, "..", "lib", "pln", "pln_ecan_coupling.metta")
-const _PLNCORE = joinpath(@__DIR__, "..", "lib", "pln", "pln_core_logic.metta")
+const _ECAN = joinpath(@__DIR__, "..", "..", "lib", "ecan", "t1_core_logic.metta")
+const _POL  = joinpath(@__DIR__, "..", "..", "lib", "ecan", "t1_ECAN_Policies.metta")
+const _FG   = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta")
+const _CPL  = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_ecan_coupling.metta")
+const _PLNCORE = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_core_logic.metta")
 
 _eerrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 

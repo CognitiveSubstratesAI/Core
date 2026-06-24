@@ -36,7 +36,7 @@ using MeTTaCore.Interpreter.StandardMeTTa          # Space, load_metta!, Express
 @testset "PLN forward maps — book contract (lib/pln Truth_*)" begin
     sp = Space()
     load_core_stdlib!(sp)                                   # stdlib + CoreExtensions (grounds *, binary min, …)
-    pln_dir = joinpath(@__DIR__, "..", "lib", "pln")
+    pln_dir = joinpath(@__DIR__, "..", "..", "lib", "pln")
     load_metta!(sp, read(joinpath(pln_dir, "stv.metta"), String))
     load_metta!(sp, read(joinpath(pln_dir, "pln_core_logic.metta"), String))
 

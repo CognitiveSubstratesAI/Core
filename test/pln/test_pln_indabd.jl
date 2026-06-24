@@ -22,7 +22,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 @testset "PLN rows-only — induction + abduction (5-premise chain-rule + singularities + sens_A=0) vs oracle" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     load_metta!(sp, """
     (message nA (stv 0.6 0.8))

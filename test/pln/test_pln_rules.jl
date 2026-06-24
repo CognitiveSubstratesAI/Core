@@ -20,7 +20,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 @testset "PLN rules — conjunction/disjunction/negation (forward + demand via dispatch, vs oracle)" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     load_metta!(sp, """
     (message P (stv 0.8 0.9))

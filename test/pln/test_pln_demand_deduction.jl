@@ -22,7 +22,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 @testset "PLN demand adjoint — deduction (4-premise, §3.3 Eq1 vs oracle :213) + non-circular property" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     # :213 graph — premises in semantic role order (B C AB BC = premise_1..4).
     load_metta!(sp, """

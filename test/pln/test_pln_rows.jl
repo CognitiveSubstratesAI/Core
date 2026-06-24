@@ -20,7 +20,7 @@ using MeTTaCore.Interpreter.StandardMeTTa
 @testset "PLN rows-only — inversion (3-premise + singularity cap) + negation demand vs oracle" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
 
     load_metta!(sp, """
     (message Ai (stv 0.8 0.9))
