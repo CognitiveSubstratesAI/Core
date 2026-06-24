@@ -283,6 +283,35 @@
           ($al (+ (* $s $nc) 1.0)) ($be (+ (* (- 1.0 $s) $nc) 1.0)) ($n (+ $al $be)))
      (dtv (/ $al $n) $n)))
 
+;; ── DTV demand sweep (hmp scope) ──────────────────────────────────────────────
+;; The DTV analogue of compute-demand-field!: forward DTV marginals via `supply-dtv`,
+;; backward demand via `adjoint2-dtv`. Demand values are scalars, so it REUSES dem-join!/
+;; dem-cur/dp-1/dp-2 — max-join (DAG support) carries over for free. Messages are
+;; (message N (dtv μ n)). NOTE: like the STV sweep it threads FORWARD marginals, so the
+;; materialised field differs from §6.2's prior-marginal hand-computation at intermediates;
+;; validated by internal consistency + the §5.7 STV-recovery cross-check. SCOPE: hmp rule.
+(= (supply-dtv $n)
+   (if (== (collapse (match &self (message $n $s) $s)) ())
+       (supply-dtv-via-factor $n)
+       (match &self (message $n $s) $s)))
+(= (supply-dtv-via-factor $n)
+   (let* (($f  (match &self (produces $n $ff) $ff))
+          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $a))
+          ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $n)) $b)))
+     (fwd-hmp-dtv (supply-dtv $p1) (supply-dtv $p2))))
+
+(= (compute-demand-field-dtv! $query) (let $seed (dem-join! $query 1.0) (propagate-dtv! $query)))
+(= (propagate-dtv! $node)
+   (let* (($dv (car-atom (dem-cur $node)))
+          ($f  (match &self (produces $node $ff) $ff))
+          ($p1 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $a))
+          ($p2 (match &self (factor $f hmp (premises $a $b) (conclusion $node)) $b))
+          ($pair (adjoint2-dtv $dv (sens2-hmp-dtv (supply-dtv $p1) (supply-dtv $p2)) (supply-dtv $p1) (supply-dtv $p2)))
+          ($c1 (dem-join! $p1 (dp-1 $pair))) ($c2 (dem-join! $p2 (dp-2 $pair))))
+     (let $r1 (recurse-dtv! $p1 $c1) (recurse-dtv! $p2 $c2))))
+(= (recurse-dtv! $node $changed)
+   (if $changed (if (== (collapse (match &self (produces $node $f) $f)) ()) () (propagate-dtv! $node)) ()))
+
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand

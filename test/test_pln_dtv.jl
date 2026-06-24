@@ -47,3 +47,37 @@ _derrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[
     """)
     @test isempty(_derrs(rs2)); @test length(rs2) == 3
 end
+
+@testset "§5 DTV demand sweep — supply + threading + DAG (vs §6.2 forward + internal consistency)" begin
+    sp = Space(); load_core_stdlib!(sp)
+    load_metta!(sp, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp, """
+    (message A (dtv 0.9047619047619048 21.0)) (message AB (dtv 0.8 10.0)) (message BC (dtv 0.8823529411764706 17.0))
+    (factor f1 hmp (premises A AB) (conclusion B)) (factor f2 hmp (premises B BC) (conclusion C))
+    (produces B f1) (produces C f2)
+    """)
+    # DTV-supply matches §6.2 forward μ_B = μ_A·μ_AB = 0.724
+    rs = load_metta!(sp, "!(assertEqual (dtv-mu (supply-dtv B)) 0.7238095238095239)")
+    @test isempty(_derrs(rs))
+    load_metta!(sp, "!(compute-demand-field-dtv! C)")
+    # internal consistency: dem(B) = the f2 adjoint at dv=1; dem(A) THREADS dem(B) as dv (not 1.0)
+    rs2 = load_metta!(sp, """
+    !(assertEqual (match &self (dem B \$d) \$d)
+                  (dp-1 (adjoint2-dtv 1.0 (sens2-hmp-dtv (supply-dtv B) (supply-dtv BC)) (supply-dtv B) (supply-dtv BC))))
+    !(assertEqual (match &self (dem A \$d) \$d)
+                  (dp-1 (adjoint2-dtv (match &self (dem B \$e) \$e) (sens2-hmp-dtv (supply-dtv A) (supply-dtv AB)) (supply-dtv A) (supply-dtv AB))))
+    """)
+    @test isempty(_derrs(rs2)); @test length(rs2) == 2
+
+    # DAG diamond: max-join reuse — exactly one (dem S _) atom, sweep terminates
+    sp2 = Space(); load_core_stdlib!(sp2)
+    load_metta!(sp2, read(joinpath(@__DIR__, "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(sp2, """
+    (message S (dtv 0.6 5.0)) (message X (dtv 0.8 5.0)) (message Y (dtv 0.7 5.0))
+    (factor f1 hmp (premises S X) (conclusion P)) (factor f2 hmp (premises S Y) (conclusion Q)) (factor f0 hmp (premises P Q) (conclusion C))
+    (produces P f1) (produces Q f2) (produces C f0)
+    """)
+    load_metta!(sp2, "!(compute-demand-field-dtv! C)")
+    rs3 = load_metta!(sp2, "!(assertEqual (size-atom (collapse (match &self (dem S \$d) \$d))) 1)")
+    @test isempty(_derrs(rs3))
+end
