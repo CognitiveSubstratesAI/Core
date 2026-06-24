@@ -54,6 +54,22 @@
 (: * (-> Number Number Number))
 (: / (-> Number Number Number))
 (: % (-> Number Number Number))
+; comparison ops → Bool (CeTTa/PeTTa type these; Core had them %Undefined%)
+(: < (-> Number Number Bool))
+(: <= (-> Number Number Bool))
+(: > (-> Number Number Bool))
+(: >= (-> Number Number Bool))
+; math grounded ops (CoreExtensions.jl): unary Number→Number, binary Number Number→Number
+(: sqrt (-> Number Number))
+(: log (-> Number Number))
+(: exp (-> Number Number))
+(: abs (-> Number Number))
+(: floor (-> Number Number))
+(: ceil (-> Number Number))
+(: max (-> Number Number Number))
+(: min (-> Number Number Number))
+(: pow (-> Number Number Number))
+(: clamp (-> Number Number Number Number))
 
 ; ── if (stdlib.metta:512) ─────────────────────────────────────────────────────
 (= (if True $then $else) $then)
