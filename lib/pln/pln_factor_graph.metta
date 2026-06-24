@@ -45,6 +45,22 @@
 (: Fmat Type)    (: fmat    (-> Number Number Number Fmat))                   ; symmetric 2×2 (Fisher) [[a b][b c]]
 (: V2 Type)      (: v2      (-> Number Number V2))                             ; 2-vector (demand vector)
 
+;; ── ACCESSOR SIGNATURES (projection out of the declared tuple/TV/matrix types) ──
+(: conf (-> STV Number))      (: stv-s (-> STV Number))
+(: dtv-mu (-> DTV Number))    (: dtv-n (-> DTV Number))
+(: dp-1 (-> DPair Number))    (: dp-2 (-> DPair Number))
+(: dt-1 (-> DTriple Number))  (: dt-2 (-> DTriple Number))  (: dt-3 (-> DTriple Number))
+(: dq-1 (-> DQuad Number))    (: dq-2 (-> DQuad Number))    (: dq-3 (-> DQuad Number))   (: dq-4 (-> DQuad Number))
+(: dn-1 (-> DQuint Number))   (: dn-2 (-> DQuint Number))   (: dn-3 (-> DQuint Number))  (: dn-4 (-> DQuint Number))  (: dn-5 (-> DQuint Number))
+(: ds-1 (-> DSingle Number))
+(: tr-1 (-> Triple Number))   (: tr-2 (-> Triple Number))   (: tr-3 (-> Triple Number))
+(: qu-1 (-> Quint Number))    (: qu-2 (-> Quint Number))    (: qu-3 (-> Quint Number))   (: qu-4 (-> Quint Number))   (: qu-5 (-> Quint Number))
+(: ab-a (-> AB Number))       (: ab-b (-> AB Number))
+(: dp-dB (-> DParts Number))  (: dp-dC (-> DParts Number))  (: dp-dAB (-> DParts Number)) (: dp-dBC (-> DParts Number))
+(: m2-det (-> M2 Number))     (: m2-tr (-> M2 Number))      (: m2-lammax (-> M2 Number))
+(: m2-inv (-> M2 M2))         (: m2-T (-> M2 M2))           (: m2-mul (-> M2 M2 M2))      (: fm->m2 (-> Fmat M2))
+(: vget-x (-> V2 Number))     (: vget-y (-> V2 Number))
+
 ;; §3.4 HMP forward map (product strength, product confidence, pi_b=0):
 ;;   B = (sA * sAB, cA * cAB)
 ;; §3.4 forward maps (2-premise rules). HMP = product (pi_b=0). Each consumes two `(stv s c)`.
