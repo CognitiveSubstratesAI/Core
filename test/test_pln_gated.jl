@@ -66,4 +66,17 @@ end
             "!(assertEqual (match &self (dem S \$d) \$d) (max (dp-1 (factor-demand-pair P (match &self (dem P \$e) \$e))) (dp-1 (factor-demand-pair Q (match &self (dem Q \$g) \$g)))))")
         @test isempty(_gerrs(rs)); @test length(rs) == 3
     end
+    # T-ARITY  §4.1 arity-complete gated path: a deduction (4-premise) factor must expand in
+    # the GATED walk too (premises get demand + active), and recursion must reach a premise's
+    # producer past the deduction. Demand cross-checked against factor-demand-quad.
+    @testset "T-ARITY gated path threads deduction (4-premise) + multi-hop" begin
+        gded = "(message B (stv 0.8 0.8)) (message C (stv 0.7 0.7)) (message AB (stv 0.9 0.9)) (message BC (stv 0.85 0.85)) (factor fd deduction (premises B C AB BC) (conclusion G)) (produces G fd)"
+        rs = _gscen(gded, "!(gated-demand-field! G 0.0 True)",
+            "!(assertEqual (match &self (dem B \$d) \$d) (dq-1 (factor-demand-quad G 1.0)))\n" *
+            "!(assertEqual (is-active C) True)\n!(assertEqual (is-active BC) True)")
+        @test isempty(_gerrs(rs)); @test length(rs) == 3
+        gmh = "(message C (stv 0.7 0.7)) (message AB (stv 0.9 0.9)) (message BC (stv 0.85 0.85)) (message x1 (stv 0.9 0.9)) (message x2 (stv 0.8 0.8)) (factor fd deduction (premises B C AB BC) (conclusion G)) (factor fb hmp (premises x1 x2) (conclusion B)) (produces G fd) (produces B fb)"
+        rs2 = _gscen(gmh, "!(gated-demand-field! G 0.0 True)", "!(assertEqual (is-active x1) True)")
+        @test isempty(_gerrs(rs2)); @test length(rs2) == 1
+    end
 end
