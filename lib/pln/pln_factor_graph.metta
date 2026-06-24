@@ -471,6 +471,61 @@
 (= (recurse-dtv! $node $changed)
    (if $changed (if (== (collapse (match &self (produces $node $f) $f)) ()) () (propagate-dtv! $node)) ()))
 
+;; ═══════════════════════════════════════════════════════════════════════════
+;; §5.4 / §5.8 LAYER 3 — information-geometric DTV (Fisher-weighted sensitivity + demand vectors)
+;; The "mathematically correct" sensitivity (§5.4 eq34) measures how a factor map stretches the
+;; Beta Fisher geometry, vs the cheap Layer-2 (μ,n)-Jacobian norm (eq35). Demand vectors (§5.8
+;; eq48) split a premise's demand into mean-shift vs concentration-tighten components. SCOPE:
+;; hmp/product rule (the §6.2 family). No paper oracle; validated against known math (trigamma =
+;; π²/6 etc., identity-map ⇒ Fisher-sens = 1) and Layer-2 correlation.
+;; ═══════════════════════════════════════════════════════════════════════════
+;; trigamma ψ'(x): recurrence ψ'(x)=ψ'(x+1)+1/x² up to x≥6, then asymptotic series.
+(= (trigamma $x) (if (< $x 6.0) (+ (/ 1.0 (* $x $x)) (trigamma (+ $x 1.0))) (trigamma-asymp $x)))
+(= (trigamma-asymp $x)
+   (let* (($x2 (* $x $x)) ($x3 (* $x2 $x)) ($x5 (* $x3 $x2)))
+     (+ (/ 1.0 $x) (+ (/ 1.0 (* 2.0 $x2)) (- (/ 1.0 (* 6.0 $x3)) (/ 1.0 (* 30.0 $x5)))))))
+;; Beta Fisher info I(η) in natural params (eq33), symmetric (fmat i11 i12 i22). n=α+β.
+(= (fisher-beta (dtv $mu $n))
+   (let* (($al (* $mu $n)) ($be (* (- 1.0 $mu) $n)) ($tn (trigamma $n)))
+     (fmat (- (trigamma $al) $tn) (- 0.0 $tn) (- (trigamma $be) $tn))))
+;; 2×2 matrix (m2 a b c d)=[[a b][c d]]; ops.
+(= (fm->m2 (fmat $a $b $c)) (m2 $a $b $b $c))
+(= (m2-det (m2 $a $b $c $d)) (- (* $a $d) (* $b $c)))
+(= (m2-tr  (m2 $a $b $c $d)) (+ $a $d))
+(= (m2-inv (m2 $a $b $c $d)) (let $det (- (* $a $d) (* $b $c)) (m2 (/ $d $det) (/ (- 0.0 $b) $det) (/ (- 0.0 $c) $det) (/ $a $det))))
+(= (m2-mul (m2 $a $b $c $d) (m2 $e $f $g $h)) (m2 (+ (* $a $e)(* $b $g)) (+ (* $a $f)(* $b $h)) (+ (* $c $e)(* $d $g)) (+ (* $c $f)(* $d $h))))
+(= (m2-T (m2 $a $b $c $d)) (m2 $a $c $b $d))
+;; largest (real) eigenvalue of a 2×2: (tr+√(tr²−4det))/2
+(= (m2-lammax $M) (let* (($t (m2-tr $M)) ($dt (m2-det $M))) (/ (+ $t (sqrt (- (* $t $t) (* 4.0 $dt)))) 2.0)))
+
+;; product forward in (α,β) (reuse the Layer-2 (μ,n) map); numerical natural-param Jacobian J1.
+(= (prod-ab $a1 $b1 $a2 $b2)
+   (let* (($n1 (+ $a1 $b1)) ($m1 (/ $a1 $n1)) ($n2 (+ $a2 $b2)) ($m2 (/ $a2 $n2))
+          ($o (fwd-hmp-dtv (dtv $m1 $n1) (dtv $m2 $n2))) ($mo (dtv-mu $o)) ($no (dtv-n $o)))
+     (ab (* $mo $no) (* (- 1.0 $mo) $no))))
+(= (ab-a (ab $a $b)) $a) (= (ab-b (ab $a $b)) $b)
+(= (jac1 $a1 $b1 $a2 $b2)
+   (let* (($e 0.0001)
+          ($j11 (/ (- (ab-a (prod-ab (+ $a1 $e) $b1 $a2 $b2)) (ab-a (prod-ab (- $a1 $e) $b1 $a2 $b2))) (* 2.0 $e)))
+          ($j21 (/ (- (ab-b (prod-ab (+ $a1 $e) $b1 $a2 $b2)) (ab-b (prod-ab (- $a1 $e) $b1 $a2 $b2))) (* 2.0 $e)))
+          ($j12 (/ (- (ab-a (prod-ab $a1 (+ $b1 $e) $a2 $b2)) (ab-a (prod-ab $a1 (- $b1 $e) $a2 $b2))) (* 2.0 $e)))
+          ($j22 (/ (- (ab-b (prod-ab $a1 (+ $b1 $e) $a2 $b2)) (ab-b (prod-ab $a1 (- $b1 $e) $a2 $b2))) (* 2.0 $e))))
+     (m2 $j11 $j12 $j21 $j22)))
+;; §5.4 eq34 Fisher-weighted sensitivity of premise 1: √λmax(I1⁻¹ J1ᵀ Iout J1). (identity map ⇒ 1)
+(= (sens-fisher-hmp1 (dtv $m1 $n1) (dtv $m2 $n2))
+   (let* (($a1 (* $m1 $n1)) ($b1 (* (- 1.0 $m1) $n1)) ($a2 (* $m2 $n2)) ($b2 (* (- 1.0 $m2) $n2))
+          ($J (jac1 $a1 $b1 $a2 $b2)) ($Iin (fm->m2 (fisher-beta (dtv $m1 $n1))))
+          ($o (fwd-hmp-dtv (dtv $m1 $n1) (dtv $m2 $n2))) ($Iout (fm->m2 (fisher-beta $o)))
+          ($M (m2-mul (m2-inv $Iin) (m2-mul (m2-T $J) (m2-mul $Iout $J)))))
+     (sqrt (m2-lammax $M))))
+;; §5.8 eq48 demand VECTOR for premise 1: dv·need·(J1ᵀ g_out). (v2 mean-demand conc-demand)
+(= (vmul (m2 $a $b $c $d) (v2 $x $y)) (v2 (+ (* $a $x)(* $b $y)) (+ (* $c $x)(* $d $y))))
+(= (vscale $s (v2 $x $y)) (v2 (* $s $x) (* $s $y)))
+(= (demand-vec-hmp1 $dv (dtv $m1 $n1) (dtv $m2 $n2) $gout)
+   (let* (($a1 (* $m1 $n1)) ($b1 (* (- 1.0 $m1) $n1)) ($a2 (* $m2 $n2)) ($b2 (* (- 1.0 $m2) $n2))
+          ($J (jac1 $a1 $b1 $a2 $b2)))
+     (vscale (* $dv (need-dtv (dtv $m1 $n1))) (vmul (m2-T $J) $gout))))
+
 ;; ── multi-factor demand SWEEP (§4.4 compute_demand_field) ─────────────────────
 ;; Top-down BFS from the query via the conclusion-first `produces` index (prefix-cheap),
 ;; threading each conclusion's demand down as the d_v of its producing factor. The demand
