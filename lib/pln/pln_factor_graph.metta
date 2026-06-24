@@ -521,10 +521,39 @@
 ;; §5.8 eq48 demand VECTOR for premise 1: dv·need·(J1ᵀ g_out). (v2 mean-demand conc-demand)
 (= (vmul (m2 $a $b $c $d) (v2 $x $y)) (v2 (+ (* $a $x)(* $b $y)) (+ (* $c $x)(* $d $y))))
 (= (vscale $s (v2 $x $y)) (v2 (* $s $x) (* $s $y)))
+(= (vget-x (v2 $x $y)) $x) (= (vget-y (v2 $x $y)) $y)   ; mean-shift / concentration-tighten components
 (= (demand-vec-hmp1 $dv (dtv $m1 $n1) (dtv $m2 $n2) $gout)
    (let* (($a1 (* $m1 $n1)) ($b1 (* (- 1.0 $m1) $n1)) ($a2 (* $m2 $n2)) ($b2 (* (- 1.0 $m2) $n2))
           ($J (jac1 $a1 $b1 $a2 $b2)))
      (vscale (* $dv (need-dtv (dtv $m1 $n1))) (vmul (m2-T $J) $gout))))
+
+;; ── §5.4/§5.8 Fisher sensitivity + demand vectors for TERM-LOGIC rules (deduction shown) ──
+;; Identical numerical-Jacobian pattern as hmp, with the rule's forward in (α,β) coords (reuse
+;; fwd-deduction-dtv). inversion/induction/abduction follow the SAME recipe per premise (heavier
+;; per-eval for the 5-premise rules). ab-of/bb-of: (μ,n)→(α,β).
+(= (ab-of $m $n) (* $m $n)) (= (bb-of $m $n) (* (- 1.0 $m) $n))
+(= (ded-ab $aB $bB $aC $bC $aAB $bAB $aBC $bBC)
+   (let* (($o (fwd-deduction-dtv (dtv (/ $aB (+ $aB $bB)) (+ $aB $bB)) (dtv (/ $aC (+ $aC $bC)) (+ $aC $bC))
+                                 (dtv (/ $aAB (+ $aAB $bAB)) (+ $aAB $bAB)) (dtv (/ $aBC (+ $aBC $bBC)) (+ $aBC $bBC))))
+          ($mo (dtv-mu $o)) ($no (dtv-n $o)))
+     (ab (* $mo $no) (* (- 1.0 $mo) $no))))
+;; Jacobian ∂(α_out,β_out)/∂(α_B,β_B) for deduction premise B (numerical).
+(= (jac-ded-B $aB $bB $aC $bC $aAB $bAB $aBC $bBC)
+   (let* (($e 0.0001)
+          ($j11 (/ (- (ab-a (ded-ab (+ $aB $e) $bB $aC $bC $aAB $bAB $aBC $bBC)) (ab-a (ded-ab (- $aB $e) $bB $aC $bC $aAB $bAB $aBC $bBC))) (* 2.0 $e)))
+          ($j21 (/ (- (ab-b (ded-ab (+ $aB $e) $bB $aC $bC $aAB $bAB $aBC $bBC)) (ab-b (ded-ab (- $aB $e) $bB $aC $bC $aAB $bAB $aBC $bBC))) (* 2.0 $e)))
+          ($j12 (/ (- (ab-a (ded-ab $aB (+ $bB $e) $aC $bC $aAB $bAB $aBC $bBC)) (ab-a (ded-ab $aB (- $bB $e) $aC $bC $aAB $bAB $aBC $bBC))) (* 2.0 $e)))
+          ($j22 (/ (- (ab-b (ded-ab $aB (+ $bB $e) $aC $bC $aAB $bAB $aBC $bBC)) (ab-b (ded-ab $aB (- $bB $e) $aC $bC $aAB $bAB $aBC $bBC))) (* 2.0 $e))))
+     (m2 $j11 $j12 $j21 $j22)))
+(= (sens-fisher-ded-B (dtv $mB $nB) (dtv $mC $nC) (dtv $mAB $nAB) (dtv $mBC $nBC))
+   (let* (($J (jac-ded-B (ab-of $mB $nB)(bb-of $mB $nB) (ab-of $mC $nC)(bb-of $mC $nC) (ab-of $mAB $nAB)(bb-of $mAB $nAB) (ab-of $mBC $nBC)(bb-of $mBC $nBC)))
+          ($Iin (fm->m2 (fisher-beta (dtv $mB $nB))))
+          ($o (fwd-deduction-dtv (dtv $mB $nB)(dtv $mC $nC)(dtv $mAB $nAB)(dtv $mBC $nBC))) ($Iout (fm->m2 (fisher-beta $o)))
+          ($M (m2-mul (m2-inv $Iin) (m2-mul (m2-T $J) (m2-mul $Iout $J)))))
+     (sqrt (m2-lammax $M))))
+(= (demand-vec-ded-B $dv (dtv $mB $nB) (dtv $mC $nC) (dtv $mAB $nAB) (dtv $mBC $nBC) $gout)
+   (let $J (jac-ded-B (ab-of $mB $nB)(bb-of $mB $nB) (ab-of $mC $nC)(bb-of $mC $nC) (ab-of $mAB $nAB)(bb-of $mAB $nAB) (ab-of $mBC $nBC)(bb-of $mBC $nBC))
+     (vscale (* $dv (need-dtv (dtv $mB $nB))) (vmul (m2-T $J) $gout))))
 
 ;; ── §5.1 / §5.3 HISTOGRAM DTV — the exact finite representation (vs the Beta projection) ──
 ;; A histogram is an expression of K bin-weights (w1 … wK) on a uniform [0,1] grid; bin center
