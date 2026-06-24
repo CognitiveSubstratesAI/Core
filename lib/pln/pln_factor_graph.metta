@@ -61,6 +61,46 @@
 (: m2-inv (-> M2 M2))         (: m2-T (-> M2 M2))           (: m2-mul (-> M2 M2 M2))      (: fm->m2 (-> Fmat M2))
 (: vget-x (-> V2 Number))     (: vget-y (-> V2 Number))
 
+;; ── PURE-FUNCTION SIGNATURES (the data pipeline; dispatch/effectful fns left %Undefined%) ──
+;; numeric helpers
+(: clampu (-> Number Number))     (: absf (-> Number Number))     (: cap-sens (-> Number Number))
+(: neg-wlogw (-> Number Number))  (: ab-of (-> Number Number Number))  (: bb-of (-> Number Number Number))
+(: beta-ex2 (-> Number Number Number))  (: beta-var (-> DTV Number))
+;; §3.4 STV forward maps
+(: fwd-hmp (-> STV STV STV))  (: fwd-conjunction (-> STV STV STV))  (: fwd-disjunction (-> STV STV STV))  (: fwd-negation (-> STV STV))
+(: fwd-deduction (-> STV STV STV STV STV))  (: fwd-inversion (-> STV STV STV STV))
+(: fwd-induction (-> STV STV STV STV STV STV))  (: fwd-abduction (-> STV STV STV STV STV STV))
+;; §3.4 STV sensitivities / §3.3 adjoints
+(: sens2-hmp (-> STV STV SPair))  (: sens2-conjunction (-> STV STV SPair))  (: sens2-disjunction (-> STV STV SPair))
+(: sens-deduction (-> STV STV STV STV Quad))  (: sens-inversion (-> STV STV STV Triple))
+(: sens-induction (-> STV STV STV STV STV Quint))  (: sens-abduction (-> STV STV STV STV STV Quint))
+(: ded-partials (-> Number Number Number Number DParts))
+(: adjoint2 (-> Number SPair STV STV DPair))  (: adjoint3 (-> Number Triple STV STV STV DTriple))
+(: adjoint5 (-> Number Quint STV STV STV STV STV DQuint))  (: demand-quad (-> Number Quad Quad DQuad))
+;; §5 DTV forward / need / sensitivity / adjoint
+(: need-dtv (-> DTV Number))  (: need-hist (-> Expression Number))
+(: fwd-hmp-dtv (-> DTV DTV DTV))  (: fwd-negation-dtv (-> DTV DTV))
+(: fwd-deduction-dtv (-> DTV DTV DTV DTV DTV))  (: fwd-inversion-dtv (-> DTV DTV DTV DTV))
+(: fwd-induction-dtv (-> DTV DTV DTV DTV DTV DTV))  (: fwd-abduction-dtv (-> DTV DTV DTV DTV DTV DTV))
+(: fwd-mu-ded (-> Number Number Number Number Number))  (: fwd-mu-inv (-> Number Number Number Number))
+(: fwd-mu-ind (-> Number Number Number Number Number Number))  (: fwd-mu-abd (-> Number Number Number Number Number Number))
+(: sens2-hmp-dtv (-> DTV DTV SPair))  (: sens-ded-dtv (-> Number Number Number Number Quad))
+(: sens-inv-dtv (-> Number Number Number Triple))  (: sens-ind-dtv (-> Number Number Number Number Number Quint))  (: sens-abd-dtv (-> Number Number Number Number Number Quint))
+(: adjoint2-dtv (-> Number SPair DTV DTV DPair))
+(: demand-quad-dtv (-> Number Quad DTV DTV DTV DTV DQuad))  (: demand-triple-dtv (-> Number Triple DTV DTV DTV DTriple))
+(: demand-quint-dtv (-> Number Quint DTV DTV DTV DTV DTV DQuint))  (: demand-single-dtv (-> Number DTV DSingle))
+(: stv->dtv (-> Number Number Number DTV))
+;; §5.4/§5.8 Layer-3
+(: trigamma (-> Number Number))  (: trigamma-asymp (-> Number Number))  (: fisher-beta (-> DTV Fmat))
+(: prod-ab (-> Number Number Number Number AB))  (: jac1 (-> Number Number Number Number M2))
+(: sens-fisher-hmp1 (-> DTV DTV Number))  (: demand-vec-hmp1 (-> Number DTV DTV V2 V2))
+(: ded-ab (-> Number Number Number Number Number Number Number Number AB))
+(: jac-ded-B (-> Number Number Number Number Number Number Number Number M2))
+(: sens-fisher-ded-B (-> DTV DTV DTV DTV Number))  (: demand-vec-ded-B (-> Number DTV DTV DTV DTV V2 V2))
+(: vmul (-> M2 V2 V2))  (: vscale (-> Number V2 V2))
+;; §5.1/§5.3 histogram
+(: hentropy (-> Expression Number))  (: hist-mean (-> Expression Number))  (: hist-var (-> Expression Number))  (: hist->dtv (-> Expression DTV))
+
 ;; §3.4 HMP forward map (product strength, product confidence, pi_b=0):
 ;;   B = (sA * sAB, cA * cAB)
 ;; §3.4 forward maps (2-premise rules). HMP = product (pi_b=0). Each consumes two `(stv s c)`.
