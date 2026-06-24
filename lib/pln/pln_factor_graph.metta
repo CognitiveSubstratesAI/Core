@@ -20,6 +20,31 @@
 ;; double-count demand — not currently guarded (every factor graph here is single-producer).
 ;; ═══════════════════════════════════════════════════════════════════════════
 
+;; ── DATA TYPES (declared, per the hyperon-experimental / CeTTa / PeTTa library convention) ──
+;; Truth values, demand/sensitivity tuples, and the Layer-3 linear-algebra types are declared
+;; algebraic types (not bare symbolic, not host-grounded). Core's gradual type system recognises
+;; them via get-type; arity is checked structurally, args are gradual.
+;; NOTE on STV: this file's truth value is the lowercase (stv s c) — distinct from stv.metta's
+;; (STV s c) storage rep (capital, accessors stv-strength/stv-confidence). The two NEVER co-load
+;; (pln.metta imports stv.metta but NOT this file), so no runtime clash. Unifying them repo-wide
+;; is a deliberate follow-up, out of scope for this typing pass.
+(: STV Type)     (: stv     (-> Number Number STV))                              ; simple truth value (s,c)
+(: DTV Type)     (: dtv     (-> Number Number DTV))                              ; distributional TV, Beta (μ,n)
+(: DPair Type)   (: dpair   (-> Number Number DPair))                           ; 2-premise demand
+(: DTriple Type) (: dtriple (-> Number Number Number DTriple))                  ; 3-premise demand
+(: DQuad Type)   (: dquad   (-> Number Number Number Number DQuad))            ; 4-premise demand
+(: DQuint Type)  (: dquint  (-> Number Number Number Number Number DQuint))    ; 5-premise demand
+(: DSingle Type) (: dsingle (-> Number DSingle))                                ; 1-premise demand
+(: SPair Type)   (: spair   (-> Number Number SPair))                           ; 2-premise sensitivity
+(: Triple Type)  (: triple  (-> Number Number Number Triple))                  ; 3-premise sensitivity
+(: Quad Type)    (: quad    (-> Number Number Number Number Quad))            ; 4-premise sensitivity
+(: Quint Type)   (: quint   (-> Number Number Number Number Number Quint))    ; 5-premise sensitivity
+(: DParts Type)  (: dparts  (-> Number Number Number Number DParts))          ; deduction strength partials
+(: AB Type)      (: ab      (-> Number Number AB))                             ; (α,β) Beta natural pair
+(: M2 Type)      (: m2      (-> Number Number Number Number M2))              ; 2×2 matrix [[a b][c d]]
+(: Fmat Type)    (: fmat    (-> Number Number Number Fmat))                   ; symmetric 2×2 (Fisher) [[a b][b c]]
+(: V2 Type)      (: v2      (-> Number Number V2))                             ; 2-vector (demand vector)
+
 ;; §3.4 HMP forward map (product strength, product confidence, pi_b=0):
 ;;   B = (sA * sAB, cA * cAB)
 ;; §3.4 forward maps (2-premise rules). HMP = product (pi_b=0). Each consumes two `(stv s c)`.
