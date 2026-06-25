@@ -111,28 +111,35 @@
 ;; Replace a parameter rule's value.
 ;;   (= ($param-expr) old-value)  →  (= ($param-expr) new-value)
 ;; collapse dropped — the matched atom IS the rule expression itself.
+;; Both-evaluator upsert (existence-guard via collapse; bare match+remove only when present).
 (= (rewrite-spreading-param! $param-expr $new-value)
-   (let $old (match &self (= ($param-expr) $v) (= ($param-expr) $v))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $exists (collapse (match &self (= ($param-expr) $v) found))
+        (let $_ (if (== $exists ()) True
+                    (let $old (match &self (= ($param-expr) $v) (= ($param-expr) $v))
+                         (remove-atom &self $old)))
              (add-atom &self (= ($param-expr) $new-value)))))
 
 ;; Allow a policy change iff cooldown elapsed OR state differs from last change.
+;; collapse the match (faithful engine returns empty, not (), on no-match → a bare `(let $last (match…))`
+;; no-binds and the whole conditional silently fails); car-atom the singleton when present.
 (= (policy-change-allowed? $new-state $current-tick)
-   (let $last (match &self (AttentionPolicyLastChanged $t $s)
-                           (AttentionPolicyLastChanged $t $s))
-        (if (== $last ())
+   (let $lasts (collapse (match &self (AttentionPolicyLastChanged $t $s)
+                                       (AttentionPolicyLastChanged $t $s)))
+        (if (== $lasts ())
             True
-            (let* (((AttentionPolicyLastChanged $last-tick $last-state) $last)
+            (let* (((AttentionPolicyLastChanged $last-tick $last-state) (car-atom $lasts))
                    ($elapsed (- $current-tick $last-tick)))
               (if (>= $elapsed (attention-policy-cooldown))
                   True
                   (if (== $last-state $new-state) False True))))))
 
-;; Record a policy change (replace any prior AttentionPolicyLastChanged atom).
+;; Record a policy change (replace any prior AttentionPolicyLastChanged atom). Both-evaluator upsert.
 (= (record-policy-change! $tick $state)
-   (let $old (match &self (AttentionPolicyLastChanged $t $s)
-                          (AttentionPolicyLastChanged $t $s))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $exists (collapse (match &self (AttentionPolicyLastChanged $t $s) found))
+        (let $_ (if (== $exists ()) True
+                    (let $old (match &self (AttentionPolicyLastChanged $t $s)
+                                           (AttentionPolicyLastChanged $t $s))
+                         (remove-atom &self $old)))
              (add-atom &self (AttentionPolicyLastChanged $tick $state)))))
 
 ;; Adapt spreading parameters based on classified attention state.
@@ -158,14 +165,14 @@
                    ($current-depth (max-spreading-depth))
                    ($new-decay (clamp (+ $current-decay 0.05) 0.0 0.95))
                    ($new-depth (clamp (+ $current-depth 1) 1 6)))
-              (do (rewrite-spreading-param! spreading-decay-factor $new-decay)
-                  (rewrite-spreading-param! max-spreading-depth    $new-depth)
-                  (record-policy-change! $tick Collapsed)
+              (let $_ (rewrite-spreading-param! spreading-decay-factor $new-decay)
+              (let $_ (rewrite-spreading-param! max-spreading-depth    $new-depth)
+              (let $_ (record-policy-change! $tick Collapsed)
                   (add-atom &self (AttentionEvolutionLog
                                     (tick $tick)
                                     (state Collapsed)
                                     (decay $current-decay -> $new-decay)
-                                    (depth $current-depth -> $new-depth)))))
+                                    (depth $current-depth -> $new-depth)))))))
             (AttentionPolicyCooldownActive Collapsed))))
 
 (= (adapt-spreading-policy! Diffuse)
@@ -175,14 +182,14 @@
                    ($current-depth (max-spreading-depth))
                    ($new-decay (clamp (- $current-decay 0.05) 0.3 1.0))
                    ($new-depth (clamp (- $current-depth 1) 1 6)))
-              (do (rewrite-spreading-param! spreading-decay-factor $new-decay)
-                  (rewrite-spreading-param! max-spreading-depth    $new-depth)
-                  (record-policy-change! $tick Diffuse)
+              (let $_ (rewrite-spreading-param! spreading-decay-factor $new-decay)
+              (let $_ (rewrite-spreading-param! max-spreading-depth    $new-depth)
+              (let $_ (record-policy-change! $tick Diffuse)
                   (add-atom &self (AttentionEvolutionLog
                                     (tick $tick)
                                     (state Diffuse)
                                     (decay $current-decay -> $new-decay)
-                                    (depth $current-depth -> $new-depth)))))
+                                    (depth $current-depth -> $new-depth)))))))
             (AttentionPolicyCooldownActive Diffuse))))
 
 ;; ============================================================
@@ -194,8 +201,14 @@
 ;; of the EvolutionStubUnloaded sentinel from the Phase 1b stub.
 ;; ============================================================
 
+;; Faithful-engine fix: the Phase-1b stub `(= (attention-evolution-step!) EvolutionStubUnloaded)` in
+;; AttentionPolicies coexists with this real definition. The faithful engine fires BOTH equations
+;; (hyperon multi-equation semantics → nondeterministic set), leaking the stub; eval_metta did
+;; last-def-wins. Remove the stub equation so only the real classifier remains.
+!(remove-atom &self (= (attention-evolution-step!) EvolutionStubUnloaded))
+
 (= (attention-evolution-step!)
    (let* (($measure (measure-attention-state!))
           ($state   (classify-attention-state $measure)))
-     (do (adapt-spreading-policy! $state)
+     (let $_ (adapt-spreading-policy! $state)
          $state)))
