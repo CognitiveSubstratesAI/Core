@@ -125,7 +125,7 @@ All three references use **closed sum types** → tag-switch dispatch. Core's `a
 |---|--------|------|------|-----|
 | 1 | `Bindings` copy-on-write | `Atoms.jl:74` | **high** (eval-core mutation semantics) | biggest alloc cut + #1 self-time |
 | 2 | reduce-step Frame/wrapper pooling | `Interpreter.jl:105/544/678` | high (continuation machine) | the 5.7k-alloc driver |
-| 3 | `rename_fresh` — avoid copying stored atoms with no vars | `Interpreter.jl:363` | medium (match path) | 31 self-samples; skip freshening ground atoms |
+| 3 | ✅ **DONE** `rename_fresh` structural sharing — ground subtrees shared, not rebuilt | `Interpreter.jl:363` | low (immutable, ground=no vars) | 0 allocs for ground atoms (was full tree rebuild); 234/234 conformance |
 | alt | `atom_types` symbol-interning (compare by id, not string) | type lookup | **low** (no binding mutation) | kills `Vector{Char}` churn per step |
 
 ## ⚠️ Guardrail — do not optimize the eval core until measured need

@@ -360,12 +360,26 @@ freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
 
 # alpha-rename every variable in `a` to a fresh one (hyperon make_variables_unique) — hygiene,
 # so a rule matched repeatedly (recursion) doesn't clash its own variables across levels.
+# Structural sharing: a ground subtree (no Var) has nothing to rename, so we return the SAME
+# immutable atom instead of rebuilding it — eliminates the per-stored-atom Expression+array
+# allocation on the match hot path (Profile: rename_fresh was a top self-time frame; ground data
+# atoms are the common case). A fresh Expression is allocated only along paths where a Var actually
+# changed. Safe because atoms are immutable and ground atoms carry no variable that could clash.
 function rename_fresh(a::Atom, m::Dict{Var,Var}, d::Int=0)
     d > _MAX_ATOM_DEPTH && return a
     if a isa Var
         return get!(() -> freshvar(a.name), m, a)
     elseif a isa Expression
-        return Expression(Atom[rename_fresh(c, m, d + 1) for c in a.children])
+        kids = a.children
+        newkids = nothing                       # allocate lazily, only on first changed child
+        for i in eachindex(kids)
+            rc = rename_fresh(kids[i], m, d + 1)
+            if rc !== kids[i]
+                newkids === nothing && (newkids = copy(kids))
+                newkids[i] = rc
+            end
+        end
+        return newkids === nothing ? a : Expression(newkids)   # share `a` if no Var was renamed
     else
         return a
     end
