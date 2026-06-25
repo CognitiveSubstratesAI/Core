@@ -73,6 +73,21 @@ The profile agrees with AllocCheck/BenchmarkTools (Bindings is #1) and adds **`r
 (`Interpreter.jl:363`)** — the match-time freshening that allocates a renamed copy of each stored atom per
 query. A third, contained target alongside the two below.
 
+## Type-stability cross-check (Aqua.jl + `@inferred`)
+
+- **`@inferred`** — `subst`, `match_atoms`, `merge_bindings`, `add_var_binding` all return concretely-inferred
+  types (STABLE). The function *interfaces* are type-stable; the JET `report_opt` dispatch is *internal*
+  (`Any == Any` on grounded values, abstract-`Atom` iteration) — consistent, not contradictory.
+- **Aqua.jl (project-wide)** — `ambiguities`, `unbound_args`, `piracies`, `undefined_exports`, `stale_deps`
+  **all PASS**. No method ambiguities, no type piracy (our `==`/`hash` are on our own atom types), no stale
+  deps.
+
+**Verdict across 6 tools (AllocCheck · JET opt+call · BenchmarkTools · Profile · `@code_warntype` · Aqua ·
+`@inferred`):** Core is type-stable and clean. The only "instability" is the **deliberate abstract-`Atom` IR
+dispatch** (design choice for the sum-typed atom representation — a *perf* signal, not a defect) plus the one
+latent `Grounded ==` edge above. No actionable correctness defect; the perf targets below are the only
+follow-ups, gated by the guardrail.
+
 ## Optimization targets
 
 | # | target | site | risk | win |
