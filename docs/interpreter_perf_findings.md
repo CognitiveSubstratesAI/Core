@@ -88,6 +88,37 @@ dispatch** (design choice for the sum-typed atom representation — a *perf* sig
 latent `Grounded ==` edge above. No actionable correctness defect; the perf targets below are the only
 follow-ups, gated by the guardrail.
 
+## Cross-engine representation comparison (how the references avoid these)
+
+Source-verified against hyperon-experimental, CeTTa, PeTTa — to separate *real divergences* from
+*design trade-offs*.
+
+| engine | `Atom` representation | dispatch | symbols | grounded eq |
+|--------|----------------------|----------|---------|-------------|
+| **hyperon** (Rust) | `enum Atom { Symbol, Expression, Variable, Grounded(Box<dyn>) }` — closed 4-variant (`hyperon-atom/src/lib.rs:827`) | tag match; vtable only for grounded | `UniqueString` — **interned** | `eq_gnd → bool` **strict** (lib.rs:414) |
+| **CeTTa** (C) | `struct Atom { AtomKind kind; union{ground,expr} }` — flat tagged union; `GroundedKind` closed enum (`atom.h`) | `switch(kind)` | `sym_id` int — **interned** | `atom_eq → bool` **strict** (atom.c:1603) |
+| **PeTTa** (Prolog) | native WAM tagged terms | WAM tag dispatch | atom table — interned | unification — strict |
+| **Core** (Julia) | `abstract type Atom` + `Grounded{T}` — **open + parametric** | **dynamic dispatch** | raw `String` name | (now) `=== true` strict |
+
+All three references use **closed sum types** → tag-switch dispatch. Core's `abstract type Atom` is the lone
+*open* hierarchy → the dynamic dispatch JET flags.
+
+**Per-issue verdict:**
+- ✅ **Grounded `==` strict bool — DONE** (`Atoms.jl:50`). Both hyperon (`eq_gnd`) and CeTTa (`atom_eq`) return
+  strict bool; Core's `Any==Any` (→ `Missing`) was the divergence. Fixed with `=== true`; 234/234 conformance
+  + Core=hyperon=CeTTa on cross-engine `metta_xcheck`.
+- ☐ **Symbol interning** — both hyperon (`UniqueString`) and CeTTa (`sym_id`) compare symbols by id, not
+  string; Core compares raw `String` (the `atom_types` `Vector{Char}` churn). Reference-validated, low-risk,
+  medium effort. The recommended next contained win.
+- ⚠️ **Abstract-`Atom` → closed `Union`** — references use closed sum types; matching them needs
+  `const Atom = Union{Sym,Var,Expression,Grounded}` (union-split = tag switch), which requires making
+  `Grounded{T}` non-parametric (type-erase like hyperon's `Box<dyn>`, or a closed grounded-kind union like
+  CeTTa's `GroundedKind`). Core's parametric `Grounded{T}` deliberately buys grounded **type-stability** that
+  hyperon sacrifices to a vtable — a genuine trade-off, deep refactor, guardrail territory.
+- ➖ **Bindings COW — not a divergence.** hyperon's `Bindings { HashMap<Var,usize>, HoleyVec }`
+  (`matcher.rs:141`) is the same slot-sharing design Core already mirrors, and hyperon copies it on branching
+  too. True COW would *exceed* the references — a Julia-specific optimization, not reference-mandated.
+
 ## Optimization targets
 
 | # | target | site | risk | win |

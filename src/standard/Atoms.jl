@@ -47,7 +47,12 @@ end
 Base.:(==)(a::Sym, b::Sym)           = a.name == b.name
 Base.:(==)(a::Var, b::Var)           = a.name == b.name && a.id == b.id
 Base.:(==)(a::Expression, b::Expression) = a.children == b.children
-Base.:(==)(a::Grounded, b::Grounded) = a.value == b.value
+# strict Bool (`=== true`): `.value::Any`, so `a.value == b.value` can widen to `Union{Missing,Bool}`
+# (a grounded atom wrapping `missing`), which throws in a boolean context (e.g. add_var_binding's
+# `elseif prev == val`). Both references return a strict bool for grounded eq — hyperon `eq_gnd → bool`
+# (hyperon-atom/src/lib.rs:414), CeTTa `atom_eq → bool` (atom.c:1603). `=== true` preserves == semantics for
+# all normal values (NaN≠NaN, 0.0==-0.0 unchanged) and maps the missing/non-Bool case to `false`.
+Base.:(==)(a::Grounded, b::Grounded) = (a.value == b.value) === true
 Base.hash(a::Sym, h::UInt)      = hash(a.name, hash(:Sym, h))
 Base.hash(a::Var, h::UInt)      = hash(a.id, hash(a.name, hash(:Var, h)))
 Base.hash(a::Expression, h::UInt) = hash(a.children, hash(:Expression, h))
