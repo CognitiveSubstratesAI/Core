@@ -1,0 +1,84 @@
+# Core Interpreter — Performance Findings (2026-06-25)
+
+Whole-path + whole-package static/dynamic analysis of the **live** `StandardMeTTa.Interpreter`
+(tree-walking reducer). Tools: AllocCheck, JET, BenchmarkTools — run via the warm Core REPL with
+`JULIA_LOAD_PATH="@:@v#.#:@stdlib"`. Probes: `tools/jet_alloc_probe.jl`, `tools/warntype_probe.jl`,
+`benchmark/ecan_perf_diag.jl`.
+
+> **Scope:** excludes `src/eval/Eval_obsolete.jl` / `EvalND_obsolete.jl` (dead code; still `include`d and
+> referenced by ~145 legacy test sites — deletion is the separate migration arc, not a perf concern).
+
+## TL;DR
+
+The live interpreter is **correct and type-clean** (hyperon-faithful, 234/234 conformance; no `::Any`/`Box`,
+no live `Vector{Any}`). It is **allocation-heavy**, not GC-bound: reducing a trivial `(f 42)` costs **5,722
+allocations**. Two structural drivers; **both are perf-only — do not touch the eval core until a workload
+measurably needs the speed** (see the guardrail).
+
+## Measured (BenchmarkTools)
+
+| call | min time | allocs | memory |
+|------|---------:|-------:|-------:|
+| `metta_run (f 42)` — one trivial 2-rule reduction | 361 µs | **5,722** | **234 KB** |
+| `match_atoms` | 2.2 µs | 69 | 3.5 KB |
+| `subst` | 0.28 µs | 4 | 128 B |
+
+- Cost is **allocation throughput + dispatch**, not GC pauses (`exp_gc.jl`: GC-disable = 1.0× — many tiny,
+  short-lived allocs are cheap to collect but expensive to *make*).
+- ECAN `heartbeat!` ≈ **~16k interpreter steps/tick** (~4.5 s/tick: naive-linear match, no JIT). Atom count
+  is **flat** post-ECATick fix (`e916f9f`) — no quadratic accumulation.
+
+## Allocation sites (AllocCheck — 675 across the reachable call tree from `metta_run`)
+
+1. **`Bindings` Dict+Vector copy** — `src/standard/Atoms.jl:74` (`var_to_slot::Dict{Var,Int}` + slot Vector
+   + backing `Memory`). Cloned per match candidate; reached via `add_var_binding` / `merge_bindings` /
+   `match_atoms`. **Top alloc driver.**
+2. **Reduce-step construction** — `src/standard/Interpreter.jl:105` (Frame, 78×), `:544` `_metta(atom,typ)`
+   wrapping every atom in `(metta …)` per step (13×), `:678` child-array splat. The continuation reducer
+   allocates a Frame + wrapper Expression + child arrays **every step** → the ~5,722-alloc driver.
+
+## Dispatch (JET)
+
+- Runtime dispatch is concentrated at the **orchestration boundary**: `metta_run` = **191** runtime-dispatch
+  reports (abstract `Atom`). Leaves are clean: `subst` = 1, `match_atoms` = 3.
+- `JET.report_package(MeTTaCore)` = **109 "possible errors" — the known false-positive class** (the `Any`-typed
+  atom boundary, e.g. the `set_val_at!`/PathMap chain). **Do not re-chase** (matches the earlier "137 = all
+  false positives" finding).
+
+## Profile (flat, self-time — `concatT(20,20)` recursion, Profile.jl)
+
+Top self-time frames (`Overhead` column = time *at* that frame, not callees):
+
+| self | frame | what |
+|-----:|-------|------|
+| 62 | `Atoms.jl:74` **`Bindings`** | Bindings construction/copy — **#1 self-time** (confirms target 1) |
+| 41 | `Interpreter.jl:556` `metta_instr` | core reduce-instruction dispatch |
+| 32 | `Interpreter.jl:88` `subst` | recursive substitution (Expression alloc) |
+| 31 | `Interpreter.jl:363` **`rename_fresh`** | variable-freshening per stored atom in match — **new hot spot** |
+| 24 | `Interpreter.jl:174/554` `interpret_stack` / `metta_instr` | reduce driver |
+| 15 | `Atoms.jl:169` `_flat`, `Interpreter.jl:644` `interpret_tuple_instr` | binding flatten / tuple eval |
+
+The profile agrees with AllocCheck/BenchmarkTools (Bindings is #1) and adds **`rename_fresh`
+(`Interpreter.jl:363`)** — the match-time freshening that allocates a renamed copy of each stored atom per
+query. A third, contained target alongside the two below.
+
+## Optimization targets
+
+| # | target | site | risk | win |
+|---|--------|------|------|-----|
+| 1 | `Bindings` copy-on-write | `Atoms.jl:74` | **high** (eval-core mutation semantics) | biggest alloc cut + #1 self-time |
+| 2 | reduce-step Frame/wrapper pooling | `Interpreter.jl:105/544/678` | high (continuation machine) | the 5.7k-alloc driver |
+| 3 | `rename_fresh` — avoid copying stored atoms with no vars | `Interpreter.jl:363` | medium (match path) | 31 self-samples; skip freshening ground atoms |
+| alt | `atom_types` symbol-interning (compare by id, not string) | type lookup | **low** (no binding mutation) | kills `Vector{Char}` churn per step |
+
+## ⚠️ Guardrail — do not optimize the eval core until measured need
+
+The interpreter is **correct and faithful**; these are **performance-only** changes with **zero functional
+benefit**. `Bindings` COW touches the hottest mutation path: an un-triggered copy on a *shared* `Bindings`
+causes **aliasing corruption** (one match branch silently overwrites another's variable bindings → wrong
+results). Trading a correct, hyperon-faithful interpreter for speed is only justified when a workload is
+**actually gated** on interpreter throughput.
+
+**If/when implemented**, gate on: full **234-conformance** + every domain suite + the 4-engine
+`workflows/metta_xcheck.sh` (the references are the only ground truth for "COW preserved semantics"). Prefer
+the low-risk `atom_types` interning first.
