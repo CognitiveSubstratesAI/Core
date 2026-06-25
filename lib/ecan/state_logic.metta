@@ -57,13 +57,18 @@
             (set-min-af-sti! (foldl-atom $af-stis 1.0 $acc $v
                                (if (< $v $acc) $v $acc))))))
 
-;; Find the AF atom with the lowest STI (lambda → 5-arg syntax).
+;; Find the AF atom with the lowest STI. foldl-atom is a SPECIAL FORM whose list/seed args are NOT
+;; evaluated on the faithful engine — passing (cdr-atom $af)/(car-atom $af) inline folds over the
+;; literal expression (returns the symbol `cdr-atom`). Bind both via let* first. (eval_metta tolerated
+;; the inline form; the faithful engine does not.) See test_pln_ecan.jl:88.
 (= (get-min-af-atom)
    (let $af (get-af-atoms)
         (if (== $af ())
             ()
-            (foldl-atom (cdr-atom $af) (car-atom $af) $best $id
-              (if (< (get-sti $id) (get-sti $best)) $id $best)))))
+            (let* (($rest (cdr-atom $af))
+                   ($seed (car-atom $af)))
+              (foldl-atom $rest $seed $best $id
+                (if (< (get-sti $id) (get-sti $best)) $id $best))))))
 
 ;; -------------------------------------------------------
 ;; 3. Attentional Focus Update (Priority Queue Logic)
