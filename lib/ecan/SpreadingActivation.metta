@@ -42,11 +42,15 @@
 
 ;; Core-interpreter workaround (drop collapse — atom-template single-match
 ;; case doesn't get wrapped, car-atom would decompose the atom).
+;; Both-evaluator upsert (existence-guard + True return) — the unguarded bare-match no-op'd on the
+;; faithful engine when no prior link existed (empty match → outer let never binds → add skipped).
 (= (set-link-weight! $source $target $weight)
-   (let $old (match &self (WeightedLink $source $target $w)
-                          (WeightedLink $source $target $w))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
-             (add-atom &self (WeightedLink $source $target $weight)))))
+   (let $exists (collapse (match &self (WeightedLink $source $target $w) found))
+        (let $_ (if (== $exists ()) True
+                    (let $old (match &self (WeightedLink $source $target $w)
+                                           (WeightedLink $source $target $w))
+                         (remove-atom &self $old)))
+             (let $a (add-atom &self (WeightedLink $source $target $weight)) True))))
 
 ;; -------------------------------------------------------
 ;; 2. STI Trade — canonical tradeSti()
@@ -217,21 +221,24 @@
           ($conj     (+ $product (* $diff $abs-diff))))
      (/ (+ $conj 1.0) 2.0)))
 
-;; Update Hebbian link weight between two co-active atoms.
-;; collapse(match) → match directly; let-destructure → let* compound pattern.
+;; Update Hebbian link weight between two co-active atoms. A bare `(match …)` returns EMPTY (not ())
+;; on the faithful engine → bound in the let* it collapsed the whole rule, so the create-branch NEVER
+;; fired (Hebbian links were never created — the bug the migration missed). collapse the existence
+;; check; car-atom the singleton for the update; both paths return True.
 (= (hebbian-update! $source $target)
    (let* (($ni (get-normalised-sti $source))
           ($nj (get-normalised-sti $target))
           ($conj (hebbian-conjunction $ni $nj))
-          ($old  (match &self (AsymHebbianLink $source $target $s $c)
-                              (AsymHebbianLink $source $target $s $c))))
-     (if (== $old ())
-         (add-atom &self (AsymHebbianLink $source $target $conj 0.5))
-         (let* (((AsymHebbianLink $src $tgt $old-s $old-c) $old)
+          ($olds (collapse (match &self (AsymHebbianLink $source $target $s $c)
+                                        (AsymHebbianLink $source $target $s $c)))))
+     (if (== $olds ())
+         (let $a (add-atom &self (AsymHebbianLink $source $target $conj 0.5)) True)
+         (let* (($old (car-atom $olds))
+                ((AsymHebbianLink $src $tgt $old-s $old-c) $old)
                 ($new-s (clamp (+ $old-s (* (link-learning-rate) (- $conj $old-s)))
                                0.0 1.0))
                 ($_ (remove-atom &self $old)))
-           (add-atom &self (AsymHebbianLink $source $target $new-s $old-c))))))
+           (let $a (add-atom &self (AsymHebbianLink $source $target $new-s $old-c)) True)))))
 
 ;; Create Hebbian link if atoms are both in AF and link doesn't exist
 (= (maybe-create-hebbian-link! $source $target)

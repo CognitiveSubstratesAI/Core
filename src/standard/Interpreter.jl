@@ -22,6 +22,7 @@ using .StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
 export metta_run, metta_results, parse_program, load_metta!, load_core_stdlib!, tokenize, metta_debug!
+export interpret_max_steps!, metta_max_steps!
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -721,7 +722,7 @@ function interpret(atom::Atom, space=nothing, b::Bindings=Bindings())::Vector{Tu
         # inputs; all sub-helpers + the fold bounded). The real cost is PER-STEP (let*-nesting + per-call
         # rule-lookup overhead, the parked perf track); this cap comes back DOWN once that's optimized.
         # Bounded-generous over measured need (~120-300K) so a real runaway still fires in minutes, not an hour.
-        (steps += 1) > 512_000 && error("minimal interpreter step limit")
+        _INTERPRET_MAX[] > 0 && (steps += 1) > _INTERPRET_MAX[] && error("minimal interpreter step limit (raise via interpret_max_steps!(n); 0 = unlimited)")
         f, fb = pop!(plan)
         for (nf, nb) in interpret_stack(f, fb, space)
             if nf.finished && nf.prev === nothing
@@ -766,6 +767,14 @@ const _METTA_STEPS = Ref(0)
 const _METTA_MAX = Ref(0)
 "Set the reduce-chain step cap; 0 = unlimited (default). Mirrors hyperon `set_max_stack_depth` semantics."
 metta_max_steps!(n::Int=0) = (_METTA_MAX[] = n)
+# Step cap for the MINIMAL machine's `interpret` loop (~line 724) — the iterative driver's runaway guard.
+# Was hard-coded 512K; now configurable (same pattern as _METTA_MAX) so heavy-but-finite workloads can
+# raise it. Default 512K (bounded-generous over measured need); 0 = unlimited (mirrors hyperon/CeTTa).
+# e.g. ECAN's 100-tick heartbeat stress test legitimately exceeds 512K — a signal for the parked
+# per-step-cost optimization, NOT a reason to keep the default permanently high.
+const _INTERPRET_MAX = Ref(512_000)
+"Set the minimal-machine `interpret` step cap; 0 = unlimited. Default 512_000."
+interpret_max_steps!(n::Int=512_000) = (_INTERPRET_MAX[] = n)
 const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
 metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)

@@ -39,8 +39,10 @@
 ;; Drop the atom's AV record (single-match remove — the set-av! pattern) and its
 ;; AF membership if any. Returns True.
 (= (forget-atom! $id)
-   (let $old (match &self (AV $id $s $l $v) (AV $id $s $l $v))
-        (let $_ (if (== $old ()) True (remove-atom &self $old))
+   (let $exists (collapse (match &self (AV $id $s $l $v) found))
+        (let $_ (if (== $exists ()) True
+                    (let $old (match &self (AV $id $s $l $v) (AV $id $s $l $v))
+                         (remove-atom &self $old)))
              (if (is-in-af? $id) (remove-from-af! $id) True))))
 
 ;; ── Agent ───────────────────────────────────────────────────────────────────

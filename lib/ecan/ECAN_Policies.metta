@@ -70,9 +70,13 @@
 ;; -------------------------------------------------------
 ;; 7. Governance Policies (call Julia primitives)
 ;; -------------------------------------------------------
+;; Effect functions return True (not the () that decimate-importance!/normalize-attention! inherit from
+;; set-av!→add-atom). On the faithful engine a ()-value bound in a `let` whose body is another nested
+;; `let` poisons the chain (returns empty) — so governance-step!/fluid-attention-step! short-circuit.
+;; Returning True keeps these usable as effect statements in a let-sequence.
 (= (apply-decay!)
    (let $dummy (println! "Applying ECAN Decay...")
-        (decimate-importance! (ecan-decay-factor))))
+        (let $d (decimate-importance! (ecan-decay-factor)) True)))
 
 (= (apply-normalization!)
-   (normalize-attention! (ecan-target-sti-sum)))
+   (let $n (normalize-attention! (ecan-target-sti-sum)) True))

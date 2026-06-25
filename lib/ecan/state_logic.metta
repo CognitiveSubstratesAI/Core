@@ -45,7 +45,7 @@
         (let $cleared (if (== $exists ()) True
                           (let $old (match &self (MinAFSTI $s) (MinAFSTI $s))
                                (remove-atom &self $old)))
-             (add-atom &self (MinAFSTI $sti)))))
+             (let $a (add-atom &self (MinAFSTI $sti)) True))))
 
 ;; Recompute minimum STI across all AF members.
 ;; lambda → canonical 5-arg foldl-atom syntax for Core compatibility.
@@ -127,7 +127,7 @@
              (let $cleared (if (== $exists ()) True
                                (let $old (match &self (ECATick $m) (ECATick $m))
                                     (remove-atom &self $old)))
-                  (add-atom &self (ECATick (+ $n 1)))))))
+                  (let $a (add-atom &self (ECATick (+ $n 1))) True)))))
 
 ;; -------------------------------------------------------
 ;; 6. Entropy Scan Gate (rate-limits adaptive_attention.metta scans)

@@ -70,19 +70,23 @@
 
 ;; Two-tier rent collection across the atomspace.
 ;; lambda → 5-arg foldl-atom.
+;; Return True (not the foldl's last collect-*-rent! result, which is () from set-av!) — a ()-value
+;; poisons a nested-let chain on the faithful engine (governance-step! short-circuits).
 (= (collect-all-wa-rent!)
    (let $all-atoms (get-all-av-atoms)
         (if (== (size-atom $all-atoms) 0)
             True
-            (foldl-atom $all-atoms True $_ $id
-              (collect-wa-rent! $id)))))
+            (let $done (foldl-atom $all-atoms True $_ $id
+                         (collect-wa-rent! $id))
+                 True))))
 
 (= (collect-all-af-rent!)
    (let $af-atoms (get-af-atoms)
         (if (== (size-atom $af-atoms) 0)
             True
-            (foldl-atom $af-atoms True $_ $id
-              (collect-af-rent! $id)))))
+            (let $done (foldl-atom $af-atoms True $_ $id
+                         (collect-af-rent! $id))
+                 True))))
 
 ;; The canonical cognitive heartbeat tick.
 ;;   1. Two-tier rent collection (WA across all atoms; AF additionally on AF members)

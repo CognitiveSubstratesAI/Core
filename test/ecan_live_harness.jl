@@ -42,6 +42,7 @@ function fresh()
 end
 
 function run_example(name)
+    interpret_max_steps!(3_000_000)   # finite headroom over the 512K default (Stability's 100 ticks); NOT 0/unlimited (a blowup would hang the server)
     sp, rep = fresh()
     src = replace(read(joinpath(BASE, "examples", "ecan", "$name.metta"), String),
                   "!(import! &self (library ecan))" => "")
