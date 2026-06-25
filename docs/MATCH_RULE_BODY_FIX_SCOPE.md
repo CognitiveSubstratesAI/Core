@@ -1,6 +1,16 @@
 # Fix scope: `collapse-match-in-rule-body` quirk in Core's Interpreter
 
-**Status:** scoped, not yet implemented. **Date:** 2026-06-25.
+> **⛔ SUPERSEDED / WRONG PREMISE (2026-06-25, Core e916f9f).** This doc's root-cause theory — that
+> `match` inside a rule body returns `()` (an INTERPRETER bug) — is FALSE. Live traces showed `match`
+> finds atoms correctly in a rule body, and a 4-engine cross-check (Core/hyperon/CeTTa/PeTTa) proved
+> 3 of 4 engines — INCLUDING hyperon, the reference — reproduce the exact ECAN-Stability symptom.
+> Core is FAITHFUL. The real defect was a **library bug**: `increment-ecan-tick!` stored
+> `(ECATick (+ $n 1))` UNEVALUATED, so the evaluated remove target `(ECATick N)` never matched →
+> accumulation → uncollapsed-match fork → overflow. Fixed by let-binding the value before add-atom
+> (Core e916f9f). Do NOT implement the interpreter changes below. Kept for the audit trail only.
+> See memory `feedback_metta_rules_verify_by_oracle_not_syntax`.
+
+**Status:** ~~scoped, not yet implemented~~ SUPERSEDED — premise disproven. **Date:** 2026-06-25.
 **Why now:** this single interpreter bug is the documented root cause of the ECAN Stability blowup
 (`increment-ecan-tick!`'s existence-check `(collapse (match &self (ECATick $m) found))` returns `()`
 inside the rule body → never removes the old counter → `ECATick` atoms accumulate → `heartbeat!` goes
