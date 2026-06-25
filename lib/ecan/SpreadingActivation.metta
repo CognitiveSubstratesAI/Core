@@ -1,4 +1,4 @@
-;; t1_SpreadingActivation.metta
+;; SpreadingActivation.metta
 ;; ECAN Importance Diffusion — canonical algorithm
 ;; Reference: iCog-Labs metta-attention/attention/ImportanceDiffusionAgent/
 ;;
@@ -27,7 +27,7 @@
 ;; (a) count correctly with size-atom regardless of whether the inner
 ;; result is a Symbol or a compound atom, and (b) iterate over a true
 ;; list (Vector of Box atoms) without foldl-atom decomposing a compound
-;; result by accident.  Box/unbox are defined in t1_core_logic.metta (the
+;; result by accident.  Box/unbox are defined in core_logic.metta (the
 ;; canonical SD-2 workaround for Core's collapse-with-atom-template ambiguity).
 (= (get-hebbian-links $source)
    (collapse (match &self (AsymHebbianLink $source $target $s $c)

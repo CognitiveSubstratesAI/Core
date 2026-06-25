@@ -1,4 +1,4 @@
-;;;; t1_Forgetting.metta — ECAN Forgetting Agent (memory reclamation)
+;;;; Forgetting.metta — ECAN Forgetting Agent (memory reclamation)
 ;;;;
 ;;;; Port of metta-attention's ForgettingAgent. LTI (Long-Term Importance) is the
 ;;;; persistence currency, so atoms with LTI below a threshold are eligible to be

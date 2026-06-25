@@ -1,4 +1,4 @@
-;; t1_core_logic.metta
+;; core_logic.metta
 ;; ECAN Core: AV Model, Global Funds, Wages, Stimulation
 ;; Reference: iCog-Labs metta-attention/attention-bank/
 ;;
@@ -268,7 +268,7 @@
 ;;    primitives `decimate-importance!` / `normalize-attention!` used by
 ;;    PRIMUS_Core's AttentionEngine.jl).
 ;;
-;;    `apply-decay!` and `apply-normalization!` in t1_ECAN_Policies.metta
+;;    `apply-decay!` and `apply-normalization!` in ECAN_Policies.metta
 ;;    invoke these — they had no effect in Phase 0 because the names were
 ;;    unbound.  Now they fire.
 ;;

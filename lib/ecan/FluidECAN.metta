@@ -1,4 +1,4 @@
-;; t1_FluidECAN.metta
+;; FluidECAN.metta
 ;; Fluid (Continuous-Time) Attention Dynamics
 ;;
 ;; Approximates continuous Ornstein-Uhlenbeck STI dynamics using
@@ -27,15 +27,21 @@
    (let $result (collapse (match &self (FluidDt $dt) $dt))
         (if (== $result ()) 0.1 (car-atom $result))))
 
-;; Drop collapse — atom-template single-match isn't list-wrapped in Core.
+;; Both-evaluator upsert (existence-guard via collapse, bare match+remove only when present) —
+;; see core_logic set-av!/set-funds-sti!. The unguarded form no-op'd on the faithful engine when
+;; no prior atom existed (empty match → outer let never binds → add skipped).
 (= (set-fluid-viscosity! $v)
-   (let $old (match &self (FluidViscosity $x) (FluidViscosity $x))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $exists (collapse (match &self (FluidViscosity $x) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (FluidViscosity $x) (FluidViscosity $x))
+                               (remove-atom &self $old)))
              (add-atom &self (FluidViscosity $v)))))
 
 (= (set-fluid-dt! $dt)
-   (let $old (match &self (FluidDt $x) (FluidDt $x))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $exists (collapse (match &self (FluidDt $x) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (FluidDt $x) (FluidDt $x))
+                               (remove-atom &self $old)))
              (add-atom &self (FluidDt $dt)))))
 
 ;; -------------------------------------------------------
@@ -55,7 +61,7 @@
           ($alpha (* $visc $dt)))
      ;; apply-decay! uses the registered ecan-decay-factor atom.
      ;; For the fluid layer we just call it — decay rate comes from
-     ;; t1_ECAN_Policies.metta (ecan-decay-factor), which captures
+     ;; ECAN_Policies.metta (ecan-decay-factor), which captures
      ;; the long-run viscosity.  $alpha is returned for observability.
      (let $_ (apply-decay!)
           $alpha)))
@@ -94,7 +100,7 @@
 ;; Fixed 2026-04-10: robust to nil/nothing from get-attentional-focus. Checks
 ;; both () and empty size to handle all return types from the Julia primitive.
 ;; get-attentional-focus now returns a list of Symbol ids (via the SD-1
-;; fix in t1_core_logic).  No unboxing needed at this call site — the
+;; fix in core_logic).  No unboxing needed at this call site — the
 ;; Box wrapper is internal to get-attentional-focus's filtering pipeline.
 (= (fluid-af-step!)
    (let $af (get-attentional-focus 0.01)

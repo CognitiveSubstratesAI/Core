@@ -19,7 +19,7 @@
 ;;     Use the deterministic ECAN tick counter instead of wall-clock — ties
 ;;     scan/cooldown timing to the heartbeat that drives this loop.
 ;;
-;; 3.  Removed duplicate scan-due? / update-scan-tick!  — t1_state_logic
+;; 3.  Removed duplicate scan-due? / update-scan-tick!  — state_logic
 ;;     already defines `(scan-due?)` (0-arg, reads tick internally) and
 ;;     `set-attention-scan-tick!`.  This file uses those.
 ;;
@@ -38,9 +38,9 @@
 ;; 0. Scan & Adaptation Parameters (evolvable atoms)
 ;; ============================================================
 
-;; NOTE: (attention-scan-interval) is already defined in t1_state_logic.metta
+;; NOTE: (attention-scan-interval) is already defined in state_logic.metta
 ;; as a default of 50.  The original PRIMUS file redefined it; we leave the
-;; t1_state_logic version authoritative.
+;; state_logic version authoritative.
 
 ;; Minimum ticks between policy changes (oscillation damping)
 (= (attention-policy-cooldown) 30)
@@ -70,7 +70,7 @@
                 $acc)))))
 
 ;; Measure the current attention distribution.  Gated by `(scan-due?)` from
-;; t1_state_logic so we don't run the full O(N) scan every tick.
+;; state_logic so we don't run the full O(N) scan every tick.
 ;;
 ;; Returns (AttentionMeasure $high $mid $low $total)
 ;;      or (AttentionMeasure skipped) when cooldown is active.
@@ -186,7 +186,7 @@
             (AttentionPolicyCooldownActive Diffuse))))
 
 ;; ============================================================
-;; 4. Main Entry Point — overrides the stub in t1_AttentionPolicies.
+;; 4. Main Entry Point — overrides the stub in AttentionPolicies.
 ;;
 ;; This is what makes governance-step!'s Phase 4 (self-evolution) live —
 ;; when this file is loaded, (attention-evolution-step!) returns a real

@@ -1,5 +1,5 @@
 ;;;; AFState.metta — Attentional Focus membership, tick counter, scan gate
-;;;; Phase 1a surface from t1_state_logic.metta.
+;;;; Phase 1a surface from state_logic.metta.
 
 !(import! &self (library ecan))
 

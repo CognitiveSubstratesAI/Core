@@ -2,7 +2,7 @@
 ;;;; MetaMo OpenPsi stimulus, plus `metamoGovern` as a candidate governance step.
 ;;;;
 ;;;; STANDALONE DEMO — this file deliberately does NOT modify the live
-;;;; `governance-step!` heartbeat (lib/ecan/t1_AttentionPolicies.metta). It proves
+;;;; `governance-step!` heartbeat (lib/ecan/AttentionPolicies.metta). It proves
 ;;;; the stimulus→step→(next-state) plumbing in isolation so the coupling can be
 ;;;; validated before being promoted into the heartbeat's Phase-4 self-evolution
 ;;;; slot (currently a no-op stub).

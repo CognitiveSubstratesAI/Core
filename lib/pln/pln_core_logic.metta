@@ -3,7 +3,7 @@
 ;; ════════════════════════════════════════════════════════════════════════════
 ;; PLN.Derive's priority ranking blends confidence with ECAN STI:
 ;;   priority = 0.5 * confidence + 0.5 * (STI / 100.0)
-;; ECAN's real get-sti / boost-sti! (lib/ecan/t1_core_logic.metta, imported by pln.metta)
+;; ECAN's real get-sti / boost-sti! (lib/ecan/core_logic.metta, imported by pln.metta)
 ;; now supply attention. get-sti defaults to 0.0 for atoms with no AV, so the blend
 ;; degrades to confidence-only ranking until attention is assigned — no stub needed.
 ;; The earlier `(= (get-sti _) 0.0)` / `(= (boost-sti! _ _) (empty))` stubs were REMOVED:

@@ -1,4 +1,4 @@
-;; t1_state_logic.metta
+;; state_logic.metta
 ;; ECAN State: Attentional Focus Management + Tick Counters
 ;; Reference: iCog-Labs metta-attention/attention-bank/bank/attentional-focus/
 ;;
@@ -36,12 +36,15 @@
    (let $result (collapse (match &self (MinAFSTI $s) $s))
         (if (== $result ()) 0.0 (car-atom $result))))
 
-;; Core-interpreter workaround (same family as set-av! in t1_core_logic):
-;; collapse+match with atom-template doesn't wrap single results, so we use
-;; the match result directly rather than via collapse+car-atom.
+;; Both-evaluator upsert idiom (mirrors set-av!/set-funds-sti! in core_logic): existence-guard via
+;; `(collapse (match … found))` (() on no-match), then run the bare match+remove ONLY inside the
+;; guarded branch so it always binds. The old unguarded `(let $old (match …))` no-op'd on the faithful
+;; engine when no prior atom existed (empty match → let never binds → add skipped).
 (= (set-min-af-sti! $sti)
-   (let $old (match &self (MinAFSTI $s) (MinAFSTI $s))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $exists (collapse (match &self (MinAFSTI $s) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (MinAFSTI $s) (MinAFSTI $s))
+                               (remove-atom &self $old)))
              (add-atom &self (MinAFSTI $sti)))))
 
 ;; Recompute minimum STI across all AF members.
@@ -114,9 +117,11 @@
         (if (== $result ()) 0 (car-atom $result))))
 
 (= (increment-ecan-tick!)
-   (let $old (match &self (ECATick $n) (ECATick $n))
-        (let $n (get-ecan-tick)
-             (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $n (get-ecan-tick)
+        (let $exists (collapse (match &self (ECATick $m) found))
+             (let $cleared (if (== $exists ()) True
+                               (let $old (match &self (ECATick $m) (ECATick $m))
+                                    (remove-atom &self $old)))
                   (add-atom &self (ECATick (+ $n 1)))))))
 
 ;; -------------------------------------------------------
@@ -128,8 +133,10 @@
         (if (== $result ()) -1000 (car-atom $result))))
 
 (= (set-attention-scan-tick! $n)
-   (let $old (match &self (AttentionScanLastTick $t) (AttentionScanLastTick $t))
-        (let $_ (if (== $old ()) () (remove-atom &self $old))
+   (let $exists (collapse (match &self (AttentionScanLastTick $t) found))
+        (let $cleared (if (== $exists ()) True
+                          (let $old (match &self (AttentionScanLastTick $t) (AttentionScanLastTick $t))
+                               (remove-atom &self $old)))
              (add-atom &self (AttentionScanLastTick $n)))))
 
 ;; Default scan interval — Phase 1c (adaptive_attention.metta) may override

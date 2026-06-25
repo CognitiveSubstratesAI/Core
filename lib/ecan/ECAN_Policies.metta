@@ -1,4 +1,4 @@
-;; t1_ECAN_Policies.metta
+;; ECAN_Policies.metta
 ;; ECAN Economic Parameters — all evolvable MeTTa atoms
 ;; Reference: iCog-Labs metta-attention/attention/AttentionParam.metta
 ;;

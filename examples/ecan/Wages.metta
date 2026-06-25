@@ -5,7 +5,7 @@
 ;;;; funds below target → POSITIVE wage (atoms get paid, draining funds back to target)
 ;;;; funds above target → NEGATIVE wage (atoms taxed, refilling funds)
 ;;;;
-;;;; Defaults from t1_ECAN_Policies.metta:
+;;;; Defaults from ECAN_Policies.metta:
 ;;;;   sti-funds-target = 10000.0
 ;;;;   sti-funds-buffer = 10000.0
 ;;;;   sti-atom-wage    = 10.0

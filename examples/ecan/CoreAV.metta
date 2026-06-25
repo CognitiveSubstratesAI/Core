@@ -2,7 +2,7 @@
 ;;;; Tests: (AV $id $sti $lti $vlti), get-sti, get-lti, get-vlti, set-*, boost-sti!
 ;;;;
 ;;;; Test 1 is the BUG PROBE for the collapse-match-in-rule-body issue
-;;;; documented in PRIMUS_Core's t1_core_logic.metta — if Core's interpreter
+;;;; documented in PRIMUS_Core's core_logic.metta — if Core's interpreter
 ;;;; has the same bug, (get-sti seeded-atom) returns 0.0 instead of the seeded
 ;;;; value, despite the find-first-number workaround.  If it returns 0.5,
 ;;;; Core's interpreter doesn't have the bug and the workaround is dead code.

@@ -1,7 +1,7 @@
 ;; ============================================================
-;; t1_AttentionPolicies.metta — Governance Loop & Policies (Phase 1b)
+;; AttentionPolicies.metta — Governance Loop & Policies (Phase 1b)
 ;; ============================================================
-;; Adopted from packages/PRIMUS_Core/lib/ecan/t1_AttentionPolicies.metta —
+;; Adopted from packages/PRIMUS_Core/lib/ecan/AttentionPolicies.metta —
 ;; only the canonical sections; PRIMUS-specific scaffolding stripped.
 ;;
 ;; INCLUDED  (canonical ECAN, upstream iCog-Labs metta-attention parity):

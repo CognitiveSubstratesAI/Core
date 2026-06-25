@@ -5,7 +5,7 @@
 # Proves PLN and ECAN are co-working cognitive algorithms over ONE faithful evaluator
 # (Minimal): PLN's backward DEMAND field drives ECAN's STI via the source's damped +
 # budget-normalized channel. NO Julia primitives — ECAN's normalize-attention! is native
-# MeTTa (t1_core_logic.metta), so PLN + ECAN run on the same evaluator. Libraries are
+# MeTTa (core_logic.metta), so PLN + ECAN run on the same evaluator. Libraries are
 # loaded ON-DEMAND (the import! subset model, cross-checked faithful to hyperon/CeTTa/PeTTa).
 #
 # Golden = the closed-form §4.9 EMA (no oracle implements it; PLNDemand.jl stops at the
@@ -24,8 +24,8 @@ using MeTTaCore.Interpreter
 using MeTTaCore.Interpreter.StandardMeTTa
 include(joinpath(@__DIR__, "..", "assert_guard.jl"))   # silent-test guard (shared convention)
 
-const _ECAN = joinpath(@__DIR__, "..", "..", "lib", "ecan", "t1_core_logic.metta")
-const _POL  = joinpath(@__DIR__, "..", "..", "lib", "ecan", "t1_ECAN_Policies.metta")
+const _ECAN = joinpath(@__DIR__, "..", "..", "lib", "ecan", "core_logic.metta")
+const _POL  = joinpath(@__DIR__, "..", "..", "lib", "ecan", "ECAN_Policies.metta")
 const _FG   = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta")
 const _CPL  = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_ecan_coupling.metta")
 const _PLNCORE = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_core_logic.metta")
