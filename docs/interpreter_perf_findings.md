@@ -37,13 +37,24 @@ measurably needs the speed** (see the guardrail).
    wrapping every atom in `(metta …)` per step (13×), `:678` child-array splat. The continuation reducer
    allocates a Frame + wrapper Expression + child arrays **every step** → the ~5,722-alloc driver.
 
-## Dispatch (JET)
+## Dispatch + type analysis (JET)
 
-- Runtime dispatch is concentrated at the **orchestration boundary**: `metta_run` = **191** runtime-dispatch
-  reports (abstract `Atom`). Leaves are clean: `subst` = 1, `match_atoms` = 3.
-- `JET.report_package(MeTTaCore)` = **109 "possible errors" — the known false-positive class** (the `Any`-typed
-  atom boundary, e.g. the `set_val_at!`/PathMap chain). **Do not re-chase** (matches the earlier "137 = all
-  false positives" finding).
+**`report_opt` (runtime dispatch) — the abstract-`Atom` class.** `metta_run` = 191 reports, `match_atoms` = 49,
+`subst` = 1. Every one traces to `Atom` being an abstract sum type, so `==`, `_flat` iteration, and `_occurs`
+predicates dispatch dynamically (`(%::Atom == %::Atom)::Any`, `(A::Vector)[i]::Any`). **Not correctness bugs —
+the same *perf* signal as above** (dispatch concentrated at the `Atom` boundary, leaves clean).
+`report_package(MeTTaCore)` = 109 "possible errors" = this same `Any`-boundary class (e.g. the PathMap
+`set_val_at!` chain). **Do not re-chase** (matches the earlier "137 = all false positives" finding).
+
+**`report_call` (type errors / may-throw) — 2 reports, both assessed:**
+1. `interpret_stack` (`Interpreter.jl:172`) getproperty-on-`Nothing` (`f.prev.vars`) → **FALSE POSITIVE** —
+   guarded 3 lines up by `f.prev === nothing && return [(f, b)]`; after the guard `f.prev` is a `Frame`.
+2. `add_var_binding` (`Atoms.jl:124`) `prev == val` typed `Union{Missing, Bool}` used in a boolean `elseif`
+   → **LATENT EDGE (not a live bug).** `Base.:(==)(a::Grounded, b::Grounded) = a.value == b.value` and
+   `.value::Any`, so `Any == Any` *can* return `missing`; if a grounded atom ever wraps Julia `missing`, line
+   124 throws "non-boolean Missing." Never fires for normal MeTTa values (Float64 / symbols / expressions) —
+   a sharp edge in the "primitives untested at edges" class, recorded not rushed (forcing `Grounded ==` to a
+   strict `Bool` would fix it but changes atom-equality semantics → conformance risk; only with measured need).
 
 ## Profile (flat, self-time — `concatT(20,20)` recursion, Profile.jl)
 
