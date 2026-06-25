@@ -38,9 +38,12 @@
 !(add-atom &self (Link stab-near1 stab-far1))
 !(add-atom &self (Link stab-near2 stab-far2))
 
-;; Snapshot of initial tick counter for delta assertions
+;; Snapshot of initial tick counter for delta assertions.
+;; Capture the VALUE with let first — add-atom stores its Atom arg unevaluated, so a bare
+;; (Snapshot (get-ecan-tick)) would store the *call* and re-evaluate to the current tick at
+;; match time (reading 50/100 instead of the captured 0).
 !(bind! &init-tick (new-space))
-!(add-atom &init-tick (Snapshot (get-ecan-tick)))
+!(let $t0 (get-ecan-tick) (add-atom &init-tick (Snapshot $t0)))
 
 ;; ── First 50-tick run ────────────────────────────────────────────────
 !(heartbeat! stab-goal 50)
@@ -77,12 +80,14 @@
   (assertEqual (> $total 0.001) True))   ;; sum positive (else share is NaN)
 
 ;; ── Snapshot at tick=50 ──────────────────────────────────────────────
+;; let-capture each STI value before add-atom (same reason as &init-tick above) — otherwise the
+;; stored (get-sti …) call re-evaluates at match time and Test 6's 50→100 delta is vacuously 0.
 !(bind! &snap50 (new-space))
-!(add-atom &snap50 (S stab-goal  (get-sti stab-goal)))
-!(add-atom &snap50 (S stab-near1 (get-sti stab-near1)))
-!(add-atom &snap50 (S stab-near2 (get-sti stab-near2)))
-!(add-atom &snap50 (S stab-far1  (get-sti stab-far1)))
-!(add-atom &snap50 (S stab-far2  (get-sti stab-far2)))
+!(let $v (get-sti stab-goal)  (add-atom &snap50 (S stab-goal  $v)))
+!(let $v (get-sti stab-near1) (add-atom &snap50 (S stab-near1 $v)))
+!(let $v (get-sti stab-near2) (add-atom &snap50 (S stab-near2 $v)))
+!(let $v (get-sti stab-far1)  (add-atom &snap50 (S stab-far1  $v)))
+!(let $v (get-sti stab-far2)  (add-atom &snap50 (S stab-far2  $v)))
 
 ;; ── Second 50-tick run ───────────────────────────────────────────────
 !(heartbeat! stab-goal 50)

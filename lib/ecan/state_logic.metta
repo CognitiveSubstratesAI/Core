@@ -123,11 +123,12 @@
 
 (= (increment-ecan-tick!)
    (let $n (get-ecan-tick)
-        (let $exists (collapse (match &self (ECATick $m) found))
-             (let $cleared (if (== $exists ()) True
-                               (let $old (match &self (ECATick $m) (ECATick $m))
-                                    (remove-atom &self $old)))
-                  (let $a (add-atom &self (ECATick (+ $n 1))) True)))))
+   (let $next (+ $n 1)                          ; evaluate FIRST — add-atom stores its Atom arg
+        (let $exists (collapse (match &self (ECATick $m) found))   ; unevaluated, so the stored atom must
+             (let $cleared (if (== $exists ()) True                ; already be (ECATick <number>); otherwise
+                               (let $old (match &self (ECATick $m) (ECATick $m))  ; the evaluated remove target
+                                    (remove-atom &self $old)))                    ; (ECATick N) never matches a
+                  (let $a (add-atom &self (ECATick $next)) True))))))             ; stored (ECATick (+ .. 1)).
 
 ;; -------------------------------------------------------
 ;; 6. Entropy Scan Gate (rate-limits adaptive_attention.metta scans)
