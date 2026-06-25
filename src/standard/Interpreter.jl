@@ -799,11 +799,19 @@ metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
 # would break it. Stored as source strings, parsed FRESH per lookup for variable hygiene.
 const _GROUNDED_OP_TYPES = Dict{Atom,String}()       # populated after the ops are defined (below)
 _parse_type(s::AbstractString)::Atom = parse_from(tokenize(s), Ref(1))
+# Parse-once cache for grounded-op intrinsic types. `atom_types` runs on every typed eval step;
+# re-tokenizing+parsing the type SOURCE STRING per lookup was the `Vector{Char}` churn AllocCheck/Profile
+# flagged. We memoize the parsed Atom and return it directly — byte-identical structure to a fresh parse
+# (same `Var("t",0)`, so type-matching is unchanged; atoms are immutable and bindings are per-call, so
+# the shared object is safe). Eval is serialized under the server LOCK, so the lazy fill needs no extra
+# guard. (NOT rename_fresh'd: that would assign new Var ids and change matching behavior — preserve parity.)
+const _GROUNDED_OP_TYPE_CACHE = Dict{Atom,Atom}()
 
 # the declared types of `atom`: intrinsic grounded-op type (if any) + space decls (: atom $T)
 function atom_types(atom::Atom, space::Space)::Vector{Atom}
     T = freshvar("T"); out = Atom[]
-    haskey(_GROUNDED_OP_TYPES, atom) && push!(out, _parse_type(_GROUNDED_OP_TYPES[atom]))
+    haskey(_GROUNDED_OP_TYPES, atom) &&
+        push!(out, get!(() -> _parse_type(_GROUNDED_OP_TYPES[atom]), _GROUNDED_OP_TYPE_CACHE, atom))
     for qb in query(space, Expression(Sym(":"), atom, T))
         t = resolve(qb, T); t !== nothing && push!(out, t)
     end

@@ -126,7 +126,13 @@ All three references use **closed sum types** → tag-switch dispatch. Core's `a
 | 1 | `Bindings` copy-on-write | `Atoms.jl:74` | **high** (eval-core mutation semantics) | biggest alloc cut + #1 self-time |
 | 2 | reduce-step Frame/wrapper pooling | `Interpreter.jl:105/544/678` | high (continuation machine) | the 5.7k-alloc driver |
 | 3 | ✅ **DONE** `rename_fresh` structural sharing — ground subtrees shared, not rebuilt | `Interpreter.jl:363` | low (immutable, ground=no vars) | 0 allocs for ground atoms (was full tree rebuild); 234/234 conformance |
-| alt | `atom_types` symbol-interning (compare by id, not string) | type lookup | **low** (no binding mutation) | kills `Vector{Char}` churn per step |
+| 4 | ✅ **DONE** `atom_types` grounded-type parse-cache — parse the type string once, not per lookup | `Interpreter.jl:800` | low (byte-identical, immutable) | kills the `Vector{Char}` re-parse; 234/234 |
+
+> **Correction (measured):** the `Vector{Char}` re-parse AllocCheck flagged was a *minor* `atom_types` cost.
+> With it cached, `atom_types(EQ_OP)` is still ~4,079 allocs / 175 KB — **dominated by the space query**
+> `query(space, (: atom $T))`, which scans + `rename_fresh`es every `(: …)` decl per lookup. Symbol
+> interning would *not* have helped this (it's not symbol comparison). The real lever is **indexing type
+> declarations by subject op** (O(1) lookup vs scan) — a deeper space-index change, deferred.
 
 ## ⚠️ Guardrail — do not optimize the eval core until measured need
 
