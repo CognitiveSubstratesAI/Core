@@ -226,6 +226,21 @@ using Test
         @test !mm2_is_relational(SM.parse_program(over_vars)[1][2])
     end
 
+    # ── piece 10: mc_closure! — opt-in substrate route, Datalog closure materialized into a live Space ──
+    @testset "mc_closure! materializes the transitive closure for the interpreter to query" begin
+        SM = MeTTaCore.Interpreter
+        isp = SM.Space(); SM.load_core_stdlib!(isp)
+        SM.load_metta!(isp, "(edge a b)\n(edge b c)\n(edge c d)\n" *
+            raw"(= (edge $x $y) (reach $x $y))" * "\n" *
+            raw"(= (, (edge $x $y) (reach $y $z)) (reach $x $z))")
+        @test mc_closure!(isp) == 6                              # 6 derived reach atoms materialized
+        res = SM.load_metta!(isp, raw"!(match &self (reach $x $y) (reach $x $y))")
+        reach = sort(unique(filter(s -> startswith(s, "(reach"),
+            [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        @test length(reach) == 6                                # interpreter now queries the full closure
+        @test "(reach a d)" in reach                            # incl. the 3-hop only the fixpoint finds
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *

@@ -328,6 +328,30 @@ function mm2_lane_saturate!(atoms; max_rounds::Int = 64)::CoreSpace
 end
 
 """
+    mc_closure!(isp; rounds=64) -> Int
+
+OPT-IN substrate route: compute the Datalog FORWARD CLOSURE of a live interpreter `Space`'s relational rules
+on the MORK lane (`mm2_lane_saturate!`) and MATERIALIZE the newly-derived atoms back into `isp`. Returns the
+count added. The user opts into forward-closure (Datalog) semantics for the relational subset; the
+interpreter's `(=)` reduction semantics for everything else are untouched. So a MeTTa program can compute a
+transitive closure on the substrate, then query it with the interpreter (`!(match &self …)`).
+"""
+function mc_closure!(isp::Interpreter.Space; rounds::Int = 64)::Int
+    own = collect(@view isp.atoms[(isp.lib_count + 1):end])
+    cs = mm2_lane_saturate!(own; max_rounds = rounds)
+    added = 0
+    for line in split(space_dump_all_sexpr(cs.inner), '\n')
+        s = strip(line); isempty(s) && continue
+        mm2_head(s) == "exec" && continue                        # skip MM2 exec-rule artifacts
+        atom = Interpreter.parse_program(s)[1][2]
+        if !any(==(atom), isp.atoms)
+            Interpreter.add_atom!(isp, atom); added += 1
+        end
+    end
+    added
+end
+
+"""
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
 
 Run a `(match SPACE PAT TMPL)` via the MM2 lane: lower to exec, step the calculus on `cs`'s native
