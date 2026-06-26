@@ -21,9 +21,13 @@ export Bindings, resolve, match_atoms, merge_bindings, add_var_binding, add_var_
 abstract type Atom end
 
 "Symbol — an id/concept. Two symbols with the same name are equal. (hyperon SymbolAtom)"
+# name is a Julia `Symbol` — interned BY THE RUNTIME (the native analog of CeTTa's `sym_id`): `==` is a
+# pointer compare (~10–20× over String memcmp) and `hash` is ~3× cheaper (the index Dict keys). Construct
+# from a String via the interning ctor below; all `Sym("lit")` sites keep working unchanged.
 struct Sym <: Atom
-    name::String
+    name::Symbol
 end
+Sym(s::AbstractString) = Sym(Symbol(s))
 
 "Variable — name + uniqueness id for hygiene/alpha-renaming. (hyperon VariableAtom)"
 struct Var <: Atom

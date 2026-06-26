@@ -30,8 +30,8 @@ const FUNCTION = Sym("function"); const RETURN = Sym("return"); const UNIFY = Sy
 const CONS = Sym("cons-atom"); const DECONS = Sym("decons-atom")
 const COLLAPSE_BIND = Sym("collapse-bind"); const SUPERPOSE_BIND = Sym("superpose-bind")
 const EMPTY = Sym("Empty"); const NOT_REDUCIBLE = Sym("NotReducible"); const ERROR = Sym("Error")
-const MINIMAL_OPS = Set(String[ "eval","evalc","chain","function","unify",
-                                 "cons-atom","decons-atom","collapse-bind","superpose-bind" ])
+const MINIMAL_OPS = Set(Symbol[ Symbol("eval"),Symbol("evalc"),Symbol("chain"),Symbol("function"),Symbol("unify"),
+                                 Symbol("cons-atom"),Symbol("decons-atom"),Symbol("collapse-bind"),Symbol("superpose-bind") ])
 
 # ── LangDef disable-to-prove hook (CeTTa-adopted, langdef_pack.{c,h}) ───────────
 # A covered HE-rule branch fires ONLY when its rule is enabled, so disabling a rule (via
@@ -53,7 +53,7 @@ langdef_reset!() = (_LANGDEF_DISABLED[] = nothing; nothing)                     
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 head_name(a::Atom) = (a isa Expression && !isempty(a.children) && a.children[1] isa Sym) ?
-                     (a.children[1]::Sym).name : ""
+                     (a.children[1]::Sym).name : Symbol("")
 is_minimal_op(a::Atom) = head_name(a) in MINIMAL_OPS
 args(a::Expression) = a.children[2:end]
 
@@ -174,21 +174,21 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
         return cont === nothing ? Tuple{Frame,Bindings}[] : [cont]
     end
     name = head_name(f.atom)
-    if name == "cons-atom";    return cons_atom(f, b)
-    elseif name == "decons-atom"; return decons_atom(f, b)
-    elseif name == "unify";    return unify_op(f, b)
-    elseif name == "eval";     return eval_op(f, b, space)
-    elseif name == "chain" && rule_enabled("HES_Chain"); return setup_chain(f.atom, b, f.prev, f.depth)
-    elseif name == "function"; return setup_function(f.atom, b, f.prev, f.depth)
-    elseif name == "collapse-bind";  return collapse_bind_op(f, b, space)
-    elseif name == "superpose-bind"; return superpose_bind_op(f, b, space)
-    elseif name == "metta";            return metta_instr(f, b, space)            # metta driver (stack-machine)
-    elseif name == "interpret-tuple";  return interpret_tuple_instr(f, b, space)
-    elseif name == "interpret-function"; return interpret_function_instr(f, b, space)
-    elseif name == "interpret-args";   return interpret_args_instr(f, b, space)
-    elseif name == "metta-call";       return metta_call_instr(f, b, space)
-    elseif name == "return-on-error";  return return_on_error_instr(f, b)
-    elseif name == "args-cont";        return args_cont_instr(f, b)
+    if name === Symbol("cons-atom");    return cons_atom(f, b)
+    elseif name === Symbol("decons-atom"); return decons_atom(f, b)
+    elseif name === Symbol("unify");    return unify_op(f, b)
+    elseif name === Symbol("eval");     return eval_op(f, b, space)
+    elseif name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(f.atom, b, f.prev, f.depth)
+    elseif name === Symbol("function"); return setup_function(f.atom, b, f.prev, f.depth)
+    elseif name === Symbol("collapse-bind");  return collapse_bind_op(f, b, space)
+    elseif name === Symbol("superpose-bind"); return superpose_bind_op(f, b, space)
+    elseif name === Symbol("metta");            return metta_instr(f, b, space)            # metta driver (stack-machine)
+    elseif name === Symbol("interpret-tuple");  return interpret_tuple_instr(f, b, space)
+    elseif name === Symbol("interpret-function"); return interpret_function_instr(f, b, space)
+    elseif name === Symbol("interpret-args");   return interpret_args_instr(f, b, space)
+    elseif name === Symbol("metta-call");       return metta_call_instr(f, b, space)
+    elseif name === Symbol("return-on-error");  return return_on_error_instr(f, b)
+    elseif name === Symbol("args-cont");        return args_cont_instr(f, b)
     else
         return finished_result(f.atom, b, f.prev)              # not a minimal op → data, as-is
     end
@@ -321,19 +321,19 @@ mutable struct Space
     # var/var-headed 2nd child, <2 children) live in `wildcard` and are checked on every query —
     # they can match any discriminant (e.g. a var-LHS rule `(= $x …)`). `atoms` stays authoritative
     # (get-atoms/lib_count/order); the index is a parallel acceleration kept in sync at add/remove.
-    index::Dict{Tuple{String,String},Vector{Atom}}
+    index::Dict{Tuple{Symbol,Symbol},Vector{Atom}}
     wildcard::Vector{Atom}
 end
-Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{String,String},Vector{Atom}}(), Atom[])
+Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
 Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
 
 # discriminant head of an atom-position: a Sym's name, or an Expression's Sym head; else nothing.
-_idx_head(x::Atom)::Union{String,Nothing} =
+_idx_head(x::Atom)::Union{Symbol,Nothing} =
     x isa Sym ? x.name :
     (x isa Expression && !isempty(x.children) && x.children[1] isa Sym) ? (x.children[1]::Sym).name :
     nothing
 # (outer-head, 2nd-child-head) discriminant; nothing ⇒ not indexable ⇒ wildcard bucket.
-function _index_key(a::Atom)::Union{Tuple{String,String},Nothing}
+function _index_key(a::Atom)::Union{Tuple{Symbol,Symbol},Nothing}
     (a isa Expression && length(a.children) >= 2 && a.children[1] isa Sym) || return nothing
     sub = _idx_head(a.children[2]); sub === nothing && return nothing
     ((a.children[1]::Sym).name, sub)
@@ -463,8 +463,8 @@ end
 # set up `atom` to be evaluated (interpreter.rs atom_to_stack:640)
 function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)::Vector{Tuple{Frame,Bindings}}
     name = head_name(atom)
-    if name == "chain" && rule_enabled("HES_Chain"); return setup_chain(atom, b, prev, depth)
-    elseif name == "function"; return setup_function(atom, b, prev, depth)
+    if name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(atom, b, prev, depth)
+    elseif name === Symbol("function"); return setup_function(atom, b, prev, depth)
     else;                      return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth), b)]
     end
 end
@@ -472,7 +472,7 @@ end
 # function-special-when-returned (interpreter.rs eval_result:559): a returned `function`
 # op is set up (looped), not treated as data.
 function eval_result(res::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
-    head_name(res) == "function" ? setup_function(res, b, prev, depth) : finished_result(res, b, prev)
+    head_name(res) === Symbol("function") ? setup_function(res, b, prev, depth) : finished_result(res, b, prev)
 end
 
 # chain (interpreter.rs chain:687 / chain_ret:675): one-step nested, bind var, subst templ, EXECUTE it
@@ -1296,7 +1296,7 @@ end))
 # substitutes the token in every SUBSEQUENT atom (parse-time, via the incremental load_metta! loop).
 const BIND_TOKEN = Grounded(SpaceOp("bind!", function (xs, space)
     (length(xs) == 2 && xs[1] isa Sym) || return ExecNoReduce()
-    space.tokens[(xs[1]::Sym).name] = xs[2]
+    space.tokens[string((xs[1]::Sym).name)] = xs[2]   # tokens table is String-keyed (parser uses raw text)
     ExecOk(Atom[Expression(Atom[])])            # unit ()
 end))
 # Intrinsic state-op types (hyperon type_()): kept out of the space (see atom_types) so they don't
@@ -1344,11 +1344,11 @@ end
 # a string (hyperon's stated target form; PeTTa coerces via atom_string), or a `(library X)` spec
 # (PeTTa/CeTTa). Cross-checked vs CeTTa eval.c resolve_import_destination + PeTTa metta.pl importer_helper.
 function _import_modname(mod::Atom)::Union{String,Nothing}
-    mod isa Sym && return mod.name
+    mod isa Sym && return string(mod.name)          # Sym name is a Symbol → String for the module path
     mod isa Grounded && mod.value isa AbstractString && return mod.value
     if mod isa Expression && length(mod.children) == 2 && mod.children[1] == Sym("library")
         c = mod.children[2]
-        c isa Sym && return c.name
+        c isa Sym && return string(c.name)
         c isa Grounded && c.value isa AbstractString && return c.value
     end
     nothing
@@ -1376,7 +1376,7 @@ const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
     elseif target isa Sym
         newsp = Space(); push!(newsp.imported, modname)
         _load_module_file!(newsp, file)
-        space.tokens[(target::Sym).name] = Grounded(newsp)      # &kb: bind the token to a fresh space
+        space.tokens[string((target::Sym).name)] = Grounded(newsp)      # &kb: bind the token to a fresh space
     else
         return ExecRuntime("import!: first argument must be a space token")
     end
