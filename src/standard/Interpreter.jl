@@ -361,10 +361,25 @@ freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
 # allocation on the match hot path (Profile: rename_fresh was a top self-time frame; ground data
 # atoms are the common case). A fresh Expression is allocated only along paths where a Var actually
 # changed. Safe because atoms are immutable and ground atoms carry no variable that could clash.
-function rename_fresh(a::Atom, m::Dict{Var,Var}, d::Int=0)
+# small flat var-map: a Vector{Pair} avoids Dict's hash-table + bucket allocation (Profile re-attribution
+# on `9c27b1a`: the per-stored-rule `Dict{Var,Var}()` was the #1 alloc + self-time site). Stored rules carry
+# ~1-2 vars, so a linear `===`-scan beats both hashing and a `==` string-compare. INVARIANT: repeated
+# occurrences of a var in an atom flowing through eval are the SAME object — the parser interns vars per
+# parse (verified `$x===$x`), `freshvar` mints one object per key, and `subst` returns the input var object
+# for unbound vars, so identity is preserved end-to-end. (A `==` scan would also be correct, but identity is
+# already guaranteed, making `===` both safe and ~free.)
+const VarRenameMap = Vector{Pair{Var,Var}}
+function _rename_get!(m::VarRenameMap, v::Var)::Var
+    @inbounds for i in eachindex(m)
+        m[i].first === v && return m[i].second
+    end
+    fv = freshvar(v.name); push!(m, v => fv); fv
+end
+
+function rename_fresh(a::Atom, m::VarRenameMap=VarRenameMap(), d::Int=0)
     d > _MAX_ATOM_DEPTH && return a
     if a isa Var
-        return get!(() -> freshvar(a.name), m, a)
+        return _rename_get!(m, a)
     elseif a isa Expression
         kids = a.children
         newkids = nothing                       # allocate lazily, only on first changed child
@@ -388,18 +403,18 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     k = _index_key(pattern)
     if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
         for stored in space.atoms
-            append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
+            append!(out, match_atoms(pattern, rename_fresh(stored)))
         end
         return out
     end
     b = get(space.index, k, nothing)                   # same-discriminant atoms — the (= (f …) …) rules for this f
     if b !== nothing
         for stored in b
-            append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
+            append!(out, match_atoms(pattern, rename_fresh(stored)))
         end
     end
     for stored in space.wildcard                       # + var-headed atoms, which can match any discriminant
-        append!(out, match_atoms(pattern, rename_fresh(stored, Dict{Var,Var}())))
+        append!(out, match_atoms(pattern, rename_fresh(stored)))
     end
     out
 end
@@ -1192,13 +1207,13 @@ const GET_ATOMS = Grounded(SpaceOp("get-atoms", function (xs, space)
     length(xs) == 1 || return ExecNoReduce()
     tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
     own = @view tgt.atoms[(tgt.lib_count + 1):end]          # own atoms only — not the imported library
-    ExecOk(Atom[rename_fresh(a, Dict{Var,Var}()) for a in own])
+    ExecOk(Atom[rename_fresh(a) for a in own])
 end))
 const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
 # all binding sets under which `pat` matches some atom of `space`, extending `b0`
 function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     out = Bindings[]
-    for atom in space.atoms, mb in match_atoms(subst(pat, b0), rename_fresh(atom, Dict{Var,Var}()))
+    for atom in space.atoms, mb in match_atoms(subst(pat, b0), rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))
     end
     out
