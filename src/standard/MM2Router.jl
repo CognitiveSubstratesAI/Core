@@ -63,19 +63,67 @@ end
 "True iff `form` is an `(exec …)` rule (the MM2-program lane)."
 mm2_is_exec_rule(form::AbstractString)::Bool = mm2_head(form) == "exec"
 
+# ── (=)→exec auto-routing guard (the grounded-op classifier) ──
+# Collect the operator-position head of `form` and of every nested sub-expression (recursively).
+function mm2_collect_heads!(heads::Vector{String}, form::AbstractString)
+    t = strip(form)
+    (startswith(t, "(") && endswith(t, ")")) || return heads     # leaf (var/sym/number) — no head
+    args = try mm2_expr_args(t) catch; return heads end
+    isempty(args) && return heads
+    push!(heads, args[1])
+    for k in 2:length(args); mm2_collect_heads!(heads, args[k]); end
+    heads
+end
+
+"""
+    mm2_is_relational(rule) -> Bool
+
+True iff `(= LHS RHS)` is safe to auto-lower to the MORK exec lane: EVERY operator-position head in
+LHS/RHS is a plain relation symbol — NONE is a grounded op or a special form. Authority = the interpreter's
+`TOKEN_REGISTRY` (grounded ops: `+ - * / < == and match superpose collapse foldl-atom case …`) ∪
+`MINIMAL_OPS` (eval/chain/function/unify/cons-atom/decons-atom/…). Conservative: any grounded/special head
+⇒ `false` (stay in the Interpreter lane). NB the authority is the INTERPRETER registry, NOT MORK's
+`GROUNDED_REGISTRY` (which holds only the 3 WILLIAM ops — arithmetic is a calculus source/sink TYPE there,
+so `MORK.is_grounded("+")` is false and would misclassify `(= (fib …) (+ …))` as relational). The `,`
+conjunction marker is allowed (it is the exec source list, not an operator).
+"""
+function mm2_is_relational(rule::AbstractString)::Bool
+    a = try mm2_expr_args(rule) catch; return false end
+    (length(a) == 3 && a[1] == "=") || return false
+    heads = String[]
+    mm2_collect_heads!(heads, a[2]); mm2_collect_heads!(heads, a[3])
+    for h in heads
+        h == "," && continue
+        (haskey(Interpreter.TOKEN_REGISTRY, h) || Symbol(h) in Interpreter.MINIMAL_OPS) && return false
+    end
+    true
+end
+
 """
     mm2_partition(program) -> (; bangs, exec, data)
 
-Partition a MeTTa/MM2 program's top-level forms into the three lanes:
-`bangs` (`!`-directives → interpreter), `exec` (`(exec …)` rules → MORK engine), `data` (everything
-else → facts/rules in the space).
+Partition a MeTTa/MM2 program's top-level forms into the three lanes: `bangs` (`!`-directives →
+interpreter), `exec` (`(exec …)` rules + auto-lowered RELATIONAL `(= …)` rules → MORK engine), `data`
+(facts + non-relational `(= …)` rules + everything else → the space). A `(= LHS RHS)` rule that passes
+`mm2_is_relational` is auto-lowered via `mm2_lower_equals` into the exec lane; one that does not (grounded
+ops / special forms) stays in `data` exactly as before — so existing behavior is preserved by default and
+the new routing fires only on provably-relational rules.
 """
 function mm2_partition(program::AbstractString)
     forms = mm2_split_forms(program)
     bangs = String[f for (b, f) in forms if b]
-    rest  = [f for (b, f) in forms if !b]
-    exec  = String[f for f in rest if mm2_is_exec_rule(f)]
-    data  = String[f for f in rest if !mm2_is_exec_rule(f)]
+    exec  = String[]
+    data  = String[]
+    for (b, f) in forms
+        b && continue                                            # `!` forms already collected in `bangs`
+        if mm2_is_exec_rule(f)
+            push!(exec, f)
+        elseif mm2_head(f) == "=" && mm2_is_relational(f)
+            push!(exec, mm2_lower_equals(f))                     # relational (= …) → auto-lower to exec
+        else
+            push!(data, f)                                       # facts / non-relational (= …) → data (unchanged)
+        end
+    end
     (bangs = bangs, exec = exec, data = data)
 end
 

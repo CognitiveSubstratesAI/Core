@@ -91,6 +91,33 @@ using Test
         @test R_mork == R_interp                              # MORK (=) lane ≡ interpreter oracle
     end
 
+    # ── piece 4: grounded-op guard + auto-routing of (= …) rules in mm2_partition ──
+    @testset "grounded-op guard classifies relational vs grounded rules" begin
+        @test mm2_is_relational(raw"(= (ancestor $x $y) (parent $x $y))")        # plain relations
+        @test mm2_is_relational(raw"(= (, (p $x) (q $x)) (r $x))")               # conjunctive, relational
+        @test !mm2_is_relational(raw"(= (fib $n) (+ (fib (- $n 1)) (fib (- $n 2))))")  # + ⇒ grounded
+        @test !mm2_is_relational(raw"(= (dbl $x) (* $x 2))")                     # * ⇒ grounded
+        @test !mm2_is_relational(raw"(= (q $x) (match &self (p $x) $x))")        # match ⇒ special
+        @test !mm2_is_relational(raw"(= (c $x) (chain $x))")                     # chain ⇒ MINIMAL_OPS
+        @test !mm2_is_relational(raw"(foo $x)")                                  # not a (= …) form
+    end
+
+    @testset "mm2_partition auto-routes relational (= …), leaves grounded in data" begin
+        # relational rule auto-lowered into exec; fact stays data
+        p = mm2_partition("(ancestor a b)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
+        @test length(p.exec) == 1 && occursin("exec 0", p.exec[1])
+        @test p.data == ["(ancestor a b)"]
+        # grounded rule untouched — stays in the data lane exactly as before
+        pg = mm2_partition(raw"(= (fib $n) (+ $n 1))")
+        @test isempty(pg.exec) && pg.data == [raw"(= (fib $n) (+ $n 1))"]
+        # end-to-end: a program with a relational (= …) rule now fires through the MORK lane unaided
+        cs = MC.new_core_space()
+        mm2_run!(cs, "(ancestor a b)\n(ancestor b c)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
+        R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                         if occursin("parent", l)]))
+        @test R == ["(parent a b)", "(parent b c)"]
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *
