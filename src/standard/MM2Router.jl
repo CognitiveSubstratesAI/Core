@@ -285,12 +285,15 @@ function mm2_lane_from_atoms(atoms)::CoreSpace
     cs
 end
 
-# ⚠ SEMANTICS BOUNDARY (the route gate): `space_metta_calculus!` on this lane computes the FORWARD CLOSURE
-# (Datalog forward-chaining) of all relational rules. That EQUALS the interpreter only for SINGLE-STEP
-# forward derivation (the `!(match &self LHS RHS)` shape) — verified across single-rule / different-relation /
-# conjunctive-join shapes. For a multi-rule CHAIN (a→b→c) MORK derives the whole closure {b,c} whereas the
-# interpreter `(=)` REDUCTION gives the normal form (c). So ROUTE is sound for forward-derivation/Datalog
-# workloads (where the closure IS the wanted answer), NOT as a drop-in for general (=) reduction-to-normal-form.
+# ⚠ SEMANTICS BOUNDARY (the route gate): `space_metta_calculus!` is the MM2 exec calculus — pattern-directed
+# METAGRAPH REWRITING (match → instantiate → write; the MM2 spec: exec ≡ match + add-atom). On this lane it
+# computes the FORWARD-REWRITING closure of all relational rules. That EQUALS the interpreter only for
+# SINGLE-STEP forward derivation (the `!(match &self LHS RHS)` shape) — verified across single-rule /
+# different-relation / conjunctive-join shapes. For a multi-rule CHAIN (a→b→c) MORK's forward rewriting derives
+# the whole closure {b,c} whereas the interpreter `(=)` REDUCTION gives the normal form (c). So ROUTE is sound
+# for forward-derivation workloads (where the closure IS the wanted answer), NOT a drop-in for general (=)
+# reduction-to-normal-form. (NB: this is metagraph rewriting, NOT Datalog — MM2 is general nested-S-expr
+# rewriting with removal/priorities; Datalog is at most a narrow special case it can express.)
 
 """
     mm2_lane_from_space(isp) -> CoreSpace
@@ -304,12 +307,13 @@ mm2_lane_from_space(isp::Interpreter.Space)::CoreSpace =
 """
     mm2_lane_saturate!(atoms; max_rounds=64) -> CoreSpace
 
-The RECURSIVE route driver: build the MORK lane from typed atoms and run the exec calculus to a FIXPOINT
-(full Datalog forward-closure). Per the MM2 spec an `exec` instruction is CONSUMED when it fires ("removed
-no matter what"), so a single `space_metta_calculus!` is single-pass; recursion is the spec's "repeated exec
-selections". This drives that: re-add the exec rules and re-run until the atom count stabilizes — so a
-recursive relational rule (e.g. transitive `reach`) reaches its full closure, which `mm2_lane_from_atoms` +
-one calculus step cannot. Sound for forward-derivation/Datalog workloads (the closure is the wanted answer).
+The RECURSIVE route driver: build the MORK lane from typed atoms and run the MM2 exec calculus (metagraph
+rewriting) to a FIXPOINT (full forward-rewriting closure). Per the MM2 spec an `exec` instruction is CONSUMED
+when it fires ("removed no matter what"), so a single `space_metta_calculus!` is single-pass; recursion is the
+spec's "repeated exec selections". This drives that: re-add the exec rules and re-run until the atom count
+stabilizes — so a recursive relational rule (e.g. transitive `reach`) reaches its full closure, which
+`mm2_lane_from_atoms` + one calculus step cannot. Sound for forward-derivation workloads (the closure is the
+wanted answer). NB: metagraph rewriting, NOT Datalog.
 """
 function mm2_lane_saturate!(atoms; max_rounds::Int = 64)::CoreSpace
     cs = new_core_space()
@@ -330,9 +334,10 @@ end
 """
     mc_closure!(isp; rounds=64) -> Int
 
-OPT-IN substrate route: compute the Datalog FORWARD CLOSURE of a live interpreter `Space`'s relational rules
-on the MORK lane (`mm2_lane_saturate!`) and MATERIALIZE the newly-derived atoms back into `isp`. Returns the
-count added. The user opts into forward-closure (Datalog) semantics for the relational subset; the
+OPT-IN substrate route: compute the FORWARD-REWRITING CLOSURE (MM2 exec calculus = metagraph rewriting, NOT
+Datalog) of a live interpreter `Space`'s relational rules on the MORK lane (`mm2_lane_saturate!`) and
+MATERIALIZE the newly-derived atoms back into `isp`. Returns the count added. The user opts into the
+forward-closure (metagraph-rewriting) semantics for the relational subset; the
 interpreter's `(=)` reduction semantics for everything else are untouched. So a MeTTa program can compute a
 transitive closure on the substrate, then query it with the interpreter (`!(match &self …)`).
 """
