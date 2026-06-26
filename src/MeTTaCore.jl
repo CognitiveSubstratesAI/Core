@@ -201,7 +201,7 @@ export core_add!, core_remove!, core_match, core_rules, core_atoms
 export core_calculus!, core_calculus_at!
 # Dual-lane MM2 program routing (CeTTa-adopted)
 export mm2_run!, mm2_partition, mm2_is_exec_rule, mm2_split_forms
-export mm2_route!, mm2_match!, mm2_lower_match, mm2_expr_args
+export mm2_route!, mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args
 # Reflectable HE small-step rule-table (CeTTa-adopted)
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest

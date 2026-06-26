@@ -135,6 +135,24 @@ function mm2_lower_match(query::AbstractString)::String
 end
 
 """
+    mm2_lower_equals(rule) -> String
+
+Lower a `(= LHS RHS)` rewrite rule to an exec rule: `(= LHS RHS)` → `(exec 0 (, LHS) (, RHS))` — the
+SAME shape as `mm2_lower_match` (LHS becomes the exec SOURCE pattern, RHS the SINK template). This is
+the `(=)→MM2` bridge for the RELATIONAL subset: forward-closure semantics (for every data atom matching
+LHS, derive RHS), sound when LHS/RHS carry NO grounded ops — those (arithmetic, control) need the
+interpreter lane and are rejected. A conjunctive LHS `(, …)` passes through as the source list.
+"""
+function mm2_lower_equals(rule::AbstractString)::String
+    a = mm2_expr_args(rule)
+    (length(a) == 3 && a[1] == "=") ||
+        error("mm2_lower_equals: expected (= LHS RHS), got: $rule")
+    lhs, rhs = a[2], a[3]
+    src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
+    "(exec 0 $src (, $rhs))"
+end
+
+"""
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
 
 Run a `(match SPACE PAT TMPL)` via the MM2 lane: lower to exec, step the calculus on `cs`'s native

@@ -64,6 +64,33 @@ using Test
         @test R_mm2 == R_interp
     end
 
+    # ── piece 3: the (=)→exec rule bridge (general rewrite rules, relational subset) ──
+    @testset "(= LHS RHS) → exec lowering + bisimulation" begin
+        @test mm2_lower_equals(raw"(= (ancestor $x $y) (parent $x $y))") ==
+              raw"(exec 0 (, (ancestor $x $y)) (, (parent $x $y)))"
+        @test mm2_lower_equals(raw"(= (, (p $x) (q $x)) (r $x))") ==
+              raw"(exec 0 (, (p $x) (q $x)) (, (r $x)))"          # conjunctive LHS passes through
+        @test_throws ErrorException mm2_lower_equals(raw"(match &self (p $x) $x)")  # not a (= …) form
+
+        # a (= …) rewrite rule fires through space_metta_calculus! and bisimulates the interpreter
+        afacts = "(ancestor a b)\n(ancestor b c)"
+        arule  = raw"(= (ancestor $x $y) (parent $x $y))"
+        cs = MC.new_core_space()
+        MC.space_add_all_sexpr!(cs.inner, afacts)
+        MC.space_add_all_sexpr!(cs.inner, mm2_lower_equals(arule))
+        MC.space_metta_calculus!(cs.inner, 1_000_000)
+        R_mork = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                              if occursin("parent", l)]))
+        @test R_mork == ["(parent a b)", "(parent b c)"]
+
+        SM = MeTTaCore.Interpreter
+        isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, afacts)
+        res = SM.load_metta!(isp, raw"!(match &self (ancestor $x $y) (parent $x $y))")
+        R_interp = sort(unique(filter(s -> occursin("parent", s),
+                       [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        @test R_mork == R_interp                              # MORK (=) lane ≡ interpreter oracle
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *
