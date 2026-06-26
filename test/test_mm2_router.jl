@@ -198,6 +198,24 @@ using Test
         @test R == ["(parent a b)", "(parent b c)"]
     end
 
+    # ── piece 8: mm2_lane_saturate! — recursive Datalog fixpoint (transitive closure) ──
+    @testset "mm2_lane_saturate! computes the full transitive closure (recursion driver)" begin
+        SM = MeTTaCore.Interpreter
+        prog = "(edge a b)\n(edge b c)\n(edge c d)\n" *
+               raw"(= (edge $x $y) (reach $x $y))" * "\n" *
+               raw"(= (, (edge $x $y) (reach $y $z)) (reach $x $z))"
+        atoms = [p[2] for p in SM.parse_program(prog)]
+        reach(cs) = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                                 if occursin("reach", l)]))
+        # single-pass MISSES the 3-hop (exec consumed after one fire — MM2 spec)
+        cs1 = mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs1.inner, 1_000_000)
+        @test !("(reach a d)" in reach(cs1))
+        # the fixpoint driver reaches the full closure (re-fire until stable)
+        R = sort(string.(reach(mm2_lane_saturate!(atoms))))
+        @test R == sort(["(reach a b)", "(reach b c)", "(reach c d)",
+                         "(reach a c)", "(reach b d)", "(reach a d)"])
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *

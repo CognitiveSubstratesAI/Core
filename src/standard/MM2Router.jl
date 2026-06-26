@@ -246,16 +246,25 @@ interpreter keeps its rules (MIRROR, not route), so this is bisimulation-safe. T
 `space_metta_calculus!` to saturate. This is the substrate-lane half of P2; full ROUTE (interpreter
 defers to MORK + delete) is a later bisimulation-gated step.
 """
-function mm2_lane_from_atoms(atoms)::CoreSpace
-    cs = new_core_space()
+# classify typed atoms → (data sexprs, lowered exec-rule sexprs) for the MORK lane
+function _mm2_classify_atoms(atoms)
+    data = String[]; execs = String[]
     for a in atoms
         s = typed_atom_to_expr(a)
         if mm2_is_relational(a)
-            space_add_all_sexpr!(cs.inner, mm2_lower_equals(s))   # relational (= …) → exec lane
+            push!(execs, mm2_lower_equals(s))                     # relational (= …) → exec
         elseif !_mm2_is_eq_rule(a)
-            space_add_all_sexpr!(cs.inner, s)                     # fact / data
+            push!(data, s)                                        # fact / data
         end                                                       # else grounded (= …) → skip (interp-only)
     end
+    (data, execs)
+end
+
+function mm2_lane_from_atoms(atoms)::CoreSpace
+    cs = new_core_space()
+    data, execs = _mm2_classify_atoms(atoms)
+    isempty(data)  || space_add_all_sexpr!(cs.inner, join(data, "\n"))
+    isempty(execs) || space_add_all_sexpr!(cs.inner, join(execs, "\n"))
     cs
 end
 
@@ -274,6 +283,32 @@ Convenience over `mm2_lane_from_atoms`: mirror a LIVE interpreter `Space`'s OWN 
 """
 mm2_lane_from_space(isp::Interpreter.Space)::CoreSpace =
     mm2_lane_from_atoms(@view isp.atoms[(isp.lib_count + 1):end])
+
+"""
+    mm2_lane_saturate!(atoms; max_rounds=64) -> CoreSpace
+
+The RECURSIVE route driver: build the MORK lane from typed atoms and run the exec calculus to a FIXPOINT
+(full Datalog forward-closure). Per the MM2 spec an `exec` instruction is CONSUMED when it fires ("removed
+no matter what"), so a single `space_metta_calculus!` is single-pass; recursion is the spec's "repeated exec
+selections". This drives that: re-add the exec rules and re-run until the atom count stabilizes — so a
+recursive relational rule (e.g. transitive `reach`) reaches its full closure, which `mm2_lane_from_atoms` +
+one calculus step cannot. Sound for forward-derivation/Datalog workloads (the closure is the wanted answer).
+"""
+function mm2_lane_saturate!(atoms; max_rounds::Int = 64)::CoreSpace
+    cs = new_core_space()
+    data, execs = _mm2_classify_atoms(atoms)
+    isempty(data) || space_add_all_sexpr!(cs.inner, join(data, "\n"))
+    isempty(execs) && return cs
+    joined = join(execs, "\n"); prev = -1
+    for _ in 1:max_rounds
+        n = space_val_count(cs.inner)
+        n == prev && break                                       # fixpoint reached
+        prev = n
+        space_add_all_sexpr!(cs.inner, joined)                   # re-add consumed execs
+        space_metta_calculus!(cs.inner, 1_000_000)
+    end
+    cs
+end
 
 """
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
