@@ -162,6 +162,42 @@ using Test
         @test R == R_interp                                  # MORK mirror lane ≡ interpreter oracle
     end
 
+    # ── piece 7: P2 route gate — broad single-step bisimulation + the chain boundary + lane_from_space ──
+    @testset "P2 route gate: broad bisimulation + forward-closure boundary" begin
+        SM = MeTTaCore.Interpreter
+        mork_derive(facts, rule, head) = begin
+            atoms = [p[2] for p in SM.parse_program(facts * "\n" * rule)]
+            cs = mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs.inner, 1_000_000)
+            sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n') if occursin(head, l)]))
+        end
+        interp_match(facts, lhs, rhs, head) = begin
+            isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
+            res = SM.load_metta!(isp, "!(match &self $lhs $rhs)")
+            sort(unique(filter(s -> occursin(head, s),
+                [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        end
+        # SINGLE-STEP shapes — MORK mirror saturate ≡ interpreter !(match)
+        for (facts, lhs, rhs, head) in [
+                ("(ancestor a b)\n(ancestor b c)", raw"(ancestor $x $y)", raw"(parent $x $y)", "parent"),
+                ("(rel p q)\n(rel q r)",           raw"(rel $x $y)",      raw"(link $x $y)",   "link"),
+                ("(parent a b)\n(parent b c)",     raw"(, (parent $x $y) (parent $y $z))",
+                                                   raw"(grandparent $x $z)", "grandparent")]
+            @test mork_derive(facts, "(= $lhs $rhs)", head) == interp_match(facts, lhs, rhs, head)
+        end
+        # BOUNDARY (documented): a multi-rule chain → MORK forward CLOSURE {b,c}, by design (Datalog),
+        # NOT the interpreter's (=) reduction normal-form (c). This bounds what ROUTE may soundly do.
+        chain = mork_derive("(a 1)", raw"(= (a $x) (b $x))" * "\n" * raw"(= (b $x) (c $x))", "")
+        @test ("(b 1)" in chain) && ("(c 1)" in chain)
+
+        # mm2_lane_from_space — mirror a LIVE Space's own atoms (excludes stdlib)
+        isp = SM.Space(); SM.load_core_stdlib!(isp)
+        SM.load_metta!(isp, "(ancestor a b)\n(ancestor b c)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
+        cs = mm2_lane_from_space(isp); MC.space_metta_calculus!(cs.inner, 1_000_000)
+        R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                         if occursin("parent", l)]))
+        @test R == ["(parent a b)", "(parent b c)"]
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *

@@ -259,6 +259,22 @@ function mm2_lane_from_atoms(atoms)::CoreSpace
     cs
 end
 
+# ⚠ SEMANTICS BOUNDARY (the route gate): `space_metta_calculus!` on this lane computes the FORWARD CLOSURE
+# (Datalog forward-chaining) of all relational rules. That EQUALS the interpreter only for SINGLE-STEP
+# forward derivation (the `!(match &self LHS RHS)` shape) — verified across single-rule / different-relation /
+# conjunctive-join shapes. For a multi-rule CHAIN (a→b→c) MORK derives the whole closure {b,c} whereas the
+# interpreter `(=)` REDUCTION gives the normal form (c). So ROUTE is sound for forward-derivation/Datalog
+# workloads (where the closure IS the wanted answer), NOT as a drop-in for general (=) reduction-to-normal-form.
+
+"""
+    mm2_lane_from_space(isp) -> CoreSpace
+
+Convenience over `mm2_lane_from_atoms`: mirror a LIVE interpreter `Space`'s OWN atoms
+(`atoms[lib_count+1:end]` — excludes the imported stdlib) into a MORK lane. The whole-Space live-eval handoff.
+"""
+mm2_lane_from_space(isp::Interpreter.Space)::CoreSpace =
+    mm2_lane_from_atoms(@view isp.atoms[(isp.lib_count + 1):end])
+
 """
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
 
