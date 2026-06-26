@@ -233,8 +233,25 @@ typed_atom_to_expr(a)::String = (io = IOBuffer(); _typed_atom_to_expr!(io, a); S
 _mm2_is_eq_rule(a) = a isa _MM2_ATOM.Expression && length(a.children) == 3 &&
                      a.children[1] isa _MM2_ATOM.Sym && a.children[1].name == Symbol("=")
 
-"Typed-Atom overload of the grounded-op guard — serialize then classify (used by the live-eval handoff)."
-mm2_is_relational(atom::_MM2_ATOM.Atom)::Bool = mm2_is_relational(typed_atom_to_expr(atom))
+# MORK byte-Expr HARD LIMITS (upstream wiki Data-in-MORK): an Expression has ≤63 children (arity tag is
+# 6-bit) and an expression has ≤64 distinct vars (De Bruijn level is 6-bit). A rule exceeding either cannot
+# encode → must NOT route to MORK (stays in the interpreter). Conservative: reject on >63 children.
+function _mm2_collect_limits!(a, vars)::Bool
+    if a isa _MM2_ATOM.Expression
+        length(a.children) > 63 && return false
+        for c in a.children; _mm2_collect_limits!(c, vars) || return false; end
+    elseif a isa _MM2_ATOM.Var
+        push!(vars, a)
+    end
+    true
+end
+_mm2_within_mork_limits(a)::Bool =
+    (vars = Set{_MM2_ATOM.Var}(); _mm2_collect_limits!(a, vars) && length(vars) <= 64)
+
+"Typed-Atom overload of the grounded-op guard — serialize then classify; also rejects rules exceeding MORK's
+byte-Expr limits (arity 63 / 64 vars), which can't encode and must stay in the interpreter."
+mm2_is_relational(atom::_MM2_ATOM.Atom)::Bool =
+    _mm2_within_mork_limits(atom) && mm2_is_relational(typed_atom_to_expr(atom))
 
 """
     mm2_lane_from_atoms(atoms) -> CoreSpace

@@ -216,6 +216,16 @@ using Test
                          "(reach a c)", "(reach b d)", "(reach a d)"])
     end
 
+    # ── piece 9: MORK byte-Expr limit guard (arity 63 / 64 vars — wiki Data-in-MORK) ──
+    @testset "mm2_is_relational rejects rules exceeding MORK byte-Expr limits" begin
+        SM = MeTTaCore.Interpreter
+        @test mm2_is_relational(SM.parse_program(raw"(= (ancestor $x $y) (parent $x $y))")[1][2])  # within limits
+        over_arity = "(= (big " * join(["a$i" for i in 1:70], " ") * ") (ok))"      # 71-child LHS > 63
+        @test !mm2_is_relational(SM.parse_program(over_arity)[1][2])
+        over_vars = "(= (f " * join(["\$v$i" for i in 1:70], " ") * ") (g))"        # 70 distinct vars > 64
+        @test !mm2_is_relational(SM.parse_program(over_vars)[1][2])
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *
