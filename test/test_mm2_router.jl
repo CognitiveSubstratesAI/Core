@@ -118,6 +118,28 @@ using Test
         @test R == ["(parent a b)", "(parent b c)"]
     end
 
+    # ── piece 5: typed Atom → MM2 sexpr (the live-eval handoff converter) ──
+    @testset "typed_atom_to_expr round-trips to mm2_lower_equals" begin
+        SM = MeTTaCore.Interpreter
+        for s in [raw"(= (ancestor $x $y) (parent $x $y))",
+                  raw"(= (, (p $x) (q $x)) (r $x))",
+                  raw"(= (sym a) (sym b))",
+                  raw"(= (dbl $x) (twice $x $x))"]
+            atom = SM.parse_program(s)[1][2]                  # the parsed (= …) Atom
+            e = typed_atom_to_expr(atom)
+            @test mm2_lower_equals(e) == mm2_lower_equals(s)  # serialize→lower == lower(source)
+        end
+        # end-to-end: a parsed Atom rule, serialized, fires through the MORK lane and bisimulates
+        atom = SM.parse_program(raw"(= (ancestor $x $y) (parent $x $y))")[1][2]
+        cs = MC.new_core_space()
+        MC.space_add_all_sexpr!(cs.inner, "(ancestor a b)\n(ancestor b c)")
+        MC.space_add_all_sexpr!(cs.inner, mm2_lower_equals(typed_atom_to_expr(atom)))
+        MC.space_metta_calculus!(cs.inner, 1_000_000)
+        R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                         if occursin("parent", l)]))
+        @test R == ["(parent a b)", "(parent b c)"]
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *

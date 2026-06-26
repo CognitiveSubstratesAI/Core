@@ -200,6 +200,35 @@ function mm2_lower_equals(rule::AbstractString)::String
     "(exec 0 $src (, $rhs))"
 end
 
+# ── typed Atom → MM2 sexpr (the LIVE-eval handoff: load_metta!/eval hold typed Atoms, not strings) ──
+const _MM2_ATOM = Interpreter.StandardMeTTa
+function _typed_atom_to_expr!(io::IO, a)
+    if a isa _MM2_ATOM.Sym
+        print(io, a.name)
+    elseif a isa _MM2_ATOM.Var
+        print(io, "\$", a.name)                          # drop internal #id — MORK assigns De Bruijn on parse
+    elseif a isa _MM2_ATOM.Expression
+        print(io, "(")
+        for (k, c) in enumerate(a.children); k > 1 && print(io, " "); _typed_atom_to_expr!(io, c); end
+        print(io, ")")
+    elseif a isa _MM2_ATOM.Grounded
+        print(io, a.value)
+    else
+        print(io, a)
+    end
+end
+
+"""
+    typed_atom_to_expr(atom) -> String
+
+Serialize a typed `StandardMeTTa` `Atom` to the MeTTa sexpr string MORK's parser ingests — the inverse
+of parse, for the live-eval handoff (eval holds typed `Atom` objects, not source strings). Variables
+emit as `\$name` with the internal `#id` dropped; MORK assigns the byte-level De Bruijn (NewVar/VarRef)
+on `space_add_all_sexpr!`, and interned/repeated vars print consistently in first-occurrence order.
+Round-trip gated: `mm2_lower_equals(typed_atom_to_expr(parse(rule))) == mm2_lower_equals(rule_string)`.
+"""
+typed_atom_to_expr(a)::String = (io = IOBuffer(); _typed_atom_to_expr!(io, a); String(take!(io)))
+
 """
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
 
