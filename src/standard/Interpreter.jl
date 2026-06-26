@@ -62,16 +62,10 @@ args(a::Expression) = a.children[2:end]
 # Error HEAD so control flow is unaffected. See docs/STDLIB_FAITHFULNESS_REFERENCE.md (ERROR REPRESENTATION).
 error_atom(a::Atom, msg::AbstractString) = Expression(ERROR, a, Grounded(String(msg)))
 
-# canonical representative of a var's equality class (smallest id, then name) — used when the
-# slot has no value but the var is equal to another (formal-arg = actual-arg matches as $a=$b)
-function _slot_rep(b::Bindings, v::Var)
-    haskey(b.var_to_slot, v) || return v
-    s = b.var_to_slot[v]; rep = v
-    for (vv, ss) in b.var_to_slot
-        ss == s && (vv.id < rep.id || (vv.id == rep.id && vv.name < rep.name)) && (rep = vv)
-    end
-    rep
-end
+# canonical representative of a var's equality class (smallest id, then name) — used when the slot has
+# no value but the var is equal to another (formal-arg = actual-arg matches as $a=$b). Min-rooted
+# forwarding keeps the root == the (id,name)-minimum of the class, so this is just canonical_var.
+_slot_rep(b::Bindings, v::Var) = canonical_var(b, v)
 
 # Depth guard for the recursive atom-walkers. StackOverflowError CANNOT be caught in Julia (the stack is
 # already exhausted), so it must be PREVENTED: bail at a generous depth (cyclic/pathological atoms — e.g.
@@ -128,23 +122,25 @@ finished_result(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}) =
 # over-approximation (`_cumvars` below) that keeps ≥ what hyperon keeps, so it can never drop a
 # binding a pending frame still needs — it only drops fresh sub-evaluation-internal vars.
 function narrow_bindings(b::Bindings, live)::Bindings
-    slot_live = Dict{Int,Vector{Var}}()
+    # group present vars by equality-class root, flag any dead (forwarding model: enumerate every var
+    # appearing as a source OR a forwarding target — the analog of the old `for (v,s) in var_to_slot`).
+    by_root = Dict{Var,Vector{Var}}()
+    seen = Set{Var}()
     any_drop = false
-    for (v, s) in b.var_to_slot
-        if v in live
-            push!(get!(slot_live, s, Var[]), v)
-        else
-            any_drop = true
+    for e in b.entries
+        for v in (e.val isa Var ? (e.var, e.val::Var) : (e.var,))
+            v in seen && continue; push!(seen, v)
+            v in live ? push!(get!(by_root, canonical_var(b, v), Var[]), v) : (any_drop = true)
         end
     end
     any_drop || return b                                   # nothing dead → no allocation (fast path)
     nb = Bindings()
-    for (s, vars) in slot_live
-        val = b.slots[s]
+    for (root, vars) in by_root
+        val = resolve(b, root)
         if val === nothing
             length(vars) < 2 && continue                   # lone value-less var ≡ unbound → drop
             v1 = vars[1]
-            for i in 2:length(vars)
+            for i in 2:length(vars)                        # re-root the equality among the LIVE vars
                 r = add_var_equality(nb, v1, vars[i]); isempty(r) || (nb = r[1])
             end
         else
@@ -444,9 +440,9 @@ function eval_op(f::Frame, b::Bindings, space)
             # resolve-filter (mirrors hyperon interpreter.rs query:619 `resolve(&var_x)→None`): drop a query match
             # where the rewrite-RHS X is TRULY unbound — a bare variable space atom binds itself to the whole
             # `(= …)` query, leaving X free, which would leak as a spurious `$X` and shadow grounded ops. Uses
-            # `haskey(var_to_slot)` NOT `resolve===nothing`: Core's resolve also returns nothing for X equated to a
+            # `is_present` NOT `resolve===nothing`: Core's resolve also returns nothing for X equated to a
             # var (no value), but those (e.g. `(= (id $x) $x)` → a var) are LEGIT and must be KEPT. (See :564, :883.)
-            haskey(mb.var_to_slot, X) || continue
+            is_present(mb, X) || continue
             x = subst(X, mb)
             append!(out, eval_result(x, mb, f.prev, f.depth + 1))
         end
@@ -708,7 +704,7 @@ function metta_call_instr(f::Frame, b::Bindings, space)
         qres = space === nothing ? Bindings[] : query(space::Space, Expression(Sym("="), atom, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
-            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Interpreter.jl :309)
+            is_present(mb, X) || continue                # resolve-filter (identical to Interpreter.jl :309)
             reduced = true
             append!(out, push_nested(_metta(subst(X, mb), typ), mb, f.prev, f.depth + 1))
         end
@@ -1052,7 +1048,7 @@ function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector
         qres = query(space, Expression(Sym("="), a, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
-            haskey(mb.var_to_slot, X) || continue        # resolve-filter (identical to Interpreter.jl :309)
+            is_present(mb, X) || continue                # resolve-filter (identical to Interpreter.jl :309)
             reduced = true
             push!(out, (subst(X, mb), type, mb, false))                 # rewrite result → reduce again
         end

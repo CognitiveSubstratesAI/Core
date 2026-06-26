@@ -15,7 +15,8 @@
 module StandardMeTTa
 
 export Atom, Sym, Var, Expression, Grounded, metatype, isvar
-export Bindings, resolve, match_atoms, merge_bindings, add_var_binding, add_var_equality
+export Bindings, Binding, resolve, match_atoms, merge_bindings, add_var_binding, add_var_equality
+export is_present, canonical_var
 
 # ── Atom: a typed sum-type (Julia's faithful equivalent of hyperon's `enum Atom`) ──
 abstract type Atom end
@@ -76,49 +77,47 @@ Base.show(io::IO, a::Expression) = print(io, "(", join(string.(a.children), " ")
 Base.show(io::IO, a::Grounded) = print(io, a.value)
 
 # ── Bindings ──────────────────────────────────────────────────────────────────
-# Variables map to shared integer slots; a slot holds an optional bound value.
-# Two variables in the SAME slot are equal ($x = $y) — faithful to hyperon's
-# `binding_by_var: HashMap<VariableAtom, usize>` + `bindings: HoleyVec<Binding>`.
+# FLAT min-rooted forwarding (CeTTa-style data-driven; src/match.h `Binding *entries`). An append-only
+# `Vector{Binding}`: `Binding(var, val::Atom)` = `var` bound to a value; `Binding(var, val::Var)` = `var`
+# forwards to a canonically-SMALLER root, representing the $x=$y equality class. The class VALUE lives on
+# its root. Replaces the Dict{Var,Int}+slots union-find: `copy` is a flat array copy (the #1-alloc fix),
+# equality is an append (no interior repoint), and `canonical_var` is a 1-hop walk (chains kept root-
+# flattened by always forwarding the larger root → the smaller). Append-only ⇒ trail-ready (Step 3).
+struct Binding
+    var::Var
+    val::Union{Atom,Var}
+end
 mutable struct Bindings
-    var_to_slot::Dict{Var,Int}
-    slots::Vector{Union{Atom,Nothing}}   # value of slot, or nothing = equality-class only
+    entries::Vector{Binding}
 end
-Bindings() = Bindings(Dict{Var,Int}(), Union{Atom,Nothing}[])
-Base.copy(b::Bindings) = Bindings(copy(b.var_to_slot), copy(b.slots))
+Bindings() = Bindings(Binding[])
+Base.copy(b::Bindings) = Bindings(copy(b.entries))
 
-"Resolve a variable to its bound value (or `nothing` if unbound)."
-resolve(b::Bindings, v::Var) = haskey(b.var_to_slot, v) ? b.slots[b.var_to_slot[v]] : nothing
-
-# give `var` a slot with value `val` (var was unbound, or its slot had no value)
-function _bind_value!(b::Bindings, var::Var, val::Atom)
-    if haskey(b.var_to_slot, var)
-        b.slots[b.var_to_slot[var]] = val
-    else
-        push!(b.slots, val)
-        b.var_to_slot[var] = length(b.slots)
-    end
-    b
-end
-
-# union the slots of `a` and `c` (they become equal); keep the non-nothing value if any
-function _union_slots!(b::Bindings, a::Var, c::Var)
-    sa = get(b.var_to_slot, a, 0)
-    sc = get(b.var_to_slot, c, 0)
-    if sa == 0 && sc == 0
-        push!(b.slots, nothing); s = length(b.slots)
-        b.var_to_slot[a] = s; b.var_to_slot[c] = s
-    elseif sc == 0
-        b.var_to_slot[c] = sa
-    elseif sa == 0
-        b.var_to_slot[a] = sc
-    elseif sa != sc
-        val = b.slots[sa] !== nothing ? b.slots[sa] : b.slots[sc]
-        b.slots[sa] = val
-        for (v, s) in b.var_to_slot          # repoint every var in slot sc → sa
-            s == sc && (b.var_to_slot[v] = sa)
+# canonical (min id,name) representative of v's equality class: follow forwarding edges to the root.
+function canonical_var(b::Bindings, v::Var)::Var
+    cur = v
+    while true
+        nxt = nothing
+        for e in b.entries
+            if e.var === cur && e.val isa Var; nxt = e.val::Var; break; end
         end
+        nxt === nothing && return cur
+        cur = nxt
     end
-    b
+end
+
+# is `v` present at all (bound OR in an equality class)? — distinct from `resolve === nothing`, which is
+# also nothing for a value-less var merely equated to another (formal=actual). MUST check both ends: a var
+# can appear as a forwarding SOURCE (`e.var`) or as the class ROOT, i.e. a forwarding TARGET (`e.val`).
+is_present(b::Bindings, v::Var) = any(e -> e.var === v || e.val === v, b.entries)
+
+"Resolve a variable to its bound value (or `nothing` if unbound / equality-only)."
+function resolve(b::Bindings, v::Var)::Union{Atom,Nothing}
+    r = canonical_var(b, v)                          # the class value lives on the root
+    for e in b.entries
+        if e.var === r && e.val isa Atom; return e.val::Atom; end
+    end
+    nothing
 end
 
 # metta.md §add_var_binding
@@ -129,7 +128,8 @@ function add_var_binding(b::Bindings, var::Var, val::Atom)::Vector{Bindings}
     prev = resolve(b, var)
     if prev === nothing
         _occurs(var, val) && return Bindings[]      # occurs check — reject (unify $v with (… $v …) fails)
-        return [_bind_value!(copy(b), var, val)]
+        nb = copy(b); push!(nb.entries, Binding(canonical_var(nb, var), val))   # value on the root
+        return [nb]
     elseif prev == val
         return [b]
     else
@@ -141,11 +141,19 @@ function add_var_binding(b::Bindings, var::Var, val::Atom)::Vector{Bindings}
     end
 end
 
-# metta.md §add_var_equality
+# metta.md §add_var_equality — append a root→root forwarding edge (no interior mutation)
 function add_var_equality(b::Bindings, a::Var, c::Var)::Vector{Bindings}
     av, cv = resolve(b, a), resolve(b, c)
     if av === nothing || cv === nothing || av == cv
-        return [_union_slots!(copy(b), a, c)]
+        nb = copy(b)
+        r1 = canonical_var(nb, a); r2 = canonical_var(nb, c)
+        if r1 !== r2
+            (r2.id, r2.name) < (r1.id, r1.name) && ((r1, r2) = (r2, r1))   # r1 = smaller = new root
+            push!(nb.entries, Binding(r2, r1))                              # r2 → r1 (larger → smaller)
+            val = av !== nothing ? av : cv                                  # preserve the class value
+            (val !== nothing && resolve(nb, r1) === nothing) && push!(nb.entries, Binding(r1, val))
+        end
+        return [nb]
     else
         out = Bindings[]
         for m in match_atoms(av, cv)
@@ -157,20 +165,24 @@ end
 
 # enumerate `right`'s relations and fold them into `left` (metta.md §merge_bindings)
 function merge_bindings(left::Bindings, right::Bindings)::Vector{Bindings}
-    # group right's variables by slot
-    by_slot = Dict{Int,Vector{Var}}()
-    for (v, s) in right.var_to_slot
-        push!(get!(by_slot, s, Var[]), v)
+    # group right's variables by their equality-class root
+    by_root = Dict{Var,Vector{Var}}()
+    seen = Set{Var}()
+    for e in right.entries
+        for v in (e.val isa Var ? (e.var, e.val::Var) : (e.var,))
+            v in seen && continue; push!(seen, v)
+            push!(get!(by_root, canonical_var(right, v), Var[]), v)
+        end
     end
     result = [left]
-    for (s, vars) in by_slot
-        v1 = vars[1]
-        for v in vars[2:end]                       # equality relations $v1 = $v
-            result = _flat([add_var_equality(r, v1, v) for r in result])
+    for (root, vars) in by_root
+        for v in vars                              # equality relations within the class
+            v === root && continue
+            result = _flat([add_var_equality(r, root, v) for r in result])
         end
-        val = right.slots[s]
-        if val !== nothing                          # assignment relation $v1 <- val
-            result = _flat([add_var_binding(r, v1, val) for r in result])
+        val = resolve(right, root)                 # assignment relation root <- val
+        if val !== nothing
+            result = _flat([add_var_binding(r, root, val) for r in result])
         end
     end
     return result
