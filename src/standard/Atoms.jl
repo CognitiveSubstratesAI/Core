@@ -163,9 +163,8 @@ function add_var_equality(b::Bindings, a::Var, c::Var)::Vector{Bindings}
     end
 end
 
-# enumerate `right`'s relations and fold them into `left` (metta.md §merge_bindings)
-function merge_bindings(left::Bindings, right::Bindings)::Vector{Bindings}
-    # group right's variables by their equality-class root
+# group right's vars by equality-class root (shared by the trail fast path + the branching fallback)
+function _right_relations(right::Bindings)
     by_root = Dict{Var,Vector{Var}}()
     seen = Set{Var}()
     for e in right.entries
@@ -174,18 +173,81 @@ function merge_bindings(left::Bindings, right::Bindings)::Vector{Bindings}
             push!(get!(by_root, canonical_var(right, v), Var[]), v)
         end
     end
-    result = [left]
+    by_root
+end
+
+# Append-only in-place extension `root <- val`. :ok (extended/no-op), :fail (occurs check),
+# :fork (value conflict → caller must use the branching path). Appends only ⇒ trail-resettable.
+function _extend_bind_inplace!(b::Bindings, root::Var, val::Atom)::Symbol
+    prev = resolve(b, root)
+    prev === nothing || return (prev == val ? :ok : :fork)
+    _occurs(root, val) && return :fail
+    push!(b.entries, Binding(canonical_var(b, root), val)); :ok
+end
+
+# Append-only in-place equality root↔v. :ok, or :fork (both sides bound to conflicting values).
+function _extend_eq_inplace!(b::Bindings, a::Var, c::Var)::Symbol
+    av, cv = resolve(b, a), resolve(b, c)
+    (av !== nothing && cv !== nothing && av != cv) && return :fork
+    r1 = canonical_var(b, a); r2 = canonical_var(b, c)
+    if r1 !== r2
+        (r2.id, r2.name) < (r1.id, r1.name) && ((r1, r2) = (r2, r1))
+        push!(b.entries, Binding(r2, r1))
+        val = av !== nothing ? av : cv
+        (val !== nothing && resolve(b, r1) === nothing) && push!(b.entries, Binding(r1, val))
+    end
+    :ok
+end
+
+# fold `right`'s relations into `left` (metta.md §merge_bindings).
+# TRAIL FAST PATH: fold deterministically by appending to `left` IN PLACE, copy the SURVIVOR once, then
+# `resize!` `left` back to its checkpoint length — observationally PURE on `left` (append-only ⇒ the undo
+# is O(1)), so the per-candidate copies collapse to one-per-surviving-merge. A relation that FORKS (value
+# conflict needing match_atoms) bails to the branching path, which is the original copying fold.
+function merge_bindings(left::Bindings, right::Bindings)::Vector{Bindings}
+    by_root = _right_relations(right)
+    checkpoint = length(left.entries)
+    forked = false; ok = true
     for (root, vars) in by_root
         for v in vars                              # equality relations within the class
             v === root && continue
+            _extend_eq_inplace!(left, root, v) === :fork && (forked = true; break)
+        end
+        forked && break
+        val = resolve(right, root)                 # assignment relation root <- val
+        if val !== nothing
+            s = _extend_bind_inplace!(left, root, val)
+            s === :fail && (ok = false; break)
+            s === :fork && (forked = true; break)
+        end
+    end
+    if !forked
+        if !ok
+            resize!(left.entries, checkpoint); return Bindings[]
+        end
+        length(left.entries) == checkpoint && return Bindings[left]   # no-op merge — share left (no copy)
+        result = Bindings[copy(left)]                                  # copy SURVIVOR only (left extended)
+        resize!(left.entries, checkpoint)                             # O(1) undo — left restored
+        return result
+    end
+    resize!(left.entries, checkpoint)                      # undo partial fast-path appends
+    _merge_branching(left, right, by_root)                 # SLOW PATH (rare value-conflict fork)
+end
+
+# original copying fold — correct for the forking case (each add_var_* may yield 0/1/many results)
+function _merge_branching(left::Bindings, right::Bindings, by_root)::Vector{Bindings}
+    result = [left]
+    for (root, vars) in by_root
+        for v in vars
+            v === root && continue
             result = _flat([add_var_equality(r, root, v) for r in result])
         end
-        val = resolve(right, root)                 # assignment relation root <- val
+        val = resolve(right, root)
         if val !== nothing
             result = _flat([add_var_binding(r, root, val) for r in result])
         end
     end
-    return result
+    result
 end
 _flat(xss) = (out = Bindings[]; for xs in xss; append!(out, xs); end; out)
 
