@@ -359,6 +359,10 @@ function mc_closure!(isp::Interpreter.Space; rounds::Int = 64)::Int
     added
 end
 
+# wire the `(mork-closure)` grounded op: its SpaceOp is defined in Interpreter (so it lives in TOKEN_REGISTRY),
+# but its impl is `mc_closure!` here in the parent — populate the hook now that both are loaded.
+Interpreter._MORK_CLOSURE_HOOK[] = mc_closure!
+
 """
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
 

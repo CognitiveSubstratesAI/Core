@@ -271,6 +271,20 @@ using Test
         @test ("(counter Z)" in R) && (n < 100000)            # terminated (didn't hit the step cap)
     end
 
+    # ── piece 12: (mork-closure) grounded op — invoke the substrate route from MeTTa SOURCE ──
+    @testset "(mork-closure) grounded op runs the substrate route from MeTTa" begin
+        SM = MeTTaCore.Interpreter
+        isp = SM.Space(); SM.load_core_stdlib!(isp)
+        SM.load_metta!(isp, "(edge a b)\n(edge b c)\n(edge c d)\n" *
+            raw"(= (edge $x $y) (reach $x $y))" * "\n" *
+            raw"(= (, (edge $x $y) (reach $y $z)) (reach $x $z))")
+        SM.load_metta!(isp, "!(mork-closure)")               # ← invoke the substrate route FROM MeTTa text
+        res = SM.load_metta!(isp, raw"!(match &self (reach $x $y) (reach $x $y))")
+        reach = sort(unique(filter(s -> startswith(s, "(reach"),
+            [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        @test length(reach) == 6 && ("(reach a d)" in reach)  # full closure, queryable by the interpreter
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *

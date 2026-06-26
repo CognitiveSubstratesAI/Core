@@ -1394,8 +1394,19 @@ const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
     ExecOk(Atom[Expression(Atom[])])
 end))
 
+# (mork-closure): OPT-IN substrate route — compute the MM2 forward-rewriting closure of this Space's relational
+# rules on the MORK lane and materialize the derived atoms back into the Space, then continue in the interpreter.
+# The implementation (`mc_closure!`) lives in the parent MeTTaCore (MM2Router, loaded after this); a hook bridges
+# the module order — MM2Router populates `_MORK_CLOSURE_HOOK[]` at load. See `MM2Router.mc_closure!`.
+const _MORK_CLOSURE_HOOK = Ref{Function}(_ -> error("mork-closure: substrate route not wired (load order)"))
+const MORK_CLOSURE = Grounded(SpaceOp("mork-closure", function (xs, space)
+    _MORK_CLOSURE_HOOK[](space)                      # materialize the MORK closure into `space` (side effect)
+    ExecOk(Atom[Expression(Atom[])])                 # unit ()
+end))
+
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
+    "mork-closure" => MORK_CLOSURE,
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE, "%" => MOD,
     "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
     "and" => AND, "or" => OR, "not" => NOT, "id" => ID,
