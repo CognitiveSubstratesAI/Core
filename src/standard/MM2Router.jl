@@ -313,7 +313,10 @@ when it fires ("removed no matter what"), so a single `space_metta_calculus!` is
 spec's "repeated exec selections". This drives that: re-add the exec rules and re-run until the atom count
 stabilizes — so a recursive relational rule (e.g. transitive `reach`) reaches its full closure, which
 `mm2_lane_from_atoms` + one calculus step cannot. Sound for forward-derivation workloads (the closure is the
-wanted answer). NB: metagraph rewriting, NOT Datalog.
+wanted answer). NB: metagraph rewriting, NOT Datalog. The canonical MM2 alternative (verified working on our
+MORK, see test) is the NATIVE main-loop idiom — `DEF` rules + a self-re-adding exec + a halt condition — which
+runs the fixpoint INSIDE one `space_metta_calculus!`; this host re-add loop is a pragmatic shortcut for the
+additive-closure case (per the MM2_Structuring_Code tutorial: Going-Wide main loop, Control_09 halting).
 """
 function mm2_lane_saturate!(atoms; max_rounds::Int = 64)::CoreSpace
     cs = new_core_space()

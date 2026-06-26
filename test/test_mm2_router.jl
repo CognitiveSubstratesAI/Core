@@ -241,6 +241,36 @@ using Test
         @test "(reach a d)" in reach                            # incl. the 3-hop only the fixpoint finds
     end
 
+    # ── piece 11: our MORK is MM2-idiom-complete (canonical idioms from MM2_Structuring_Code tutorial) ──
+    @testset "MORK supports the canonical MM2 idioms (O-sink / priority / chaining / native recursion)" begin
+        run1(prog) = begin
+            cs = MC.new_core_space(); MC.space_add_all_sexpr!(cs.inner, prog)
+            n = MC.space_metta_calculus!(cs.inner, 100000)
+            (sort([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]), n)
+        end
+        # O-sink REMOVAL — (exec 0 (, $x) (O (- b))) over {a,b} ⇒ b removed (non-monotonic)
+        R, _ = run1(raw"(exec 0 (, $x) (O (- b)))" * "\na\nb")
+        @test R == ["a"]
+        # PRIORITIES — two no-op execs both consumed
+        R, n = run1("(exec 0 (,) (,))\n(exec 1 (,) (,))")
+        @test isempty(R) && n == 2
+        # EXEC CHAINING (sequence) — nested execs emit 0,1,2,3 in order
+        R, _ = run1(raw"(exec 0 (, $x) (, 0 (exec 0 (, 0) (, 1 (exec 0 (, 1) (, 2 (exec 0 (, 2) (, 3))))))))")
+        @test R == ["0", "1", "2", "3"]
+        # NATIVE RECURSION + HALTING — self-re-adding LOOP decrements (S(S(S Z)))→Z and halts (the MM2-native
+        # fixpoint idiom; proves the host re-add loop in mm2_lane_saturate! is a shortcut, not a necessity)
+        loop = raw"""
+        (counter (S (S (S Z))))
+        (exec (LOOP 9)
+           (, (exec (LOOP 9) $p $t) )
+           (O (+ (exec (LOOP 0) (, (exec (LOOP $n) $_p $_t) (counter Z)) (O (- (exec (LOOP $n) $_p $_t)))))
+              (+ (exec (LOOP 1) (, (counter (S $x))) (O (+ (counter $x)) (- (counter (S $x))))))
+              (+ (exec (LOOP 9) $p $t))))
+        """
+        R, n = run1(loop)
+        @test ("(counter Z)" in R) && (n < 100000)            # terminated (didn't hit the step cap)
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *
