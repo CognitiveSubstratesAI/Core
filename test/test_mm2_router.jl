@@ -140,6 +140,28 @@ using Test
         @test R == ["(parent a b)", "(parent b c)"]
     end
 
+    # ── piece 6: live-eval handoff — typed-Atom guard + MORK mirror lane (mirror, bisim-safe) ──
+    @testset "mm2_is_relational(Atom) + mm2_lane_from_atoms bisimulates interpreter" begin
+        SM = MeTTaCore.Interpreter
+        @test mm2_is_relational(SM.parse_program(raw"(= (ancestor $x $y) (parent $x $y))")[1][2])
+        @test !mm2_is_relational(SM.parse_program(raw"(= (fib $n) (+ $n 1))")[1][2])   # grounded
+        @test !mm2_is_relational(SM.parse_program("(ancestor a b)")[1][2])             # a fact, not a rule
+
+        prog  = "(ancestor a b)\n(ancestor b c)\n" * raw"(= (ancestor $x $y) (parent $x $y))"
+        atoms = [p[2] for p in SM.parse_program(prog)]
+        cs = mm2_lane_from_atoms(atoms)                       # build the MORK mirror from typed atoms
+        MC.space_metta_calculus!(cs.inner, 1_000_000)
+        R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                         if occursin("parent", l)]))
+        @test R == ["(parent a b)", "(parent b c)"]
+
+        isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, "(ancestor a b)\n(ancestor b c)")
+        res = SM.load_metta!(isp, raw"!(match &self (ancestor $x $y) (parent $x $y))")
+        R_interp = sort(unique(filter(s -> occursin("parent", s),
+                       [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        @test R == R_interp                                  # MORK mirror lane ≡ interpreter oracle
+    end
+
     @testset "mm2_route! full dispatch (data + exec + !match + deferred)" begin
         cs = MC.new_core_space()
         prog2 = facts * "\n" * rule * "\n" *

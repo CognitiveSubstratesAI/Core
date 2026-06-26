@@ -229,6 +229,36 @@ Round-trip gated: `mm2_lower_equals(typed_atom_to_expr(parse(rule))) == mm2_lowe
 """
 typed_atom_to_expr(a)::String = (io = IOBuffer(); _typed_atom_to_expr!(io, a); String(take!(io)))
 
+# is `a` a `(= LHS RHS)` rewrite-rule Atom? (vs a fact / other atom)
+_mm2_is_eq_rule(a) = a isa _MM2_ATOM.Expression && length(a.children) == 3 &&
+                     a.children[1] isa _MM2_ATOM.Sym && a.children[1].name == Symbol("=")
+
+"Typed-Atom overload of the grounded-op guard — serialize then classify (used by the live-eval handoff)."
+mm2_is_relational(atom::_MM2_ATOM.Atom)::Bool = mm2_is_relational(typed_atom_to_expr(atom))
+
+"""
+    mm2_lane_from_atoms(atoms) -> CoreSpace
+
+The LIVE-eval handoff (mirror form): build a MORK CoreSpace from a list of typed `Atom`s (e.g. a live
+interpreter Space's user atoms). Relational `(= …)` rules → auto-lowered to `(exec …)`; non-rule atoms
+→ data; grounded/special `(= …)` rules → skipped (interpreter-only). Read-only on the source atoms — the
+interpreter keeps its rules (MIRROR, not route), so this is bisimulation-safe. The caller runs
+`space_metta_calculus!` to saturate. This is the substrate-lane half of P2; full ROUTE (interpreter
+defers to MORK + delete) is a later bisimulation-gated step.
+"""
+function mm2_lane_from_atoms(atoms)::CoreSpace
+    cs = new_core_space()
+    for a in atoms
+        s = typed_atom_to_expr(a)
+        if mm2_is_relational(a)
+            space_add_all_sexpr!(cs.inner, mm2_lower_equals(s))   # relational (= …) → exec lane
+        elseif !_mm2_is_eq_rule(a)
+            space_add_all_sexpr!(cs.inner, s)                     # fact / data
+        end                                                       # else grounded (= …) → skip (interp-only)
+    end
+    cs
+end
+
 """
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}
 
