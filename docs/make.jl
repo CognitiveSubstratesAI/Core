@@ -18,6 +18,7 @@ makedocs(;
     pages=[
         "Home" => "index.md",
         "Execution Backends" => "backends.md",
+        "Query Optimization (MeTTa→MM2→Trie-Join)" => "query-optimization.md",
         "MeTTa-IL" => [
             "MeTTa-IL Lane" => "mettail.md",
             "GSLT Theory Algebra" => "gslt.md",
