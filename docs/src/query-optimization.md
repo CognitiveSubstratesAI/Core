@@ -138,6 +138,30 @@ subprocess-spawn limitation, unrelated). Full design, safety conditions, and per
 measurements are in
 [ADR-056](https://github.com/CognitiveSubstratesAI/docs) (`docs/architecture/ADR-056_zam_cardinality_join_planning.md`).
 
+## Real-workload validation (FlyWire connectome, 2026-06-27)
+
+The benchmarks above use synthetic layered DAGs with **binary** `(edge $x $y)` relations. Validating
+against the real FlyWire connectome info-flow workload (`MORK/examples/connectome/`) surfaced two
+limitations that the synthetic shapes could not:
+
+1. **The info-flow algorithm uses single-source anchored scans, not joins.** Its hot query is
+   `(match &self (syn $r $p $c) …)` pinned by the post-neuron, folded through a ratio threshold
+   (`reached-in / total-in ≥ 0.3`) with grounded ops. A conjunction needs ≥2 factors, so the trie-join
+   fast paths do not fire — the workload's speed comes from by-post trie-prefix anchoring
+   (`InfoFlowFast.metta`), an orthogonal optimization.
+2. **Connectome relations are ternary; the classifiers require binary.** The synapse relation is
+   `(syn pre post count)` (arity-4 atom, 3 args). `_classify_binary_join` / `_classify_chain` require
+   exactly arity-3 factors (head + 2 args), so even a connectome *motif* query
+   `(, (syn $a $b $w)(syn $b $c $w2))` does **not** fire P2/P3 (confirmed: ternary → `false`, binary
+   `(edge …)` → `true`).
+
+**Conclusion:** the trie-join is correct and large on binary path/join workloads, but does not yet apply
+to raw connectome queries. The unlocking extension is **arity-N factor support** — let the join variable
+sit at any argument position with the remaining args (e.g. the synapse weight) carried as tails. This is
+a clean, scoped follow-on (generalize the arg-split from 2 to N and locate the shared var's position),
+after which connectome motif/path queries would fire the existing composition machinery. (Until then, a
+binary projection `(edge a b)` derived from `(syn a b w)` fires P2/P3 directly.)
+
 ### What is *not* built (deliberate, per the MORK author's guidance)
 
 - **Non-chain k≥3 joins** (star / general join graphs) — would need a runtime-data-driven join-order
