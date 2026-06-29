@@ -216,6 +216,34 @@ using Test
                          "(reach a c)", "(reach b d)", "(reach a d)"])
     end
 
+    # ── piece 8b: mm2_lane_saturate_seminaive! — Zippy finite-difference fixpoint ≡ naive driver ──
+    @testset "mm2_lane_saturate_seminaive! computes the SAME closure as the naive driver" begin
+        SM = MeTTaCore.Interpreter
+        prog = "(edge a b)\n(edge b c)\n(edge c d)\n" *
+               raw"(= (edge $x $y) (reach $x $y))" * "\n" *
+               raw"(= (, (edge $x $y) (reach $y $z)) (reach $x $z))"
+        atoms = [p[2] for p in SM.parse_program(prog)]
+        reach(cs) = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                                 if occursin("reach", l)]))
+        expected = sort(["(reach a b)", "(reach b c)", "(reach c d)",
+                         "(reach a c)", "(reach b d)", "(reach a d)"])
+        @test reach(mm2_lane_saturate_seminaive!(atoms)) == expected            # full closure, incl 3-hop
+        # ≡ the naive driver, fact-for-fact
+        @test reach(mm2_lane_saturate_seminaive!(atoms)) == reach(mm2_lane_saturate!(atoms))
+        # no (d …) delta-tag artifacts leak into the final space
+        @test !any(l -> startswith(strip(l), "(d "),
+                   split(MC.space_dump_all_sexpr(mm2_lane_saturate_seminaive!(atoms).inner), '\n'))
+        # derived-relation analysis + variant generation (the semi-naive transform)
+        @test MeTTaCore._mm2_derived_relations(
+            ["(exec 0 (, (edge \$x \$y) (reach \$y \$z)) (, (reach \$x \$z)))"]) == Set(["reach"])
+        vs = MeTTaCore._mm2_seminaive_variants(
+            "(exec 0 (, (edge \$x \$y) (reach \$y \$z)) (, (reach \$x \$z)))", Set(["reach"]))
+        @test vs == ["(exec 0 (, (edge \$x \$y) (d (reach \$y \$z))) (, (reach \$x \$z)))"]  # only derived premise tagged
+        # non-recursive rule (no derived premise) → no variant → falls back to naive seed pass
+        @test isempty(MeTTaCore._mm2_seminaive_variants(
+            "(exec 0 (, (edge \$x \$y)) (, (reach \$x \$y)))", Set(["reach"])))
+    end
+
     # ── piece 9: MORK byte-Expr limit guard (arity 63 / 64 vars — wiki Data-in-MORK) ──
     @testset "mm2_is_relational rejects rules exceeding MORK byte-Expr limits" begin
         SM = MeTTaCore.Interpreter
