@@ -107,9 +107,15 @@ const Plan = Vector{Tuple{Frame,Bindings}}
 
 no_handler(::Frame, ::Atom, ::Bindings) = nothing   # a finished child with no_handler just pops
 
+# Finished frames never use `.vars` for membership (only pending frames are narrowed against), and
+# `.vars` is never mutated after construction (verified: read-only at narrow_bindings + _cumvars) — so
+# all finished frames SHARE one immutable empty set instead of allocating Set{Var}() per result. This
+# was a top per-step allocator on deep proof search (finished_result fires on every reduction result).
+const EMPTY_VARS = Set{Var}()
+
 # finished_result (interpreter.rs:474): a finished frame holding `atom`, linked to `prev`
 finished_result(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}) =
-    Tuple{Frame,Bindings}[(Frame(atom, Set{Var}(), prev, no_handler, true, 0), b)]
+    Tuple{Frame,Bindings}[(Frame(atom, EMPTY_VARS, prev, no_handler, true, 0), b)]
 
 # ── per-step binding-narrowing (the step the faithful Minimal port had OMITTED) ───────────────
 # hyperon `Bindings::apply_and_retain` (matcher.rs:693) / `narrow_vars` (:518); CeTTa eval.c
@@ -124,18 +130,28 @@ finished_result(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}) =
 function narrow_bindings(b::Bindings, live)::Bindings
     # group present vars by equality-class root, flag any dead (forwarding model: enumerate every var
     # appearing as a source OR a forwarding target — the analog of the old `for (v,s) in var_to_slot`).
-    by_root = Dict{Var,Vector{Var}}()
-    seen = Set{Var}()
+    # FLAT scratch (measured on obc: ≤11 roots, ≤28 seen per call) — parallel Vectors + linear lookup
+    # replace Dict{Var,Vector{Var}}+Set{Var}: cheaper than hashing at these sizes and far less alloc per
+    # step. `live` stays a Set (membership target, up to ~113 — a linear scan there WOULD regress).
+    seen = Var[]; roots = Var[]; groups = Vector{Var}[]
     any_drop = false
-    for e in b.entries
+    @inbounds for e in b.entries
         for v in (e.val isa Var ? (e.var, e.val::Var) : (e.var,))
             v in seen && continue; push!(seen, v)
-            v in live ? push!(get!(by_root, canonical_var(b, v), Var[]), v) : (any_drop = true)
+            if v in live
+                r = canonical_var(b, v)
+                idx = 0
+                for j in eachindex(roots); roots[j] == r && (idx = j; break); end
+                idx == 0 ? (push!(roots, r); push!(groups, Var[v])) : push!(groups[idx], v)
+            else
+                any_drop = true
+            end
         end
     end
     any_drop || return b                                   # nothing dead → no allocation (fast path)
     nb = Bindings()
-    for (root, vars) in by_root
+    @inbounds for k in eachindex(roots)
+        root = roots[k]; vars = groups[k]
         val = resolve(b, root)
         if val === nothing
             length(vars) < 2 && continue                   # lone value-less var ≡ unbound → drop
@@ -511,12 +527,12 @@ function setup_function(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, dep
     body = atom.children[2]
     fret = function (self::Frame, result::Atom, rb::Bindings)
         if result isa Expression && length(result.children) == 2 && result.children[1] == RETURN
-            return (Frame(result.children[2], Set{Var}(), self.prev, no_handler, true, depth), rb)  # return x
+            return (Frame(result.children[2], EMPTY_VARS, self.prev, no_handler, true, depth), rb)  # return x
         elseif is_minimal_op(result)
             pushed = push_nested(result, rb, self, depth + 1)                                        # loop
             isempty(pushed) ? nothing : pushed[1]
         else
-            return (Frame(error_atom(atom, "NoReturn"), Set{Var}(), self.prev, no_handler, true, depth), rb)
+            return (Frame(error_atom(atom, "NoReturn"), EMPTY_VARS, self.prev, no_handler, true, depth), rb)
         end
     end
     fframe = Frame(atom, _cumvars(prev, atom), prev, fret, false, depth)

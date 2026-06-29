@@ -122,7 +122,15 @@ end
 
 # metta.md §add_var_binding
 # occurs check: does `v` appear anywhere inside `a`? (prevents the cyclic binding $v <- (… $v …))
-_occurs(v::Var, a::Atom) = a isa Var ? a == v : (a isa Expression && any(c -> _occurs(v, c), a.children))
+function _occurs(v::Var, a::Atom)
+    a isa Var && return a == v
+    if a isa Expression
+        @inbounds for c in a.children
+            _occurs(v, c) && return true
+        end
+    end
+    return false
+end
 
 function add_var_binding(b::Bindings, var::Var, val::Atom)::Vector{Bindings}
     prev = resolve(b, var)
