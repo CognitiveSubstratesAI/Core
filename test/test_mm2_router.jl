@@ -282,9 +282,13 @@ using Test
         # PRIORITIES — two no-op execs both consumed
         R, n = run1("(exec 0 (,) (,))\n(exec 1 (,) (,))")
         @test isempty(R) && n == 2
-        # EXEC CHAINING (sequence) — nested execs emit 0,1,2,3 in order
-        R, _ = run1(raw"(exec 0 (, $x) (, 0 (exec 0 (, 0) (, 1 (exec 0 (, 1) (, 2 (exec 0 (, 2) (, 3))))))))")
-        @test R == ["0", "1", "2", "3"]
+        # EXEC CHAINING (sequence) — nested execs emit 0,1,2,3 in order. The bootstrap exec needs a REAL
+        # trigger atom (`start`): per the MM2 calculus (upstream `metta_calculus` removes the exec BEFORE
+        # `interpret` matches its source, and matches are value-presence-gated — `path_exists`), an exec whose
+        # source `(, $x)` has no atom to bind after self-removal does NOT fire. (Matching the removed exec
+        # itself was the pre-`16981af` dangling-node bug that made Control_08 non-terminate.)
+        R, _ = run1(raw"(exec 0 (, start) (, 0 (exec 0 (, 0) (, 1 (exec 0 (, 1) (, 2 (exec 0 (, 2) (, 3))))))))" * "\nstart")
+        @test all(x -> x in R, ["0", "1", "2", "3"])             # full cascade fires (trigger `start` remains)
         # NATIVE RECURSION + HALTING — self-re-adding LOOP decrements (S(S(S Z)))→Z and halts (the MM2-native
         # fixpoint idiom; proves the host re-add loop in mm2_lane_saturate! is a shortcut, not a necessity)
         loop = raw"""
