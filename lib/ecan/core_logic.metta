@@ -45,21 +45,6 @@
 ;;
 ;; Examples:
 ;;   (get-sti nonexistent-atom-xyz) → 0.0
-;;
-;; ECAN Bug (discovered 2026-04-09 via doctest):
-;;   (get-sti <existing-atom>) returns 0.0 (the default fallback) instead of
-;;   the actual STI value. Raw `(match &self (AV atom $sti ...) $sti)` works
-;;   correctly and returns the value; but the `collapse(match(...))` pattern
-;;   inside get-sti's rule body returns an empty list, triggering the default.
-;;   Same issue affects get-lti and get-vlti. Root cause is likely that &self
-;;   inside a rule body resolves to a different evaluation context than the
-;;   top-level &self, or that collapse evaluates the match in a scope where
-;;   the atom isn't visible. Investigation deferred — this is the ECAN
-;;   equivalent of the PLN Channel-leak class of bugs.
-;;
-;; When the collapse-match-in-rule-body bug is fixed, add doctests
-;; for get-sti, get-lti, get-vlti with a seeded (AV ...) atom and
-;; verify they return the correct values instead of 0.0 defaults.
 
 (= (get-av $id)
    (match &self (AV $id $sti $lti $vlti) (AV $id $sti $lti $vlti)))
@@ -74,15 +59,10 @@
 ;;   (get-sti ecan-doctest-acc) → 0.42
 ;;   (get-sti nonexistent-atom-xyz) → 0.0
 
-;; Inlined form (2026-04-17): (let $result (collapse ...) (find-first-number $result 0.0))
-;; was fragile in rule bodies. Inlining is closer to canonical MeTTa style.
-;;
-;; KNOWN INFRA BUG (investigation deferred): even after inlining, get-sti and
-;; get-lti still return 0.0 while get-vlti works, despite rules being
-;; structurally IDENTICAL after parsing (same aliased $a, $b, $Then, $Else
-;; binding shape). Runtime-defined versions of the same rules work. Deep
-;; interpreter dispatch-order bug — not in the rule code itself. Tracked
-;; in project todos; revisit after D1 quoting.
+;; Inlined collapse-match form (find-first-number filters to the first numeric match — see the
+;; AV-accessors note above). get-sti/get-lti/get-vlti are verified working by the ECAN acceptance
+;; suite (Stimulate asserts get-sti=10.1, etc.); the old "returns 0.0 / interpreter bug" note was a
+;; false diagnosis (the real issue was a library-layer bug) and has been removed.
 (= (get-sti $id)
    (find-first-number (collapse (match &self (AV $id $sti $lti $vlti) $sti)) 0.0))
 
