@@ -640,6 +640,47 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 
 # (metta <atom> <type>) — interpret_expression (interpreter.rs:1110). Leaf/cast cases finish as-is; an
 # expression emits the tuple path (typed/function path added next increment).
+# ═══════════════════════════════════════════════════════════════════════════════
+# SLG VARIANT TABLING (opt-in; default OFF) — SWI-Prolog §7.1 memoisation in the top-down interpreter.
+# `table!(head)` marks a predicate tabled; a tabled goal's FULLY-REDUCED answer set is computed ONCE and
+# replayed on every variant re-call, turning exponential recomputation (fib) into linear. The interpreter is
+# already a CPS stack machine, so this rides the existing nested-`interpret` pattern (cf. collapse_bind_op).
+#   DEFAULT-OFF GUARANTEE: with no head registered the hook in metta_instr is always false ⇒ the 234
+#   conformance reduction path is byte-identical by construction (the disable-to-prove pattern).
+#   SCOPE: memoisation only. A left-recursive goal that re-enters an IN-PROGRESS variant falls through to
+#   normal reduction (no suspend-on-variant yet — that needs the worklist/dynamic-SCC completion machinery;
+#   §7.2). Handles the fib/ackermann class. Variant key = the substituted goal (ground ⇒ identity; non-ground
+#   canonicalization is TODO). Table is global+session-scoped; cleared by table!/untable_all! (TODO: per-space
+#   + IDG invalidation on space mutation, §7.7).
+const _TABLED_HEADS = Set{Symbol}()
+const _ANSWER_TABLE = Dict{Atom,Vector{Atom}}()
+const _TABLE_INPROG = Set{Atom}()
+"Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
+table!(head::Symbol) = (push!(_TABLED_HEADS, head); empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); nothing)
+"Disable all tabling and clear the answer table."
+untable_all!() = (empty!(_TABLED_HEADS); empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); nothing)
+@inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
+
+_replay(answers::Vector{Atom}, b::Bindings, prev) =
+    isempty(answers) ? finished_result(EMPTY, b, prev) :
+    reduce(vcat, (finished_result(ans, b, prev) for ans in answers))
+
+# Compute (once) or replay a tabled goal's answer set. Marks the goal IN-PROGRESS so the nested re-entry of
+# THIS goal skips the table and applies its rules (sub-goals — different keys — re-table normally).
+function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
+    key = subst(atom, b)
+    cached = get(_ANSWER_TABLE, key, nothing)
+    cached === nothing || return _replay(cached, b, prev)            # complete table ⇒ replay (the win)
+    push!(_TABLE_INPROG, key)
+    answers = try
+        unique(Atom[subst(at, bnd) for (at, bnd) in interpret(_metta(key, typ), space, b) if !is_empty_atom(at)])
+    finally
+        delete!(_TABLE_INPROG, key)
+    end
+    _ANSWER_TABLE[key] = answers
+    _replay(answers, b, prev)
+end
+
 function metta_instr(f::Frame, b::Bindings, space)
     a = f.atom
     # spec (metta.md:191) is 3-arg `(metta <atom> <type> <space>)`; Core threads `space` as a Julia param so
@@ -657,6 +698,11 @@ function metta_instr(f::Frame, b::Bindings, space)
     (is_empty_atom(atom) || is_error_atom(atom)) && return finished_result(atom, b, f.prev)
     (typ == ATOM_T || typ == metatype_sym(atom) || atom isa Var) && return finished_result(atom, b, f.prev)
     (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
+    # SLG variant tabling (opt-in; default-OFF ⇒ is_tabled is false ⇒ never fires ⇒ 234 path unchanged):
+    # memoise a tabled goal — compute its answer set once, replay on variant re-calls. Skip an in-progress
+    # variant (its own rule-application) so only sub-goals re-table.
+    (space !== nothing && is_tabled(atom) && !(atom in _TABLE_INPROG)) &&
+        return tabled_eval(atom, typ, space, b, f.prev)
     if is_minimal_op(atom)                  # embedded minimal instruction → run it, then re-metta its result
         r = freshvar("r")                   # (a rule body like let*'s chain rewrites to (let …) which must reduce)
         # NotReducible backstop (hyperon metta_call_return interpreter.rs:1456): if the embedded minimal op
