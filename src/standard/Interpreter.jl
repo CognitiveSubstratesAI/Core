@@ -655,10 +655,13 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 const _TABLED_HEADS = Set{Symbol}()
 const _ANSWER_TABLE = Dict{Atom,Vector{Atom}}()
 const _TABLE_INPROG = Set{Atom}()
+const _PARTIAL = Dict{Atom,Vector{Atom}}()   # a leader's accumulating answer set during completion
+const _PARTIAL_READ = Set{Atom}()            # tabled keys whose partials a consumer read ⇒ self-recursive
+_table_reset!() = (empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); empty!(_PARTIAL); empty!(_PARTIAL_READ))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
-table!(head::Symbol) = (push!(_TABLED_HEADS, head); empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); nothing)
+table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
-untable_all!() = (empty!(_TABLED_HEADS); empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); nothing)
+untable_all!() = (empty!(_TABLED_HEADS); _table_reset!(); nothing)
 @inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
 # MeTTa surface for the directive (the analog of SWI `:- table fib/1`): `!(table! fib)` marks the `fib`
 # predicate tabled, so a program/server enables tabling without a Julia call. Registered in TOKEN_REGISTRY.
@@ -690,20 +693,52 @@ function _canonical_goal(atom::Atom, space, b::Bindings)::Atom
     _variant_rename(Expression(Atom[g.children[1]; rargs]))
 end
 
-# Compute (once) or replay a tabled goal's answer set. Marks the goal IN-PROGRESS so the nested re-entry of
-# THIS goal skips the table and applies its rules (sub-goals — different keys — re-table normally).
+# Suspend-on-variant via NAIVE FIXPOINT — the simplification of SWI completion (boot/tabling.pl
+# run_leader/`completion` resumes a delimited continuation off a worklist; we re-run the leader pass instead:
+# correct for a single SCC, no continuation machinery). A tabled goal is the LEADER of its variant; a re-entry
+# of an IN-PROGRESS variant is a CONSUMER that reads the leader's PARTIAL answers — so left-recursion SUSPENDS
+# (returns partials) instead of looping. A leader that no consumer re-read (fib) finishes in ONE pass.
+#   SCOPE: single self-recursive SCC, naive (re-derives each round, not semi-naive), ground/enumerable answer
+#   atoms. No mutual-SCC merging (SWI's dynamic SCC), no WFS negation (§7.6), no answer subsumption (§7.3).
+
+# One resolution pass for the leader: apply key's `(= key body)` rules and reduce each body. A recursive
+# sub-call to an in-progress variant hits the hook → consumer → reads partials. Returns this pass's answers.
+function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
+    out = Atom[]; X = freshvar("X")
+    for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
+        is_present(mb, X) || continue
+        for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
+            is_empty_atom(at) || push!(out, subst(at, bnd))
+        end
+    end
+    unique(out)
+end
+
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     key = _canonical_goal(atom, space, b)
-    cached = get(_ANSWER_TABLE, key, nothing)
-    cached === nothing || return _replay(cached, b, prev)            # complete table ⇒ replay (the win)
-    push!(_TABLE_INPROG, key)
-    answers = try
-        unique(Atom[subst(at, bnd) for (at, bnd) in interpret(_metta(key, typ), space, b) if !is_empty_atom(at)])
-    finally
-        delete!(_TABLE_INPROG, key)
+    haskey(_ANSWER_TABLE, key) && return _replay(_ANSWER_TABLE[key], b, prev)    # complete ⇒ replay
+    if key in _TABLE_INPROG                                                       # consumer (variant re-entry):
+        push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
+        return _replay(get(_PARTIAL, key, Atom[]), b, prev)                      #   answer from partials (suspend)
     end
-    _ANSWER_TABLE[key] = answers
-    _replay(answers, b, prev)
+    push!(_TABLE_INPROG, key); _PARTIAL[key] = Atom[]; delete!(_PARTIAL_READ, key)   # become LEADER
+    local ans::Vector{Atom} = Atom[]
+    try
+        while true
+            new = _leader_pass(key, typ, space)
+            if !(key in _PARTIAL_READ)                          # no recursion into self ⇒ this pass is final
+                ans = new; break
+            end
+            n0 = length(_PARTIAL[key])                          # self-recursive ⇒ accumulate to fixpoint
+            _PARTIAL[key] = unique(vcat(_PARTIAL[key], new))
+            length(_PARTIAL[key]) == n0 && (ans = _PARTIAL[key]; break)   # naive fixpoint: no new answers
+            delete!(_PARTIAL_READ, key)                         # reset, run another round
+        end
+    finally
+        delete!(_TABLE_INPROG, key); delete!(_PARTIAL, key); delete!(_PARTIAL_READ, key)
+    end
+    _ANSWER_TABLE[key] = ans
+    _replay(ans, b, prev)
 end
 
 function metta_instr(f::Frame, b::Bindings, space)
@@ -723,11 +758,9 @@ function metta_instr(f::Frame, b::Bindings, space)
     (is_empty_atom(atom) || is_error_atom(atom)) && return finished_result(atom, b, f.prev)
     (typ == ATOM_T || typ == metatype_sym(atom) || atom isa Var) && return finished_result(atom, b, f.prev)
     (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
-    # SLG variant tabling (opt-in; default-OFF ⇒ is_tabled is false ⇒ never fires ⇒ 234 path unchanged):
-    # memoise a tabled goal — compute its answer set once, replay on variant re-calls. Skip an in-progress
-    # variant (its own rule-application) so only sub-goals re-table.
-    (space !== nothing && is_tabled(atom) && !(atom in _TABLE_INPROG)) &&
-        return tabled_eval(atom, typ, space, b, f.prev)
+    # SLG tabling (opt-in; default-OFF ⇒ is_tabled is false ⇒ never fires ⇒ 234 path unchanged): route a
+    # tabled goal to the leader/consumer driver — memoise + suspend-on-variant (left-recursion terminates).
+    (space !== nothing && is_tabled(atom)) && return tabled_eval(atom, typ, space, b, f.prev)
     if is_minimal_op(atom)                  # embedded minimal instruction → run it, then re-metta its result
         r = freshvar("r")                   # (a rule body like let*'s chain rewrites to (let …) which must reduce)
         # NotReducible backstop (hyperon metta_call_return interpreter.rs:1456): if the embedded minimal op
