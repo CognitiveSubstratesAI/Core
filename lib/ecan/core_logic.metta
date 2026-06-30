@@ -177,28 +177,33 @@
 
 ;; -------------------------------------------------------
 ;; 4. Dynamic Wage Calculation
-;; Reference: calculateSTIWage in attention-bank.metta
+;; Reference: calculateSTIWage in attention-bank.metta (canonical metta-attention / singnet attention).
 ;;
-;; wage = clamp((target - funds) / buffer, -1, 1) * base-wage
-;; When funds are low  → positive wage (reward atoms, replenish funds)
-;; When funds are high → negative wage (suppress inflation)
+;; wage = base-wage * (1 + clamp((funds - target) / buffer, -1, 1))   ->  range [0, 2*base], NON-negative
+;; When funds are HIGH -> pay MORE (up to 2*base): push STI out of the over-full pool into used atoms.
+;; When funds are LOW  -> wage -> 0: stop paying. The pool is refilled by RENT, not by a negative wage.
+;; (A wage is a PAYMENT and is structurally non-negative. The homeostatic negative feedback runs through
+;;  RENT — opposite numerator, gated off when funds>=target. The prior (target-funds) numerator + the
+;;  +/-base envelope was a DOUBLE sign-inversion that paid NEGATIVE wages at the shipped start state,
+;;  punishing atoms for being used -> the negative-STI cascade. Verified vs ECAN theory + canonical
+;;  calculateSTIWage, 2026-06-30.)
 ;; -------------------------------------------------------
 
 (= (calculate-sti-wage)
    (let* (($funds  (get-funds-sti))
           ($target (sti-funds-target))
           ($buffer (sti-funds-buffer))
-          ($ratio  (/ (- $target $funds) $buffer))
-          ($clamped (clamp $ratio -1.0 1.0)))
-     (* $clamped (sti-atom-wage))))
+          ($ndiff  (clamp (/ (- $funds $target) $buffer) -1.0 1.0))   ; funds - target (canonical)
+          ($base   (sti-atom-wage)))
+     (+ $base (* $base $ndiff))))                                      ; [0, 2*base], never negative
 
 (= (calculate-lti-wage)
    (let* (($funds  (get-funds-lti))
           ($target (lti-funds-target))
           ($buffer (lti-funds-buffer))
-          ($ratio  (/ (- $target $funds) $buffer))
-          ($clamped (clamp $ratio -1.0 1.0)))
-     (* $clamped (lti-atom-wage))))
+          ($ndiff  (clamp (/ (- $funds $target) $buffer) -1.0 1.0))
+          ($base   (lti-atom-wage)))
+     (+ $base (* $base $ndiff))))
 
 ;; -------------------------------------------------------
 ;; 5. Stimulate — pay wages when atom is used

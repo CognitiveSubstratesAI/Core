@@ -12,27 +12,28 @@
 
 !(import! &self (library ecan))
 
-; Test 1: funds == target → wage is zero (clamp((10000-10000)/10000, -1, 1) * 10 = 0)
+; Canonical wage = base * (1 + clamp((funds - target)/buffer, -1, 1)) → [0, 2*base], NON-negative.
+; Higher funds → MORE wage (distribute the over-full pool); the funds homeostat runs through RENT.
+; Test 1: funds == target → wage = base (ndiff=(10000-10000)/10000=0, wage = 10*(1+0) = 10)
 !(set-funds-sti! 10000.0)
-!(assertEqual (calculate-sti-wage) 0.0)
-
-; Test 2: funds well below target → wage is positive, capped at base-wage
-; funds=0, ratio=(10000-0)/10000=1.0, clamp=1.0, wage = 1.0 * 10.0 = 10.0
-!(set-funds-sti! 0.0)
 !(assertEqual (calculate-sti-wage) 10.0)
 
-; Test 3: funds well above target → wage is negative, capped at -base-wage
-; funds=20000, ratio=(10000-20000)/10000=-1.0, clamp=-1.0, wage = -10.0
-!(set-funds-sti! 20000.0)
-!(assertEqual (calculate-sti-wage) -10.0)
+; Test 2: funds == 0 (bank empty) → wage = 0; the bank can't pay when broke
+; ndiff=(0-10000)/10000=-1, wage = 10*(1 + -1) = 0.0  (the pool refills via RENT, never a negative wage)
+!(set-funds-sti! 0.0)
+!(assertEqual (calculate-sti-wage) 0.0)
 
-; Test 4: funds exactly at target+buffer → wage = -base-wage
-; funds=20000 (=target+buffer), ratio=-1.0, wage = -10.0 (same as test 3 boundary)
+; Test 3: funds well above target → wage capped at 2*base (push STI out of the over-full pool)
+; funds=20000, ndiff=(20000-10000)/10000=1.0, wage = 10*(1+1) = 20.0
 !(set-funds-sti! 20000.0)
-!(assertEqual (calculate-sti-wage) -10.0)
+!(assertEqual (calculate-sti-wage) 20.0)
 
-; Test 5: linear interpolation in the middle range
-; funds=5000, ratio=(10000-5000)/10000=0.5, wage = 0.5 * 10.0 = 5.0
+; Test 4: funds at target+buffer → wage at the 2*base ceiling (same boundary as test 3)
+!(set-funds-sti! 20000.0)
+!(assertEqual (calculate-sti-wage) 20.0)
+
+; Test 5: linear interpolation below target
+; funds=5000, ndiff=(5000-10000)/10000=-0.5, wage = 10*(1-0.5) = 5.0
 !(set-funds-sti! 5000.0)
 !(assertEqual (calculate-sti-wage) 5.0)
 
