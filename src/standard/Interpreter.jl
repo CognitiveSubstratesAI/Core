@@ -223,6 +223,7 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name === Symbol("decons-atom"); return decons_atom(f, b)
     elseif name === Symbol("unify");    return unify_op(f, b)
     elseif name === Symbol("eval");     return eval_op(f, b, space)
+    elseif name === Symbol("evalc");    return evalc_op(f, b, space)
     elseif name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(f.atom, b, f.prev, f.depth)
     elseif name === Symbol("function"); return setup_function(f.atom, b, f.prev, f.depth)
     elseif name === Symbol("collapse-bind");  return collapse_bind_op(f, b, space)
@@ -512,6 +513,18 @@ function eval_op(f::Frame, b::Bindings, space)
         end
         return isempty(out) ? finished_result(NOT_REDUCIBLE, b, f.prev) : out
     end
+end
+
+# evalc — evaluate the body in the supplied space context. For the in-self (&self) case (the only one
+# Core's libs use) that is the current interpreter space, so delegate to eval's logic on (eval <body>).
+# evalc was in MINIMAL_OPS with NO dispatch branch, so a bare (evalc …) was re-fed to the interpreter
+# loop until the step ceiling — a hang on trivial input vs hyperon/CeTTa's 7. (2026-06-30; matches both.)
+function evalc_op(f::Frame, b::Bindings, space)
+    a = f.atom
+    (a isa Expression && length(a.children) == 3) ||
+        return finished_result(error_atom(a, "expected (evalc <atom> <space>)"), b, f.prev)
+    f.atom = Expression(EVAL, a.children[2])   # (evalc body space) → (eval body); same frame + continuation
+    return eval_op(f, b, space)
 end
 
 # ── pushing nested computations + continuations (chain / function) ────────────
