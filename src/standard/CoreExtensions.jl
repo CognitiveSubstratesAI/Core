@@ -14,16 +14,20 @@
 # Numeric leaf ops (bare names). Legacy Core exposes the unary ones as `<f>-math` in Primitives.jl
 # with a bare→-math rule layer on top; here they are bare grounded ops directly.
 _ext_isnum(a::Atom) = a isa Grounded && a.value isa Number
+# domain-safe: a Julia DomainError (e.g. (sqrt -4), (log -1), (pow -2 0.5)) becomes NaN, matching the
+# `-math` ops (CoreMathOps) + hyperon. A grounded op must NEVER throw an unhandled Julia exception out
+# of the interpreter — bare sqrt/log used to crash the engine on negative input. (2026-06-30)
+_ext_domsafe(f, args...) = try f(args...) catch e; e isa DomainError ? NaN : rethrow() end
 function _ext_unop(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         (length(xs) == 1 && _ext_isnum(xs[1])) || return ExecNoReduce()
-        ExecOk(Atom[Grounded(f(xs[1].value))])
+        ExecOk(Atom[Grounded(_ext_domsafe(f, xs[1].value))])
     end))
 end
 function _ext_binop(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         (length(xs) == 2 && _ext_isnum(xs[1]) && _ext_isnum(xs[2])) || return ExecNoReduce()
-        ExecOk(Atom[Grounded(f(xs[1].value, xs[2].value))])
+        ExecOk(Atom[Grounded(_ext_domsafe(f, xs[1].value, xs[2].value))])
     end))
 end
 const CLAMP = Grounded(Operation("clamp", function (xs::Vector{Atom})
