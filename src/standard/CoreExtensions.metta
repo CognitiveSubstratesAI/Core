@@ -26,6 +26,14 @@
 ;; xor: boolean exclusive-or (MOSES propagate_not.metta)
 (= (xor $a $b) (not (== $a $b)))
 
+;; ~= / ===: PeTTa/MeTTaLog-compat (not hyperon-canonical), the rest of the is-member/xor compat group whose
+;; "one canonical home" is this live file. `~=` (not-equal) is CALLED by MOSES cut_unnecessary_and/or and was
+;; left only in the dead stdlib/core.metta — so it no-op'd on the LIVE path (ml()/mc_run); `===` completes the
+;; trio. (`!=` can't be a rule — the parser tokenizes it as `! =` — so ports use `~=`.) The dead-stdlib copies
+;; remain, matching the existing xor/is-member duplication; the dangling-ops lint missed `~=` (symbolic name).
+(= (~=  $a $b) (not (== $a $b)))
+(= (=== $a $b) (== $a $b))
+
 ;; length: element count (MOSES add_logical_knobs.metta). Recursion sits in `+`'s arg position; `+`
 ;; is a grounded op that evaluates its args, so the recursive call reduces — no let-bind needed.
 (= (length $list)
