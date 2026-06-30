@@ -40,10 +40,10 @@
 !(assertEqual (get-sti ecan-probe) 0.2)
 !(assertEqual (get-lti ecan-probe) 0.8)
 
-; Test 8: boost-sti! clamps at max-attention-concentration (0.3)
-!(assertEqual (max-attention-concentration) 0.3)
+; Test 8: boost-sti! adds raw STI on the economic scale (no fixed concentration cap)
+; ecan-probe STI was 0.2 (Test 7) → +1.0 → 1.2 (the old 0.3 clamp was a scale bug)
 !(boost-sti! ecan-probe 1.0)
-!(assertEqual (get-sti ecan-probe) 0.3)
+!(assertEqual (get-sti ecan-probe) 1.2)
 
 ; Test 9: clamp utility
 !(assertEqual (clamp 0.5 0.0 1.0) 0.5)

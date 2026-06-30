@@ -60,9 +60,9 @@
 (= (trade-sti! $source $target $amount)
    (let* (($src-sti (get-sti $source))
           ($tgt-sti (get-sti $target))
-          ($actual  (clamp $amount 0.0 $src-sti))
+          ($actual  (clamp $amount 0.0 $src-sti))   ; can't transfer more than the source holds
           ($new-src (- $src-sti $actual))
-          ($new-tgt (clamp (+ $tgt-sti $actual) 0.0 (max-attention-concentration))))
+          ($new-tgt (+ $tgt-sti $actual)))          ; target grows freely — raw STI is economic-scale, zero-sum
      (let $_ (set-sti! $source $new-src)
           (set-sti! $target $new-tgt))))
 

@@ -117,16 +117,13 @@
 ;;   (clamp -0.3 0.0 1.0) → 0.0
 ;; clamp lives in Core stdlib/math.metta (always loaded) — local copy removed 2026-06-10.
 
-;; Direct STI boost (clamped to max-attention-concentration)
-;;
-;; Examples:
-;;   (max-attention-concentration) → 0.3
-(= (max-attention-concentration) 0.3)
-
+;; Direct STI boost. Raw STI rides the economic scale (like funds/wages) — NOT capped at a fixed
+;; "concentration". Canonical metta-attention keeps STI unbounded; the [0,1] concentration is a
+;; normalized VIEW via recent-max-sti (see get-normalised-sti). The old 0.3 raw-STI cap was a scale
+;; bug: it clamped every atom to 0.3 while funds/target/wage run at 100000/10000/10-scale, so atoms
+;; could never absorb attention from the pool and trade-sti! was non-zero-sum. (2026-06-30)
 (= (boost-sti! $id $amount)
-   (let* (($current (get-sti $id))
-          ($new     (clamp (+ $current $amount) 0.0 (max-attention-concentration))))
-     (set-sti! $id $new)))
+   (set-sti! $id (+ (get-sti $id) $amount)))
 
 ;; -------------------------------------------------------
 ;; 3. Global Funds
@@ -250,10 +247,17 @@
 (= (get-all-av-atoms)
    (collapse (match &self (AV $id $sti $lti $vlti) $id)))
 
-;; Normalised STI to [0, 1] using max-attention-concentration as ceiling
+;; recent-max-sti — the current max STI over all AV atoms (a stateless stand-in for upstream's
+;; recentMaxSTI). Epsilon floor so the [0,1] normalization never divides by zero.
+(= (recent-max-sti)
+   (let $ids (get-all-av-atoms)
+        (if (== $ids ()) 0.000001
+            (foldl-atom $ids 0.000001 $acc $id (max $acc (get-sti $id))))))
+
+;; Normalised STI to [0, 1] — raw STI over the dynamic recent-max (canonical: normalize by
+;; recentMaxSTI, NOT a fixed divisor; raw STI is economic-scale, unbounded).
 (= (get-normalised-sti $id)
-   (let $sti (get-sti $id)
-        (/ $sti (max-attention-concentration))))
+   (/ (get-sti $id) (recent-max-sti)))
 
 ;; -------------------------------------------------------
 ;; 8. Bulk Operations (Phase 1b — pure MeTTa replacement for the Julia
