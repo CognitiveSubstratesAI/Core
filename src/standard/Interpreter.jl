@@ -187,8 +187,27 @@ end
 # Stack::add_vars_it :111, but a plain union — not hyperon's per-stack-type logic). Because a
 # frame's set is fixed when it is built, fresh vars introduced by a child sub-evaluation are
 # absent from the parent's set and get dropped when the child returns (narrow_bindings above).
-_cumvars(prev::Union{Frame,Nothing}, atom::Atom)::Set{Var} =
-    prev === nothing ? collect_vars(atom) : union!(collect_vars(atom), prev.vars)
+# When the atom introduces NO var the parent doesn't already have, SHARE the parent's set instead of
+# deep-copying it (Set `union!` is O(n); the set is immutable/read-only — verified: only read in
+# narrow_bindings + here, never mutated). This is the O(1)-clone case hyperon gets free from im::HashSet;
+# it avoids the per-frame copy of the ≤113-var cumulative set.
+function _cumvars(prev::Union{Frame,Nothing}, atom::Atom)::Set{Var}
+    prev === nothing && return collect_vars(atom)
+    pv = prev.vars
+    _atom_introduces_var(atom, pv) || return pv
+    union!(collect_vars(atom), pv)
+end
+
+# does `a` contain any Var not already in `pv`? walks the atom WITHOUT allocating its var set
+function _atom_introduces_var(a::Atom, pv::Set{Var})::Bool
+    a isa Var && return !(a in pv)
+    if a isa Expression
+        @inbounds for c in a.children
+            _atom_introduces_var(c, pv) && return true
+        end
+    end
+    return false
+end
 
 # ── the dispatch step (interpreter.rs interpret_stack:374) ────────────────────
 function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindings}}
