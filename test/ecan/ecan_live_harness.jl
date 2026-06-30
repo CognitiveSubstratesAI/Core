@@ -17,7 +17,7 @@ const BASE = normpath(joinpath(@__DIR__, "..", ".."))
 const MODS = ["ECAN_Policies", "core_logic", "state_logic",
               "SpreadingActivation", "AttentionPolicies", "FluidECAN", "Forgetting"]
 const EXAMPLES = ["CoreAV", "Funds", "Wages", "Stimulate", "Rent", "AFState", "Spreading",
-                  "Fluid", "Forgetting", "Governance", "Adaptive", "Stability", "BulkOps"]
+                  "Fluid", "Forgetting", "Governance", "Adaptive", "Stability", "BulkOps", "Convergence"]
 
 eerrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
 

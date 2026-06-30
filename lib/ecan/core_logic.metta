@@ -202,28 +202,42 @@
      (set-av! $id $new-sti $new-lti $cur-vlti)))
 
 ;; -------------------------------------------------------
-;; 6. Rent Collection (Two-Tier)
-;; Reference: RentCollectionBaseAgent.metta
+;; 6. Rent Collection (Two-Tier, deficit-scaled)
+;; Reference: RentCollectionBaseAgent.metta — the homeostat's COLLECT side.
 ;;
 ;; WA rent: applied to ALL atoms (whole atomspace).
 ;; AF rent: applied ADDITIONALLY to atoms in Attentional Focus.
-;; Rent refills funds (opposite direction of wages).
+;; Rent refills funds (opposite direction of wages), via set-av!'s conserving accounting.
+;;
+;; Deficit-scaled: rent is GATED OFF (0) when funds >= target (pool full enough — let wages drain the
+;; surplus); below target it ramps  rate * (1 + clamp((target-funds)/buffer, 0, 1))  up to 2*rate as
+;; funds fall a full buffer below target. This is the OPPOSITE numerator to calculate-sti-wage: the
+;; wage pays MORE at high funds, rent collects MORE at low funds — together they regulate funds ->
+;; target (the homeostat). Raw STI is economic-scale: floor at 0, no [0,1] ceiling (see boost-sti!).
 ;; -------------------------------------------------------
+
+(= (deficit-rent-rate $base $funds $target $buffer)
+   (if (>= $funds $target) 0.0
+       (* $base (+ 1.0 (clamp (/ (- $target $funds) $buffer) 0.0 1.0)))))
 
 (= (collect-wa-rent! $id)
    (let* (($sti (get-sti $id))
           ($lti (get-lti $id))
           ($vlti (get-vlti $id))
-          ($new-sti (clamp (- $sti (wa-sti-rent-rate)) 0.0 1.0))
-          ($new-lti (clamp (- $lti (wa-lti-rent-rate)) 0.0 1.0)))
+          ($sr (deficit-rent-rate (wa-sti-rent-rate) (get-funds-sti) (sti-funds-target) (sti-funds-buffer)))
+          ($lr (deficit-rent-rate (wa-lti-rent-rate) (get-funds-lti) (lti-funds-target) (lti-funds-buffer)))
+          ($new-sti (max 0.0 (- $sti $sr)))
+          ($new-lti (max 0.0 (- $lti $lr))))
      (set-av! $id $new-sti $new-lti $vlti)))
 
 (= (collect-af-rent! $id)
    (let* (($sti (get-sti $id))
           ($lti (get-lti $id))
           ($vlti (get-vlti $id))
-          ($new-sti (clamp (- $sti (af-sti-rent-rate)) 0.0 1.0))
-          ($new-lti (clamp (- $lti (af-lti-rent-rate)) 0.0 1.0)))
+          ($sr (deficit-rent-rate (af-sti-rent-rate) (get-funds-sti) (sti-funds-target) (sti-funds-buffer)))
+          ($lr (deficit-rent-rate (af-lti-rent-rate) (get-funds-lti) (lti-funds-target) (lti-funds-buffer)))
+          ($new-sti (max 0.0 (- $sti $sr)))
+          ($new-lti (max 0.0 (- $lti $lr))))
      (set-av! $id $new-sti $new-lti $vlti)))
 
 ;; -------------------------------------------------------

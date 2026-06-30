@@ -19,16 +19,18 @@
 !(let $s (get-sti g2)
   (assertEqual (< $s 0.5) True))
 
-;; ── Test 3: collect-all-wa-rent! charges WA rent to every AV atom ─────
-;; Add three atoms with known STI.
+;; ── Test 3: collect-all-wa-rent! charges deficit-scaled WA rent to every AV atom ─────
+;; Funds at 0 (< target) so the deficit rate is active (rent gates OFF at funds >= target). The bulk
+;; tick refills funds as it goes (conserving set-av!), so per-atom rates drift slightly — the EXACT
+;; 2*base rate is pinned in Rent.metta (single atom, no drift); here we confirm every atom is charged.
+!(set-funds-sti! 0.0)
 !(add-atom &self (AV r1 0.5 0.3 0.0))
 !(add-atom &self (AV r2 0.4 0.2 0.0))
 !(add-atom &self (AV r3 0.3 0.1 0.0))
 !(collect-all-wa-rent!)
-;; Each STI deducted by wa-sti-rent-rate (0.01).
-!(assertEqual (get-sti r1) 0.49)
-!(assertEqual (get-sti r2) 0.39)
-!(assertEqual (get-sti r3) 0.29)
+!(assertEqual (< (get-sti r1) 0.5) True)
+!(assertEqual (< (get-sti r2) 0.4) True)
+!(assertEqual (< (get-sti r3) 0.3) True)
 
 ;; ── Test 4: attention-evolution-step! returns a real classifier state ──
 ;; Phase 1c's adaptive_attention.metta overrides the Phase 1b stub.  If the

@@ -17,6 +17,7 @@ const ECAN_DIR = joinpath(@__DIR__, "..", "..", "examples", "ecan")
 const ECAN_FILES = [
     "CoreAV", "Funds", "Wages", "Rent", "Stimulate", "AFState",
     "BulkOps", "Spreading", "Governance", "Fluid", "Adaptive", "Forgetting",
+    "Convergence",
 ]
 
 # Stability runs heartbeat!×100 (two 50-tick convergence runs) through the
