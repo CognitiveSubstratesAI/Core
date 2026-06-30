@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Core health gate — the live Core repo's substrate-health check.
+# Replaces the obsolete ~/PRIMUS `primus health`. Usage:  ./bin/health [full]
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1
+exec julia --project=. test/health.jl "$@"
