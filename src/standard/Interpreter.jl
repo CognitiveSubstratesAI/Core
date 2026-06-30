@@ -657,7 +657,11 @@ const _ANSWER_TABLE = Dict{Atom,Vector{Atom}}()
 const _TABLE_INPROG = Set{Atom}()
 const _PARTIAL = Dict{Atom,Vector{Atom}}()   # a leader's accumulating answer set during completion
 const _PARTIAL_READ = Set{Atom}()            # tabled keys whose partials a consumer read ⇒ self-recursive
-_table_reset!() = (empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); empty!(_PARTIAL); empty!(_PARTIAL_READ))
+const _GEN_STACK = Atom[]                     # in-progress leaders (generators), in call order
+const _COMPONENT = Dict{Atom,Atom}()          # key → SCC root (union-find; merged on a cross-leader cycle)
+_table_reset!() = (empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); empty!(_PARTIAL); empty!(_PARTIAL_READ);
+                   empty!(_GEN_STACK); empty!(_COMPONENT))
+_scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
@@ -714,30 +718,62 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     unique(out)
 end
 
+# Dynamic-SCC completion — the SOUNDNESS extension over single-goal suspend. SWI completes an ENTIRE SCC
+# together (boot/tabling.pl `completion` → `$tbl_table_complete_all(SCC)`); finalising one goal before a
+# mutually-dependent partner makes the partner's table unsound. We track the in-progress GENERATOR stack
+# (_GEN_STACK) + a union-find of SCC roots (_COMPONENT): when a CONSUMER re-enters a goal that is an ANCESTOR
+# on the stack (a cross-leader cycle), every generator from that ancestor up is unioned into one component.
+# The component ROOT drives a joint naive fixpoint over ALL members and completes them together; a non-root
+# member is a FOLLOWER that returns its partials and stays in-progress for the root to finish. A lone,
+# non-self-recursive goal (fib) is a singleton root ⇒ ONE pass (no regression). SCOPE caveats unchanged:
+# naive (not semi-naive), no WFS tnot (§7.6), no answer subsumption (§7.3), ground/enumerable answer atoms.
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     key = _canonical_goal(atom, space, b)
     haskey(_ANSWER_TABLE, key) && return _replay(_ANSWER_TABLE[key], b, prev)    # complete ⇒ replay
-    if key in _TABLE_INPROG                                                       # consumer (variant re-entry):
+    if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
+        ki = findfirst(g -> g == key, _GEN_STACK)                                #   union key..top into one SCC
+        if ki !== nothing
+            root = _scc_root(key)
+            for j in ki+1:length(_GEN_STACK)
+                _COMPONENT[_scc_root(_GEN_STACK[j])] = root
+            end
+        end
         return _replay(get(_PARTIAL, key, Atom[]), b, prev)                      #   answer from partials (suspend)
     end
-    push!(_TABLE_INPROG, key); _PARTIAL[key] = Atom[]; delete!(_PARTIAL_READ, key)   # become LEADER
+    push!(_TABLE_INPROG, key); push!(_GEN_STACK, key)                            # become a GENERATOR
+    _PARTIAL[key] = Atom[]; _COMPONENT[key] = key; delete!(_PARTIAL_READ, key)
     local ans::Vector{Atom} = Atom[]
     try
-        while true
-            new = _leader_pass(key, typ, space)
-            if !(key in _PARTIAL_READ)                          # no recursion into self ⇒ this pass is final
-                ans = new; break
-            end
-            n0 = length(_PARTIAL[key])                          # self-recursive ⇒ accumulate to fixpoint
-            _PARTIAL[key] = unique(vcat(_PARTIAL[key], new))
-            length(_PARTIAL[key]) == n0 && (ans = _PARTIAL[key]; break)   # naive fixpoint: no new answers
-            delete!(_PARTIAL_READ, key)                         # reset, run another round
+        _PARTIAL[key] = _leader_pass(key, typ, space)                           # initial pass (may merge me up)
+        if _scc_root(key) != key                                                 # I became a FOLLOWER ⇒
+            return _replay(_PARTIAL[key], b, prev)                              #   ancestor root finishes me
         end
+        comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]            # I am the ROOT: my SCC members
+        members = comp()
+        if !(length(members) == 1 && !(key in _PARTIAL_READ))                    # singleton+no self-rec ⇒ 1 pass
+            while true                                                           # joint naive fixpoint over SCC
+                grew = false
+                for m in members
+                    np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
+                    _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
+                    length(_PARTIAL[m]) != n0 && (grew = true)
+                end
+                grew || break
+                members = comp()                                                # component may have grown
+            end
+        end
+        ans = _PARTIAL[key]
+        for m in comp(); _ANSWER_TABLE[m] = _PARTIAL[m]; end                     # complete ALL members together
     finally
-        delete!(_TABLE_INPROG, key); delete!(_PARTIAL, key); delete!(_PARTIAL_READ, key)
+        if _scc_root(key) == key                                                # only the ROOT cleans its SCC
+            done = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
+            filter!(g -> _scc_root(g) != key, _GEN_STACK)
+            for m in done
+                delete!(_TABLE_INPROG, m); delete!(_PARTIAL, m); delete!(_COMPONENT, m); delete!(_PARTIAL_READ, m)
+            end
+        end
     end
-    _ANSWER_TABLE[key] = ans
     _replay(ans, b, prev)
 end
 
