@@ -372,6 +372,11 @@ mutable struct Space
 end
 Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
 Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
+# Bounded display: a Space embedded in a result/error atom (e.g. `&self` passed as an argument to an
+# undefined op, which then echoes back) must NOT dump its entire atom list — the default struct show
+# recurses the whole KB and stack-overflows the REPL render. Core is single-flattened-space, so a grounded
+# Space displays as `&self` (matches hyperon's output for the self space).
+Base.show(io::IO, ::Space) = print(io, "&self")
 
 # discriminant head of an atom-position: a Sym's name, or an Expression's Sym head; else nothing.
 _idx_head(x::Atom)::Union{Symbol,Nothing} =
@@ -636,9 +641,18 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 # expression emits the tuple path (typed/function path added next increment).
 function metta_instr(f::Frame, b::Bindings, space)
     a = f.atom
-    (a isa Expression && length(a.children) == 3) ||
-        return finished_result(error_atom(a, "expected (metta atom type)"), b, f.prev)
+    # spec (metta.md:191) is 3-arg `(metta <atom> <type> <space>)`; Core threads `space` as a Julia param so
+    # its internal builders use the 2-arg `(metta atom type)` form. Accept BOTH: the optional 3rd operand, when
+    # a grounded Space, becomes the eval context (matches hyperon metta_sym :940); a non-space/&self 3rd arg
+    # falls back to the ambient context space (Core's single-space model). This also fixes the prior hard
+    # rejection of the canonical 3-arg form, which embedded the whole &self Space into an Error atom.
+    (a isa Expression && (length(a.children) == 3 || length(a.children) == 4)) ||
+        return finished_result(error_atom(a, "expected (metta atom type [space])"), b, f.prev)
     atom = subst(a.children[2], b); typ = a.children[3]
+    if length(a.children) == 4
+        s3 = subst(a.children[4], b)
+        s3 isa Grounded && s3.value isa Space && (space = s3.value::Space)
+    end
     (is_empty_atom(atom) || is_error_atom(atom)) && return finished_result(atom, b, f.prev)
     (typ == ATOM_T || typ == metatype_sym(atom) || atom isa Var) && return finished_result(atom, b, f.prev)
     (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
