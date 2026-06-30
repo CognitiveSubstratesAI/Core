@@ -1318,10 +1318,14 @@ end))
 # superpose (grounded): turn a tuple into a nondeterministic result (each child a separate result)
 const SUPERPOSE = Grounded(Operation("superpose",
     xs -> (length(xs) == 1 && xs[1] isa Expression) ? ExecOk(collect(Atom, xs[1].children)) : ExecNoReduce()))
-# collapse (grounded SpaceOp): collect all results of evaluating the arg into one tuple
+# collapse (grounded SpaceOp): collect all results of evaluating the arg into one tuple.
+# `reverse`: interpret()'s plan is a LIFO stack, so metta_run yields the nondeterministic alternatives in
+# REVERSE generation order; collapse freezes that order into a VALUE (unlike top-level display, where order is
+# cosmetic), diverging from hyperon+CeTTa which both give forward/source order — e.g. (collapse (superpose
+# (1 2 3)))→(1 2 3), not (3 2 1). Reversing here restores forward order for superpose, rule-fanout, AND match.
 const COLLAPSE = Grounded(SpaceOp("collapse", function (xs, space)
     length(xs) == 1 || return ExecNoReduce()
-    ExecOk(Atom[Expression(Atom[metta_run(xs[1], space)...])])
+    ExecOk(Atom[Expression(reverse(metta_run(xs[1], space)))])
 end))
 # get-type (grounded SpaceOp): the type(s) of the argument
 const GET_TYPE = Grounded(SpaceOp("get-type",
