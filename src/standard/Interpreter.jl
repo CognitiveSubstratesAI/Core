@@ -660,6 +660,11 @@ table!(head::Symbol) = (push!(_TABLED_HEADS, head); empty!(_ANSWER_TABLE); empty
 "Disable all tabling and clear the answer table."
 untable_all!() = (empty!(_TABLED_HEADS); empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); nothing)
 @inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
+# MeTTa surface for the directive (the analog of SWI `:- table fib/1`): `!(table! fib)` marks the `fib`
+# predicate tabled, so a program/server enables tabling without a Julia call. Registered in TOKEN_REGISTRY.
+const TABLE_DECL = Grounded(Operation("table!", xs ->
+    (length(xs) == 1 && xs[1] isa Sym) ?
+        (table!((xs[1]::Sym).name); ExecOk(Atom[Expression(Atom[])])) : ExecNoReduce()))
 
 _replay(answers::Vector{Atom}, b::Bindings, prev) =
     isempty(answers) ? finished_result(EMPTY, b, prev) :
@@ -1596,7 +1601,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
     "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
-    "import!" => IMPORT)
+    "import!" => IMPORT, "table!" => TABLE_DECL)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
 # atom is stored as-is, not reduced. Atom-typed 2nd arg ⇒ the driver passes it unevaluated. Intrinsic
 # (kept out of the space). Defined here, after the ops exist.
