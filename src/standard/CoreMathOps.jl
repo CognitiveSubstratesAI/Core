@@ -48,18 +48,22 @@ const ABS_MATH   = _math_un_preserve("abs-math",   abs,      abs,   "abs-math ex
 const TRUNC_MATH = _math_un_preserve("trunc-math", identity, trunc, "trunc-math expects one argument: input number")
 const CEIL_MATH  = _math_un_preserve("ceil-math",  identity, ceil,  "ceil-math expects one argument: input number")
 const FLOOR_MATH = _math_un_preserve("floor-math", identity, floor, "floor-math expects one argument: input number")
-const ROUND_MATH = _math_un_preserve("round-math", identity, round, "round-math expects one argument: input number")
+# round-math: Rust f64::round is round-half-AWAY-from-zero; Julia's default round is half-to-even
+# (banker's), so (round-math 0.5)=1/(2.5)=3/(-0.5)=-1 must use RoundNearestTiesAway to match hyperon.
+const ROUND_MATH = _math_un_preserve("round-math", identity, x -> round(x, RoundNearestTiesAway), "round-math expects one argument: input number")
 
 const ISNAN_MATH = _math_un_bool("isnan-math", isnan, "isnan-math expects one argument: input number")
 const ISINF_MATH = _math_un_bool("isinf-math", isinf, "isinf-math expects one argument: input number")
 
-# pow-math (base power) → Float; a negative or > u32::MAX Integer power is rejected (Rust uses u32 int-pow).
+# pow-math (base power) → Float. Rust does `base.powi(i32::try_from(n))` for an Integer power, so a
+# NEGATIVE power is fine (2 ^ -1 = 0.5) and only a power outside the SIGNED i32 range errors (NOT u32,
+# NOT p<0 — both were wrong here and diverged from hyperon: pow-math 2 -1 errored vs hyperon's 0.5).
 const POW_MATH = Grounded(Operation("pow-math", function (xs::Vector{Atom})
     length(xs) == 2 || return ExecRuntime("pow-math expects two arguments: number (base) and number (power)")
     b = _mnum(xs[1]); p = _mnum(xs[2])     # assign unconditionally (not inside the && — keeps locals defined)
     (b === nothing || p === nothing) &&
         return ExecRuntime("pow-math expects two arguments: number (base) and number (power)")
-    (p isa Integer && (p < 0 || p > typemax(UInt32))) &&
+    (p isa Integer && !(typemin(Int32) <= p <= typemax(Int32))) &&
         return ExecRuntime("power argument is too big, try using float value")
     ExecOk(Atom[Grounded(Float64(b) ^ Float64(p))])
 end))

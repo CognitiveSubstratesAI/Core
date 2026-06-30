@@ -34,6 +34,7 @@
 !(assertEqual (pow-math 5 200000000000000) (Error (pow-math 5 200000000000000) "power argument is too big, try using float value"))
 !(assertEqual (pow-math 5.5 2.3) 50.44686540422945)
 !(assertEqual (pow-math A 2) (Error (pow-math A 2) "pow-math expects two arguments: number (base) and number (power)"))
+!(assertEqual (pow-math 2 -1) 0.5)   ; negative Integer power is VALID — Rust does base.powi(i32::try_from(n))
 
 ; ── sqrt-math (math.rs:460-465) ──────────────────────────────────────────────
 !(assertEqual (sqrt-math 4) 2)
@@ -67,6 +68,10 @@
 ; ── round-math (math.rs:501-506) ─────────────────────────────────────────────
 !(assertEqual (round-math 2.4) 2)
 !(assertEqual (round-math -2.7) -3)
+; half-integers — Rust f64::round is half-AWAY-from-zero (NOT banker's/half-even): .5 rounds outward
+!(assertEqual (round-math 0.5) 1)
+!(assertEqual (round-math 2.5) 3)
+!(assertEqual (round-math -2.5) -3)
 !(assertEqual (round-math A) (Error (round-math A) "round-math expects one argument: input number"))
 
 ; ── sin-math (math.rs:508-513) ───────────────────────────────────────────────
