@@ -870,6 +870,7 @@ is_empty_atom(a::Atom) = a == EMPTY
 const UNDEF  = Sym("%Undefined%")
 const ATOM_T = Sym("Atom")
 const ARROW  = Sym("->")
+const ERROR_TYPE = Sym("ErrorType")   # hyperon ATOM_TYPE_ERROR — the type of an (Error …) atom
 metatype_sym(a::Atom) = Sym(String(metatype(a)))
 is_function_type(t::Atom) = t isa Expression && !isempty(t.children) && t.children[1] == ARROW
 fn_arg_types(t::Expression) = t.children[2:end-1]
@@ -937,6 +938,11 @@ end
 # Grounded → its grounded type; Symbol/Expression → declared types, else %Undefined%.
 function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
     arg isa Var && return Atom[UNDEF]                            # types.rs:386 — variables have no types
+    is_error_atom(arg) && return Atom[ERROR_TYPE]               # (Error …) : ErrorType (hyperon ATOM_TYPE_ERROR) —
+                                                                # so an Error LITERAL passed where a concrete type is
+                                                                # expected fails type-check → (BadArgType i T ErrorType),
+                                                                # matching hyperon. (Atom-typed args still bypass via
+                                                                # match_types_b's Atom short-circuit, so assertEqual etc. are unaffected.)
     if arg isa Grounded
         arg.value isa Bool && return Atom[Sym("Bool")]
         arg.value isa Number && return Atom[Sym("Number")]
