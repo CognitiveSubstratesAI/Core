@@ -103,12 +103,21 @@
 ;;      position). Needed because the full Eval does NOT evaluate match templates (a
 ;;      remove-in-template never fires there), while Minimal's match returns EMPTY (not ()) on
 ;;      no-match (a bare `(let $old (match...))` no-op's there) — so neither idiom works on both alone.
+;; Conserving upsert — mirrors upstream metta-attention setAv (getter-and-setter.metta:16-50):
+;; every STI/LTI change is balanced against the global funds pool so total STI (atoms + funds) is
+;; conserved. stiDiff = oldSti - newSti; funds += stiDiff. Wages (STI up) draw from funds; rent
+;; (STI down) refills funds — automatically, at the single accounting point. (2026-06-30: was
+;; fund-blind, which split accounting into stimulate! and leaked rent — see Rent/Stimulate examples.)
 (= (set-av! $id $new-sti $new-lti $new-vlti)
-   (let $exists (collapse (match &self (AV $id $s $l $v) found))
-        (let $cleared (if (== $exists ()) True
-                          (let $old (match &self (AV $id $a $b $c) (AV $id $a $b $c))
-                               (remove-atom &self $old)))
-             (add-atom &self (AV $id $new-sti $new-lti $new-vlti)))))
+   (let* (($old-sti (get-sti $id))
+          ($old-lti (get-lti $id)))
+     (let $exists (collapse (match &self (AV $id $s $l $v) found))
+          (let $cleared (if (== $exists ()) True
+                            (let $old (match &self (AV $id $a $b $c) (AV $id $a $b $c))
+                                 (remove-atom &self $old)))
+               (let $_ (add-atom &self (AV $id $new-sti $new-lti $new-vlti))
+                    (let $_ (set-funds-sti! (+ (get-funds-sti) (- $old-sti $new-sti)))
+                         (set-funds-lti! (+ (get-funds-lti) (- $old-lti $new-lti)))))))))
 
 (= (set-sti! $id $new-sti)
    (let* (($lti  (get-lti $id))
@@ -198,6 +207,8 @@
 ;; participates in inference or goal evaluation.
 ;; -------------------------------------------------------
 
+;; Pay wages: raise the atom's STI/LTI; the funds debit is handled by set-av!'s conserving accounting
+;; (STI up -> funds down), so we no longer adjust funds here (that double-counted before the recouple).
 (= (stimulate! $id $factor)
    (let* (($sti-wage  (calculate-sti-wage))
           ($lti-wage  (calculate-lti-wage))
@@ -205,12 +216,8 @@
           ($cur-lti   (get-lti $id))
           ($cur-vlti  (get-vlti $id))
           ($new-sti   (+ $cur-sti (* $sti-wage $factor)))
-          ($new-lti   (+ $cur-lti (* $lti-wage $factor)))
-          ($new-funds-sti (- (get-funds-sti) (* $sti-wage $factor)))
-          ($new-funds-lti (- (get-funds-lti) (* $lti-wage $factor))))
-     (let $_ (set-av! $id $new-sti $new-lti $cur-vlti)
-          (let $_ (set-funds-sti! $new-funds-sti)
-               (set-funds-lti! $new-funds-lti)))))
+          ($new-lti   (+ $cur-lti (* $lti-wage $factor))))
+     (set-av! $id $new-sti $new-lti $cur-vlti)))
 
 ;; -------------------------------------------------------
 ;; 6. Rent Collection (Two-Tier)
