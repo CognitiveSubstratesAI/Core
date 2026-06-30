@@ -235,6 +235,7 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
     elseif name === Symbol("metta-call");       return metta_call_instr(f, b, space)
     elseif name === Symbol("return-on-error");  return return_on_error_instr(f, b)
     elseif name === Symbol("args-cont");        return args_cont_instr(f, b)
+    elseif name === Symbol("metta-noreduce");   return metta_noreduce_instr(f, b)        # NotReducible backstop
     else
         return finished_result(f.atom, b, f.prev)              # not a minimal op → data, as-is
     end
@@ -658,7 +659,10 @@ function metta_instr(f::Frame, b::Bindings, space)
     (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
     if is_minimal_op(atom)                  # embedded minimal instruction → run it, then re-metta its result
         r = freshvar("r")                   # (a rule body like let*'s chain rewrites to (let …) which must reduce)
-        return push_nested(_chain(atom, r, _metta(r, typ)), b, f.prev, f.depth + 1)
+        # NotReducible backstop (hyperon metta_call_return interpreter.rs:1456): if the embedded minimal op
+        # bottoms out in the INTERNAL NOT_REDUCIBLE sentinel, surface the ORIGINAL atom unchanged (keep-form,
+        # matches hyperon — no engine shows the bare sentinel to the user); else re-metta r as before.
+        return push_nested(_chain(atom, r, _op("metta-noreduce", atom, r, typ)), b, f.prev, f.depth + 1)
     end
     op = atom.children[1]; nargs = length(atom.children) - 1
     # No space ⇒ no type system (bare/minimal eval, e.g. interpret(atom)/bare_eval(atom) with the
@@ -761,6 +765,19 @@ function return_on_error_instr(f::Frame, b::Bindings)
     atom = subst(a.children[2], b); then = a.children[3]
     (is_empty_atom(atom) || is_error_atom(atom)) ?
         finished_result(atom, b, f.prev) : push_nested(subst(then, b), b, f.prev, f.depth)
+end
+
+# (metta-noreduce <orig> <r> <typ>) — hyperon's metta_call_return NOT_REDUCIBLE backstop (interpreter.rs:1456).
+# The metta driver re-mettas the result `r` of an embedded minimal op; if that result is the INTERNAL
+# NOT_REDUCIBLE sentinel, hyperon surfaces the ORIGINAL atom unchanged rather than the bare sentinel. Without
+# this, Core leaked `NotReducible` to the user (e.g. !(eval (A B C)) → NotReducible vs hyperon's (eval (A B C))).
+# Internal NotReducible propagation (chain/switch's if-equal on NotReducible) is untouched — this only fires
+# at the metta re-reduction seam.
+function metta_noreduce_instr(f::Frame, b::Bindings)
+    a = f.atom
+    r = subst(a.children[3], b)
+    r == NOT_REDUCIBLE ? finished_result(a.children[2], b, f.prev) :
+                         push_nested(_metta(r, a.children[4]), b, f.prev, f.depth)
 end
 
 # (metta-call <atom> <type>) — metta_call (interpreter.rs:1415): grounded → execute; else → query

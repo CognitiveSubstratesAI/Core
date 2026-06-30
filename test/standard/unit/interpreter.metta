@@ -55,9 +55,13 @@
 (= a b)
 !(assertEqual (eval a) b)
 
-; ── eval: no definition / empty expr → NotReducible (interpreter.rs:1494-1502) ─
-!(assertEqual (eval no-def-symbol) NotReducible)
-!(assertEqual (eval ()) NotReducible)
+; ── eval: no definition / empty expr → keep-form at the TOP LEVEL. The BARE interpreter yields the internal
+;    NotReducible sentinel (interpreter.rs:1494-1502), but the metta driver SUPPRESSES it and surfaces the
+;    original (eval …) unchanged (metta_call_return interpreter.rs:1456) — hyperon does the same; neither
+;    engine shows the bare sentinel to the user. Strong assertEqualToResult pins the keep-form result set
+;    (would catch a sentinel leak). (These were mis-vendored as bare-level `… NotReducible` assertions.)
+!(assertEqualToResult (eval no-def-symbol) ((eval no-def-symbol)))
+!(assertEqualToResult (eval ()) ((eval ())))
 
 ; ── eval: pure expression with var binding (interpreter.rs:1513-1516) ─────────
 (= (foo $a B) $a)
@@ -69,8 +73,8 @@
 (= color blue)
 !(assertEqualToResult (eval color) (red green blue))
 
-; ── eval: pure expr, no definition → NotReducible (interpreter.rs:1535-1537) ──
-!(assertEqual (eval (undefined-foo A)) NotReducible)
+; ── eval: pure expr, no definition → keep-form at top level (bare NotReducible suppressed, rs:1535-1537/1456)
+!(assertEqualToResult (eval (undefined-foo A)) ((eval (undefined-foo A))))
 
 ; ── eval: pure expr, variable in space (interpreter.rs:1542-1544) ─────────────
 ; space also contains a bare `$t` atom plus (= (foo2 $a B) $a)
@@ -83,11 +87,14 @@ $t
 (= (foo3 ($W)) True)
 !(assertEqual (eval (foo3 $W)) True)
 
-; ── eval: variable operation — Minimal default not(feature=variable_operation)
-;    → NotReducible (interpreter.rs:1585-1591, 1634-1640) ──────────────────────
+; ── eval: variable in OP position. Bare interp → NotReducible (rs:1585-1591, default not variable_operation);
+;    at the top level that sentinel is SUPPRESSED → keep-form (metta_call_return rs:1456). hyperon matches.
 ; (= (foo $a B) $a) already in space above; ($a A $b) has a VARIABLE in op position
-!(assertEqual (eval ($a A $b)) NotReducible)
+!(assertEqualToResult (eval ($a A $b)) ((eval ($a A $b))))
 (= ((baz $a) $b) ($a $b))
+; NOTE: Core performs variable-operation matching here ((($a A) B) unifies the ((baz $a) $b) rule) where
+; hyperon's not(variable_operation) default does not — a SEPARATE pre-existing divergence (baseline), not the
+; NotReducible-leak fix. Left asserting NotReducible so the baseline keeps tracking that gap honestly.
 !(assertEqual (eval (($a A) B)) NotReducible)
 
 ; ── eval: variable via call, direct equality (interpreter.rs:1595-1605) ───────
