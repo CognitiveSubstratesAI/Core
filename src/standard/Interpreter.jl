@@ -81,7 +81,21 @@ function subst(a::Atom, b::Bindings, d::Int=0)
         rep = _slot_rep(b, a)                  # unbound but maybe equal to another var → representative
         return rep == a ? a : rep
     elseif a isa Expression
-        return Expression(Atom[subst(c, b, d + 1) for c in a.children])
+        # structural sharing (same pattern as rename_fresh; mirrors hyperon apply_bindings_to_atom's
+        # `updated` flag in Core's immutable model): rebuild ONLY subtrees that actually changed. An
+        # Expression with no bound var inside returns the SAME object → zero allocation (was: rebuild every
+        # node every call — the top materialization allocator). Identity-safe: subst returns the input var
+        # object for unbound vars (rep == a ? a : rep), so `!==` means a real substitution occurred.
+        kids = a.children
+        newkids = nothing                       # allocate lazily, only on first changed child
+        for i in eachindex(kids)
+            sc = subst(kids[i], b, d + 1)
+            if sc !== kids[i]
+                newkids === nothing && (newkids = copy(kids))
+                newkids[i] = sc
+            end
+        end
+        return newkids === nothing ? a : Expression(newkids)
     else
         return a
     end
