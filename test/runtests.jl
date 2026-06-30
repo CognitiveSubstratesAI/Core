@@ -525,10 +525,6 @@ include("test_metamo.jl")
 # adaptive). The slow Stability convergence probe is gated behind ECAN_SLOW_TESTS=1.
 include("test_ecan.jl")
 
-# Dual-evaluator ECAN tracker — runs examples/ecan under eval_metta AND eval_nd,
-# tracking the divergence landscape as the long-term flip to eval_nd progresses.
-include("test_ecan_dual.jl")
-
 # PLN factor-graph suite (test/pln/) — demand-driven backward chaining on the lib/pln substrate:
 # STV engine (DAG + arity-complete, all 8 rules), Layer-2 DTV (core + sweep + all rules), Layer-3
 # (Fisher-weighted sensitivity + demand vectors, §5.4/§5.8), and §4.9 PLN↔ECAN coupling. Each file
@@ -610,40 +606,4 @@ include("test_supercompiler_core.jl")
     @test mork_rule_rewrite("(foo bar)", "(foo bar)") === nothing                     # not a (= ..) rule
     @test mork_unify("(f \$x)", "(f bar)") isa Dict                                   # match → bindings
     @test mork_unify("(f \$x)", "(h bar)") === nothing                                # no match
-end
-
-@testset "OutcomeSet evaluator (nondeterministic) — conformance fixtures" begin
-    # The cases legacy eval_metta gets wrong (single-value, no fan-out / no binding propagation).
-    # eval_nd returns a SET; compare order-insensitively. See docs/CONFORMANCE_AUDIT.md.
-    s = new_core_space(); load_stdlib!(s)
-    for f in parse_metta("(= (croaks Fritz) True)\n(= (eats_flies Fritz) True)\n" *
-                         "(= (croaks Sam) True)\n(= (eats_flies Sam) False)\n" *
-                         "(= (frog \$x) (and (croaks \$x) (eats_flies \$x)))\n(= (f \$x) (g \$x))\n" *
-                         "(= (green \$x) (frog \$x))\n" *
-                         "(= (color) red)\n(= (color) green)\n(= (color) yellow)\n" *
-                         "(= (bin) A)\n(= (bin) B)\n(= (croaks2 Fritz) T)\n(= (eat_flies Fritz) T)\n")
-        core_add!(s, f)
-    end
-    ndset(src) = Set(to_sexpr.(eval_nd_results(parse_metta(src)[1], s)))
-    @test ndset("(croaks \$x)") == Set(["True"])                               # fan-out over facts → {True}
-    @test ndset("(f (superpose (1 2)))") == Set(["(g 1)", "(g 2)"])            # fan-out through application
-    @test ndset("(if (frog \$x) (\$x is Frog) (\$x is-not Frog))") ==
-          Set(["(Fritz is Frog)", "(Sam is-not Frog)"])                        # the frog tutorial — fan-out + binding
-    @test ndset("(color)") == Set(["red", "green", "yellow"])                  # fan-out over multiple rules
-    @test ndset("(collapse (color))") == Set(["(red green yellow)"])           # collapse: stream → tuple
-    @test ndset("(pair (bin) (bin))") ==
-          Set(["(pair A A)", "(pair A B)", "(pair B A)", "(pair B B)"])        # nondeterministic product
-    @test ndset("(let \$r (color) (got \$r))") ==
-          Set(["(got red)", "(got green)", "(got yellow)"])                    # let over a nondeterministic value
-    @test ndset("(match &self (= (\$p Fritz) T) \$p)") == Set(["croaks2", "eat_flies"])  # multi-result match
-    @test ndset("(chain (+ 2 3) \$x (* \$x 2))") == Set(["10"])                # chain: bind then use
-    @test ndset("(let* ((\$r1 (+ 1 2)) (\$r2 (+ \$r1 1))) (foo \$r2))") == Set(["(foo 4)"])  # sequential let*
-    @test ndset("(unify (f \$x) (f 7) (got \$x) nope)") == Set(["(got 7)"])    # unify then-branch + binding
-    @test ndset("(unify (f 1) (g 1) yes no)") == Set(["no"])                   # unify else-branch
-    @test ndset("(quote (+ 1 2))") == Set(["(+ 1 2)"])                         # quote: unevaluated
-    @test ndset("(case (color) ((red R) (green G) (\$_ other)))") == Set(["R", "G", "other"])  # case + wildcard over nondeterminism
-    @test ndset("(\$x (green \$x))") == Set(["(Fritz True)", "(Sam False)"])    # var-head expr: binding from one element reaches another (b3_direct)
-    # legacy-form delegation: forms eval_nd doesn't implement delegate to eval_metta (one outcome)
-    @test ndset("(map-atom (1 2 3) \$x (g \$x))") ==
-          Set([to_sexpr(eval_metta(parse_metta("(map-atom (1 2 3) \$x (g \$x))")[1], s))])
 end

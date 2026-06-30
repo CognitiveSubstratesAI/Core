@@ -53,12 +53,12 @@ include("parser/Parser.jl")
 include("primitives/Primitives.jl")
 include("primitives/AtomOps.jl")
 include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundation) — NOT legacy
-# ⚠️ OBSOLETE — legacy interpreters being RETIRED (docs/ARCHITECTURE_TARGET.md: the Interpreter supersedes
-# eval_metta AND eval_nd). Retained ONLY because ~13 full-Eval test scripts (test_ecan/_dual, test_types,
-# test_metamo, test_actpc_chem, test_william, test_moses full-Eval path, …) have not yet migrated to the
-# Interpreter harness. DO NOT build new code on eval_metta / run_metta / eval_nd. Delete after migration.
+# ⚠️ OBSOLETE — legacy interpreter being RETIRED (docs/ARCHITECTURE_TARGET.md: the Interpreter supersedes
+# eval_metta). Retained ONLY because a handful of full-Eval test scripts (test_types, test_metamo,
+# test_actpc_chem, test_william, test_moses full-Eval path, …) have not yet migrated to the Interpreter
+# harness. DO NOT build new code on eval_metta / run_metta. Delete after migration.
+# (EvalND_obsolete.jl / eval_nd removed 2026-06-30 — its sole consumer was the test_ecan_dual tracker.)
 include("eval/Eval_obsolete.jl")     # eval_metta / run_metta / run_file (legacy tree-walker)
-include("eval/EvalND_obsolete.jl")   # eval_nd / eval_nd_results (legacy OutcomeSet experiment)
 
 # Standard-MeTTa Interpreter (faithful hyperon interpreter.rs port of the minimal-MeTTa instruction set).
 # Fully SELF-CONTAINED — it does NOT touch eval_metta/eval_nd and shares no types with the MORK-backed
@@ -231,6 +231,5 @@ export eval_metta, run_metta, run_file, default_space
 export register_core_primitives!, register_all_primitives!, register_for_space!, load_stdlib!
 export register_grounded!, is_grounded, GROUNDED_REGISTRY
 export mork_unify, mork_apply, mork_rule_rewrite   # E1.0 native-engine bridge
-export eval_nd, eval_nd_results                    # OutcomeSet (nondeterministic) evaluator
 
 end # module MeTTaCore
