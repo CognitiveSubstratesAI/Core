@@ -31,7 +31,11 @@ end
 
 @testset "lint — no lib/ definition shadows a Core-provided name" begin
     srcfiles    = filter(f -> endswith(f, ".jl"), readdir(joinpath(_LINT_ROOT, "src", "primitives"); join = true))
-    stdlibfiles = filter(f -> endswith(f, ".metta"), readdir(joinpath(_LINT_ROOT, "stdlib"); join = true))
+    # The LIVE StandardMeTTa stdlib is src/standard/{stdlib,CoreExtensions}.metta (what load_core_stdlib!
+    # loads) — NOT the dead top-level stdlib/ (only the retired CoreSpace lane ever read that). Scanning the
+    # dead dir produced phantom-name false positives (e.g. `nth`) that forced packages to duplicate/rename to
+    # dodge a shadow of something the engine never loads. Point the lint at the real canonical source.
+    stdlibfiles = filter(f -> endswith(f, ".metta"), readdir(joinpath(_LINT_ROOT, "src", "standard"); join = true))
     libfiles    = _metta_files(joinpath(_LINT_ROOT, "lib"))
 
     grounded   = _heads(srcfiles, r"register_grounded!\(\"([^\"]+)\"")

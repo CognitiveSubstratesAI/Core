@@ -14,7 +14,7 @@
 
 ; ── list helpers for extreme-ray construction ────────────────────────────────
 (= (zeros $n) (if (== $n 0) () (let* ( ($r (zeros (- $n 1))) ) (cons-atom 0 $r))))
-(= (nth $xs $i) (if (== $i 0) (car-atom $xs) (nth (cdr-atom $xs) (- $i 1))))
+; (list indexing uses the common grounded `index-atom` — hyperon/CeTTa-faithful; no package-local nth)
 (= (set-at $xs $i $v)
    (if (== $i 0)
        (let* ( (($h $t) (decons-atom $xs)) ) (cons-atom $v $t))
@@ -31,7 +31,7 @@
 (= (rays-acc $u $i $n)
    (if (== $i $n)
        ()
-       (let* ( ($ray (set-at (zeros $n) $i (nth $u $i)))
+       (let* ( ($ray (set-at (zeros $n) $i (index-atom $u $i)))
                ($rest (rays-acc $u (+ $i 1) $n)) )
          (cons-atom $ray $rest))))
 

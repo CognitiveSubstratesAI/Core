@@ -1184,8 +1184,13 @@ end))
 const SIZE_ATOM = Grounded(Operation("size-atom", xs ->
     (length(xs) == 1 && xs[1] isa Expression) ? ExecOk(Atom[Grounded(length(xs[1].children))]) : ExecNoReduce()))
 const INDEX_ATOM = Grounded(Operation("index-atom", function (xs)
-    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Grounded && xs[2].value isa Integer) || return ExecNoReduce()
-    i = xs[2].value
+    # Core's number model is Float64, so computed indices arrive as integral Floats (e.g. (ceil 4.75) → 5.0,
+    # (+ $i 1) → Float). Accept any integral Real (Int or 4.0), matching hyperon/CeTTa's grounded index-atom
+    # semantics in Core's number model — without this, the canonical op no-ops on every computed index,
+    # forcing packages to hand-roll a recursive nth. Non-integral / Inf / NaN still don't reduce.
+    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Grounded &&
+        xs[2].value isa Real && isinteger(xs[2].value)) || return ExecNoReduce()
+    i = Int(xs[2].value)
     (0 <= i < length(xs[1].children)) ? ExecOk(Atom[xs[1].children[i+1]]) :
         ExecOk(Atom[Expression(ERROR, Expression(Sym("index-atom"), xs[1], xs[2]), Sym("IndexOutOfBounds"))])
 end))

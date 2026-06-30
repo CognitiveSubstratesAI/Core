@@ -24,7 +24,7 @@
 (= (quantile $sorted $q)
    (let* ( ($n (vlen $sorted))
            ($r (ceilNum (* $q $n))) )
-     (nth $sorted (- $r 1))))
+     (index-atom $sorted (- $r 1))))
 
 ; conformal margin: point margin − the (1−δ)-quantile of held-out CALIBRATION residuals
 ; (non-circular — residuals come from a separate calibration set, not the training data).
