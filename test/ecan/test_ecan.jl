@@ -11,7 +11,7 @@
 
 using MeTTaCore, Test
 
-const ECAN_DIR = joinpath(@__DIR__, "..", "examples", "ecan")
+const ECAN_DIR = joinpath(@__DIR__, "..", "..", "examples", "ecan")
 
 # Fast acceptance files — full mechanism coverage, always run.
 const ECAN_FILES = [

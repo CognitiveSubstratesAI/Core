@@ -7,12 +7,12 @@
 # Strips the `!(import! &self (library ecan))` line (we load modules explicitly instead).
 #
 # Usage (warm, via MettaJam /julia or REPL):
-#   include(".../Core/test/ecan_live_harness.jl"); println(ECANLiveHarness.run_all())
+#   include(".../Core/test/ecan/ecan_live_harness.jl"); println(ECANLiveHarness.run_all())
 #   ECANLiveHarness.run_example("CoreAV")
 module ECANLiveHarness
 using MeTTaCore.Interpreter, MeTTaCore.Interpreter.StandardMeTTa
 
-const BASE = normpath(joinpath(@__DIR__, ".."))
+const BASE = normpath(joinpath(@__DIR__, "..", ".."))
 # Load order per lib/ecan/ecan.metta (hyperseed/adaptive_attention deferred — Phase 1c).
 const MODS = ["ECAN_Policies", "core_logic", "state_logic",
               "SpreadingActivation", "AttentionPolicies", "FluidECAN", "Forgetting"]

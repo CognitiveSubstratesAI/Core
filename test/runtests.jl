@@ -523,7 +523,7 @@ include("test_metamo.jl")
 # ECAN acceptance suite — executes examples/ecan/*.metta (attention economy:
 # AV, funds, wages, two-tier rent, AF, spreading + Hebbian, governance, fluid,
 # adaptive). The slow Stability convergence probe is gated behind ECAN_SLOW_TESTS=1.
-include("test_ecan.jl")
+include("ecan/test_ecan.jl")
 
 # PLN factor-graph suite (test/pln/) — demand-driven backward chaining on the lib/pln substrate:
 # STV engine (DAG + arity-complete, all 8 rules), Layer-2 DTV (core + sweep + all rules), Layer-3
