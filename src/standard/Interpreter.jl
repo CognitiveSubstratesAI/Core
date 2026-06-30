@@ -665,10 +665,30 @@ _replay(answers::Vector{Atom}, b::Bindings, prev) =
     isempty(answers) ? finished_result(EMPTY, b, prev) :
     reduce(vcat, (finished_result(ans, b, prev) for ans in answers))
 
+# Canonicalize a tabled goal to its VARIANT KEY. Cross-checked vs SWI-Prolog boot/tabling.pl `start_tabling`
+# + the C `$tbl_variant_table`: SWI variant-matches the goal up to variable RENAMING and does NOT reduce
+# args (Prolog's is/2 pre-evaluates them before the call). MeTTa nests the arithmetic IN the goal
+# (`(fib (- n 1))`) with no is/2-before-call split, so we (a) REDUCE the args — the MeTTa analog of Prolog's
+# pre-call arg eval — then (b) RENAME vars by first occurrence (= SWI's variant canonicalization). Result:
+# `(fib (- 20 2))` and `(fib (- 19 1))` both key to `(fib 18)` (halves the table → O(n)), and `(fib $x)` /
+# `(fib $y)` share one table.
+function _variant_rename(a::Atom)::Atom
+    seen = Dict{Var,Var}(); n = Ref(0)
+    rn(x::Atom) = x isa Var ? get!(() -> (n[] += 1; Var("_v", UInt64(n[]))), seen, x) :
+                  (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
+    rn(a)
+end
+function _canonical_goal(atom::Atom, space, b::Bindings)::Atom
+    g = subst(atom, b)
+    (g isa Expression && !isempty(g.children)) || return _variant_rename(g)
+    rargs = Atom[c isa Var ? c : (rs = metta_run(c, space); isempty(rs) ? c : rs[1]) for c in g.children[2:end]]
+    _variant_rename(Expression(Atom[g.children[1]; rargs]))
+end
+
 # Compute (once) or replay a tabled goal's answer set. Marks the goal IN-PROGRESS so the nested re-entry of
 # THIS goal skips the table and applies its rules (sub-goals — different keys — re-table normally).
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
-    key = subst(atom, b)
+    key = _canonical_goal(atom, space, b)
     cached = get(_ANSWER_TABLE, key, nothing)
     cached === nothing || return _replay(cached, b, prev)            # complete table ⇒ replay (the win)
     push!(_TABLE_INPROG, key)
