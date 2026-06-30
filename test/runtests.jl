@@ -567,6 +567,11 @@ include("test_moses.jl")
 # duplication class from the 2026-06-10 primitive audit; clamp/xor/is-member consolidation).
 include("test_no_stdlib_shadow.jl")
 
+# Structural lint (dual) — no lib/ op CALLS a dangling primitive: an op undefined in the live engine
+# but present only in the dead top-level stdlib/ or an upstream stdlib name. Closes the silent
+# ported-dangling class found 2026-06-30 in PLN (append/list_to_set/exclude-item).
+include("test_no_dangling_ops.jl")
+
 # Type-system conformance — Core vs the metta-lang.dev types_basics tutorials,
 # grounded in hyperon-experimental's b5_types_prelim/d4_type_prop scripts: gradual
 # typing, function-application return-type inference, BadArgType checking, parametric
