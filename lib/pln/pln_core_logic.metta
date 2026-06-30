@@ -20,9 +20,10 @@
 ;; clamp lives in Core stdlib/math.metta (always loaded) — PLN's second local copy
 ;; removed 2026-06-10 (it was also in stv.metta).
 
-;;Concat tuples
+;;Concat tuples — reuse the common grounded union-atom (concat, no dedup) instead of the undefined
+;; upstream `append` (only existed in the dead top-level stdlib/). hyperon/CeTTa-faithful: reuse, don't re-roll.
 (= (TupleConcat $Ev1 $Ev2)
-   (append $Ev1 $Ev2))
+   (union-atom $Ev1 $Ev2))
 ;   (collapse (superpose ((superpose $Ev1) (superpose $Ev2)))))
 
 ;;Count size of tuple
@@ -98,7 +99,7 @@
 
 ;;Exclude item from tuple
 (= (Without $Tuple $a)
-   (exclude-item $a $Tuple))
+   (subtraction-atom $Tuple ($a)))   ; reuse grounded subtraction-atom (was undefined `exclude-item`)
 ;   (collapse (let $x (superpose $Tuple)
 ;                  (if (== $x $a)
 ;                      (empty)
@@ -114,7 +115,7 @@
 
 ;;Fast but TODO use efficient native handling once available: https://github.com/trueagi-io/metta-morph/pull/27
 (= (Unique $L $Ret)
-   (list_to_set $L))
+   (unique-atom $L))   ; reuse grounded unique-atom (dedup, keeps first) — was undefined `list_to_set`
 ;   (if (== $L ())
 ;       $Ret
 ;       (let* (($x (car-atom $L))
