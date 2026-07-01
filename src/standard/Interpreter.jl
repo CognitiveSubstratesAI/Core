@@ -695,11 +695,40 @@ function _variant_rename(a::Atom)::Atom
                   (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
     rn(a)
 end
-function _canonical_goal(atom::Atom, space, b::Bindings)::Atom
+# reduced goal = subst + REDUCE args (no var-rename); _canonical_goal renames on top ⇒ the variant KEY.
+function _reduced_goal(atom::Atom, space, b::Bindings)::Atom
     g = subst(atom, b)
-    (g isa Expression && !isempty(g.children)) || return _variant_rename(g)
+    (g isa Expression && !isempty(g.children)) || return g
     rargs = Atom[c isa Var ? c : (rs = metta_run(c, space); isempty(rs) ? c : rs[1]) for c in g.children[2:end]]
-    _variant_rename(Expression(Atom[g.children[1]; rargs]))
+    Expression(Atom[g.children[1]; rargs])
+end
+_canonical_goal(atom::Atom, space, b::Bindings)::Atom = _variant_rename(_reduced_goal(atom, space, b))
+
+# NON-GROUND ANSWER PROJECTION (the SLG answer skeleton, variant tabling). Answers are stored in the canonical
+# key's vars (_v1.._vn from _variant_rename); replaying them to a caller whose goal is a VARIANT means mapping
+# _vi back to the caller's i-th (first-occurrence) variable. Ground goals have no vars ⇒ identity (the fib fast
+# path, zero overhead). This is what lets tabling fire on `(Deduction $A $B $C)`-style non-ground pattern calls,
+# not just ground arithmetic. (Fresh existential vars a rule body introduces are NOT standardized-apart here —
+# a documented follow-up; PLN's equality-based matching is dominated by goal-var answers.)
+function _ordered_vars(a::Atom)::Vector{Var}
+    out = Var[]; seen = Set{Var}()
+    function walk(x::Atom)
+        if x isa Var
+            x in seen || (push!(seen, x); push!(out, x))
+        elseif x isa Expression
+            for c in x.children; walk(c); end
+        end
+    end
+    walk(a); out
+end
+_subst_vars(a::Atom, m::Dict{Var,Atom})::Atom =
+    a isa Var ? get(m, a, a) :
+    (a isa Expression ? Expression(Atom[_subst_vars(c, m) for c in a.children]) : a)
+function _project(answers::Vector{Atom}, red::Atom)::Vector{Atom}
+    cvars = _ordered_vars(red)
+    isempty(cvars) && return answers
+    m = Dict{Var,Atom}(Var("_v", UInt64(i)) => cvars[i] for i in eachindex(cvars))
+    Atom[_subst_vars(a, m) for a in answers]
 end
 
 # Suspend-on-variant via NAIVE FIXPOINT — the simplification of SWI completion (boot/tabling.pl
@@ -733,8 +762,8 @@ end
 # non-self-recursive goal (fib) is a singleton root ⇒ ONE pass (no regression). SCOPE caveats unchanged:
 # naive (not semi-naive), no WFS tnot (§7.6), no answer subsumption (§7.3), ground/enumerable answer atoms.
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
-    key = _canonical_goal(atom, space, b)
-    haskey(_ANSWER_TABLE, key) && return _replay(_ANSWER_TABLE[key], b, prev)    # complete ⇒ replay
+    red = _reduced_goal(atom, space, b); key = _variant_rename(red)             # red keeps the caller's vars;
+    haskey(_ANSWER_TABLE, key) && return _replay(_project(_ANSWER_TABLE[key], red), b, prev)  # complete ⇒ project+replay
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
         (_NEG_DEPTH[] > 0 && key in _NEG_BARRIER) && (_NEG_TAINT[] = true)        #   positive edge crossing a tnot
@@ -745,7 +774,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
                 _COMPONENT[_scc_root(_GEN_STACK[j])] = root
             end
         end
-        return _replay(get(_PARTIAL, key, Atom[]), b, prev)                      #   answer from partials (suspend)
+        return _replay(_project(get(_PARTIAL, key, Atom[]), red), b, prev)       #   answer from partials (suspend)
     end
     push!(_TABLE_INPROG, key); push!(_GEN_STACK, key)                            # become a GENERATOR
     _PARTIAL[key] = Atom[]; _COMPONENT[key] = key; delete!(_PARTIAL_READ, key)
@@ -753,7 +782,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     try
         _PARTIAL[key] = _leader_pass(key, typ, space)                           # initial pass (may merge me up)
         if _scc_root(key) != key                                                 # I became a FOLLOWER ⇒
-            return _replay(_PARTIAL[key], b, prev)                              #   ancestor root finishes me
+            return _replay(_project(_PARTIAL[key], red), b, prev)              #   ancestor root finishes me
         end
         comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]            # I am the ROOT: my SCC members
         members = comp()
@@ -780,7 +809,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             end
         end
     end
-    _replay(ans, b, prev)
+    _replay(_project(ans, red), b, prev)
 end
 
 # tnot — SLG tabled negation (SWI boot/tabling.pl:852), negation of PROVABILITY (distinct from grounded `not`,
