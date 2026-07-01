@@ -38,10 +38,19 @@ end
 Var(name::AbstractString) = Var(String(name), UInt64(0))   # id 0 = named, not yet made-unique
 
 "Expression — typed children (NOT Vector{Any}). (hyperon ExpressionAtom)"
+# `has_vars` is a CACHED bit (CeTTa's ATOM_FLAG_HAS_VARS, atom.h:52): does this subtree contain ANY Var?
+# Computed bottom-up at construction (OR of children; children cache their own flag ⇒ O(arity) per node).
+# Lets `subst`/`collect_vars` short-circuit a GROUND subtree in O(1) instead of recursing over the abstract
+# `Atom` element type — that recursion is dynamic-dispatch-boxed (~32 B/node, AllocCheck-confirmed), which is
+# the O(term-size)/step allocation on ground-heavy reduction. Derived from children ⇒ NOT part of ==/hash.
 struct Expression <: Atom
     children::Vector{Atom}
+    has_vars::Bool
+    Expression(xs::Vector{Atom}) = new(xs, _any_has_vars(xs))
 end
 Expression(xs::Atom...) = Expression(collect(Atom, xs))
+@inline _has_vars(a::Atom)::Bool = a isa Var ? true : (a isa Expression ? a.has_vars : false)
+_any_has_vars(xs::Vector{Atom})::Bool = any(_has_vars, xs)
 
 "Grounded — a typed host value. (hyperon Grounded(Box<dyn GroundedAtom>) / CeTTa typed union)"
 struct Grounded{T} <: Atom

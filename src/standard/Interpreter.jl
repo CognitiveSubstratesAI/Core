@@ -81,6 +81,10 @@ function subst(a::Atom, b::Bindings, d::Int=0)
         rep = _slot_rep(b, a)                  # unbound but maybe equal to another var → representative
         return rep == a ? a : rep
     elseif a isa Expression
+        # has_vars fast path (CeTTa match.c:891 `if (!atom_has_vars(atom)) return atom;`): a GROUND subtree
+        # can never change under substitution — return it in O(1), skipping the abstract-`Atom` recursion whose
+        # dynamic-dispatch boxing (~32 B/node, AllocCheck-confirmed) is the O(term-size)/step ground-reduction cost.
+        a.has_vars || return a
         # structural sharing (same pattern as rename_fresh; mirrors hyperon apply_bindings_to_atom's
         # `updated` flag in Core's immutable model): rebuild ONLY subtrees that actually changed. An
         # Expression with no bound var inside returns the SAME object → zero allocation (was: rebuild every
@@ -103,7 +107,9 @@ end
 
 function collect_vars!(s::Set{Var}, a::Atom)
     a isa Var && (push!(s, a); return s)
-    a isa Expression && (for c in a.children; collect_vars!(s, c); end)
+    a isa Expression || return s
+    a.has_vars || return s                    # ground subtree ⇒ no vars, O(1) (has_vars fast path)
+    for c in a.children; collect_vars!(s, c); end
     s
 end
 collect_vars(a::Atom) = collect_vars!(Set{Var}(), a)
