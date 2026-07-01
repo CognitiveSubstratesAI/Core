@@ -379,9 +379,22 @@ mutable struct Space
     type_epoch::Int               # monotonic; bumped ONLY when a (: …) type decl is added/removed (see
                                   # add_atom!/remove_atom!). Keys the arg_actual_types memo — actual types
                                   # derive solely from `:` decls, so cached types invalidate exactly on change.
-    # inner ctor defaults type_epoch ⇒ existing 6-arg positional Space(...) calls keep working (field is last).
+    # Control accel #2 (CeTTa subst_tree, space.c:497): a LAZY per-bucket discrimination trie. The 2-symbol
+    # `index` narrows to same-(head,arg1-head) atoms, but a WIDE bucket (many rules/facts sharing that key,
+    # differing deeper) still costs O(bucket) rename+match per query. This trie prunes that scan by shared LHS
+    # structure (a Var on EITHER side = wildcard) to a dup-free, order-preserved SUPERSET of matches; match_atoms
+    # stays authoritative. Value = (trie-root, bucket-position map). Entry ABSENT ⇒ (re)build on next query;
+    # invalidated (deleted) on any add/remove to the bucket. Built only for buckets over `_TRIE_MIN_BUCKET`
+    # (small buckets keep the zero-overhead linear scan). Field is LAST + inner-ctor-defaulted ⇒ existing
+    # 6/7-arg positional Space(...) calls keep working.
+    bucket_trie::Dict{Tuple{Symbol,Symbol},Any}
+    # monotonic mutation counter (bumped on EVERY add/remove). Stamps SLG answer-table entries (CeTTa
+    # table_store.c:153 per-space `revision`): a tabled answer computed at revision r is stale once the space
+    # mutates (r'≠r) and is auto-evicted on lookup — closes the "table can go silently stale" hole (§7.7).
+    revision::Int
     Space(atoms, tokens, imported, lib_count, index, wildcard, type_epoch=0) =
-        new(atoms, tokens, imported, lib_count, index, wildcard, type_epoch)
+        new(atoms, tokens, imported, lib_count, index, wildcard, type_epoch,
+            Dict{Tuple{Symbol,Symbol},Any}(), 0)
 end
 Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
 Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
@@ -408,18 +421,26 @@ _is_type_decl(a::Atom)::Bool = a isa Expression && length(a.children) >= 2 &&
     a.children[1] isa Sym && (a.children[1]::Sym).name === Symbol(":")
 function add_atom!(s::Space, a::Atom)
     push!(s.atoms, a)
+    s.revision += 1                              # bump the mutation counter (SLG answer-table staleness stamp)
     k = _index_key(a)
-    k === nothing ? push!(s.wildcard, a) : push!(get!(() -> Atom[], s.index, k), a)
+    if k === nothing
+        push!(s.wildcard, a)
+    else
+        push!(get!(() -> Atom[], s.index, k), a)
+        isempty(s.bucket_trie) || delete!(s.bucket_trie, k)   # invalidate the bucket's discrimination trie
+    end
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
 function remove_atom!(s::Space, a::Atom)
     filter!(x -> x != a, s.atoms)
+    s.revision += 1
     k = _index_key(a)
     if k === nothing
         filter!(x -> x != a, s.wildcard)
     else
         b = get(s.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
+        isempty(s.bucket_trie) || delete!(s.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
     _is_type_decl(a) && (s.type_epoch += 1)
     s
@@ -470,8 +491,116 @@ function rename_fresh(a::Atom, m::VarRenameMap=VarRenameMap(), d::Int=0)
     end
 end
 
-# query (= pattern $X) → the matching binding sets (interpreter.rs query:604, naive linear match).
-# Each stored atom's variables are freshened before matching (interpreter.rs make_variables_unique).
+# ── per-bucket discrimination trie: a conservative candidate filter ─────────────────────────────────────
+# Prunes a WIDE same-discriminant bucket by shared LHS structure. Tokens are the pre-order flattening of an
+# atom; a Var (either side) is a WILDCARD. The stored trie routes each atom by its ground tokens (a stored Var
+# → the `star` edge). Retrieval descends the query stream: a ground query token follows the matching concrete
+# edge AND the star edge (a stored Var matches the query's whole subterm, so skip it); a query Var (or query
+# exhaustion) collects the whole subtrie. Result = a duplicate-free SUPERSET of true matches (each stored atom
+# lies on exactly one path, so it is collected ≤1×); match_atoms remains authoritative. Correctness: match_atoms
+# succeeds ⇒ at every position one side is a Var or both are equal ground tokens ⇒ the atom is on a followed
+# path ⇒ collected. So the filter never drops a match.
+const _TRIE_MIN_BUCKET = 16                # build/use the trie only for buckets larger than this (CeTTa promotes at 16)
+# Concrete, isbits token — NO `Any` (dense `Vector{_Tok}` + isbits `Dict` keys ⇒ zero boxing / no dynamic dispatch;
+# what the JIT wants). A Var is a wildcard (`_KVAR`); a Sym/Grounded is keyed by the 64-bit hash of its name/value
+# (a hash collision only WIDENS the candidate set — match_atoms stays authoritative — so a match is never dropped);
+# an Expression by its arity. `kind` disambiguates hash spaces (a Sym and a Grounded with equal hashes stay separate).
+const _KVAR  = 0x00
+const _KSYM  = 0x01
+const _KEXPR = 0x02
+const _KGND  = 0x03
+struct _Tok
+    kind::UInt8
+    pay::UInt64
+end
+@inline _tok(a::Atom)::_Tok =
+    a isa Sym        ? _Tok(_KSYM,  hash(a.name)) :
+    a isa Expression ? _Tok(_KEXPR, UInt64(length(a.children))) :
+    a isa Grounded   ? _Tok(_KGND,  hash(a.value)) :
+                       _Tok(_KVAR,  UInt64(0))               # Var (or unknown) = wildcard
+
+function _flat_tokens!(toks::Vector{_Tok}, a::Atom, d::Int)
+    if d > _MAX_ATOM_DEPTH
+        push!(toks, _Tok(_KVAR, UInt64(0))); return          # depth cap → wildcard (conservative)
+    elseif a isa Expression
+        push!(toks, _Tok(_KEXPR, UInt64(length(a.children))))
+        for c in a.children; _flat_tokens!(toks, c, d + 1); end
+    else
+        push!(toks, _tok(a))
+    end
+    return
+end
+_flat_tokens(a::Atom) = (t = _Tok[]; _flat_tokens!(t, a, 0); t)
+
+function _skip_term(toks::Vector{_Tok}, i::Int)::Int         # advance past one whole term (isbits ⇒ alloc-free)
+    @inbounds t = toks[i]
+    if t.kind == _KEXPR
+        i += 1
+        for _ in 1:Int(t.pay); i = _skip_term(toks, i); end
+        return i
+    end
+    i + 1
+end
+
+mutable struct _TNode
+    atoms::Vector{Atom}                    # every stored atom routed through this node (⇒ query-var collect)
+    concrete::Dict{_Tok,_TNode}
+    star::Union{_TNode,Nothing}
+    _TNode() = new(Atom[], Dict{_Tok,_TNode}(), nothing)
+end
+
+function _trie_insert!(root::_TNode, a::Atom)
+    node = root
+    push!(node.atoms, a)
+    for t in _flat_tokens(a)
+        if t.kind == _KVAR
+            node.star === nothing && (node.star = _TNode())
+            node = node.star
+        else
+            node = get!(_TNode, node.concrete, t)
+        end
+        push!(node.atoms, a)
+    end
+    return
+end
+
+function _trie_build(bucket::Vector{Atom})
+    root = _TNode()
+    pos = IdDict{Atom,Int}()
+    for (i, a) in enumerate(bucket)
+        pos[a] = i
+        _trie_insert!(root, a)
+    end
+    (root, pos)
+end
+
+function _trie_collect!(acc::Vector{Atom}, node::_TNode, q::Vector{_Tok}, qi::Int)
+    if qi > length(q) || (@inbounds q[qi].kind == _KVAR)
+        append!(acc, node.atoms); return                     # query exhausted / query-var → all in subtrie
+    end
+    @inbounds t = q[qi]
+    c = get(node.concrete, t, nothing)
+    c !== nothing && _trie_collect!(acc, c, q, qi + 1)        # ground token → matching concrete edge
+    node.star !== nothing && _trie_collect!(acc, node.star, q, _skip_term(q, qi))  # stored var → skip query subterm
+    return
+end
+
+function _bucket_candidates(space::Space, k::Tuple{Symbol,Symbol}, b::Vector{Atom}, pattern::Atom)::Vector{Atom}
+    entry = get(space.bucket_trie, k, nothing)
+    if entry === nothing
+        entry = _trie_build(b)
+        space.bucket_trie[k] = entry
+    end
+    root, pos = entry::Tuple{_TNode,IdDict{Atom,Int}}
+    acc = Atom[]
+    _trie_collect!(acc, root, _flat_tokens(pattern), 1)
+    sort!(acc; by = a -> get(pos, a, typemax(Int)))          # preserve linear-scan order (⇒ identical results)
+    acc
+end
+
+# query (= pattern $X) → the matching binding sets (interpreter.rs query:604). Each stored atom's variables are
+# freshened before matching (make_variables_unique). Same-discriminant atoms are scanned linearly for a small
+# bucket, or pruned via the per-bucket discrimination trie for a wide one (identical results either way).
 function query(space::Space, pattern::Atom)::Vector{Bindings}
     out = Bindings[]
     k = _index_key(pattern)
@@ -483,8 +612,14 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     end
     b = get(space.index, k, nothing)                   # same-discriminant atoms — the (= (f …) …) rules for this f
     if b !== nothing
-        for stored in b
-            append!(out, match_atoms(pattern, rename_fresh(stored)))
+        if length(b) > _TRIE_MIN_BUCKET                # wide bucket → prune the scan by shared LHS structure
+            for stored in _bucket_candidates(space, k, b, pattern)
+                append!(out, match_atoms(pattern, rename_fresh(stored)))
+            end
+        else                                           # small bucket → zero-overhead linear scan (unchanged)
+            for stored in b
+                append!(out, match_atoms(pattern, rename_fresh(stored)))
+            end
         end
     end
     for stored in space.wildcard                       # + var-headed atoms, which can match any discriminant
@@ -668,10 +803,12 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 #   SCOPE: memoisation only. A left-recursive goal that re-enters an IN-PROGRESS variant falls through to
 #   normal reduction (no suspend-on-variant yet — that needs the worklist/dynamic-SCC completion machinery;
 #   §7.2). Handles the fib/ackermann class. Variant key = the substituted goal (ground ⇒ identity; non-ground
-#   canonicalization is TODO). Table is global+session-scoped; cleared by table!/untable_all! (TODO: per-space
-#   + IDG invalidation on space mutation, §7.7).
+#   canonicalization is TODO). Table is global+session-scoped and cleared by table!/untable_all!; entries are now
+#   REVISION-STAMPED per space (CeTTa table_store.c:153) so a mutation to the space auto-evicts its stale answers on
+#   the next lookup (closes the silent-staleness half of §7.7; fine-grained IDG dependency tracking still TODO).
 const _TABLED_HEADS = Set{Symbol}()
 const _ANSWER_TABLE = Dict{Atom,Vector{Atom}}()
+const _ANSWER_STAMP = Dict{Atom,Tuple{UInt,Int}}()   # key → (objectid(space), revision) at completion; auto-evict on mismatch
 const _TABLE_INPROG = Set{Atom}()
 const _PARTIAL = Dict{Atom,Vector{Atom}}()   # a leader's accumulating answer set during completion
 const _PARTIAL_READ = Set{Atom}()            # tabled keys whose partials a consumer read ⇒ self-recursive
@@ -681,8 +818,8 @@ const _NEG_BARRIER = Set{Atom}()              # in-progress keys sitting BEHIND 
 const _NEG_DEPTH = Ref(0)                      # active tnot-drive depth (>0 ⇒ evaluating under a negation)
 const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key under negation ⇒ unsound 2-valued
 const UNDEFINED = Sym("undefined")            # WFS bottom / third truth value; NOT aliased to Empty or False
-_table_reset!() = (empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); empty!(_PARTIAL); empty!(_PARTIAL_READ);
-                   empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
+_table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
+                   empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
@@ -781,7 +918,12 @@ end
 # naive (not semi-naive), no WFS tnot (§7.6), no answer subsumption (§7.3), ground/enumerable answer atoms.
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     red = _reduced_goal(atom, space, b); key = _variant_rename(red)             # red keeps the caller's vars;
-    haskey(_ANSWER_TABLE, key) && return _replay(_project(_ANSWER_TABLE[key], red), b, prev)  # complete ⇒ project+replay
+    if haskey(_ANSWER_TABLE, key)                                                # complete entry — but only replay if
+        if get(_ANSWER_STAMP, key, (UInt(0), -1)) == (objectid(space), space.revision)
+            return _replay(_project(_ANSWER_TABLE[key], red), b, prev)          #   FRESH (space unchanged) ⇒ project+replay
+        end
+        delete!(_ANSWER_TABLE, key); delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
+    end
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
         (_NEG_DEPTH[] > 0 && key in _NEG_BARRIER) && (_NEG_TAINT[] = true)        #   positive edge crossing a tnot
@@ -817,7 +959,8 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             end
         end
         ans = _PARTIAL[key]
-        for m in comp(); _ANSWER_TABLE[m] = _PARTIAL[m]; end                     # complete ALL members together
+        _stamp = (objectid(space), space.revision)                              # stamp each completed answer set with
+        for m in comp(); _ANSWER_TABLE[m] = _PARTIAL[m]; _ANSWER_STAMP[m] = _stamp; end  # the (space, revision) it holds for
     finally
         if _scc_root(key) == key                                                # only the ROOT cleans its SCC
             done = Atom[g for g in _GEN_STACK if _scc_root(g) == key]

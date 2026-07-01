@@ -78,3 +78,58 @@ end
         @test d == true && atom == E(PLUS, Grounded(1), Grounded(2))
     end
 end
+
+# Control accel #2 — the per-bucket discrimination trie (CeTTa subst_tree borrow) is a CONSERVATIVE candidate
+# filter: on a WIDE same-discriminant bucket (> _TRIE_MIN_BUCKET) `query` must return EXACTLY the linear-scan
+# result (never drop or duplicate a match) across every pattern shape. Guards the asymptotic fan-out fix.
+@testset "query: wide-bucket discrimination trie ≡ linear scan" begin
+    G(x) = Grounded(x)
+    # a pure linear reference over ALL atoms (== bucket+wildcard match set for a keyed pattern), trie-independent.
+    # Compare the resolved output multiset (stable across fresh-renames) so a wrong-atom-but-right-count trie bug fails.
+    linref(s, p) = (acc = Bindings[]; for a in s.atoms; append!(acc, match_atoms(p, Interpreter.rename_fresh(a))); end; acc)
+    outs(bs, p) = sort(String[string(Interpreter.subst(p, b)) for b in bs])       # resolved match instances
+
+    s = Space()
+    for k in 1:30; Interpreter.add_atom!(s, E(S("rel"), S("a"), S("v$k"))); end   # 30 ground facts
+    Interpreter.add_atom!(s, E(S("rel"), S("a"), V("x")))                          # pos-3 wildcard rule
+    Interpreter.add_atom!(s, E(S("rel"), S("a"), E(S("g"), S("b"))))              # nested
+    Interpreter.add_atom!(s, E(S("rel"), S("a"), G(5)))                            # grounded
+    @test length(s.index[(:rel, :a)]) > Interpreter._TRIE_MIN_BUCKET              # trie actually fires
+
+    pats = [E(S("rel"), S("a"), S("v5")), E(S("rel"), S("a"), V("o")), E(S("rel"), S("a"), S("v99")),
+            E(S("rel"), S("a"), E(S("g"), S("b"))), E(S("rel"), S("a"), E(S("g"), V("z"))),
+            E(S("rel"), S("a"), G(5))]
+    for p in pats
+        q = Interpreter.query(s, p); r = linref(s, p)
+        @test length(q) == length(r)
+        @test outs(q, p) == outs(r, p)            # resolved instances identical ⇒ no dropped/wrong/dup match
+    end
+    # invalidation: adding to the bucket rebuilds the trie ⇒ new atom is found
+    Interpreter.add_atom!(s, E(S("rel"), S("a"), S("vNEW")))
+    @test length(Interpreter.query(s, E(S("rel"), S("a"), S("vNEW")))) ==
+          length(linref(s, E(S("rel"), S("a"), S("vNEW"))))
+end
+
+# Borrow 2 — revision-stamped SLG table invalidation (CeTTa table_store.c:153). A tabled goal's cached answer set
+# is stamped with the space (objectid, revision); a mutation bumps `revision` so the stale entry auto-evicts on the
+# next lookup and recomputes — closing the "table goes silently stale on space mutation" hole (§7.7).
+@testset "tabling: revision-stamped answer invalidation" begin
+    Interpreter.untable_all!()
+    Interpreter.table!(Symbol("mem"))
+    try
+        s = Space()
+        for p in ["(= (mem) (collapse (match &self (item \$x) \$x)))", "(item a)", "(item b)"]
+            for (_, atom) in parse_program(p); Interpreter.add_atom!(s, atom); end
+        end
+        q = parse_program("(mem)")[1][2]
+        r1 = string(metta_run(q, s))                          # cached at the current revision
+        rev1 = s.revision
+        for (_, atom) in parse_program("(item c)"); Interpreter.add_atom!(s, atom); end
+        @test s.revision > rev1                               # mutation bumped the revision
+        r2 = string(metta_run(q, s))                          # stale entry must be evicted + recomputed
+        @test !occursin("c", r1)                              # baseline: c not yet present
+        @test occursin("c", r2)                               # fresh: recomputed answer includes the new fact
+    finally
+        Interpreter.untable_all!()
+    end
+end
