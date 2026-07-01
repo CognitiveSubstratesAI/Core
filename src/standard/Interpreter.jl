@@ -376,6 +376,12 @@ mutable struct Space
     # (get-atoms/lib_count/order); the index is a parallel acceleration kept in sync at add/remove.
     index::Dict{Tuple{Symbol,Symbol},Vector{Atom}}
     wildcard::Vector{Atom}
+    type_epoch::Int               # monotonic; bumped ONLY when a (: …) type decl is added/removed (see
+                                  # add_atom!/remove_atom!). Keys the arg_actual_types memo — actual types
+                                  # derive solely from `:` decls, so cached types invalidate exactly on change.
+    # inner ctor defaults type_epoch ⇒ existing 6-arg positional Space(...) calls keep working (field is last).
+    Space(atoms, tokens, imported, lib_count, index, wildcard, type_epoch=0) =
+        new(atoms, tokens, imported, lib_count, index, wildcard, type_epoch)
 end
 Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
 Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
@@ -396,10 +402,15 @@ function _index_key(a::Atom)::Union{Tuple{Symbol,Symbol},Nothing}
     sub = _idx_head(a.children[2]); sub === nothing && return nothing
     ((a.children[1]::Sym).name, sub)
 end
+# a `(: atom T)` type declaration — the ONLY atom shape whose add/remove changes actual-type inference
+# (atom_types queries exactly `(: atom $T)`; Core has no (:< ) supertype closure). Bumps the memo epoch.
+_is_type_decl(a::Atom)::Bool = a isa Expression && length(a.children) >= 2 &&
+    a.children[1] isa Sym && (a.children[1]::Sym).name === Symbol(":")
 function add_atom!(s::Space, a::Atom)
     push!(s.atoms, a)
     k = _index_key(a)
     k === nothing ? push!(s.wildcard, a) : push!(get!(() -> Atom[], s.index, k), a)
+    _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
 function remove_atom!(s::Space, a::Atom)
@@ -410,6 +421,7 @@ function remove_atom!(s::Space, a::Atom)
     else
         b = get(s.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
     end
+    _is_type_decl(a) && (s.type_epoch += 1)
     s
 end
 
@@ -1129,6 +1141,14 @@ _parse_type(s::AbstractString)::Atom = parse_from(tokenize(s), Ref(1))
 # the shared object is safe). Eval is serialized under the server LOCK, so the lazy fill needs no extra
 # guard. (NOT rename_fresh'd: that would assign new Var ids and change matching behavior — preserve parity.)
 const _GROUNDED_OP_TYPE_CACHE = Dict{Atom,Atom}()
+# arg_actual_types memo (ADR-059). A GROUND atom's actual types are invariant until a `(: …)` decl mutates the
+# space, so cache atom → (objectid(space), type_epoch, types). On a later reduction step the same ground
+# subterm is a HIT instead of an O(term) re-query — collapsing the O(n²) re-descent (the dominant typed-program
+# allocator, ~71–79% of typed-Peano alloc) to O(n). Byte-identical to recomputation (semantics-preserving):
+# only `:`-decls change types and they bump type_epoch; the space objectid guards against a stale cross-space hit.
+const _ATOM_TYPE_MEMO = Dict{Atom,Tuple{UInt,Int,Vector{Atom}}}()
+const _TYPE_MEMO_ON = Ref(true)     # gate for one release; health 4/4 proves parity before it's load-bearing
+const _TYPE_MEMO_CAP = 1 << 20      # bound growth on long-running servers (clears wholesale on overflow)
 
 # the declared types of `atom`: intrinsic grounded-op type (if any) + space decls (: atom $T)
 function atom_types(atom::Atom, space::Space)::Vector{Atom}
@@ -1168,6 +1188,26 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
         arg.value isa StateCell && return Atom[arg.value.vtype]   # intrinsic (StateMonad T) (space.rs:55)
         arg.value isa Space && return Atom[Sym("SpaceType")]      # DynSpace.type_() = ATOM_TYPE_SPACE (hyperon-space/lib.rs:18)
     end
+    # GROUND-atom memo (ADR-059): a var-free atom's actual types depend ONLY on the space's `:` decls, so they
+    # are stable until type_epoch changes. Cache by (space identity, epoch) ⇒ each distinct ground subterm is
+    # typed ONCE, then hit on every later reduction step — the O(n²)→O(n) re-descent collapse (the dominant
+    # typed-program allocator). `_has_vars` (the existing cached bit) is the cacheability predicate; a
+    # var-containing arg recurses uncached exactly as before. Byte-identical to recomputation.
+    if _TYPE_MEMO_ON[] && !(arg isa Expression && arg.has_vars)   # ground ⇒ memoisable (Var/Grounded returned above)
+        sid = objectid(space)
+        hit = get(_ATOM_TYPE_MEMO, arg, nothing)
+        (hit !== nothing && hit[1] == sid && hit[2] == space.type_epoch) && return hit[3]
+        res = _arg_actual_types_uncached(arg, space)
+        length(_ATOM_TYPE_MEMO) < _TYPE_MEMO_CAP || empty!(_ATOM_TYPE_MEMO)   # bound growth (risk #3)
+        _ATOM_TYPE_MEMO[arg] = (sid, space.type_epoch, res)
+        return res
+    end
+    _arg_actual_types_uncached(arg, space)
+end
+
+# the uncached body (Expression head-type application + declared-type fallthrough); semantics UNCHANGED. The
+# recursive arg_actual_types calls below re-enter the memoized entry above, so each ground child is a memo hit.
+function _arg_actual_types_uncached(arg::Atom, space::Space)::Vector{Atom}
     # Expression: infer its return type by applying the HEAD's function type to the args. The head's types
     # are got recursively (types.rs:400-403 op_value_types) — so an EXPRESSION head like `(curry +)` has
     # its type INFERRED, enabling higher-order/curried application `((curry +) 2)`.
