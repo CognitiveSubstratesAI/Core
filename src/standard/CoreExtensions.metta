@@ -34,6 +34,13 @@
 (= (~=  $a $b) (not (== $a $b)))
 (= (=== $a $b) (== $a $b))
 
+;; tnot: SLG tabled negation (grounded SpaceOp in Interpreter.jl — negation of PROVABILITY, distinct from the
+;; truth-functional grounded `not`). Like collapse/case, it must receive its goal UNEVALUATED so it can probe
+;; the goal's table itself; the `(-> Atom …)` arg type suppresses reduction. Returns True (goal fails / no
+;; answers), Empty (goal proven), or `undefined` (WFS bottom — recursion-through-negation). Fires only when the
+;; goal's head is tabled (opt-in); the return is Atom-typed so True/undefined pass through un-re-evaluated.
+(: tnot (-> Atom Atom))
+
 ;; length: element count (MOSES add_logical_knobs.metta). Recursion sits in `+`'s arg position; `+`
 ;; is a grounded op that evaluates its args, so the recursive call reduces — no let-bind needed.
 (= (length $list)

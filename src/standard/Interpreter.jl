@@ -659,8 +659,13 @@ const _PARTIAL = Dict{Atom,Vector{Atom}}()   # a leader's accumulating answer se
 const _PARTIAL_READ = Set{Atom}()            # tabled keys whose partials a consumer read ⇒ self-recursive
 const _GEN_STACK = Atom[]                     # in-progress leaders (generators), in call order
 const _COMPONENT = Dict{Atom,Atom}()          # key → SCC root (union-find; merged on a cross-leader cycle)
+const _NEG_BARRIER = Set{Atom}()              # in-progress keys sitting BEHIND an active tnot (negation)
+const _NEG_DEPTH = Ref(0)                      # active tnot-drive depth (>0 ⇒ evaluating under a negation)
+const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key under negation ⇒ unsound 2-valued
+const UNDEFINED = Sym("undefined")            # WFS bottom / third truth value; NOT aliased to Empty or False
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_TABLE_INPROG); empty!(_PARTIAL); empty!(_PARTIAL_READ);
-                   empty!(_GEN_STACK); empty!(_COMPONENT))
+                   empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
+                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
@@ -732,6 +737,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     haskey(_ANSWER_TABLE, key) && return _replay(_ANSWER_TABLE[key], b, prev)    # complete ⇒ replay
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
+        (_NEG_DEPTH[] > 0 && key in _NEG_BARRIER) && (_NEG_TAINT[] = true)        #   positive edge crossing a tnot
         ki = findfirst(g -> g == key, _GEN_STACK)                                #   union key..top into one SCC
         if ki !== nothing
             root = _scc_root(key)
@@ -776,6 +782,43 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     end
     _replay(ans, b, prev)
 end
+
+# tnot — SLG tabled negation (SWI boot/tabling.pl:852), negation of PROVABILITY (distinct from grounded `not`,
+# which is truth-functional Bool→Bool value negation — left untouched). SPECIAL FORM: like COLLAPSE it takes G
+# UNEVALUATED and controls its evaluation, so it can probe G's table BEFORE reducing. Three-valued read of G's
+# COMPLETE answer set = SWI's `$tbl_answer_dl` true/conditional/none probe. SCOPED (per the design synthesis):
+# STRATIFIED negation exactly (⇒ perfect-model, complete) + an HONEST `undefined` for recursion-through-negation
+# — never a spurious two-valued answer. Full delay-list WFS residuals (EXPLANATION, not correctness) deferred.
+#   G ∈ _TABLE_INPROG (live negative loop)   ⇒ undefined      | drive crosses a negation (barrier read) ⇒ undefined
+#   G complete, has a REAL answer            ⇒ Empty (¬G false)| G complete, only `undefined`  ⇒ undefined
+#   G complete, NO answers                   ⇒ True  (¬G true)
+# Consistent with the bottom-up lane's stratified-NAF (KBSaturation `_is_negated_premise`: succeeds iff the
+# closed-world match is empty) — same meaning of negation, extended top-down with the undefined third value.
+# Opt-in gate: fires only when G's head is tabled (else usage error) ⇒ default-OFF ⇒ 234-path byte-identical.
+const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
+    length(xs) == 1 || return ExecNoReduce()
+    G = xs[1]
+    (G isa Expression && !isempty(G.children)) || return ExecNoReduce()
+    is_tabled(G) || return ExecOk(Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
+        "tnot: goal head must be tabled — (table! …) it first")])
+    isempty(collect_vars(G)) || return ExecOk(Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
+        "tnot: non-ground goal (instantiation_error)")])
+    key = _canonical_goal(G, space, Bindings())
+    key in _TABLE_INPROG && return ExecOk(Atom[UNDEFINED])                # live negative loop ⇒ WFS bottom
+    saved = copy(_NEG_BARRIER); union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
+    st = _NEG_TAINT[]; _NEG_TAINT[] = false; _NEG_DEPTH[] += 1            #   a consumer reading a barrier key
+    local A::Vector{Atom} = Atom[]; local tainted::Bool = false          #   ⇒ a positive edge crossed the tnot
+    try
+        A = metta_run(G, space)
+    finally
+        _NEG_DEPTH[] -= 1; tainted = _NEG_TAINT[]; _NEG_TAINT[] = st
+        empty!(_NEG_BARRIER); union!(_NEG_BARRIER, saved)
+    end
+    tainted                     && return ExecOk(Atom[UNDEFINED])         # crossed the negation ⇒ can't decide
+    any(a -> a != UNDEFINED, A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
+    any(a -> a == UNDEFINED, A) && return ExecOk(Atom[UNDEFINED])         # G only-undefined ⇒ ¬G undefined
+    ExecOk(Atom[Sym("True")])                                            # G false ⇒ ¬G true
+end))
 
 function metta_instr(f::Frame, b::Bindings, space)
     a = f.atom
@@ -1670,7 +1713,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
     "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
-    "import!" => IMPORT, "table!" => TABLE_DECL)
+    "import!" => IMPORT, "table!" => TABLE_DECL, "tnot" => TNOT)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
 # atom is stored as-is, not reduced. Atom-typed 2nd arg ⇒ the driver passes it unevaluated. Intrinsic
 # (kept out of the space). Defined here, after the ops exist.
