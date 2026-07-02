@@ -108,6 +108,24 @@ using Test
         @test ("(wrap a)" in dK) && ("(myf a)" in dK)          # reduct added, redex KEPT (default)
     end
 
+    # ── piece 3b: string-literal-safe splitters (mm2_expr_args / mm2_split_forms) ──
+    @testset "splitters treat \"…\" as opaque (no split on interior spaces/parens)" begin
+        # mm2_expr_args: a top-level string with spaces stays ONE arg (was mis-split at the space)
+        @test mm2_expr_args(raw"""(= (f x) "hello world")""") == ["=", "(f x)", "\"hello world\""]
+        @test mm2_expr_args(raw"""(f "a b c" y)""")           == ["f", "\"a b c\"", "y"]
+        # parens INSIDE a string must not corrupt paren-depth
+        @test mm2_expr_args(raw"""(concat "(" ")")""")         == ["concat", "\"(\"", "\")\""]
+        # escaped quote inside a string does not close it early (normal string: \\\" ⇒ a real \" pair)
+        @test mm2_expr_args("(f \"a\\\"b\" y)")                == ["f", "\"a\\\"b\"", "y"]
+        # mm2_split_forms: a '(' inside a string literal must not break the form boundary
+        @test [f for (b, f) in mm2_split_forms("(f \"a (b\" y)\n(g z)")] == ["(f \"a (b\" y)", "(g z)"]
+        # end-to-end: a bare top-level string RHS lowers as a single reduct (relational + reduction)
+        @test mm2_lower_equals(raw"""(= (name $x) "John Doe")""") ==
+              raw"""(exec 0 (, (name $x)) (, "John Doe"))"""
+        @test mm2_lower_equals(raw"""(= (name $x) "John Doe")"""; mode = :reduction) ==
+              raw"""(exec 0 (I (name $x)) (O (+ "John Doe") (- (name $x))))"""
+    end
+
     # ── piece 4: grounded-op guard + auto-routing of (= …) rules in mm2_partition ──
     @testset "grounded-op guard classifies relational vs grounded rules" begin
         @test mm2_is_relational(raw"(= (ancestor $x $y) (parent $x $y))")        # plain relations

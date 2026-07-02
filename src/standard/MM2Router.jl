@@ -36,12 +36,17 @@ function mm2_split_forms(program::AbstractString)::Vector{Tuple{Bool, String}}
         i > n && break
         start = i
         if s[i] == '('
-            depth = 0
+            depth = 0; instr = false; esc = false        # string-aware: (/)/whitespace inside "…" are literal
             while i <= n
-                s[i] == '(' && (depth += 1)
-                s[i] == ')' && (depth -= 1)
+                c = s[i]
+                if instr
+                    esc ? (esc = false) : c == '\\' ? (esc = true) : c == '"' && (instr = false)
+                elseif c == '"'; instr = true
+                elseif c == '('; depth += 1
+                elseif c == ')'; depth -= 1
+                end
                 i += 1
-                depth == 0 && break
+                (depth == 0 && !instr) && break
             end
         else
             while i <= n && !isspace(s[i]); i += 1; end
@@ -156,8 +161,12 @@ function mm2_expr_args(form::AbstractString)::Vector{String}
     (startswith(t, "(") && endswith(t, ")")) || error("mm2_expr_args: not an expr: $form")
     inner = SubString(t, nextind(t, firstindex(t)), prevind(t, lastindex(t)))
     args = String[]; depth = 0; buf = IOBuffer()
+    instr = false; esc = false                            # string-aware: (/)/whitespace inside "…" are literal
     for c in inner
-        if c == '('; depth += 1; print(buf, c)
+        if instr; print(buf, c)
+            esc ? (esc = false) : c == '\\' ? (esc = true) : c == '"' && (instr = false)
+        elseif c == '"'; instr = true; print(buf, c)
+        elseif c == '('; depth += 1; print(buf, c)
         elseif c == ')'; depth -= 1; print(buf, c)
         elseif isspace(c) && depth == 0
             s = String(take!(buf)); isempty(s) || push!(args, s)
