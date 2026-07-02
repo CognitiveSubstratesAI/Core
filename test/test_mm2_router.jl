@@ -126,6 +126,52 @@ using Test
               raw"""(exec 0 (I (name $x)) (O (+ "John Doe") (- (name $x))))"""
     end
 
+    # ── piece 3c: (= (f …) ARITH) integer-arith body → pure-sink reduction (Phase-2, R7 lane-1) ──
+    @testset "integer-arith (=) body → MM2 pure-sink; bisimulates the interpreter" begin
+        SM = MeTTaCore.Interpreter
+        # classifier: + - * % (incl. nested / arity-2) are arith; /, reduction, relational, control aren't
+        @test mm2_is_arith_body(raw"(= (f $x) (+ $x 3))")
+        @test mm2_is_arith_body(raw"(= (f $x) (+ (* $x 2) 1))")          # nested tree
+        @test mm2_is_arith_body(raw"(= (g $x $y) (- (* $x $y) 1))")      # arity-2 + nested
+        @test !mm2_is_arith_body(raw"(= (f $x) (/ $x 2))")              # / = REAL division (float) → excluded
+        @test !mm2_is_arith_body(raw"(= (id $x) $x)")                   # bare-var RHS = reduction, not arith
+        @test !mm2_is_arith_body(raw"(= (ancestor $x $y) (parent $x $y))")  # relational, not arith
+        @test !mm2_is_arith_body(raw"(= (f $x) (+ $x a))")             # non-numeric leaf `a`
+        @test !mm2_is_arith_body(raw"(foo $x)")                         # not a (= …) form
+        @test_throws ErrorException mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))")
+
+        # lowering: leaves→i64_from_string, root→i64_to_string, redex deleted via (- LHS)
+        @test mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))") ==
+              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 3)))) (- (f $x))))"
+        @test mm2_lower_equals_arith(raw"(= (f $x) (+ (* $x 2) 1))") ==
+              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (product_i64 (i64_from_string $x) (i64_from_string 2)) (i64_from_string 1)))) (- (f $x))))"
+
+        # bisimulation: the MORK pure-sink reduct == the interpreter's normal form, redex DELETED
+        bisim(rule, call) = begin
+            cs = MC.new_core_space()
+            MC.space_add_all_sexpr!(cs.inner, call)
+            MC.space_add_all_sexpr!(cs.inner, mm2_lower_equals_arith(rule))
+            MC.space_metta_calculus!(cs.inner, 1_000_000)
+            dump = [strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
+            isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, rule)
+            res = SM.load_metta!(isp, "!" * call)
+            interp = [string(x) for r in res for x in (r isa AbstractVector ? r : [r])]
+            (dump, interp)
+        end
+        for (rule, call, val) in [
+                (raw"(= (f $x) (+ $x 3))",       "(f 5)",   "8"),
+                (raw"(= (f $x) (- $x 3))",       "(f 5)",   "2"),
+                (raw"(= (f $x) (* $x 3))",       "(f 5)",   "15"),
+                (raw"(= (f $x) (% $x 3))",       "(f 10)",  "1"),
+                (raw"(= (f $x) (+ (* $x 2) 1))", "(f 5)",   "11"),
+                (raw"(= (g $x $y) (+ $x $y))",   "(g 3 4)", "7")]
+            dump, interp = bisim(rule, call)
+            @test interp == [val]                          # interpreter-oracle sanity
+            @test val in dump                              # MM2 pure-sink computed the same value
+            @test !(strip(call) in dump)                   # redex DELETED (reduction, not accumulation)
+        end
+    end
+
     # ── piece 4: grounded-op guard + auto-routing of (= …) rules in mm2_partition ──
     @testset "grounded-op guard classifies relational vs grounded rules" begin
         @test mm2_is_relational(raw"(= (ancestor $x $y) (parent $x $y))")        # plain relations
