@@ -23,6 +23,7 @@ using .StandardMeTTa
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
 export metta_run, metta_results, parse_program, load_metta!, load_core_stdlib!, tokenize, metta_debug!
 export interpret_max_steps!, metta_max_steps!
+export table!, untable_all!, auto_table!
 
 # instruction symbols
 const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
@@ -832,6 +833,93 @@ untable_all!() = (empty!(_TABLED_HEADS); _table_reset!(); nothing)
 const TABLE_DECL = Grounded(Operation("table!", xs ->
     (length(xs) == 1 && xs[1] isa Sym) ?
         (table!((xs[1]::Sym).name); ExecOk(Atom[Expression(Atom[])])) : ExecNoReduce()))
+
+# ── PURITY-ANALYSIS AUTO-TABLER (MeTTa-TS-style `automatic tabling of pure functions`) ──────────────
+# `table!` is opt-in (`!(table! fib)`); MeTTa-TS instead auto-detects which functions are PURE (their
+# answer set is a function of their args — no space mutation / state / I/O / mutable-state read) and tables
+# them with no directive. Core already owns the hard part (the SLG table engine above); this is only the
+# missing FRONT-END: an impurity-propagation fixpoint over the space's `(=)` rules. CONSERVATIVE WHITELIST
+# of side-effect-free primitives ⇒ any function whose body-closure touches an unknown/impure op (add-atom,
+# remove-atom, match/&self, state, superpose, I/O, or any un-whitelisted grounded op / data constructor) is
+# left UNTABLED. Result-preserving: tabling memoises a pure function's answer set, so answers are identical,
+# only faster (fib: exponential → linear). Not auto-wired into load_metta! — call `auto_table!(space)` explicitly.
+const _PURE_PRIMS = Set{Symbol}(Symbol.([
+    "+","-","*","/","%","<",">","<=",">=","==","!=",                       # arithmetic + comparison
+    "and","or","not","xor","if","if-equal","unify","let","let*","case",    # boolean + control
+    "quote","unquote","eval","id","noeval","noreduce-eq","=alpha",         # quote / eval (pure)
+    "car-atom","cdr-atom","cons-atom","size-atom","index-atom","min-atom","max-atom",  # pure list/tuple
+    "get-type","get-metatype","match-types","is-function",                 # type queries (pure)
+    "sqrt-math","pow-math","abs-math","log-math","exp-math","sin-math","cos-math",
+]))
+
+# extract `(= (h …) body)` rules from a list of atoms → head Symbol ↦ [body atoms]
+function _rules_of(atoms)::Dict{Symbol,Vector{Atom}}
+    d = Dict{Symbol,Vector{Atom}}(); EQ = Symbol("=")
+    for a in atoms
+        (a isa Expression && length(a.children) == 3 && head_name(a) == EQ) || continue
+        lhs = a.children[2]
+        (lhs isa Expression && !isempty(lhs.children) && lhs.children[1] isa Sym) || continue
+        push!(get!(d, head_name(lhs), Atom[]), a.children[3])
+    end
+    d
+end
+
+# every operator-position symbol reachable in `a` (its "callees" — reducible heads AND data constructors)
+function _callees!(a::Atom, acc::Set{Symbol})
+    if a isa Expression && !isempty(a.children)
+        a.children[1] isa Sym && push!(acc, (a.children[1]::Sym).name)
+        for c in a.children; _callees!(c, acc); end
+    end
+    acc
+end
+
+# impurity-propagation fixpoint: a head is impure if a body calls something that is neither a pure prim
+# nor a (defined) head (⇒ an unknown/impure grounded op), or calls a known-impure head. Self-recursion OK.
+function _pure_heads(rules::Dict{Symbol,Vector{Atom}})::Set{Symbol}
+    heads = Set(keys(rules)); impure = Set{Symbol}()
+    while true
+        changed = false
+        for h in heads
+            h in impure && continue
+            done = false
+            for body in rules[h]
+                for op in _callees!(body, Set{Symbol}())
+                    op == h && continue
+                    if !(op in _PURE_PRIMS || op in heads) || op in impure
+                        push!(impure, h); changed = true; done = true; break
+                    end
+                end
+                done && break
+            end
+        end
+        changed || break
+    end
+    setdiff(heads, impure)
+end
+
+"""
+    auto_table!(space) -> (; tabled, skipped)
+
+Analyze `space`'s `(=)` rules and mark every USER-defined PURE function head tabled (the MeTTa-TS
+`automatic tabling of pure functions`, bolted onto Core's existing `table!` engine). Purity is decided by
+an impurity-propagation fixpoint over a conservative pure-primitive whitelist, so anything touching an
+unknown/impure op is left untabled — result-preserving, only faster. Returns the heads it tabled/skipped.
+"""
+function auto_table!(space::Space)
+    pure = _pure_heads(_rules_of(space.atoms))                              # analyze ALL rules (stdlib deps too)
+    user = keys(_rules_of(@view space.atoms[(space.lib_count + 1):end]))    # but only TABLE the user's own heads
+    up = intersect(pure, user)
+    for h in up; table!(h); end
+    (tabled = sort!(collect(up)), skipped = sort!(collect(setdiff(user, up))))
+end
+
+# `!(auto-table!)` — the MeTTa surface for the auto-tabler (the analog of MeTTa-TS's automatic tabling; cf.
+# `!(table! fib)` for the per-predicate directive). Analyzes `&self` and tables every PURE user function head,
+# returning `(auto-tabled h1 h2 …)` so a program/server enables it with no Julia call and sees what was tabled.
+const AUTO_TABLE_DECL = Grounded(SpaceOp("auto-table!", function (xs, space)
+    r = auto_table!(space)
+    ExecOk(Atom[Expression(Atom[Sym("auto-tabled"); Atom[Sym(string(h)) for h in r.tabled]])])
+end))
 
 _replay(answers::Vector{Atom}, b::Bindings, prev) =
     isempty(answers) ? finished_result(EMPTY, b, prev) :
@@ -1931,7 +2019,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
     "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
-    "import!" => IMPORT, "table!" => TABLE_DECL, "tnot" => TNOT)
+    "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL, "tnot" => TNOT)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
 # atom is stored as-is, not reduced. Atom-typed 2nd arg ⇒ the driver passes it unevaluated. Intrinsic
 # (kept out of the space). Defined here, after the ops exist.
@@ -2011,7 +2099,7 @@ end
 INCREMENTAL parse-eval (hyperon/CeTTa Tokenizer model): each atom is parsed THEN evaluated before the
 next is parsed, so a `bind!` directive registers its token in `space.tokens` in time for the parser to
 substitute that token in every following atom (parse-time substitution)."""
-function load_metta!(space::Space, text::AbstractString; as_library::Bool=false)::Vector{Atom}
+function load_metta!(space::Space, text::AbstractString; as_library::Bool=false, auto_table::Bool=false)::Vector{Atom}
     get!(space.tokens, "&self", Grounded(space))    # `&self` (parse-time) resolves to the current space
     results = Atom[]; toks = tokenize(text); i = Ref(1)
     while i[] <= length(toks)
@@ -2024,6 +2112,7 @@ function load_metta!(space::Space, text::AbstractString; as_library::Bool=false)
     # mark everything loaded so far as imported-library content, hidden from `get-atoms` (hyperon: a
     # dependency lives in a child space and is not returned by get-atoms of the importing space).
     as_library && (space.lib_count = length(space.atoms))
+    auto_table && !as_library && auto_table!(space)   # opt-in: auto-table the just-loaded user program's pure fns
     results
 end
 

@@ -133,3 +133,49 @@ end
         Interpreter.untable_all!()
     end
 end
+
+# Auto-tabler — the purity-analysis FRONT-END to table! (MeTTa-TS `automatic tabling of pure functions`):
+# analyze &self, table PURE user function heads, skip impure ones (add-atom / state / match / …). Result-
+# preserving (tabling only memoises a pure answer set); the impure fn still runs, just untabled.
+@testset "auto-tabler: purity classification + result-identity + impure-skip + surface" begin
+    Interpreter.untable_all!()
+    try
+        fib = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))"
+        # classification: pure fib/dbl tabled; impure remember (add-atom) skipped
+        s = Space(); load_core_stdlib!(s); load_metta!(s, fib)
+        load_metta!(s, raw"(= (dbl $x) (* $x 2))")
+        load_metta!(s, raw"(= (remember $x) (add-atom &self (seen $x)))")
+        r = Interpreter.auto_table!(s)
+        @test :fib in r.tabled && :dbl in r.tabled
+        @test :remember in r.skipped && !(:remember in r.tabled)
+        @test Interpreter.is_tabled(parse_program("(fib 5)")[1][2])       # fib really registered
+        @test !Interpreter.is_tabled(parse_program("(remember z)")[1][2]) # impure not registered
+
+        # result-identity: auto-tabled fib(10) == untabled fib(10) (order matters — tabling is global)
+        Interpreter.untable_all!()
+        u = Space(); load_core_stdlib!(u); load_metta!(u, fib)
+        got_untabled = string(load_metta!(u, "!(fib 10)"))                # _TABLED_HEADS empty here
+        t = Space(); load_core_stdlib!(t); load_metta!(t, fib); Interpreter.auto_table!(t)
+        got_tabled = string(load_metta!(t, "!(fib 10)"))                  # fib now tabled
+        @test got_untabled == got_tabled && occursin("55", got_tabled)    # fib(10)=55, identical
+
+        # impure fn still WORKS (mutates) despite being skipped
+        Interpreter.untable_all!()
+        s3 = Space(); load_core_stdlib!(s3)
+        load_metta!(s3, raw"(= (remember $x) (add-atom &self (seen $x)))")
+        Interpreter.auto_table!(s3)
+        load_metta!(s3, "!(remember foo)")
+        @test occursin("foo", string(load_metta!(s3, raw"!(match &self (seen $x) $x)")))
+
+        # surface: the !(auto-table!) directive tables + reports; the auto_table=true load flag tables
+        Interpreter.untable_all!()
+        s4 = Space(); load_core_stdlib!(s4); load_metta!(s4, fib)
+        @test occursin("fib", string(load_metta!(s4, "!(auto-table!)")))
+        @test Interpreter.is_tabled(parse_program("(fib 1)")[1][2])
+        Interpreter.untable_all!()
+        s5 = Space(); load_core_stdlib!(s5); load_metta!(s5, fib; auto_table = true)
+        @test Interpreter.is_tabled(parse_program("(fib 1)")[1][2])
+    finally
+        Interpreter.untable_all!()
+    end
+end
