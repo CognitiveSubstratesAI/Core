@@ -178,6 +178,29 @@ using Test
         end
     end
 
+    # ── piece 3d: unified (=)→MM2 reduction dispatch + interpreter-oracle bisim harness ──
+    @testset "mm2_lower_eq dispatch + mm2_eq_bisim interpreter-oracle harness" begin
+        # dispatch: arithmetic body → arith pure-sink lowering; else → reduction form
+        @test mm2_lower_eq(raw"(= (f $x) (+ $x 3))") == mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))")
+        @test mm2_lower_eq(raw"(= (f $x) (/ $x 2))") == mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))")  # float
+        @test mm2_lower_eq(raw"(= (id $x) $x)") == mm2_lower_equals(raw"(= (id $x) $x)"; mode = :reduction)
+
+        # the harness: MORK reduct set-equals the interpreter normal form across the reduction/arith subset
+        for (rule, query) in [
+                (raw"(= (id $x) $x)",            "(id a)"),        # symbolic identity
+                (raw"(= (dup $x) (pair $x $x))", "(dup a)"),       # shared-var template duplication
+                (raw"(= (f $x) (+ $x 3))",       "(f 5)"),         # int arith
+                (raw"(= (f $x) (/ $x 2))",       "(f 10)"),        # float arith
+                (raw"(= (k $x) (/ (+ $x 1) 2))", "(k 9)")]         # nested, float-propagated
+            r = mm2_eq_bisim(rule, query)
+            @test r.ok                                             # MORK reduct ≡ interpreter normal form
+            @test r.reduct == r.interp
+        end
+        # the harness CATCHES divergence: a rule that does not apply to the query → ok=false (redex kept, no reduct)
+        d = mm2_eq_bisim(raw"(= (id $x) $x)", "(other 5)")
+        @test !d.ok && isempty(d.reduct) && d.interp == ["(other 5)"]
+    end
+
     # ── piece 4: grounded-op guard + auto-routing of (= …) rules in mm2_partition ──
     @testset "grounded-op guard classifies relational vs grounded rules" begin
         @test mm2_is_relational(raw"(= (ancestor $x $y) (parent $x $y))")        # plain relations

@@ -342,6 +342,44 @@ function mm2_lower_equals_arith(rule::AbstractString)::String
     "(exec 0 (I $lhs) (O (pure \$__r \$__r ($cast $tree)) (- $lhs)))"
 end
 
+# ── unified interpreter-faithful (=)→MM2 lowering + the interpreter-oracle bisim harness ──────────────
+"""
+    mm2_lower_eq(rule) -> String
+
+Unified INTERPRETER-FAITHFUL `(= LHS RHS)`→MM2 lowering (reduce-to-normal-form): an arithmetic body →
+the pure-sink arith lowering (`mm2_lower_equals_arith`), else the reduction form
+(`mm2_lower_equals(; mode=:reduction)` — delete the redex, add the reduct). This is the single entry
+whose result bisimulates the interpreter's `!(f …)` EVALUATION. (Relational forward-closure is a
+DIFFERENT, Datalog semantics — keep-LHS — via `mm2_lower_equals(; mode=:relational)`; it bisimulates
+`!(match &self LHS RHS)`, not reduction, so it is deliberately NOT the default here.)
+"""
+mm2_lower_eq(rule::AbstractString)::String =
+    mm2_is_arith_body(rule) ? mm2_lower_equals_arith(rule) : mm2_lower_equals(rule; mode = :reduction)
+
+"""
+    mm2_eq_bisim(rule, query) -> (; reduct, interp, ok)
+
+Interpreter-oracle bisimulation harness for `(=)`→MM2 REDUCTION — the design-doc follow-up that makes
+every reduction/arith lowering systematically checkable (Phase-1 could only inspect by hand, because raw
+`(=)` is inert in MORK so `verify_bisim` can't be the `(=)`-oracle). Lowers `rule` via `mm2_lower_eq`,
+fires it against a fresh MORK space holding `query`, and compares the REDUCT (final atoms minus the
+consumed redex) to the interpreter's `!query` normal form. Returns the two sorted atom-sets and `ok`
+(their set-equality) — `ok=false` flags a real divergence (e.g. a rule that fails to fire, or a semantic
+mismatch). Use it to gate any new `(=)` lowering against the 234-conformance interpreter.
+"""
+function mm2_eq_bisim(rule::AbstractString, query::AbstractString)
+    cs = new_core_space()
+    space_add_all_sexpr!(cs.inner, query)
+    space_add_all_sexpr!(cs.inner, mm2_lower_eq(rule))
+    space_metta_calculus!(cs.inner, 1_000_000)
+    dump = [strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
+    reduct = sort(String[String(x) for x in dump if x != strip(query)])   # atoms added, redex removed
+    isp = Interpreter.Space(); Interpreter.load_core_stdlib!(isp); Interpreter.load_metta!(isp, rule)
+    res = Interpreter.load_metta!(isp, "!" * query)
+    interp = sort(String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
+    (; reduct = reduct, interp = interp, ok = Set(reduct) == Set(interp))
+end
+
 # ── typed Atom → MM2 sexpr (the LIVE-eval handoff: load_metta!/eval hold typed Atoms, not strings) ──
 const _MM2_ATOM = Interpreter.StandardMeTTa
 function _typed_atom_to_expr!(io::IO, a)
