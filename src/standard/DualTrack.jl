@@ -38,7 +38,7 @@ so never use it as a general accelerator). Returns the chosen `lane` and its nat
 """
 function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                 mode::Symbol = :auto, theory = nothing, saturate::Bool = false, steps::Int = 1_000_000,
-                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS)
+                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :relational)
     heads = _dual_heads(program)
     lane = mode != :auto ? mode :
            (theory !== nothing || "theory" in heads) ? :theory :
@@ -60,7 +60,7 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
         # Rule-of-64 decomposition / saturation). It MATERIALIZES intermediate joins (~5–30× vs the
         # streaming ZAM calculus), so it's a win only for multi-source conjunctions, not general queries.
         supercompile ? sc_execute!(cs, program; opts = sc_opts) :
-                       mm2_route!(cs, program; steps = steps)
+                       mm2_route!(cs, program; steps = steps, eq_mode = eq_mode)
     else
         error("mc_run: unknown mode $mode (expected :auto/:direct/:rewrite/:pipeline/:theory)")
     end

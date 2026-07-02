@@ -100,16 +100,17 @@ function mm2_is_relational(rule::AbstractString)::Bool
 end
 
 """
-    mm2_partition(program) -> (; bangs, exec, data)
+    mm2_partition(program; eq_mode=:relational) -> (; bangs, exec, data)
 
 Partition a MeTTa/MM2 program's top-level forms into the three lanes: `bangs` (`!`-directives →
-interpreter), `exec` (`(exec …)` rules + auto-lowered RELATIONAL `(= …)` rules → MORK engine), `data`
+interpreter), `exec` (`(exec …)` rules + auto-lowered grounded-free `(= …)` rules → MORK engine), `data`
 (facts + non-relational `(= …)` rules + everything else → the space). A `(= LHS RHS)` rule that passes
-`mm2_is_relational` is auto-lowered via `mm2_lower_equals` into the exec lane; one that does not (grounded
-ops / special forms) stays in `data` exactly as before — so existing behavior is preserved by default and
-the new routing fires only on provably-relational rules.
+`mm2_is_relational` is auto-lowered via `mm2_lower_equals` into the exec lane using `eq_mode`
+(`:relational` forward-closure [default] or `:reduction` delete-redex function-eval); one that does not
+(grounded ops / special forms) stays in `data` exactly as before — so existing behavior is preserved by
+default and the new routing fires only on provably grounded-free rules.
 """
-function mm2_partition(program::AbstractString)
+function mm2_partition(program::AbstractString; eq_mode::Symbol = :relational)
     forms = mm2_split_forms(program)
     bangs = String[f for (b, f) in forms if b]
     exec  = String[]
@@ -119,7 +120,7 @@ function mm2_partition(program::AbstractString)
         if mm2_is_exec_rule(f)
             push!(exec, f)
         elseif mm2_head(f) == "=" && mm2_is_relational(f)
-            push!(exec, mm2_lower_equals(f))                     # relational (= …) → auto-lower to exec
+            push!(exec, mm2_lower_equals(f; mode = eq_mode))     # grounded-free (= …) → auto-lower (relational|reduction)
         else
             push!(data, f)                                       # facts / non-relational (= …) → data (unchanged)
         end
@@ -135,8 +136,8 @@ exec-calculus. Per CeTTa's pure-program-lane discipline, top-level `!` forms are
 to the interpreter lane) unless `allow_bang=true` (then they are partitioned out but not run here).
 """
 function mm2_run!(cs::CoreSpace, program::AbstractString;
-                  steps::Int = 1_000_000, allow_bang::Bool = false)
-    p = mm2_partition(program)
+                  steps::Int = 1_000_000, allow_bang::Bool = false, eq_mode::Symbol = :relational)
+    p = mm2_partition(program; eq_mode = eq_mode)
     if !allow_bang && !isempty(p.bangs)
         error("mm2_run!: MM2-program lane does not accept top-level ! forms " *
               "($(length(p.bangs)) found) — route those to the interpreter lane")
@@ -183,21 +184,37 @@ function mm2_lower_match(query::AbstractString)::String
 end
 
 """
-    mm2_lower_equals(rule) -> String
+    mm2_lower_equals(rule; mode=:relational) -> String
 
-Lower a `(= LHS RHS)` rewrite rule to an exec rule: `(= LHS RHS)` → `(exec 0 (, LHS) (, RHS))` — the
-SAME shape as `mm2_lower_match` (LHS becomes the exec SOURCE pattern, RHS the SINK template). This is
-the `(=)→MM2` bridge for the RELATIONAL subset: forward-closure semantics (for every data atom matching
-LHS, derive RHS), sound when LHS/RHS carry NO grounded ops — those (arithmetic, control) need the
-interpreter lane and are rejected. A conjunctive LHS `(, …)` passes through as the source list.
+Lower a `(= LHS RHS)` rewrite rule to an exec rule. TWO modes — the caller declares which `(=)`
+semantics apply (both are `(= LHS RHS)` with no grounded ops, so they are syntactically
+indistinguishable; the mode is intent, not inference):
+
+- `:relational` (default) → `(exec 0 (, LHS) (, RHS))`. FORWARD-CLOSURE (Datalog): for every data atom
+  matching LHS, DERIVE RHS and **KEEP LHS**. Correct for relations, e.g. `(= (parent \$x \$y) (ancestor \$x \$y))`.
+  A conjunctive LHS `(, …)` passes through as the source list. (Same shape as `mm2_lower_match`.)
+
+- `:reduction` → `(exec 0 (I LHS) (O (+ RHS) (- LHS)))`. FUNCTION-EVAL: for every data atom matching LHS,
+  ADD RHS and **REMOVE the matched LHS redex** — reduce to normal form. Correct for function defs, e.g.
+  `(= (id \$x) \$x)` reduces `(id a)` → `a` (deleting `(id a)`). Mirrors MorkSupercompiler `_lower_eq_snode`
+  and the interpreter's reduce-to-normal-form semantics; LHS is a single redex term.
+
+Both are the `(=)→MM2` bridge for the RELATIONAL/grounded-free subset; grounded ops (arithmetic, control)
+still need the interpreter or KBSaturation lane and are gated out upstream by `mm2_is_relational`.
 """
-function mm2_lower_equals(rule::AbstractString)::String
+function mm2_lower_equals(rule::AbstractString; mode::Symbol = :relational)::String
     a = mm2_expr_args(rule)
     (length(a) == 3 && a[1] == "=") ||
         error("mm2_lower_equals: expected (= LHS RHS), got: $rule")
     lhs, rhs = a[2], a[3]
-    src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
-    "(exec 0 $src (, $rhs))"
+    if mode === :reduction
+        return "(exec 0 (I $lhs) (O (+ $rhs) (- $lhs)))"      # delete redex + add reduct (function-eval)
+    elseif mode === :relational
+        src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
+        return "(exec 0 $src (, $rhs))"                        # keep LHS + add RHS (forward-closure)
+    else
+        error("mm2_lower_equals: unknown mode $mode (expected :relational or :reduction)")
+    end
 end
 
 # ── typed Atom → MM2 sexpr (the LIVE-eval handoff: load_metta!/eval hold typed Atoms, not strings) ──
@@ -472,8 +489,8 @@ Full dual-lane dispatch: data+exec → the MM2 lane (run); each `!(match …)` d
 bridge (`mm2_match!`, results in `matched`); other `!` forms → `deferred` (the interpreter lane — needs
 the interpreter/MORK space link, not yet wired).
 """
-function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000)
-    p = mm2_partition(program)
+function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000, eq_mode::Symbol = :relational)
+    p = mm2_partition(program; eq_mode = eq_mode)
     isempty(p.data) || space_add_all_sexpr!(cs.inner, join(p.data, "\n"))
     isempty(p.exec) || space_add_all_sexpr!(cs.inner, join(p.exec, "\n"))
     isempty(p.exec) || space_metta_calculus!(cs.inner, steps)

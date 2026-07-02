@@ -555,6 +555,13 @@ module StandardMeTTaTests
     include("standard/test_conformance.jl")
 end
 
+# MM2 dual-lane router (src/standard/MM2Router.jl) — module-wrapped so its top-level `MC`/`facts`/`prog`
+# consts stay isolated from Main (same discipline as StandardMeTTaTests). Covers `(=)→exec` lowering in
+# BOTH modes (relational forward-closure + reduction delete-redex), partition/route, and bisimulation.
+module MM2RouterTests
+    include("test_mm2_router.jl")
+end
+
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
 include("test_actpc_chem.jl")

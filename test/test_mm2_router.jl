@@ -91,6 +91,23 @@ using Test
         @test R_mork == R_interp                              # MORK (=) lane ≡ interpreter oracle
     end
 
+    @testset "(= …) reduction-mode lowering (delete-redex) vs relational (keep-redex)" begin
+        # reduction: (= L R) → (exec 0 (I L) (O (+ R) (- L))) — consume the redex, add the reduct
+        @test mm2_lower_equals(raw"(= (myf $x) (wrap $x))"; mode = :reduction) ==
+              raw"(exec 0 (I (myf $x)) (O (+ (wrap $x)) (- (myf $x))))"
+        @test mm2_lower_equals(raw"(= (myf $x) (wrap $x))"; mode = :relational) ==
+              raw"(exec 0 (, (myf $x)) (, (wrap $x)))"          # default unchanged (forward-closure)
+        @test_throws ErrorException mm2_lower_equals(raw"(= (myf $x) (wrap $x))"; mode = :bogus)
+
+        # end-to-end: reduction DELETES the redex, relational KEEPS it (both add the reduct)
+        prog = "(= (myf \$x) (wrap \$x))\n(myf a)\n"
+        dmp(cs) = [strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
+        csR = MC.new_core_space(); MC.mc_run(csR, "", prog; eq_mode = :reduction); dR = dmp(csR)
+        @test ("(wrap a)" in dR) && !("(myf a)" in dR)         # reduct added, redex CONSUMED
+        csK = MC.new_core_space(); MC.mc_run(csK, "", prog; eq_mode = :relational); dK = dmp(csK)
+        @test ("(wrap a)" in dK) && ("(myf a)" in dK)          # reduct added, redex KEPT (default)
+    end
+
     # ── piece 4: grounded-op guard + auto-routing of (= …) rules in mm2_partition ──
     @testset "grounded-op guard classifies relational vs grounded rules" begin
         @test mm2_is_relational(raw"(= (ancestor $x $y) (parent $x $y))")        # plain relations
