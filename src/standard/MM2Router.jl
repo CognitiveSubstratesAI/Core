@@ -105,17 +105,18 @@ function mm2_is_relational(rule::AbstractString)::Bool
 end
 
 """
-    mm2_partition(program; eq_mode=:relational) -> (; bangs, exec, data)
+    mm2_partition(program; eq_mode=:reduction) -> (; bangs, exec, data)
 
 Partition a MeTTa/MM2 program's top-level forms into the three lanes: `bangs` (`!`-directives →
 interpreter), `exec` (`(exec …)` rules + auto-lowered grounded-free `(= …)` rules → MORK engine), `data`
 (facts + non-relational `(= …)` rules + everything else → the space). A `(= LHS RHS)` rule that passes
 `mm2_is_relational` is auto-lowered via `mm2_lower_equals` into the exec lane using `eq_mode`
-(`:relational` forward-closure [default] or `:reduction` delete-redex function-eval); one that does not
-(grounded ops / special forms) stays in `data` exactly as before — so existing behavior is preserved by
-default and the new routing fires only on provably grounded-free rules.
+(**`:reduction` [default]** = delete-redex function-eval, INTERPRETER-FAITHFUL — MeTTa `(=)` is a reduction
+relation; or `:relational` = opt-in forward-REWRITING closure, keep-LHS, which bisimulates `!(match …)`
+not reduction). A rule that does NOT pass the gate (grounded ops / special forms) stays in `data` and runs
+on the interpreter. The routing fires only on provably grounded-free rules.
 """
-function mm2_partition(program::AbstractString; eq_mode::Symbol = :relational)
+function mm2_partition(program::AbstractString; eq_mode::Symbol = :reduction)
     forms = mm2_split_forms(program)
     bangs = String[f for (b, f) in forms if b]
     exec  = String[]
@@ -141,7 +142,7 @@ exec-calculus. Per CeTTa's pure-program-lane discipline, top-level `!` forms are
 to the interpreter lane) unless `allow_bang=true` (then they are partitioned out but not run here).
 """
 function mm2_run!(cs::CoreSpace, program::AbstractString;
-                  steps::Int = 1_000_000, allow_bang::Bool = false, eq_mode::Symbol = :relational)
+                  steps::Int = 1_000_000, allow_bang::Bool = false, eq_mode::Symbol = :reduction)
     p = mm2_partition(program; eq_mode = eq_mode)
     if !allow_bang && !isempty(p.bangs)
         error("mm2_run!: MM2-program lane does not accept top-level ! forms " *
@@ -652,7 +653,7 @@ Full dual-lane dispatch: data+exec → the MM2 lane (run); each `!(match …)` d
 bridge (`mm2_match!`, results in `matched`); other `!` forms → `deferred` (the interpreter lane — needs
 the interpreter/MORK space link, not yet wired).
 """
-function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000, eq_mode::Symbol = :relational)
+function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000, eq_mode::Symbol = :reduction)
     p = mm2_partition(program; eq_mode = eq_mode)
     isempty(p.data) || space_add_all_sexpr!(cs.inner, join(p.data, "\n"))
     isempty(p.exec) || space_add_all_sexpr!(cs.inner, join(p.exec, "\n"))

@@ -38,7 +38,7 @@ so never use it as a general accelerator). Returns the chosen `lane` and its nat
 """
 function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                 mode::Symbol = :auto, theory = nothing, saturate::Bool = false, steps::Int = 1_000_000,
-                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :relational)
+                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :reduction)
     heads = _dual_heads(program)
     lane = mode != :auto ? mode :
            (theory !== nothing || "theory" in heads) ? :theory :

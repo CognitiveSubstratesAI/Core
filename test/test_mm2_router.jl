@@ -228,6 +228,24 @@ using Test
         @test R == ["(parent a b)", "(parent b c)"]
     end
 
+    @testset "auto-router default = :reduction (interpreter-faithful); :relational is opt-in" begin
+        prog = "(ancestor a b)\n" * raw"(= (ancestor $x $y) (parent $x $y))"
+        derived(cs, head) = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
+                                         if occursin(head, l)]))
+        # DEFAULT (:reduction): parent derived AND the ancestor redex CONSUMED — matches the interpreter's
+        # !(ancestor a b) → (parent a b) reduce-to-normal-form (MeTTa `(=)` is a reduction relation, not Datalog).
+        csR = MC.new_core_space(); mm2_run!(csR, prog)
+        @test derived(csR, "parent") == ["(parent a b)"]
+        @test derived(csR, "ancestor") == String[]                 # redex deleted (reduce-to-normal-form)
+        # OPT-IN (:relational): forward-REWRITING closure — parent added, ancestor KEPT (bisimulates !(match …)).
+        csK = MC.new_core_space(); mm2_run!(csK, prog; eq_mode = :relational)
+        @test derived(csK, "parent") == ["(parent a b)"]
+        @test derived(csK, "ancestor") == ["(ancestor a b)"]       # source retained (keep-LHS)
+        # mc_run's direct lane inherits the same reduction default
+        csM = MC.new_core_space(); MC.mc_run(csM, "", prog)
+        @test derived(csM, "ancestor") == String[] && derived(csM, "parent") == ["(parent a b)"]
+    end
+
     # ── piece 5: typed Atom → MM2 sexpr (the live-eval handoff converter) ──
     @testset "typed_atom_to_expr round-trips to mm2_lower_equals" begin
         SM = MeTTaCore.Interpreter
