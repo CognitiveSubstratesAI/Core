@@ -126,27 +126,28 @@ using Test
               raw"""(exec 0 (I (name $x)) (O (+ "John Doe") (- (name $x))))"""
     end
 
-    # ── piece 3c: (= (f …) ARITH) integer-arith body → pure-sink reduction (Phase-2, R7 lane-1) ──
-    @testset "integer-arith (=) body → MM2 pure-sink; bisimulates the interpreter" begin
+    # ── piece 3c: (= (f …) ARITH) arith body → pure-sink reduction (Phase-2, R7 lane-1; int + float) ──
+    @testset "arith (=) body → MM2 pure-sink (i64 + f64); bisimulates the interpreter" begin
         SM = MeTTaCore.Interpreter
-        # classifier: + - * % (incl. nested / arity-2) are arith; /, reduction, relational, control aren't
+        # classifier: + - * % (int) and / + float literals (float) are arith; reduction/relational/control aren't
         @test mm2_is_arith_body(raw"(= (f $x) (+ $x 3))")
         @test mm2_is_arith_body(raw"(= (f $x) (+ (* $x 2) 1))")          # nested tree
         @test mm2_is_arith_body(raw"(= (g $x $y) (- (* $x $y) 1))")      # arity-2 + nested
-        @test !mm2_is_arith_body(raw"(= (f $x) (/ $x 2))")              # / = REAL division (float) → excluded
+        @test mm2_is_arith_body(raw"(= (f $x) (/ $x 2))")               # / ⇒ FLOAT mode (accepted)
+        @test mm2_is_arith_body(raw"(= (g $x) (+ $x 1.5))")            # float literal ⇒ FLOAT mode
+        @test !mm2_is_arith_body(raw"(= (f $x) (+ (/ $x 2) (% $y 3)))")  # / and % mixed → un-typeable → rejected
         @test !mm2_is_arith_body(raw"(= (id $x) $x)")                   # bare-var RHS = reduction, not arith
         @test !mm2_is_arith_body(raw"(= (ancestor $x $y) (parent $x $y))")  # relational, not arith
         @test !mm2_is_arith_body(raw"(= (f $x) (+ $x a))")             # non-numeric leaf `a`
         @test !mm2_is_arith_body(raw"(foo $x)")                         # not a (= …) form
-        @test_throws ErrorException mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))")
 
-        # lowering: leaves→i64_from_string, root→i64_to_string, redex deleted via (- LHS)
-        @test mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))") ==
+        # lowering: leaves→<t>_from_string, root→<t>_to_string, redex deleted via (- LHS)
+        @test mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))") ==       # INT: i64 ops
               raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 3)))) (- (f $x))))"
-        @test mm2_lower_equals_arith(raw"(= (f $x) (+ (* $x 2) 1))") ==
-              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (product_i64 (i64_from_string $x) (i64_from_string 2)) (i64_from_string 1)))) (- (f $x))))"
+        @test mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))") ==       # FLOAT: f64 ops (div forces it)
+              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (f64_to_string (div_f64 (f64_from_string $x) (f64_from_string 2)))) (- (f $x))))"
 
-        # bisimulation: the MORK pure-sink reduct == the interpreter's normal form, redex DELETED
+        # bisimulation: the MORK pure-sink reduct == the interpreter's normal form (Int64 / Float64), redex DELETED
         bisim(rule, call) = begin
             cs = MC.new_core_space()
             MC.space_add_all_sexpr!(cs.inner, call)
@@ -159,12 +160,17 @@ using Test
             (dump, interp)
         end
         for (rule, call, val) in [
-                (raw"(= (f $x) (+ $x 3))",       "(f 5)",   "8"),
+                (raw"(= (f $x) (+ $x 3))",       "(f 5)",   "8"),      # INT
                 (raw"(= (f $x) (- $x 3))",       "(f 5)",   "2"),
                 (raw"(= (f $x) (* $x 3))",       "(f 5)",   "15"),
                 (raw"(= (f $x) (% $x 3))",       "(f 10)",  "1"),
                 (raw"(= (f $x) (+ (* $x 2) 1))", "(f 5)",   "11"),
-                (raw"(= (g $x $y) (+ $x $y))",   "(g 3 4)", "7")]
+                (raw"(= (g $x $y) (+ $x $y))",   "(g 3 4)", "7"),
+                (raw"(= (f $x) (/ $x 2))",       "(f 10)",  "5.0"),    # FLOAT (/ forces f64)
+                (raw"(= (f $x) (/ $x 3))",       "(f 10)",  "3.3333333333333335"),  # full-precision rendering
+                (raw"(= (g $x) (+ $x 1.5))",     "(g 2)",   "3.5"),    # float literal; int arg promoted
+                (raw"(= (h $x) (* $x 2.0))",     "(h 3)",   "6.0"),
+                (raw"(= (k $x) (/ (+ $x 1) 2))", "(k 9)",   "5.0")]    # nested, float-propagated
             dump, interp = bisim(rule, call)
             @test interp == [val]                          # interpreter-oracle sanity
             @test val in dump                              # MM2 pure-sink computed the same value

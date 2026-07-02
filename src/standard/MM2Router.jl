@@ -229,45 +229,71 @@ end
 # ── Phase-2 arith body-forms: (= (f …) ARITH) → pure-sink reduction exec ──────────────
 # The MM2 SINK layer computes VALUES on already-matched tuples (design §5 R7 / §6): the `pure`
 # sink evaluates a call-tree of MORK pure ops (Pure.jl) over the bound vars and writes the result.
-# We map MeTTa integer arithmetic → the i64 pure ops (bisimulates the interpreter's Int64 result —
-# f64 ops would render `10.0` ≠ the oracle's `10`). Numbers cross the byte-expr boundary as symbols,
-# so LEAVES wrap in `i64_from_string` and the ROOT wraps in `i64_to_string` (mirrors the MORK
-# `sink_pure_advanced` / ip_sudoku idiom). Nested trees WORK in our Julia PureSink (ahead of the
-# Rust `finalize` todo!() caveat). Guards/comparison/`if`/recursion are NOT here — those route to the
-# KBSaturation Datalog lane or the interpreter (R7). OPT-IN, bisim-gated; NOT auto-wired into mm2_partition.
-# `/` is DELIBERATELY absent: MeTTa `/` is REAL division (`(/ 10 2)` → `5.0` Float64), which does not
-# bisimulate `div_i64` (→ `5`) and would propagate float-ness through the whole tree — a separate f64
-# lowering path (type-inferred), deferred. `+ - * %` are integer-exact against the interpreter oracle.
-const _MM2_ARITH_OPS = Dict{String,String}(
-    "+" => "sum_i64", "-" => "sub_i64", "*" => "product_i64", "%" => "mod_i64")
+# Numbers cross the byte-expr boundary as symbols, so LEAVES wrap in `<t>_from_string` and the ROOT
+# in `<t>_to_string` (mirrors the MORK `sink_pure_advanced` / ip_sudoku idiom). Nested trees WORK in
+# our Julia PureSink (ahead of the Rust `finalize` todo!() caveat). Guards/comparison/`if`/recursion
+# are NOT here — those route to the KBSaturation Datalog lane or the interpreter (R7). OPT-IN, bisim-gated.
+#
+# TWO numeric modes, chosen to bisimulate the interpreter's own promotion (verified by oracle):
+#  - INT (i64): `+ - * %`, all-integer tree → the interpreter's `(* 5 2)` = Int64 `10`.
+#  - FLOAT (f64): a `/` op OR any float literal forces f64 — MeTTa `/` is REAL division (`(/ 10 2)` →
+#    `5.0`), and float-ness propagates up the tree. Both sides are Julia Float64 + `string`, so rendering
+#    is bit-identical (incl. `3.3333333333333335`). `%` is int-only, `/` is float-only; a tree mixing the
+#    two (`(+ (/ …) (% …))`) is REJECTED (can't type it consistently) — the documented boundary.
+const _MM2_ARITH_ALLOPS = ("+", "-", "*", "/", "%")
+const _MM2_ARITH_I64 = Dict{String,String}("+" => "sum_i64", "-" => "sub_i64", "*" => "product_i64", "%" => "mod_i64")
+const _MM2_ARITH_F64 = Dict{String,String}("+" => "sum_f64", "-" => "sub_f64", "*" => "product_f64", "/" => "div_f64")
 const _MM2_ARITH_NARY = Set{String}(["+", "*"])          # n-ary folds; the rest are strictly binary
 
 _mm2_is_var(t::AbstractString) = startswith(lstrip(t), "\$")
-function _mm2_is_intlit(t::AbstractString)
-    s = strip(t); isempty(s) && return false
-    d = startswith(s, "-") ? s[nextind(s, firstindex(s)):end] : s
-    !isempty(d) && all(isdigit, d)
+_mm2_is_intlit(t::AbstractString) = tryparse(Int, strip(t)) !== nothing
+_mm2_is_floatlit(t::AbstractString) = tryparse(Float64, strip(t)) !== nothing && !_mm2_is_intlit(t)
+
+"""
+    _mm2_arith_scan(node) -> (ok::Bool, isfloat::Bool)
+
+Recognize whether `node` is a pure arithmetic tree over `+ - * / %` (`ok`) and whether it must be
+evaluated in FLOAT mode (`isfloat` — true if any `/` op or float literal appears). Vars are type-agnostic.
+"""
+function _mm2_arith_scan(node::AbstractString)::Tuple{Bool,Bool}
+    t = strip(node)
+    (_mm2_is_var(t) || _mm2_is_intlit(t)) && return (true, false)
+    _mm2_is_floatlit(t) && return (true, true)            # float literal forces f64
+    startswith(t, "(") || return (false, false)           # bare non-numeric symbol → not arithmetic
+    a = try mm2_expr_args(t) catch; return (false, false) end
+    (a[1] in _MM2_ARITH_ALLOPS) || return (false, false)
+    nargs = length(a) - 1
+    (a[1] in _MM2_ARITH_NARY ? nargs >= 2 : nargs == 2) || return (false, false)
+    isfloat = a[1] == "/"                                  # division forces f64
+    for c in @view a[2:end]
+        ok, cf = _mm2_arith_scan(c)
+        ok || return (false, false)
+        isfloat |= cf
+    end
+    (true, isfloat)
 end
 
 """
-    _mm2_lower_arith_node(node) -> String | nothing
+    _mm2_lower_arith_node(node, isfloat) -> String | nothing
 
-Recursively lower one MeTTa arithmetic node to a MORK `pure` i64 call-tree. Leaves (vars / integer
-literals) → `(i64_from_string LEAF)`; internal `(OP a b …)` → `(<pureop> …)`. Returns `nothing` if the
-node is not a pure integer-arithmetic tree (unknown head, wrong arity, or a non-numeric leaf).
+Recursively lower one MeTTa arithmetic node to a MORK `pure` call-tree in the chosen numeric mode.
+Leaves → `(<t>_from_string LEAF)`; internal `(OP a b …)` → `(<pureop> …)`. Returns `nothing` if the
+node is not lowerable in that mode (unknown/out-of-mode head — e.g. `%` under float or `/` under int).
 """
-function _mm2_lower_arith_node(node::AbstractString)::Union{String,Nothing}
+function _mm2_lower_arith_node(node::AbstractString, isfloat::Bool)::Union{String,Nothing}
     t = strip(node)
-    (_mm2_is_var(t) || _mm2_is_intlit(t)) && return "(i64_from_string $t)"
-    startswith(t, "(") || return nothing                  # bare non-numeric symbol → not arithmetic
+    if _mm2_is_var(t) || _mm2_is_intlit(t) || _mm2_is_floatlit(t)
+        return isfloat ? "(f64_from_string $t)" : "(i64_from_string $t)"
+    end
+    startswith(t, "(") || return nothing
     a = try mm2_expr_args(t) catch; return nothing end
-    op = get(_MM2_ARITH_OPS, a[1], nothing)
+    op = get(isfloat ? _MM2_ARITH_F64 : _MM2_ARITH_I64, a[1], nothing)
     op === nothing && return nothing
     nargs = length(a) - 1
     (a[1] in _MM2_ARITH_NARY ? nargs >= 2 : nargs == 2) || return nothing
     children = String[]
     for c in @view a[2:end]
-        lc = _mm2_lower_arith_node(c)
+        lc = _mm2_lower_arith_node(c, isfloat)
         lc === nothing && return nothing
         push!(children, lc)
     end
@@ -277,9 +303,10 @@ end
 """
     mm2_is_arith_body(rule) -> Bool
 
-True iff `rule` is `(= (f …) ARITH)` whose RHS is a pure integer-arithmetic EXPRESSION (head is one of
-`+ - * / %`, every leaf a var or integer literal). A bare-var/literal RHS is the REDUCTION case (use
-`mm2_lower_equals(; mode=:reduction)`), not arith. Grounded control (`if`/comparison/recursion) → false.
+True iff `rule` is `(= (f …) ARITH)` whose RHS is a pure arithmetic EXPRESSION lowerable to a pure-sink
+call-tree (head `+ - * / %`, every leaf a var or numeric literal, `/`↔`%` not mixed). A bare-var/literal
+RHS is the REDUCTION case (`mm2_lower_equals(; mode=:reduction)`), not arith; grounded control (`if`/
+comparison/recursion) → false.
 """
 function mm2_is_arith_body(rule::AbstractString)::Bool
     a = try mm2_expr_args(rule) catch; return false end
@@ -287,28 +314,32 @@ function mm2_is_arith_body(rule::AbstractString)::Bool
     rhs = strip(a[3])
     startswith(rhs, "(") || return false                  # bare RHS = reduction, not arith
     ra = try mm2_expr_args(rhs) catch; return false end
-    haskey(_MM2_ARITH_OPS, ra[1]) || return false
-    _mm2_lower_arith_node(rhs) !== nothing && startswith(strip(a[2]), "(")
+    (ra[1] in _MM2_ARITH_ALLOPS) || return false
+    ok, isfloat = _mm2_arith_scan(rhs)
+    ok && _mm2_lower_arith_node(rhs, isfloat) !== nothing && startswith(strip(a[2]), "(")
 end
 
 """
     mm2_lower_equals_arith(rule) -> String
 
-Lower `(= (f …) ARITH)` (an integer-arithmetic function def) to a pure-sink REDUCTION exec:
-`(exec 0 (I LHS) (O (pure \$__r \$__r (i64_to_string TREE)) (- LHS)))` — match the redex, compute the
-value write-side via the `pure` sink, add the value, and delete the redex. Bisimulates the interpreter's
-reduce-to-normal-form for integer arithmetic. Errors if the RHS is not a pure arithmetic tree
-(check `mm2_is_arith_body` first).
+Lower `(= (f …) ARITH)` (an arithmetic function def) to a pure-sink REDUCTION exec:
+`(exec 0 (I LHS) (O (pure \$__r \$__r (<t>_to_string TREE)) (- LHS)))` — match the redex, compute the
+value write-side via the `pure` sink, add the value, and delete the redex. INT (`i64`) or FLOAT (`f64`)
+mode is inferred to bisimulate the interpreter's promotion. Errors if the RHS is not a pure arithmetic
+tree (check `mm2_is_arith_body` first).
 """
 function mm2_lower_equals_arith(rule::AbstractString)::String
     a = mm2_expr_args(rule)
     (length(a) == 3 && a[1] == "=") ||
         error("mm2_lower_equals_arith: expected (= LHS RHS), got: $rule")
     lhs, rhs = a[2], a[3]
-    tree = _mm2_lower_arith_node(rhs)
+    ok, isfloat = _mm2_arith_scan(rhs)
+    ok || error("mm2_lower_equals_arith: RHS is not a pure arithmetic tree: $rhs")
+    tree = _mm2_lower_arith_node(rhs, isfloat)
     tree === nothing &&
-        error("mm2_lower_equals_arith: RHS is not a pure integer-arithmetic tree: $rhs")
-    "(exec 0 (I $lhs) (O (pure \$__r \$__r (i64_to_string $tree)) (- $lhs)))"
+        error("mm2_lower_equals_arith: RHS is not a pure arithmetic tree ($(isfloat ? "f64" : "i64") mode): $rhs")
+    cast = isfloat ? "f64_to_string" : "i64_to_string"
+    "(exec 0 (I $lhs) (O (pure \$__r \$__r ($cast $tree)) (- $lhs)))"
 end
 
 # ── typed Atom → MM2 sexpr (the LIVE-eval handoff: load_metta!/eval hold typed Atoms, not strings) ──
