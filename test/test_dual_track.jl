@@ -161,10 +161,12 @@ using MORK   # space dump for the supercompiler-opt-in test
         d = runr("(p 2 4)\n(p 2 5)", raw"(==> (, (p $x $y) (+ $x $x $y)) (dbl $x))")
         @test der(d, "dbl") == ["(dbl 2)"]
 
-        # (d) UNBOUNDED generating rule still TERMINATES via the round-cap whistle (would hang without it)
+        # (d) UNBOUNDED generating rule still TERMINATES via the round-cap whistle (would hang without it).
+        # The cap is KBSaturation.saturate!(; max_rounds=1000): one new (c k) per round ⇒ (c 0)..(c 1000)
+        # = 1001 atoms. Bound by the cap (not a hang) rather than an exact count so a cap change won't nag.
         u = runr("(c 0)", raw"(==> (, (c $n) (+ $n 1 $m)) (c $m))")
         nc = length(der(u, "c"))
-        @test 2 <= nc <= 200            # produced a capped prefix and returned — did not hang
+        @test 2 <= nc <= 1001           # produced a capped prefix and returned — did not hang
     end
 
     @testset "saturation stratified negation-as-failure (NAF)" begin

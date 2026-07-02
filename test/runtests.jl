@@ -562,6 +562,16 @@ module MM2RouterTests
     include("test_mm2_router.jl")
 end
 
+# MM2 dual-lane SURFACE — the remaining front-ends over the same MM2/MORK substrate, each module-wrapped so
+# their top-level `MC`/`facts` consts stay isolated (same discipline as MM2RouterTests). Together with the
+# router suite these cover every caller of the mm2_expr_args / mm2_split_forms parsers: the unified `mc_run`
+# dispatch, the GSLT theory algebra, the MeTTa-IL rewrite lane, and the frequent-pattern miner. (Previously
+# orphaned — present in test/ but never included here, so drift went unnoticed; wired in 2026-07-02.)
+module DualTrackTests;    include("test_dual_track.jl");    end
+module GSLTTests;         include("test_gslt.jl");          end
+module MeTTaILTests;      include("test_mettail.jl");       end
+module PatternMinerTests; include("test_pattern_miner.jl"); end
+
 # ActPC-Chem algorithm tests — lib/ActPC-Chem/ (migrated from PRIMUS_Core,
 # dialect-adapted). AC1–AC7,AC10 core; cross-algo bridges + AG/AC8 are separate.
 include("test_actpc_chem.jl")
