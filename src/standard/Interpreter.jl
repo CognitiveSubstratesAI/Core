@@ -492,6 +492,28 @@ function rename_fresh(a::Atom, m::VarRenameMap=VarRenameMap(), d::Int=0)
     end
 end
 
+# ── FAST-MATCH (opt-in, default OFF): skip rename_fresh when it is PROVABLY a no-op on the result ─────────
+# `rename_fresh` exists to (a) separate the query's var namespace from the rule's, and (b) give a rule's
+# UNBOUND RHS vars fresh identity so nondeterministic results don't conflate. Both are moot when the query
+# GOAL is ground AND the rule is "closed" (vars(RHS) ⊆ vars(LHS)): matching a ground goal binds every rule
+# var to a ground term ⇒ the RHS substitutes to a GROUND result — nothing unbound to freshen, no query var
+# to separate. So skipping the rename yields a BYTE-IDENTICAL result (verified by the differential harness),
+# while avoiding the per-call spine rebuild that the profile flagged as the top hot spot on var-heavy rules
+# (fib's body). Gated behind `_FAST_MATCH[]` (default false) so the 234-conformance path is byte-identical
+# by construction until the harness proves the fast path equivalent.
+const _FAST_MATCH = Ref(false)
+fast_match!(on::Bool = true) = (_FAST_MATCH[] = on)
+const _CLOSED_RULE_MEMO = Dict{UInt,Bool}()      # objectid(stored) → vars(RHS)⊆vars(LHS); rules are stable objects
+_is_eq_rule(a::Atom) = a isa Expression && length(a.children) == 3 &&
+                       a.children[1] isa Sym && (a.children[1]::Sym).name == Symbol("=")
+function _is_closed_rule(stored::Atom)::Bool
+    _is_eq_rule(stored) || return false
+    get!(_CLOSED_RULE_MEMO, objectid(stored)) do
+        issubset(collect_vars(stored.children[3]), collect_vars(stored.children[2]))
+    end
+end
+@inline _ground_atom(x::Atom)::Bool = x isa Var ? false : (x isa Expression ? !x.has_vars : true)
+
 # ── per-bucket discrimination trie: a conservative candidate filter ─────────────────────────────────────
 # Prunes a WIDE same-discriminant bucket by shared LHS structure. Tokens are the pre-order flattening of an
 # atom; a Var (either side) is a WILDCARD. The stored trie routes each atom by its ground tokens (a stored Var
@@ -604,10 +626,14 @@ end
 # bucket, or pruned via the per-bucket discrimination trie for a wide one (identical results either way).
 function query(space::Space, pattern::Atom)::Vector{Bindings}
     out = Bindings[]
+    # FAST-MATCH (opt-in): for a `(= ground-goal $X)` query, a CLOSED rule's rename is a no-op on the (ground)
+    # result ⇒ skip it. `gg` = the goal is ground (so no query var to separate). Default OFF ⇒ always renames.
+    gg = _FAST_MATCH[] && _is_eq_rule(pattern) && _ground_atom(pattern.children[2])
+    @inline prep(stored::Atom) = (gg && _is_closed_rule(stored)) ? stored : rename_fresh(stored)
     k = _index_key(pattern)
     if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
         for stored in space.atoms
-            append!(out, match_atoms(pattern, rename_fresh(stored)))
+            append!(out, match_atoms(pattern, prep(stored)))
         end
         return out
     end
@@ -615,16 +641,16 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     if b !== nothing
         if length(b) > _TRIE_MIN_BUCKET                # wide bucket → prune the scan by shared LHS structure
             for stored in _bucket_candidates(space, k, b, pattern)
-                append!(out, match_atoms(pattern, rename_fresh(stored)))
+                append!(out, match_atoms(pattern, prep(stored)))
             end
         else                                           # small bucket → zero-overhead linear scan (unchanged)
             for stored in b
-                append!(out, match_atoms(pattern, rename_fresh(stored)))
+                append!(out, match_atoms(pattern, prep(stored)))
             end
         end
     end
     for stored in space.wildcard                       # + var-headed atoms, which can match any discriminant
-        append!(out, match_atoms(pattern, rename_fresh(stored)))
+        append!(out, match_atoms(pattern, prep(stored)))
     end
     out
 end

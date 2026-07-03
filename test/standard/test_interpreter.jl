@@ -179,3 +179,31 @@ end
         Interpreter.untable_all!()
     end
 end
+
+# FAST-MATCH — opt-in skip of rename_fresh when it is provably a no-op on the result (goal ground + rule
+# closed ⇒ ground result). Correctness gate: results must be BYTE-IDENTICAL to the rename path (alpha-
+# normalized for the fresh-var counter, which advances globally between the two runs). Default OFF.
+@testset "fast-match: byte-identical to rename path (flag-gated) + closed-rule predicate" begin
+    Interpreter.fast_match!(false)
+    try
+        norm(rs) = sort([replace(string(x), r"#\d+" => "#N") for x in rs])   # alpha-normalize gensym ids
+        run1(prog, q) = (s = Space(); load_core_stdlib!(s); load_metta!(s, prog); load_metta!(s, q))
+        for (prog, q) in [
+                (raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))", "!(fib 10)"),  # closed+ground → fast fires
+                (raw"(= (g $x) (h $x $y))", "!(g a)"),                     # unbound RHS var → NOT closed → falls back
+                (raw"(= (pick) (superpose (a b c)))", "!(pick)"),          # nondeterministic closed
+                (raw"(= (poly $x) (+ (* $x $x) (* 2 $x)))", "!(poly 5)"),  # nested pure
+                (raw"(= (idx (pair $a $b)) $a)", raw"!(idx (pair x y))")]  # var in goal → NOT ground → falls back
+            Interpreter.fast_match!(false); off = norm(run1(prog, q))
+            Interpreter.fast_match!(true);  on  = norm(run1(prog, q))
+            Interpreter.fast_match!(false)
+            @test off == on
+        end
+        # closed-rule predicate: vars(RHS) ⊆ vars(LHS)
+        @test Interpreter._is_closed_rule(parse_program(raw"(= (fib $n) (fib (- $n 1)))")[1][2])
+        @test !Interpreter._is_closed_rule(parse_program(raw"(= (g $x) (h $x $y))")[1][2])   # $y RHS-only
+        @test !Interpreter._is_closed_rule(parse_program("(foo bar)")[1][2])                 # not a (= …) rule
+    finally
+        Interpreter.fast_match!(false)
+    end
+end
