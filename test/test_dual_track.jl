@@ -240,4 +240,33 @@ using MORK   # space dump for the supercompiler-opt-in test
         r6 = mc_run(cs6, "", fibp; fallback_table = false)
         @test r6.results.evaluated == [("(fib 2)", ["1"])]
     end
+
+    @testset "supercompile lane: bang hygiene (non-match bangs answered, not corrupted)" begin
+        # The SC frontend's byte parsers treat `!` as a symbol byte: a raw `!(fib 2)` used to be
+        # CORRUPTED into two inert trie atoms (`!` + `(fib 2)`) and never evaluated. Now bangs are
+        # stripped bang-aware before sc_execute!: non-match bangs → interpreter fallback; match-bangs
+        # pass BARE (still lowered via §10.3, minus the stray-`!` trie pollution).
+        dumpl(cs) = [strip(l) for l in split(MORK.space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
+
+        # (a) non-match bang under supercompile: ANSWERED via fallback, and the trie is CLEAN
+        fibp = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n!(fib 2)"
+        cs = MC.new_core_space()
+        r = mc_run(cs, "", fibp; supercompile = true)
+        @test r.results.evaluated == [("(fib 2)", ["1"])]
+        @test r.results.deferred == ["(fib 2)"]
+        d = dumpl(cs)
+        @test !("!" in d)             # corruption regression: no stray `!` symbol atom
+        @test !("(fib 2)" in d)       # …and the query was NOT materialized as inert data
+        @test r.results.sc isa MC.SCResult   # SC result still fully accessible
+
+        # (b) match-bang under supercompile: still derives (§10.3), now WITHOUT the stray `!` atom
+        facts = "(edge 0 1)\n(edge 1 2)\n(edge 2 3)"
+        prog = raw"!(match &self (, (edge $x $y) (edge $y $z)) (path $x $z))"
+        cs2 = MC.new_core_space()
+        r2 = mc_run(cs2, facts, prog; supercompile = true)
+        d2 = dumpl(cs2)
+        @test "(path 0 2)" in d2 && "(path 1 3)" in d2   # §10.3 lowering still fires
+        @test !("!" in d2)                                # stray-`!` pollution gone
+        @test isempty(r2.results.deferred)                # match-bang was served by the SC lane
+    end
 end
