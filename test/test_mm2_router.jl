@@ -217,15 +217,32 @@ using Test
         p = mm2_partition("(ancestor a b)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
         @test length(p.exec) == 1 && occursin("exec 0", p.exec[1])
         @test p.data == ["(ancestor a b)"]
-        # grounded rule untouched — stays in the data lane exactly as before
+        # arith-body rule: NOW auto-lowered to a pure-sink reduction exec (Phase-2 wired, arith_exec
+        # default ON — interpreter-bisim-proven lowering); the kill switch restores the old routing
         pg = mm2_partition(raw"(= (fib $n) (+ $n 1))")
-        @test isempty(pg.exec) && pg.data == [raw"(= (fib $n) (+ $n 1))"]
+        @test length(pg.exec) == 1 && occursin("(pure ", pg.exec[1]) && isempty(pg.data)
+        pg0 = mm2_partition(raw"(= (fib $n) (+ $n 1))"; arith_exec = false)
+        @test isempty(pg0.exec) && pg0.data == [raw"(= (fib $n) (+ $n 1))"]
+        # non-arith grounded rule (if/<) still stays in the data lane (interpreter territory)
+        pif = mm2_partition(raw"(= (f $n) (if (< $n 2) $n 0))")
+        @test isempty(pif.exec) && length(pif.data) == 1
         # end-to-end: a program with a relational (= …) rule now fires through the MORK lane unaided
         cs = MC.new_core_space()
         mm2_run!(cs, "(ancestor a b)\n(ancestor b c)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
         R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
                          if occursin("parent", l)]))
         @test R == ["(parent a b)", "(parent b c)"]
+    end
+
+    @testset "arith (=) auto-wire: pure-sink exec E2E + interpreter bisim (piece 4b)" begin
+        # E2E on the MM2 lane: the wired arith rule REDUCES a matching data atom at the substrate
+        cs = MC.new_core_space()
+        mm2_run!(cs, "(inc 41)\n" * raw"(= (inc $x) (+ $x 1))")
+        d = [strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
+        @test "42" in d && !("(inc 41)" in d)      # value written, redex consumed (reduction semantics)
+        # bisim locks: the wired lowering ≡ the interpreter oracle (int + float promotion)
+        @test mm2_eq_bisim(raw"(= (inc $x) (+ $x 1))", "(inc 41)").ok
+        @test mm2_eq_bisim(raw"(= (half $x) (/ $x 4))", "(half 10)").ok   # f64 path: 2.5
     end
 
     @testset "auto-router default = :reduction (interpreter-faithful); :relational is opt-in" begin

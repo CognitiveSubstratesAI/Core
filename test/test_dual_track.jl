@@ -313,5 +313,11 @@ using MORK   # space dump for the supercompiler-opt-in test
         csF = MC.new_core_space(); rF = mc_run(csF, "", fibp)
         @test isempty(rF.results.zam_served)
         @test rF.results.evaluated == [("(fib 2)", ["1"])]
+
+        # (g) arith rule (Phase-2 auto-wired into partition): served ON the ZAM via the pure-sink exec
+        ar = raw"(= (inc $x) (+ $x 1))" * "\n!(inc 41)"
+        csG = MC.new_core_space(); rG = mc_run(csG, "", ar)
+        @test ("(inc 41)", ["42"]) in rG.results.evaluated
+        @test rG.results.zam_served == ["(inc 41)"]
     end
 end

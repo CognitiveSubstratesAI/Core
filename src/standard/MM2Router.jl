@@ -113,10 +113,13 @@ interpreter), `exec` (`(exec …)` rules + auto-lowered grounded-free `(= …)` 
 `mm2_is_relational` is auto-lowered via `mm2_lower_equals` into the exec lane using `eq_mode`
 (**`:reduction` [default]** = delete-redex function-eval, INTERPRETER-FAITHFUL — MeTTa `(=)` is a reduction
 relation; or `:relational` = opt-in forward-REWRITING closure, keep-LHS, which bisimulates `!(match …)`
-not reduction). A rule that does NOT pass the gate (grounded ops / special forms) stays in `data` and runs
-on the interpreter. The routing fires only on provably grounded-free rules.
+not reduction). A `(= LHS ARITH)` rule whose body is a pure arithmetic tree is auto-lowered via
+`mm2_lower_equals_arith` into a PURE-SINK reduction exec (`arith_exec=true` [default] — the Phase-2
+lowering, interpreter-bisim-proven incl. nested + float promotion; `arith_exec=false` = kill switch,
+restores the pre-wire routing). A rule that passes NEITHER gate (other grounded ops / special forms)
+stays in `data` and runs on the interpreter.
 """
-function mm2_partition(program::AbstractString; eq_mode::Symbol = :reduction)
+function mm2_partition(program::AbstractString; eq_mode::Symbol = :reduction, arith_exec::Bool = true)
     forms = mm2_split_forms(program)
     bangs = String[f for (b, f) in forms if b]
     exec  = String[]
@@ -127,8 +130,10 @@ function mm2_partition(program::AbstractString; eq_mode::Symbol = :reduction)
             push!(exec, f)
         elseif mm2_head(f) == "=" && mm2_is_relational(f)
             push!(exec, mm2_lower_equals(f; mode = eq_mode))     # grounded-free (= …) → auto-lower (relational|reduction)
+        elseif arith_exec && mm2_head(f) == "=" && mm2_is_arith_body(f)
+            push!(exec, mm2_lower_equals_arith(f))               # arith body → pure-sink reduction (Phase-2)
         else
-            push!(data, f)                                       # facts / non-relational (= …) → data (unchanged)
+            push!(data, f)                                       # facts / non-lowerable (= …) → data (unchanged)
         end
     end
     (bangs = bangs, exec = exec, data = data)
@@ -142,8 +147,9 @@ exec-calculus. Per CeTTa's pure-program-lane discipline, top-level `!` forms are
 to the interpreter lane) unless `allow_bang=true` (then they are partitioned out but not run here).
 """
 function mm2_run!(cs::CoreSpace, program::AbstractString;
-                  steps::Int = 1_000_000, allow_bang::Bool = false, eq_mode::Symbol = :reduction)
-    p = mm2_partition(program; eq_mode = eq_mode)
+                  steps::Int = 1_000_000, allow_bang::Bool = false, eq_mode::Symbol = :reduction,
+                  arith_exec::Bool = true)
+    p = mm2_partition(program; eq_mode = eq_mode, arith_exec = arith_exec)
     if !allow_bang && !isempty(p.bangs)
         error("mm2_run!: MM2-program lane does not accept top-level ! forms " *
               "($(length(p.bangs)) found) — route those to the interpreter lane")
@@ -757,11 +763,13 @@ end
     mm2_route!(cs::CoreSpace, program; steps=1_000_000) -> (; n_exec, n_data, matched, deferred)
 
 Full dual-lane dispatch: data+exec → the MM2 lane (run); each `!(match …)` directive → the match→exec
-bridge (`mm2_match!`, results in `matched`); other `!` forms → `deferred` (the interpreter lane — needs
-the interpreter/MORK space link, not yet wired).
+bridge (`mm2_match!`, results in `matched`); other `!` forms → `deferred` (the interpreter lane —
+served by `mc_run`'s fastlane-first ZAM readback + interpreter fallback; at THIS level `deferred` is
+the honest routing record only).
 """
-function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000, eq_mode::Symbol = :reduction)
-    p = mm2_partition(program; eq_mode = eq_mode)
+function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000, eq_mode::Symbol = :reduction,
+                    arith_exec::Bool = true)
+    p = mm2_partition(program; eq_mode = eq_mode, arith_exec = arith_exec)
     isempty(p.data) || space_add_all_sexpr!(cs.inner, join(p.data, "\n"))
     isempty(p.exec) || space_add_all_sexpr!(cs.inner, join(p.exec, "\n"))
     isempty(p.exec) || space_metta_calculus!(cs.inner, steps)
