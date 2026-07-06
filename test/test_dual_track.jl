@@ -190,4 +190,37 @@ using MORK   # space dump for the supercompiler-opt-in test
         mc_run(cs2, "(seed s)", ns; supercompile = true, sc_opts = MC.SCOptions(saturate = true))
         @test "(seed s)" in [strip(l) for l in split(MORK.space_dump_all_sexpr(cs2.inner), '\n')]  # terminated
     end
+
+    @testset "direct lane: interpreter fallback for deferred bangs (fastlane-first)" begin
+        # Design §5 R7 lane 3 / MeTTa-spec §4: a `!`-atom the ZAM lane cannot serve must still be
+        # EVALUATED — on the interpreter, over the same program. Before this, `deferred` was a dead-end.
+        fibp = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n!(fib 2)"
+
+        # (a) fib: rule stays off the MM2 kernel (per design), bang answered by the fallback
+        cs = MC.new_core_space()
+        r = mc_run(cs, "", fibp)
+        @test r.lane == :direct
+        @test r.results.n_exec == 0 && r.results.deferred == ["(fib 2)"]   # routing record unchanged
+        @test r.results.evaluated == [("(fib 2)", ["1"])]                  # …but the bang is SERVED
+        @test MORK.space_val_count(cs.inner) == 1   # scratch-Space eval — MORK space holds only the rule
+
+        # (b) servable class: exec fires on the ZAM (substrate reduction) AND the bang gets an answer
+        wr = raw"(= (wrapit $x) (wrapped $x))" * "\n!(wrapit a)"
+        cs2b = MC.new_core_space()
+        r2 = mc_run(cs2b, "(wrapit a)", wr)
+        @test r2.results.n_exec == 1                                        # rule lowered to a ZAM exec
+        dump2 = [strip(l) for l in split(MORK.space_dump_all_sexpr(cs2b.inner), '\n')]
+        @test "(wrapped a)" in dump2                                        # …which fired at the substrate
+        @test ("(wrapit a)", ["(wrapped a)"]) in r2.results.evaluated       # and the bang is answered
+
+        # (c) grounded arith bang (the canonical deferred example from the router tests)
+        cs3 = MC.new_core_space()
+        r3 = mc_run(cs3, "", "!(+ 1 2)")
+        @test r3.results.evaluated == [("(+ 1 2)", ["3"])]
+
+        # (d) fallback=:none reproduces pure-routing behavior (empty evaluated, deferred intact)
+        cs4 = MC.new_core_space()
+        r4 = mc_run(cs4, "", fibp; fallback = :none)
+        @test r4.results.deferred == ["(fib 2)"] && isempty(r4.results.evaluated)
+    end
 end

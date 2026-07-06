@@ -35,10 +35,20 @@ lane to fixpoint (recursive closure). On the **direct** lane, `supercompile=true
 through the MorkSupercompiler (`sc_execute!`, options `sc_opts`) instead of the lean streaming calculus —
 for multi-source-conjunction / Rule-of-64 / closure workloads (it MATERIALIZES, ~5–30× slower otherwise,
 so never use it as a general accelerator). Returns the chosen `lane` and its native `results`.
+
+Direct-lane **interpreter fallback** (`fallback=:interpreter`, default ON): bangs the ZAM/MM2 lane cannot
+serve (`route.deferred` — anything but `!(match …)`) are evaluated on the Interpreter over the SAME
+program (fresh typed Space + stdlib + `data` + the program's non-bang forms; each deferred bang
+re-prefixed with `!` — the `mm2_eq_bisim` recipe, MM2Router.jl). This is the merge design's §5 R7 lane 3
+("grounded/control stay in the interpreter lane") and MeTTa-spec §4 conformance (a `!`-atom must be
+evaluated, not silently deferred). Results land in `results.evaluated::Vector{Tuple{String,Vector{String}}}`;
+`results.deferred` stays as the honest routing record of what the fastlane could not serve. The fallback
+evaluates in a scratch Space — it never writes the MORK space. `fallback=:none` = pure-routing behavior.
 """
 function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                 mode::Symbol = :auto, theory = nothing, saturate::Bool = false, steps::Int = 1_000_000,
-                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :reduction)
+                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :reduction,
+                fallback::Symbol = :interpreter)
     heads = _dual_heads(program)
     lane = mode != :auto ? mode :
            (theory !== nothing || "theory" in heads) ? :theory :
@@ -59,8 +69,27 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
         # opt-in (OFF by default): route the Direct lane through the MorkSupercompiler (join-planning /
         # Rule-of-64 decomposition / saturation). It MATERIALIZES intermediate joins (~5–30× vs the
         # streaming ZAM calculus), so it's a win only for multi-source conjunctions, not general queries.
-        supercompile ? sc_execute!(cs, program; opts = sc_opts) :
-                       mm2_route!(cs, program; steps = steps, eq_mode = eq_mode)
+        if supercompile
+            sc_execute!(cs, program; opts = sc_opts)
+        else
+            route = mm2_route!(cs, program; steps = steps, eq_mode = eq_mode)
+            # Interpreter FALLBACK (design §5 R7 lane 3; MeTTa-spec §4): serve the deferred bangs on the
+            # interpreter over the same program. Scratch Space only — the MORK space is not written.
+            evaluated = Tuple{String, Vector{String}}[]
+            if fallback === :interpreter && !isempty(route.deferred)
+                isp = Interpreter.Space(); Interpreter.load_core_stdlib!(isp)
+                isempty(strip(data)) || Interpreter.load_metta!(isp, data)
+                for (bang, f) in mm2_split_forms(program)          # original (=)-rules/facts, verbatim
+                    bang || Interpreter.load_metta!(isp, f)        # (never reconstruct from the trie —
+                end                                                #  PathMap normalizes variables)
+                for b in route.deferred
+                    res = Interpreter.load_metta!(isp, "!" * b)    # re-prefix exactly as mm2_eq_bisim does
+                    push!(evaluated,
+                        (b, String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
+                end
+            end
+            (; route..., evaluated)
+        end
     else
         error("mc_run: unknown mode $mode (expected :auto/:direct/:rewrite/:pipeline/:theory)")
     end
