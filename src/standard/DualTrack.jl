@@ -90,7 +90,13 @@ Under `supercompile=true` the same discipline applies (SC-lane BANG HYGIENE): th
 parsers treat `!` as a symbol byte and would corrupt a raw bang into inert trie atoms, so bangs are
 stripped bang-aware before `sc_execute!` — match-bangs pass BARE (still lowered via §10.3), non-match
 bangs go to the interpreter fallback. The supercompile branch returns `(; sc::SCResult, evaluated,
-deferred)` (previously the bare `SCResult`; no test/src consumer read its fields through `mc_run`).
+deferred, zam_served)` (previously the bare `SCResult`; no test/src consumer read its fields through
+`mc_run`).
+
+FASTLANE-FIRST (streaming branch): before the interpreter fallback, deferred bangs in the
+reduction-servable SAFE SUBSET (all rules lowered · one clause per head · acyclic · no nested
+rule-head calls — see `mm2_zam_answers`) are answered ON the ZAM itself via scratch-space
+demand-injection + redex-delete readback; `results.zam_served` lists the bangs the ZAM answered.
 """
 function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                 mode::Symbol = :auto, theory = nothing, saturate::Bool = false, steps::Int = 1_000_000,
@@ -136,14 +142,21 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
             scres = sc_execute!(cs, join(keep, "\n"); opts = sc_opts)
             evaluated = _mc_fallback_eval(data, program, sc_deferred;
                                           fallback = fallback, fallback_table = fallback_table)
-            (; sc = scres, evaluated, deferred = sc_deferred)
+            (; sc = scres, evaluated, deferred = sc_deferred, zam_served = String[])
         else
             route = mm2_route!(cs, program; steps = steps, eq_mode = eq_mode)
-            # Interpreter FALLBACK (design §5 R7 lane 3; MeTTa-spec §4): serve the deferred bangs on
-            # the interpreter over the same program. Scratch Space only — the MORK space is not written.
-            evaluated = _mc_fallback_eval(data, program, route.deferred;
-                                          fallback = fallback, fallback_table = fallback_table)
-            (; route..., evaluated)
+            # FASTLANE-FIRST, literal: deferred bangs in the reduction-servable SAFE SUBSET are
+            # answered ON the ZAM (mm2_zam_answers — scratch space, redex-delete readback); only
+            # the remainder goes to the interpreter FALLBACK (design §5 R7 lane 3; MeTTa-spec §4).
+            # Both evaluate in scratch spaces — the live MORK space is not written by either.
+            zam = fallback === :none ?
+                (; served = Tuple{String, Vector{String}}[],
+                   remaining = String[String(b) for b in route.deferred]) :
+                mm2_zam_answers(program, route.deferred; steps = steps)
+            evaluated = vcat(zam.served,
+                             _mc_fallback_eval(data, program, zam.remaining;
+                                               fallback = fallback, fallback_table = fallback_table))
+            (; route..., evaluated, zam_served = String[b for (b, _) in zam.served])
         end
     else
         error("mc_run: unknown mode $mode (expected :auto/:direct/:rewrite/:pipeline/:theory)")

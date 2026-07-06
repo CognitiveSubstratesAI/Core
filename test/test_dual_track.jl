@@ -269,4 +269,49 @@ using MORK   # space dump for the supercompiler-opt-in test
         @test !("!" in d2)                                # stray-`!` pollution gone
         @test isempty(r2.results.deferred)                # match-bang was served by the SC lane
     end
+
+    @testset "direct lane: ZAM demand-injection readback (fastlane-first, literal)" begin
+        # Bangs whose (=) rules are in the reduction-servable SAFE SUBSET (all lowered · one clause
+        # per head · acyclic · no nested rule-head calls) are answered ON the ZAM via scratch-space
+        # redex injection + readback; everything else falls back to the interpreter. Outside the
+        # subset the ZAM could diverge from the interpreter's normal form, so it is never trusted.
+
+        # (a) single servable rule: answered BY THE ZAM, same answer the interpreter would give
+        wr = raw"(= (wrapit $x) (wrapped $x))" * "\n!(wrapit a)"
+        csA = MC.new_core_space(); rA = mc_run(csA, "", wr)
+        @test ("(wrapit a)", ["(wrapped a)"]) in rA.results.evaluated
+        @test rA.results.zam_served == ["(wrapit a)"]        # ZAM, not the interpreter
+
+        # (b) distinct-rule chain (f a)→(g a)→(h a): completes in ONE calculus call on the ZAM
+        ch = raw"(= (f $x) (g $x))" * "\n" * raw"(= (g $x) (h $x))" * "\n!(f a)"
+        csB = MC.new_core_space(); rB = mc_run(csB, "", ch)
+        @test ("(f a)", ["(h a)"]) in rB.results.evaluated
+        @test rB.results.zam_served == ["(f a)"]
+
+        # (c) innermost-order hazard (nested rule-head in bang args): NOT ZAM-served; the
+        #     interpreter reduces innermost-first and answers correctly
+        nest = raw"(= (f $x) (wrapped $x))" * "\n!(f (f a))"
+        csC = MC.new_core_space(); rC = mc_run(csC, "", nest)
+        @test isempty(rC.results.zam_served)
+        @test ("(f (f a))", ["(wrapped (wrapped a))"]) in rC.results.evaluated
+
+        # (d) multi-clause head: the reduction exec DELETES the redex — a second clause would never
+        #     fire on the ZAM — so multi-clause heads are gated to the interpreter (collect-all: BOTH)
+        mcp = raw"(= (c $x) (r1 $x))" * "\n" * raw"(= (c $x) (r2 $x))" * "\n!(c k)"
+        csD = MC.new_core_space(); rD = mc_run(csD, "", mcp)
+        @test isempty(rD.results.zam_served)
+        ansD = only([a for (b, a) in rD.results.evaluated if b == "(c k)"])
+        @test sort(ansD) == ["(r1 k)", "(r2 k)"]            # interpreter collect-all preserved
+
+        # (e) cyclic rule graph: gate rejects (needs the absent reduction re-fire loop) — test the
+        #     router helper directly (no eval: the interpreter would not terminate on this either)
+        z = MC.mm2_zam_answers(raw"(= (a $x) (b $x))" * "\n" * raw"(= (b $x) (a $x))", ["(a 1)"])
+        @test isempty(z.served) && z.remaining == ["(a 1)"]
+
+        # (f) un-lowered rules (fib): gate fails → interpreter answers, ZAM not involved
+        fibp = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n!(fib 2)"
+        csF = MC.new_core_space(); rF = mc_run(csF, "", fibp)
+        @test isempty(rF.results.zam_served)
+        @test rF.results.evaluated == [("(fib 2)", ["1"])]
+    end
 end

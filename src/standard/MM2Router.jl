@@ -381,6 +381,113 @@ function mm2_eq_bisim(rule::AbstractString, query::AbstractString)
     (; reduct = reduct, interp = interp, ok = Set(reduct) == Set(interp))
 end
 
+# ── ZAM demand-injection readback (routing-gap arc #3) ───────────────────────────────────────
+# Serve a deferred bang ON the ZAM: seed a SCRATCH space with the program's reduction-lowered
+# execs + the bang atom as the redex, run the calculus, read back the normal form — mm2_eq_bisim's
+# recipe generalized to N rules. SAFE SUBSET only (outside it the caller falls back to the
+# interpreter, so an unsound ZAM answer is never returned):
+#   (1) every (=) rule lowered (partition leaves no `=` in data) and no user-authored raw execs
+#       (their MM2-native effects have no interpreter counterpart);
+#   (2) ONE clause per head — the reduction exec DELETES the redex when it fires, so a second
+#       overlapping clause would never fire (the interpreter's collect-all returns BOTH);
+#   (3) rule-head call graph ACYCLIC — an exec is consumed on firing, so self/mutual recursion
+#       needs a reduction-mode re-fire loop (absent); distinct-rule chains DO complete in one
+#       space_metta_calculus! call (the kernel re-selects still-present execs to fixpoint);
+#   (4) no NESTED rule-head call in any rule's LHS/RHS args or in the bang's args — MM2 matches
+#       whole atoms and binds nested redexes LITERALLY, diverging from the interpreter's
+#       innermost-first order (design §6 R1, OPEN).
+# Ground bangs only (a var-bearing redex won't round-trip the trie dump byte-identically).
+
+# true iff any sub-expression BELOW the top level of `form` has a head in `heads`
+function _mm2_head_below_top(form::AbstractString, heads::Set{String})::Bool
+    startswith(strip(form), "(") || return false
+    args = mm2_expr_args(form)
+    for a in args[2:end]
+        startswith(a, "(") || continue
+        mm2_head(a) in heads && return true
+        _mm2_head_below_top(a, heads) && return true
+    end
+    false
+end
+
+"""
+    mm2_zam_answers(program, bangs; steps=1_000_000) -> (; served, remaining)
+
+Try to answer each deferred bang ON the ZAM (scratch space seeded with the program's
+reduction-lowered execs + the bang as redex → `space_metta_calculus!` → read back the normal
+form). `served` = `[(bang, sorted answers)]` for bangs the safe-subset gate admits AND whose
+redex actually fired (redex-delete ⇒ a bang still present in the dump means no rule matched);
+`remaining` = everything the caller must send to the interpreter fallback instead.
+"""
+function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:AbstractString};
+                         steps::Int = 1_000_000)
+    served = Tuple{String, Vector{String}}[]
+    remaining = String[String(b) for b in bangs]
+    isempty(bangs) && return (; served, remaining)
+    forms = mm2_split_forms(program)
+    p = mm2_partition(program; eq_mode = :reduction)
+    # gate (1): every (=) lowered; no user-authored raw execs
+    any(f -> mm2_head(f) == "=", p.data) && return (; served, remaining)
+    any(t -> !t[1] && mm2_head(t[2]) == "exec", forms) && return (; served, remaining)
+    # collect rule heads; gate (2): one clause per head
+    heads = Set{String}(); rules = Tuple{String, String, String}[]     # (head, lhs, rhs)
+    for (bang, f) in forms
+        (bang || mm2_head(f) != "=") && continue
+        a = mm2_expr_args(f)
+        length(a) == 3 || return (; served, remaining)
+        lhs, rhs = a[2], a[3]
+        startswith(strip(lhs), "(") || return (; served, remaining)
+        h = mm2_head(lhs)
+        h in heads && return (; served, remaining)                      # overlapping clauses
+        push!(heads, h); push!(rules, (h, lhs, rhs))
+    end
+    isempty(heads) && return (; served, remaining)
+    # gates (3)+(4): no nested rule-head calls; top-level chain graph must be acyclic
+    adj = Dict{String, Vector{String}}()
+    for (h, lhs, rhs) in rules
+        _mm2_head_below_top(lhs, heads) && return (; served, remaining)
+        _mm2_head_below_top(rhs, heads) && return (; served, remaining)
+        (startswith(strip(rhs), "(") && mm2_head(rhs) in heads) &&
+            push!(get!(adj, h, String[]), mm2_head(rhs))
+    end
+    color = Dict{String, Int}()                    # 0=white, 1=grey, 2=black
+    function _cyc(u::String)::Bool
+        color[u] = 1
+        for v in get(adj, u, String[])
+            c = get(color, v, 0)
+            c == 1 && return true
+            (c == 0 && _cyc(v)) && return true
+        end
+        color[u] = 2
+        false
+    end
+    for h in heads
+        (get(color, h, 0) == 0 && _cyc(h)) && return (; served, remaining)
+    end
+    # per-bang: ground redex with a lowered rule head and no nested rule-head → scratch ZAM eval
+    empty!(remaining)
+    for b0 in bangs
+        b = String(strip(b0))
+        if !startswith(b, "(") || occursin("\$", b) || !(mm2_head(b) in heads) ||
+           _mm2_head_below_top(b, heads)
+            push!(remaining, String(b0)); continue
+        end
+        scr = new_core_space()
+        space_add_all_sexpr!(scr.inner, b)
+        for e in p.exec; space_add_all_sexpr!(scr.inner, e); end
+        space_metta_calculus!(scr.inner, steps)
+        dump = [strip(l) for l in split(space_dump_all_sexpr(scr.inner), '\n') if !isempty(strip(l))]
+        reduct = sort(String[String(x) for x in dump
+                             if !(startswith(x, "(") && mm2_head(x) == "exec")])
+        if b in reduct || isempty(reduct)
+            push!(remaining, String(b0))           # redex persists (no rule fired) / empty → interp
+        else
+            push!(served, (String(b0), reduct))
+        end
+    end
+    (; served, remaining)
+end
+
 # ── typed Atom → MM2 sexpr (the LIVE-eval handoff: load_metta!/eval hold typed Atoms, not strings) ──
 const _MM2_ATOM = Interpreter.StandardMeTTa
 function _typed_atom_to_expr!(io::IO, a)
