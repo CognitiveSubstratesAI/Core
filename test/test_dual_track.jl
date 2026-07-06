@@ -222,5 +222,22 @@ using MORK   # space dump for the supercompiler-opt-in test
         cs4 = MC.new_core_space()
         r4 = mc_run(cs4, "", fibp; fallback = :none)
         @test r4.results.deferred == ["(fib 2)"] && isempty(r4.results.evaluated)
+
+        # (e) fallback tabling (default ON): deep recursion is memoized — fib(17) answers fast — and
+        #     the PROCESS-GLOBAL tabling state is snapshot/restored (no head leak, prior heads survive)
+        MC.Interpreter.table!(:keepme_dt)                       # pre-existing global tabled head
+        fib17 = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n!(fib 17)"
+        cs5 = MC.new_core_space()
+        t0 = time_ns(); r5 = mc_run(cs5, "", fib17); dt5 = (time_ns() - t0) / 1e9
+        @test r5.results.evaluated == [("(fib 17)", ["1597"])]
+        @test dt5 < 10.0                                        # untabled ≈ 18 s; tabled ≈ 0.1 s
+        @test :fib ∉ MC.Interpreter._TABLED_HEADS               # scratch tabling did NOT leak
+        @test :keepme_dt in MC.Interpreter._TABLED_HEADS        # pre-existing head restored
+        delete!(MC.Interpreter._TABLED_HEADS, :keepme_dt); MC.Interpreter._table_reset!()  # tidy up
+
+        # (f) fallback_table=false still answers (untabled path stays available)
+        cs6 = MC.new_core_space()
+        r6 = mc_run(cs6, "", fibp; fallback_table = false)
+        @test r6.results.evaluated == [("(fib 2)", ["1"])]
     end
 end

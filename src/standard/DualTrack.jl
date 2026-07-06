@@ -44,11 +44,14 @@ re-prefixed with `!` — the `mm2_eq_bisim` recipe, MM2Router.jl). This is the m
 evaluated, not silently deferred). Results land in `results.evaluated::Vector{Tuple{String,Vector{String}}}`;
 `results.deferred` stays as the honest routing record of what the fastlane could not serve. The fallback
 evaluates in a scratch Space — it never writes the MORK space. `fallback=:none` = pure-routing behavior.
+`fallback_table=true` (default) runs `auto_table!` on the scratch Space before evaluating — purity-gated,
+result-preserving memoization of the program's PURE heads (fib(17) 294×, commit 410d1a4); the process-global
+tabling state is snapshot/restored so nothing leaks to other Spaces.
 """
 function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                 mode::Symbol = :auto, theory = nothing, saturate::Bool = false, steps::Int = 1_000_000,
                 supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :reduction,
-                fallback::Symbol = :interpreter)
+                fallback::Symbol = :interpreter, fallback_table::Bool = true)
     heads = _dual_heads(program)
     lane = mode != :auto ? mode :
            (theory !== nothing || "theory" in heads) ? :theory :
@@ -82,10 +85,26 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                 for (bang, f) in mm2_split_forms(program)          # original (=)-rules/facts, verbatim
                     bang || Interpreter.load_metta!(isp, f)        # (never reconstruct from the trie —
                 end                                                #  PathMap normalizes variables)
-                for b in route.deferred
-                    res = Interpreter.load_metta!(isp, "!" * b)    # re-prefix exactly as mm2_eq_bisim does
-                    push!(evaluated,
-                        (b, String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
+                # Memoize PURE heads for the bang evals (auto_table! is purity-gated and result-preserving;
+                # fib(17) 294×, commit 410d1a4). Tabling state (_TABLED_HEADS/_ANSWER_TABLE) is
+                # PROCESS-GLOBAL, so snapshot/restore: heads tabled for this scratch eval must not leak —
+                # another Space's same-NAMED head may be impure, and memoizing an impure function is
+                # unsound. The answer cache is cleared on restore (perf-only for other spaces; their
+                # revision stamps evict stale entries anyway).
+                prev_tabled = fallback_table ? copy(Interpreter._TABLED_HEADS) : nothing
+                try
+                    fallback_table && Interpreter.auto_table!(isp)
+                    for b in route.deferred
+                        res = Interpreter.load_metta!(isp, "!" * b)   # re-prefix exactly as mm2_eq_bisim does
+                        push!(evaluated,
+                            (b, String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
+                    end
+                finally
+                    if prev_tabled !== nothing
+                        empty!(Interpreter._TABLED_HEADS)
+                        union!(Interpreter._TABLED_HEADS, prev_tabled)
+                        Interpreter._table_reset!()
+                    end
                 end
             end
             (; route..., evaluated)
