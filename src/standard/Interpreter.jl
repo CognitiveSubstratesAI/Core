@@ -844,7 +844,16 @@ const _COMPONENT = Dict{Atom,Atom}()          # key → SCC root (union-find; me
 const _NEG_BARRIER = Set{Atom}()              # in-progress keys sitting BEHIND an active tnot (negation)
 const _NEG_DEPTH = Ref(0)                      # active tnot-drive depth (>0 ⇒ evaluating under a negation)
 const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key under negation ⇒ unsound 2-valued
-const UNDEFINED = Sym("undefined")            # WFS bottom / third truth value; NOT aliased to Empty or False
+# WFS bottom / third truth value. MUST be OUT-OF-BAND: a plain `Sym("undefined")` COLLIDES with a user datum
+# literally named `undefined` — a tabled predicate whose real answer is that symbol would be mis-read as the
+# truth value at the classification in TNOT (`== UNDEFINED`), a soundness bug (returns undefined when the true
+# WFS value is false). A zero-field `Grounded` singleton is NOT constructible from MeTTa source (source
+# `undefined` parses to a `Sym`, and cross-type `Sym == Grounded` is `false`), so it can never collide. It
+# renders as "undefined" (SWI's term) via `show(::Grounded)=print(value)`; the printed form does NOT round-trip
+# back to this sentinel, by design — it is a truth value, not reconstructable data.
+struct WFSBottom end
+Base.show(io::IO, ::WFSBottom) = print(io, "undefined")
+const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; NOT a program Sym
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false)

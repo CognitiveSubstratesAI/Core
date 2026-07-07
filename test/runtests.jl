@@ -551,6 +551,7 @@ module StandardMeTTaTests
     include("standard/test_atoms.jl")
     include("standard/test_minimal.jl")
     include("standard/test_interpreter.jl")
+    include("standard/test_tnot_wfs.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_conformance.jl")
 end
