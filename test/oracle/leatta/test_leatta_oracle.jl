@@ -39,34 +39,32 @@ const _LI = Interpreter
 
 const LEATTA_CORPUS = joinpath(@__DIR__, "corpus")
 
-# Ops Core does not (yet) implement — a call with one of these heads returns UNREDUCED (correct MeTTa for
-# an undefined head), so its self-checking directive can't pass. NOT bugs; this is the coverage ledger.
-const LEATTA_KNOWN_MISSING = Set([
-    "sort-strings",   # sorting needs an atom-ordering primitive Core lacks (both CeTTa + LeaTTa ground it)
-])
-# (assert*Msg / assertAlphaEqual [2026-07-08], plus assert / help! / pragma! / hyperpose, were implemented
-#  as stdlib.metta rules and are NO LONGER masked here — a regression in any surfaces as CORE_BUG.)
-# Space/parallel-model op still present as a coverage gap: `fork-space` (forked named spaces; LeaTTa passes
-# c2_spaces 25/25). Non-gated ledger item, not a CORE_BUG.
-const LEATTA_ONLY = Set(["fork-space", "fork-spaces", "new-space-forked"])
+# Ops Core does not implement — a call with one of these heads returns UNREDUCED (correct MeTTa for an
+# undefined head), so its self-checking directive can't pass. NOT bugs; a non-gated coverage ledger.
+# EMPTY: Core now implements the ENTIRE proved corpus (270/270). The whole family was burned down as
+# stdlib rules + grounded primitives (assert*Msg/assertAlphaEqual, assert, help!, pragma!, hyperpose,
+# sort-strings/sort-atom, fork-space, new-mork-space). Any head that fails to reduce now surfaces as a
+# CORE_BUG, not a silently-ledgered gap — the strongest gate. Add a head here only for a DELIBERATE defer.
+const LEATTA_KNOWN_MISSING = Set(String[])
+const LEATTA_ONLY = Set(String[])
 
 # Frozen ledger: per file, the (MISSING_OP, LEATTA_SPECIFIC) directive counts Core currently exhibits.
 # EVERY other directive must PASS; any deviation from these exact counts (or any CORE_BUG) fails the gate.
-# Derived from the 2026-07-08 differential; total = 266 pass + 1 missing + 3 leatta = 270 (== EXPECTED.txt)
-# after the assert family + assert / help! / pragma! / hyperpose were implemented as stdlib rules. Only
-# sort-strings (needs an ordering primitive) and fork-space (space model) remain as ledger gaps.
+# total = 270 pass + 0 missing + 0 leatta = 270 (== EXPECTED.txt) — FULL conformance to the machine-proved
+# corpus after the entire assert family + assert/help!/pragma!/hyperpose + sort-strings + fork-space +
+# new-mork-space were implemented (and the atom_types type-checker root fix, c8d6177).
 const LEATTA_LEDGER_BASELINE = Dict{String,Tuple{Int,Int}}(
     "a1_symbols.metta"       => (0, 0), "a2_opencoggy.metta"     => (0, 0),
     "a3_twoside.metta"       => (0, 0), "b0_chaining_prelim.metta" => (0, 0),
     "b1_equal_chain.metta"   => (0, 0), "b2_backchain.metta"     => (0, 0),
     "b3_direct.metta"        => (0, 0), "b4_nondeterm.metta"     => (0, 0),
     "b5_types_prelim.metta"  => (0, 0), "c1_grounded_basic.metta" => (0, 0),
-    "c2_spaces.metta"        => (0, 3), "c3_pln_stv.metta"       => (0, 0),
+    "c2_spaces.metta"        => (0, 0), "c3_pln_stv.metta"       => (0, 0),
     "d1_gadt.metta"          => (0, 0), "d2_higherfunc.metta"    => (0, 0),
     "d3_deptypes.metta"      => (0, 0), "d4_type_prop.metta"     => (0, 0),
     "d5_auto_types.metta"    => (0, 0), "e1_kb_write.metta"      => (0, 0),
     "e2_states.metta"        => (0, 0), "e3_match_states.metta"  => (0, 0),
-    "g1_docs.metta"          => (0, 0), "test_stdlib.metta"      => (1, 0),
+    "g1_docs.metta"          => (0, 0), "test_stdlib.metta"      => (0, 0),
 )
 
 # ---- per-directive runner: mirrors load_metta!'s incremental parse-eval loop (Interpreter.jl:2190),

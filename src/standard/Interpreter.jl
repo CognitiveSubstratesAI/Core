@@ -1882,6 +1882,13 @@ const SUBTRACTION_ATOM = Grounded(Operation("subtraction-atom", function (xs::Ve
     out = Atom[]; for c in xs[1].children; k = _alpha1(c); (get(cnt, k, 0) > 0) ? (cnt[k] -= 1) : push!(out, c); end
     ExecOk(Atom[Expression(out)])
 end))
+# sort-atom / sort-strings (hyperon string.rs:65 / stdlib.metta:1292 ; LeaTTa sortAtomOp): the expression
+# with its children sorted by PRINTED form. Both names share one op (LeaTTa Stdlib.lean:247-248). A genuine
+# primitive — Core has no atom-ordering op to compose from; CeTTa and LeaTTa both ground it.
+const SORT_ATOM = Grounded(Operation("sort-atom", function (xs::Vector{Atom})
+    (length(xs) == 1 && xs[1] isa Expression) || return ExecNoReduce()
+    ExecOk(Atom[Expression(sort(xs[1].children; by=string))])
+end))
 const ASSERT_ALPHA_EQUAL_TO_RESULT = Grounded(SpaceOp("assertAlphaEqualToResult", function (xs, space)
     (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
     Set(_alpha1(x) for x in metta_run(xs[1], space)) == Set(_alpha1(x) for x in xs[2].children) ?
@@ -2016,6 +2023,16 @@ _GROUNDED_OP_TYPES[CHANGE_STATE] = "(-> (StateMonad \$t) \$t (StateMonad \$t))"
 # Grounded{Space}; `&self`/`&kb` resolve (parse-time tokens) to such a handle. add-atom/match take the
 # space as their first arg and operate on it (falling back to the context space when it isn't a handle).
 const NEW_SPACE = Grounded(Operation("new-space", (xs::Vector{Atom}) -> ExecOk(Atom[Grounded(Space())])))
+# fork-space (hyperon; LeaTTa Interpreter.lean:776): a fresh space seeded with a SNAPSHOT of the parent's
+# atoms — an INDEPENDENT copy, so a later add/remove on the fork does NOT propagate to the parent (the
+# c2_spaces isolation contract: parent→(A), child→(A B), grandchild→(A)). `Space(atoms)` rebuilds the index;
+# lib_count is preserved so `get-atoms` on the fork still excludes flattened library atoms.
+const FORK_SPACE = Grounded(Operation("fork-space", function (xs::Vector{Atom})
+    (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa Space) || return ExecNoReduce()
+    parent = xs[1].value
+    fork = Space(copy(parent.atoms)); fork.lib_count = parent.lib_count
+    ExecOk(Atom[Grounded(fork)])
+end))
 const ADD_ATOM = Grounded(SpaceOp("add-atom", function (xs, space)
     length(xs) == 2 || return ExecNoReduce()
     tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
@@ -2114,10 +2131,18 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "superpose" => SUPERPOSE, "collapse" => COLLAPSE,
     "unique-atom" => UNIQUE_ATOM, "union-atom" => UNION_ATOM,
     "intersection-atom" => INTERSECTION_ATOM, "subtraction-atom" => SUBTRACTION_ATOM,
+    "sort-atom" => SORT_ATOM, "sort-strings" => SORT_ATOM,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
-    "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
+    "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "fork-space" => FORK_SPACE,
+    # new-mork-space (c2_spaces): the corpus tests that the fork-space ISOLATION CONTRACT holds for
+    # "MORK-backed" spaces identically to plain ones — an interpreter Space provides exactly that contract
+    # (as does LeaTTa's proved model, whose new-mork-space is likewise a plain space). Core's real MORK
+    # substrate is a separate lane (mc_run/DualTrack); backing this op with it is a future integration, not
+    # required by the contract the op's stdlib semantics specify. So it aliases new-space here.
+    "new-mork-space" => NEW_SPACE,
+    "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
     "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL, "tnot" => TNOT)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
 # atom is stored as-is, not reduced. Atom-typed 2nd arg ⇒ the driver passes it unevaluated. Intrinsic
