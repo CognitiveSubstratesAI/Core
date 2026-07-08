@@ -31,65 +31,60 @@ flowchart LR
     Q -->|"meta / control tail"| IK["Interpreter meta-kernel"]
 ```
 
-## `mc_run` — the concrete dual-track pipeline
+## `mc_run` — the execution stack (verified from code)
 
-The routing above is the *model*; [`mc_run`](@ref) (`DualTrack.jl`) is the *implementation*. It is a single
-entry that **dispatches by program form** into four front-ends — the `:direct` lane (Core forms lowered
-straight to MM2, no intermediate IL) and three [MeTTa-IL-family](mettail.md) lanes (`:rewrite`, `:pipeline`,
-`:theory`). All four emit MM2 `(exec …)` atoms onto the **one** shared MORK / PathMap substrate, and each
-**bisimulates against the interpreter-spec**. The MorkSupercompiler tier-2 pipeline is an *opt-in backend*
-reachable from two lanes (`supercompile=true` on `:direct`, `saturate=true` on `:rewrite`) — not a lane of
-its own.
+The routing above is the *model*; [`mc_run`](@ref) (`DualTrack.jl`) is the *implementation*. Traced through
+the code (not the comments), the load-bearing fact is that there is **one execution engine** —
+`space_metta_calculus!`, the MM2 exec-calculus on the MORK trie. **Every** run reaches it: the Direct lane
+routes there directly (`mm2_route!` → `space_metta_calculus!`, `MM2Router.jl:159`), and the MorkSupercompiler
+`execute!` wraps it with whole-program stages but ends in the *same* call (`SCPipeline.jl:451`). So the MORK
+execution layer is **not optional** — it is the shared engine. What is tunable is only the `execute!`
+preprocessing, read straight from the `SCOptions()` constructor: `stats=true, plan=true, decompose=true,
+saturate=false` by default, engaged via `supercompile=true` (Direct) or `saturate=true` (MeTTa-IL).
 
 ```mermaid
 flowchart TD
-    IN(["MeTTa program"]) --> MC{{"mc_run · dispatch by form<br/>DualTrack.jl:101"}}
-    MC -->|"(theory …)"| TH["theory_run!<br/>GSLT theory algebra"]
-    MC -->|"(def …)"| PI["metta_il_run_pipeline!<br/>def / match / emit"]
-    MC -->|"(~&gt; L R)"| RW["metta_il_run!<br/>MeTTa-IL rewrite"]
-    MC -->|"else · (=) (exec) !match"| DIR["mm2_route! · :direct<br/>partition → run → route<br/>+ ZAM / interpreter fallback"]
+    MC{{"mc_run · MM2 router<br/>dispatch by form · DualTrack.jl"}}
+    MC -->|"direct"| DIR["DIRECT lane<br/>mm2_route!"]
+    MC -->|"~&gt; / def / theory"| MIL["MeTTaIL lanes<br/>rewrite / pipeline / theory"]
+    ITP["Interpreter · StandardMeTTa<br/>234/234 + LeaTTa 270/270<br/>(co-equal front-end + fallback)"]
 
-    TH --> LOW
-    PI --> LOW
-    RW --> LOW
-    DIR --> LOW["MM2 (exec …) atoms<br/>mm2_lower_equals · :reduction / :relational"]
-    LOW --> CALC["space_metta_calculus!<br/>MORK exec-calculus kernel"]
-    CALC --> STORE[("MORK Space over PathMap<br/>content-addressed trie + .act")]
+    DIR --> LOW
+    MIL --> LOW["lower → MM2 (exec …) atoms<br/>mm2_lower_equals · :reduction / :relational"]
 
-    LOW -. planned .-> MM2P["MM2+ optimization stage<br/>guard-hoist / fuse / supercompile<br/>enhancement — not built"]
-    MM2P -.-> CALC
-
-    DIR -. "supercompile=true" .-> SC
-    RW -. "saturate=true" .-> SC
-    subgraph SC ["MorkSupercompiler tier-2 · sc_execute!"]
-      direction LR
-      S1["stats"] --> S2["plan!<br/>join-order · Rule-of-64"] --> S3["approx §6"] --> S4["decompose"] --> S5["magic-sets"] --> S6["KBSaturation<br/>semi-naive"] --> S7["drive! §6"] --> S8["compile → MM2"]
+    subgraph SC["MorkSupercompiler — execution layer (NOT optional)"]
+      direction TB
+      PRE["whole-program stages · execute! (tunable)<br/>stats · plan! · decompose (_sc_tmp) · [saturate] · [drive]"]
+      ENG(["space_metta_calculus! — MM2 exec-calculus<br/>EVERY run goes through this engine"])
+      PRE --> ENG
     end
-    S8 --> CALC
 
-    ORC["interpreter-spec · StandardMeTTa<br/>234/234 + LeaTTa 270/270"]
-    DIR -. bisim .-> ORC
-    RW -. bisim .-> ORC
+    LOW -->|"default"| ENG
+    LOW -. "supercompile= / saturate=" .-> PRE
+    ITP -. "intended — code: scratch space today" .-> ENG
 
-    classDef il fill:#eef0fe,stroke:#4f46e5,color:#312b90;
-    classDef sub fill:#e6f4f2,stroke:#0f766e,color:#0a4f49;
-    classDef sc fill:#f2ecfd,stroke:#7c3aed,color:#4c1d95;
-    classDef oracle fill:#e9f5ec,stroke:#15803d,color:#0d4d24;
-    classDef direct fill:#fdf3e7,stroke:#b45309,color:#7a3708;
-    classDef enh fill:#faf5ff,stroke:#9333ea,stroke-dasharray:4 3,color:#7c3aed;
-    class TH,PI,RW il;
-    class DIR direct;
-    class LOW,CALC,STORE sub;
-    class SC,S1,S2,S3,S4,S5,S6,S7,S8 sc;
-    class ORC oracle;
-    class MM2P enh;
+    ENG --> STORE[("MORK Space / PathMap<br/>content-addressed trie + .act")]
+
+    classDef front fill:#eef0fe,stroke:#4f46e5,color:#312b90;
+    classDef eng fill:#dff0ed,stroke:#0f766e,color:#0a4f49;
+    classDef pre fill:#f2ecfd,stroke:#7c3aed,color:#4c1d95;
+    classDef itp fill:#e9f5ec,stroke:#15803d,color:#0d4d24;
+    classDef store fill:#e6f4f2,stroke:#0f766e,color:#0a4f49;
+    class DIR,MIL,LOW front;
+    class ENG eng;
+    class PRE pre;
+    class ITP itp;
+    class STORE store;
 ```
 
-Dashed edges are opt-in or planned. The **MorkSupercompiler tier-2** chain (`sc_execute!`) is
-`stats → plan! → [approx §6] → decompose → [magic-sets] → KBSaturation (semi-naive) → [drive! §6] →
-compile → MM2` — the bracketed stages are `SCOptions` opt-ins. **MM2+** (guard-hoist / fuse / supercompile
-over the lowered exec atoms) is a designed-but-unbuilt optimization stage. The `:reduction` lowering mode
-is `mc_run`'s default (function-eval / redex-delete); `:relational` (forward-closure) is explicit opt-in.
+The fast lane (`mc_run` + MM2 router) dispatches by form into the Direct lane or the MeTTa-IL lanes; each
+lowers to MM2 `(exec …)` atoms that run on the one engine. The `execute!` stages (`plan!` / `decompose` →
+`_sc_tmp` join-staging / `saturate`) are whole-program preprocessing *around* that engine, cleaned up
+afterward (`_cleanup_sc_tmp!`, `SCPipeline.jl:457`). The Interpreter is a co-equal front-end and the
+fallback; routing its output through the engine is the **intended** design — in the current code
+(`_mc_fallback_eval`, `DualTrack.jl:32`) it evaluates on a scratch `Interpreter.Space` and does **not** yet
+pass through `space_metta_calculus!` (the dashed edge). The earlier "~5–30× slower / materializes" figure was
+a stale comment, not a measured property of this path — omitted here pending a benchmark.
 
 ## Three orthogonal layers — substrate vs engines vs cognitive processes
 
