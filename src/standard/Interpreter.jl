@@ -1030,6 +1030,40 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     unique(out)
 end
 
+# ── WFS Stage B (Prolog-parity precision on dynamically-stratified programs) ──────────────────────────
+# Does the SCC contain an internal NEGATIVE edge — a member's `(=)` body that calls `tnot`? Over-approximate
+# (a `tnot` on a NON-member goal also flags; harmless — the WFS completion generalizes the plain fixpoint and
+# agrees with it whenever there is no genuine recursion-through-negation). A negation-bearing SCC routes to the
+# alternating-fixpoint WFS completion; a purely-positive SCC keeps the byte-identical naive fixpoint (fib path).
+_body_has_tnot(a::Atom)::Bool = a isa Expression && !isempty(a.children) &&
+    (((a.children[1] isa Sym) && (a.children[1]::Sym).name === :tnot) || any(_body_has_tnot, a.children))
+function _scc_has_negation(members::Vector{Atom}, space::Space)::Bool
+    for m in members
+        X = freshvar("B")
+        for qb in query(space, Expression(Sym("="), m, X)), mb in merge_bindings(Bindings(), qb)
+            is_present(mb, X) && _body_has_tnot(subst(X, mb)) && return true
+        end
+    end
+    false
+end
+
+# WFS completion for a negation-bearing SCC — Van Gelder alternating fixpoint (fills _PARTIAL[m] in place,
+# growing the component as needed). STUB (increment 1): currently mirrors the positive naive fixpoint so the
+# routing is byte-identical; the two-phase optimistic/pessimistic computation lands in the next increment.
+function _wfs_complete!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom)
+    comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
+    while true
+        grew = false
+        for m in members
+            np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
+            _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
+            length(_PARTIAL[m]) != n0 && (grew = true)
+        end
+        grew || break
+        members = comp()
+    end
+end
+
 # Dynamic-SCC completion — the SOUNDNESS extension over single-goal suspend. SWI completes an ENTIRE SCC
 # together (boot/tabling.pl `completion` → `$tbl_table_complete_all(SCC)`); finalising one goal before a
 # mutually-dependent partner makes the partner's table unsound. We track the in-progress GENERATOR stack
@@ -1070,15 +1104,19 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]            # I am the ROOT: my SCC members
         members = comp()
         if !(length(members) == 1 && !(key in _PARTIAL_READ))                    # singleton+no self-rec ⇒ 1 pass
-            while true                                                           # joint naive fixpoint over SCC
-                grew = false
-                for m in members
-                    np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
-                    _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
-                    length(_PARTIAL[m]) != n0 && (grew = true)
+            if _scc_has_negation(members, space)                                 # WFS Stage B: negative edge in SCC
+                _wfs_complete!(members, typ, space, key)                         #   ⇒ alternating-fixpoint completion
+            else
+                while true                                                       # positive SCC: joint naive fixpoint
+                    grew = false
+                    for m in members
+                        np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
+                        _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
+                        length(_PARTIAL[m]) != n0 && (grew = true)
+                    end
+                    grew || break
+                    members = comp()                                            # component may have grown
                 end
-                grew || break
-                members = comp()                                                # component may have grown
             end
         end
         ans = _PARTIAL[key]
