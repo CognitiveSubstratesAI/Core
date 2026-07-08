@@ -31,6 +31,66 @@ flowchart LR
     Q -->|"meta / control tail"| IK["Interpreter meta-kernel"]
 ```
 
+## `mc_run` — the concrete dual-track pipeline
+
+The routing above is the *model*; [`mc_run`](@ref) (`DualTrack.jl`) is the *implementation*. It is a single
+entry that **dispatches by program form** into four front-ends — the `:direct` lane (Core forms lowered
+straight to MM2, no intermediate IL) and three [MeTTa-IL-family](mettail.md) lanes (`:rewrite`, `:pipeline`,
+`:theory`). All four emit MM2 `(exec …)` atoms onto the **one** shared MORK / PathMap substrate, and each
+**bisimulates against the interpreter-spec**. The MorkSupercompiler tier-2 pipeline is an *opt-in backend*
+reachable from two lanes (`supercompile=true` on `:direct`, `saturate=true` on `:rewrite`) — not a lane of
+its own.
+
+```mermaid
+flowchart TD
+    IN(["MeTTa program"]) --> MC{{"mc_run · dispatch by form<br/>DualTrack.jl:101"}}
+    MC -->|"(theory …)"| TH["theory_run!<br/>GSLT theory algebra"]
+    MC -->|"(def …)"| PI["metta_il_run_pipeline!<br/>def / match / emit"]
+    MC -->|"(~&gt; L R)"| RW["metta_il_run!<br/>MeTTa-IL rewrite"]
+    MC -->|"else · (=) (exec) !match"| DIR["mm2_route! · :direct<br/>partition → run → route<br/>+ ZAM / interpreter fallback"]
+
+    TH --> LOW
+    PI --> LOW
+    RW --> LOW
+    DIR --> LOW["MM2 (exec …) atoms<br/>mm2_lower_equals · :reduction / :relational"]
+    LOW --> CALC["space_metta_calculus!<br/>MORK exec-calculus kernel"]
+    CALC --> STORE[("MORK Space over PathMap<br/>content-addressed trie + .act")]
+
+    LOW -. planned .-> MM2P["MM2+ optimization stage<br/>guard-hoist / fuse / supercompile<br/>enhancement — not built"]
+    MM2P -.-> CALC
+
+    DIR -. "supercompile=true" .-> SC
+    RW -. "saturate=true" .-> SC
+    subgraph SC ["MorkSupercompiler tier-2 · sc_execute!"]
+      direction LR
+      S1["stats"] --> S2["plan!<br/>join-order · Rule-of-64"] --> S3["approx §6"] --> S4["decompose"] --> S5["magic-sets"] --> S6["KBSaturation<br/>semi-naive"] --> S7["drive! §6"] --> S8["compile → MM2"]
+    end
+    S8 --> CALC
+
+    ORC["interpreter-spec · StandardMeTTa<br/>234/234 + LeaTTa 270/270"]
+    DIR -. bisim .-> ORC
+    RW -. bisim .-> ORC
+
+    classDef il fill:#eef0fe,stroke:#4f46e5,color:#312b90;
+    classDef sub fill:#e6f4f2,stroke:#0f766e,color:#0a4f49;
+    classDef sc fill:#f2ecfd,stroke:#7c3aed,color:#4c1d95;
+    classDef oracle fill:#e9f5ec,stroke:#15803d,color:#0d4d24;
+    classDef direct fill:#fdf3e7,stroke:#b45309,color:#7a3708;
+    classDef enh fill:#faf5ff,stroke:#9333ea,stroke-dasharray:4 3,color:#7c3aed;
+    class TH,PI,RW il;
+    class DIR direct;
+    class LOW,CALC,STORE sub;
+    class SC,S1,S2,S3,S4,S5,S6,S7,S8 sc;
+    class ORC oracle;
+    class MM2P enh;
+```
+
+Dashed edges are opt-in or planned. The **MorkSupercompiler tier-2** chain (`sc_execute!`) is
+`stats → plan! → [approx §6] → decompose → [magic-sets] → KBSaturation (semi-naive) → [drive! §6] →
+compile → MM2` — the bracketed stages are `SCOptions` opt-ins. **MM2+** (guard-hoist / fuse / supercompile
+over the lowered exec atoms) is a designed-but-unbuilt optimization stage. The `:reduction` lowering mode
+is `mc_run`'s default (function-eval / redex-delete); `:relational` (forward-closure) is explicit opt-in.
+
 ## Three orthogonal layers — substrate vs engines vs cognitive processes
 
 "Engine-per-workload" is a statement about the **middle** layer only. Keep three axes distinct
