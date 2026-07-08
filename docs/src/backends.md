@@ -86,6 +86,42 @@ fallback; routing its output through the engine is the **intended** design — i
 pass through `space_metta_calculus!` (the dashed edge). The earlier "~5–30× slower / materializes" figure was
 a stale comment, not a measured property of this path — omitted here pending a benchmark.
 
+## Lineage — what the direct lane inherited from CeTTa (and what it didn't)
+
+Cross-checked against CeTTa's actual C source (`eval.c`, `mm2_lower.c`, `compile.c`, `main.c`). The direct
+lane is often called "CeTTa-style," but the precise picture is: it stands on **shared upstream MORK +
+Hyperon-minimal machinery** that CeTTa *also* uses, then extends it in ways CeTTa does not.
+
+**Shared upstream (both Core and CeTTa inherit it — it is MORK / Hyperon, not one from the other):**
+
+- The MM2 **exec vocabulary** `(exec <priority> <pattern> <template>)` with `I` / `ACT` / `BTM` / `O` / `+` /
+  `-` / `,` is upstream MORK (`MORK/kernel/src/main.rs`, `MORK_TUTORIAL.md`) — Core's `(exec 0 (I L)(O (+R)(-L)))`
+  uses exactly those tokens.
+- **`space_metta_calculus!`** is the upstream `Space::metta_calculus` — the *same* fixpoint-over-trie
+  exec-stepping CeTTa invokes over FFI.
+- The **minimal-MeTTa interpreter** skeleton (type-driven laziness, special forms controlling their own arg
+  evaluation, the grounded-vs-equation split): Core's `Interpreter.jl` mirrors CeTTa's `metta_eval` /
+  `metta_call` — both trace to Hyperon's minimal-MeTTa spec. Both also **table** equation queries.
+
+**Core extended (not present in CeTTa):**
+
+- **Auto-compilation of `(= L R)` → MM2 exec** ([`mm2_lower_equals`](@ref), modes `:reduction` / `:relational`).
+  The big one: CeTTa does **not** lower equations — it treats MM2 as a *separately authored* surface (`.mm2` /
+  `--lang mm2`) where a human writes exec rules, and its `mm2_lower` maps `=` to an equality **guard**
+  (`mm2_guard_eq`), not an equation→exec rewrite. Core compiles ordinary MeTTa equations onto the exec-calculus
+  automatically.
+- A **runtime per-form router** (`mc_run`) vs CeTTa's **static** up-front engine choice (CLI / `--lang` / suffix).
+- **MM2 / MORK as the primary path with the interpreter as fallback + bisimulation oracle** — the inverse of
+  CeTTa, where the tree-walk interpreter is primary and MM2 is the side surface.
+
+**CeTTa has that the direct lane does not:** an **AOT LLVM emitter** (`compile.c`, `--compile`: emits LLVM IR
+text then exits — and even that delegates back to `metta_eval` at runtime). Core does no native codegen in this
+path.
+
+So "the direct lane mirrors CeTTa" is imprecise: the piece most directly shared with CeTTa is the
+**interpreter** (both are the Hyperon-minimal reducer); the direct lane itself is a **Core-original
+auto-compiler of MeTTa equations onto the shared MORK MM2 substrate**.
+
 ## Three orthogonal layers — substrate vs engines vs cognitive processes
 
 "Engine-per-workload" is a statement about the **middle** layer only. Keep three axes distinct
