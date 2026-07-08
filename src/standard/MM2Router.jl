@@ -206,7 +206,7 @@ Lower a `(= LHS RHS)` rewrite rule to an exec rule. TWO modes — the caller dec
 semantics apply (both are `(= LHS RHS)` with no grounded ops, so they are syntactically
 indistinguishable; the mode is intent, not inference):
 
-- `:relational` (default) → `(exec 0 (, LHS) (, RHS))`. FORWARD-CLOSURE (Datalog): for every data atom
+- `:relational` (default) → `(exec 0 (, LHS) (, RHS))`. FORWARD-CLOSURE (semi-naive saturation): for every data atom
   matching LHS, DERIVE RHS and **KEEP LHS**. Correct for relations, e.g. `(= (parent \$x \$y) (ancestor \$x \$y))`.
   A conjunctive LHS `(, …)` passes through as the source list. (Same shape as `mm2_lower_match`.)
 
@@ -239,7 +239,7 @@ end
 # Numbers cross the byte-expr boundary as symbols, so LEAVES wrap in `<t>_from_string` and the ROOT
 # in `<t>_to_string` (mirrors the MORK `sink_pure_advanced` / ip_sudoku idiom). Nested trees WORK in
 # our Julia PureSink (ahead of the Rust `finalize` todo!() caveat). Guards/comparison/`if`/recursion
-# are NOT here — those route to the KBSaturation Datalog lane or the interpreter (R7). OPT-IN, bisim-gated.
+# are NOT here — those route to the KBSaturation lane or the interpreter (R7). OPT-IN, bisim-gated.
 #
 # TWO numeric modes, chosen to bisimulate the interpreter's own promotion (verified by oracle):
 #  - INT (i64): `+ - * %`, all-integer tree → the interpreter's `(* 5 2)` = Int64 `10`.
@@ -357,7 +357,7 @@ Unified INTERPRETER-FAITHFUL `(= LHS RHS)`→MM2 lowering (reduce-to-normal-form
 the pure-sink arith lowering (`mm2_lower_equals_arith`), else the reduction form
 (`mm2_lower_equals(; mode=:reduction)` — delete the redex, add the reduct). This is the single entry
 whose result bisimulates the interpreter's `!(f …)` EVALUATION. (Relational forward-closure is a
-DIFFERENT, Datalog semantics — keep-LHS — via `mm2_lower_equals(; mode=:relational)`; it bisimulates
+DIFFERENT, forward-closure semantics — keep-LHS — via `mm2_lower_equals(; mode=:relational)`; it bisimulates
 `!(match &self LHS RHS)`, not reduction, so it is deliberately NOT the default here.)
 """
 mm2_lower_eq(rule::AbstractString)::String =
@@ -586,8 +586,8 @@ end
 # different-relation / conjunctive-join shapes. For a multi-rule CHAIN (a→b→c) MORK's forward rewriting derives
 # the whole closure {b,c} whereas the interpreter `(=)` REDUCTION gives the normal form (c). So ROUTE is sound
 # for forward-derivation workloads (where the closure IS the wanted answer), NOT a drop-in for general (=)
-# reduction-to-normal-form. (NB: this is metagraph rewriting, NOT Datalog — MM2 is general nested-S-expr
-# rewriting with removal/priorities; Datalog is at most a narrow special case it can express.)
+# reduction-to-normal-form. (NB: this is metagraph rewriting, NOT relational forward-closure saturation — MM2 is general nested-S-expr
+# rewriting with removal/priorities; relational forward-closure is at most a narrow special case it expresses.)
 
 """
     mm2_lane_from_space(isp) -> CoreSpace
@@ -607,7 +607,7 @@ when it fires ("removed no matter what"), so a single `space_metta_calculus!` is
 spec's "repeated exec selections". This drives that: re-add the exec rules and re-run until the atom count
 stabilizes — so a recursive relational rule (e.g. transitive `reach`) reaches its full closure, which
 `mm2_lane_from_atoms` + one calculus step cannot. Sound for forward-derivation workloads (the closure is the
-wanted answer). NB: metagraph rewriting, NOT Datalog. The canonical MM2 alternative (verified working on our
+wanted answer). NB: metagraph rewriting, NOT relational forward-closure saturation. The canonical MM2 alternative (verified working on our
 MORK, see test) is the NATIVE main-loop idiom — `DEF` rules + a self-re-adding exec + a halt condition — which
 runs the fixpoint INSIDE one `space_metta_calculus!`; this host re-add loop is a pragmatic shortcut for the
 additive-closure case (per the MM2_Structuring_Code tutorial: Going-Wide main loop, Control_09 halting).
@@ -719,7 +719,7 @@ end
     mc_closure!(isp; rounds=64) -> Int
 
 OPT-IN substrate route: compute the FORWARD-REWRITING CLOSURE (MM2 exec calculus = metagraph rewriting, NOT
-Datalog) of a live interpreter `Space`'s relational rules on the MORK lane (`mm2_lane_saturate!`) and
+relational forward-closure saturation) of a live interpreter `Space`'s relational rules on the MORK lane (`mm2_lane_saturate!`) and
 MATERIALIZE the newly-derived atoms back into `isp`. Returns the count added. The user opts into the
 forward-closure (metagraph-rewriting) semantics for the relational subset; the
 interpreter's `(=)` reduction semantics for everything else are untouched. So a MeTTa program can compute a

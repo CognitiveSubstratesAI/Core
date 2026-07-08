@@ -14,7 +14,7 @@
 # The GSLT theory algebra (Terms/Equations/Replacements/composition/parameterization) lives in GSLT.jl.
 #
 # Two distinct `~>` execution modes (pick by workload): metta_il_run! = additive forward-derivation
-# (relational/Datalog — transitive closure, deductive queries); metta_il_normalize = term reduction with
+# (relational/forward-derivation — transitive closure, deductive queries); metta_il_normalize = term reduction with
 # congruence (calculi — rho/lambda, equational reduction). Same surface, different semantics.
 
 "Lower one MeTTa-IL base rewrite `(~> LHS RHS)` (GSLT `Name : LHS ~> RHS`) to an MM2 `(exec …)` rule.
@@ -80,7 +80,7 @@ end
 # (verified — `(and (not T) Y)` stays unreduced). So congruence is BUILT here as a subterm-rewriting
 # normalizer: rewrite any subterm matching a base-rewrite LHS, innermost, to fixpoint. The subterm
 # descent IS the congruence — mettail-rust spells it out as explicit `rw_cat` rules ONLY because
-# Ascent/Datalog is relational and cannot descend into subterms; on a term engine it is structural.
+# Ascent is relational and cannot descend into subterms; on a term engine it is structural.
 
 function _normalize_subterm(rules::Vector{String}, term::AbstractString)::String
     term = strip(term)
