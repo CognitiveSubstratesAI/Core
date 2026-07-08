@@ -42,10 +42,10 @@ const LEATTA_CORPUS = joinpath(@__DIR__, "corpus")
 # Ops Core does not (yet) implement — a call with one of these heads returns UNREDUCED (correct MeTTa for
 # an undefined head), so its self-checking directive can't pass. NOT bugs; this is the coverage ledger.
 const LEATTA_KNOWN_MISSING = Set([
-    "assert", "assertEqualMsg", "assertEqualToResultMsg",
-    "assertAlphaEqualMsg", "assertAlphaEqualToResult", "assertAlphaEqualToResultMsg",
-    "assertIncludes", "sort-strings", "help!", "pragma!",
+    "assert", "sort-strings", "help!", "pragma!",
 ])
+# (The assert*Msg / assertAlphaEqual family was implemented as stdlib.metta rules on 2026-07-08 and is
+#  NO LONGER masked here — a regression in any of them now surfaces as CORE_BUG, not MISSING_OP.)
 # Space/parallel-model ops present in the corpus (LeaTTa passes them: c2_spaces 25/25) that Core does not
 # implement — `fork-space` (forked named spaces) and `hyperpose` (parallel superpose). Tracked separately
 # from the plain missing stdlib ops above; both are non-gated ledger items, not CORE_BUGs.
@@ -53,7 +53,8 @@ const LEATTA_ONLY = Set(["hyperpose", "fork-space", "fork-spaces", "new-space-fo
 
 # Frozen ledger: per file, the (MISSING_OP, LEATTA_SPECIFIC) directive counts Core currently exhibits.
 # EVERY other directive must PASS; any deviation from these exact counts (or any CORE_BUG) fails the gate.
-# Derived from the 2026-07-08 differential; total = 246 pass + 19 missing + 5 leatta = 270 (== EXPECTED.txt).
+# Derived from the 2026-07-08 differential; total = 255 pass + 10 missing + 5 leatta = 270 (== EXPECTED.txt)
+# after the assert*Msg / assertAlphaEqual family was implemented (test_stdlib missing 13 → 4).
 const LEATTA_LEDGER_BASELINE = Dict{String,Tuple{Int,Int}}(
     "a1_symbols.metta"       => (0, 0), "a2_opencoggy.metta"     => (0, 0),
     "a3_twoside.metta"       => (0, 0), "b0_chaining_prelim.metta" => (0, 0),
@@ -65,7 +66,7 @@ const LEATTA_LEDGER_BASELINE = Dict{String,Tuple{Int,Int}}(
     "d3_deptypes.metta"      => (0, 0), "d4_type_prop.metta"     => (0, 0),
     "d5_auto_types.metta"    => (1, 0), "e1_kb_write.metta"      => (0, 0),
     "e2_states.metta"        => (0, 0), "e3_match_states.metta"  => (0, 0),
-    "g1_docs.metta"          => (5, 0), "test_stdlib.metta"      => (13, 2),
+    "g1_docs.metta"          => (5, 0), "test_stdlib.metta"      => (4, 2),
 )
 
 # ---- per-directive runner: mirrors load_metta!'s incremental parse-eval loop (Interpreter.jl:2190),

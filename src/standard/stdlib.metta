@@ -22,9 +22,55 @@
                 ()
                 (Error (assertIncludes $atom $content)
                   (assertIncludes error: $diff not included in result: $eval_atom))))))
-; NOTE: assertAlphaEqual / *Msg variants deferred — they belong to the grounded-vs-rules decision for the
-; whole assert family (hyperon = rules over _assert-results-are-equal[-msg]; Core grounds the *ToResult
-; floor). Not adding rule-wrappers over the grounded floor until that fork is resolved. See CORELIB_COVERAGE.md.
+; ── the rest of the hyperon assert family (stdlib.metta:1101-1190): assertAlphaEqual + the `*Msg`
+;    variants. Written MeTTa-first — RULES composing existing primitives (collapse / subtraction-atom /
+;    union-atom / if / ==), the same compose-from-primitives idiom as assertIncludes above (NO new
+;    grounded ops). Two collapsed result sets are equal iff their two-way multiset difference is empty;
+;    on failure the `Msg` forms surface the caller's $msg (hyperon @return "input message - otherwise"),
+;    yielding the exact `(Error (op $actual $expected) $msg)` shape the corpus asserts (test_stdlib:114-124).
+;    A NON-ERRORING comparison is required: delegating to the grounded assertEqual would let its
+;    `(Error … AssertionFailed)` propagate through ==/case and clobber the custom message (verified).
+;    subtraction-atom's element identity is α-equivalence (Interpreter.jl:1868), so these rule-composed
+;    variants are α-tolerant; the exact grounded floor (assertEqual/assertEqualToResult) is unchanged.
+;    That distinction is invisible to the (ground) corpus cases. `*ToResult*` do NOT collapse the expected
+;    arg (it is already a literal result-set tuple); the others collapse both sides.
+(: assertEqualMsg (-> Atom Atom Atom (->)))
+(= (assertEqualMsg $actual $expected $msg)
+   (let $a (collapse $actual)
+     (let $e (collapse $expected)
+       (if (== (union-atom (subtraction-atom $a $e) (subtraction-atom $e $a)) ())
+           ()
+           (Error (assertEqualMsg $actual $expected) $msg)))))
+
+(: assertEqualToResultMsg (-> Atom Atom Atom (->)))
+(= (assertEqualToResultMsg $actual $expected $msg)
+   (let $a (collapse $actual)
+       (if (== (union-atom (subtraction-atom $a $expected) (subtraction-atom $expected $a)) ())
+           ()
+           (Error (assertEqualToResultMsg $actual $expected) $msg))))
+
+(: assertAlphaEqual (-> Atom Atom (->)))
+(= (assertAlphaEqual $actual $expected)
+   (let $a (collapse $actual)
+     (let $e (collapse $expected)
+       (if (== (union-atom (subtraction-atom $a $e) (subtraction-atom $e $a)) ())
+           ()
+           (Error (assertAlphaEqual $actual $expected) AssertionFailed)))))
+
+(: assertAlphaEqualMsg (-> Atom Atom Atom (->)))
+(= (assertAlphaEqualMsg $actual $expected $msg)
+   (let $a (collapse $actual)
+     (let $e (collapse $expected)
+       (if (== (union-atom (subtraction-atom $a $e) (subtraction-atom $e $a)) ())
+           ()
+           (Error (assertAlphaEqualMsg $actual $expected) $msg)))))
+
+(: assertAlphaEqualToResultMsg (-> Atom Atom Atom (->)))
+(= (assertAlphaEqualToResultMsg $actual $expected $msg)
+   (let $a (collapse $actual)
+       (if (== (union-atom (subtraction-atom $a $expected) (subtraction-atom $expected $a)) ())
+           ()
+           (Error (assertAlphaEqualToResultMsg $actual $expected) $msg))))
 ; ── noeval / empty (hyperon stdlib.metta:270/622 ; CeTTa lib/stdlib.metta:360/462 — both upstreams AGREE) ──
 ; noeval: Atom-typed so the arg is NOT pre-evaluated; returns it unreduced (evaluation control).
 (: noeval (-> Atom Atom))
