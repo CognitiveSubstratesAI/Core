@@ -207,3 +207,16 @@ end
         Interpreter.fast_match!(false)
     end
 end
+
+@testset "case: empty subject matches the `Empty` clause (hyperon; LeaTTa proved-oracle)" begin
+    # LeaTTa (Lean-4 machine-proved MeTTa) differential, 2026-07-08: Core's `case` collapsed an
+    # EMPTY result set to `()` and so missed the literal `Empty` clause — hyperon's rule
+    # (stdlib.metta §case) is: empty subject ⇒ the `Empty` pattern fires. Fixed in Interpreter.jl.
+    s = Space(); load_core_stdlib!(s)
+    # subject with NO results (unify miss) ⇒ the `Empty` clause, NOT the `()`/wildcard clause
+    @test load_metta!(s, "!(case (unify (A B) (C D) ok Empty) ((ok yes) (Empty nok)))") == Atom[S("nok")]
+    @test load_metta!(s, "!(case Empty ((ok yes) (Empty nok)))")                          == Atom[S("nok")]
+    # regression — non-empty subjects are unaffected (first matching clause still wins)
+    @test load_metta!(s, "!(case (unify (A B) (A B) ok Empty) ((ok yes) (Empty nok)))") == Atom[S("yes")]
+    @test load_metta!(s, "!(case foo ((foo yes) (Empty nok)))")                          == Atom[S("yes")]
+end

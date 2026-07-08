@@ -1939,7 +1939,8 @@ end))
 # case (grounded SpaceOp): evaluate $atom, return the body of the first case pattern it matches
 const CASE = Grounded(SpaceOp("case", function (xs, space)
     (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
-    results = metta_run(xs[1], space); isempty(results) && (results = Atom[Expression(Atom[])])  # Empty→()
+    # hyperon (stdlib.metta case §): an EMPTY result set matches the special `Empty` case pattern (NOT `()`).
+    results = metta_run(xs[1], space); isempty(results) && (results = Atom[Sym("Empty")])
     out = Atom[]; binds = Bindings[]
     for res in results, clause in xs[2].children
         if res == UNDEFINED                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
