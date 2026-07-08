@@ -554,6 +554,7 @@ module StandardMeTTaTests
     include("standard/test_tnot_wfs.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_conformance.jl")
+    include("oracle/leatta/test_leatta_oracle.jl")   # differential vs the Lean-4 machine-proved MeTTa
 end
 
 # MM2 dual-lane router (src/standard/MM2Router.jl) — module-wrapped so its top-level `MC`/`facts`/`prog`

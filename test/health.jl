@@ -16,6 +16,7 @@ const _HFULL = ("full" in ARGS) || (get(ENV, "CORE_HEALTH_FULL", "") == "1")
 # (name, test file) — each is a self-contained @testset that throws on failure.
 const _HCHECKS = Tuple{String,String}[
     ("hyperon conformance (234 directives)", joinpath(_HROOT, "standard", "test_conformance.jl")),
+    ("LeaTTa proved-oracle (CORE_BUG gate)", joinpath(_HROOT, "oracle", "leatta", "test_leatta_oracle.jl")),
     ("no dangling lib ops",                  joinpath(_HROOT, "test_no_dangling_ops.jl")),
     ("no stdlib shadowing",                  joinpath(_HROOT, "test_no_stdlib_shadow.jl")),
     ("type system",                          joinpath(_HROOT, "test_types.jl")),
