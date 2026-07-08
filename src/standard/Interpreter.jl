@@ -1458,8 +1458,19 @@ const _ATOM_TYPE_MEMO = Dict{Atom,Tuple{UInt,Int,Vector{Atom}}}()
 const _TYPE_MEMO_ON = Ref(true)     # gate for one release; health 4/4 proves parity before it's load-bearing
 const _TYPE_MEMO_CAP = 1 << 20      # bound growth on long-running servers (clears wholesale on overflow)
 
+const NO_TYPES = Atom[]     # shared empty-types sentinel (no caller mutates an atom_types result); same
+                            # zero-alloc convention as EMPTY_VARS — the early-return below is alloc-free.
 # the declared types of `atom`: intrinsic grounded-op type (if any) + space decls (: atom $T)
 function atom_types(atom::Atom, space::Space)::Vector{Atom}
+    # A VARIABLE has no declared type (types.rs:386). The `(: $v $T)` query below would otherwise unify $v
+    # with EVERY `(: X …)` decl in the space and return all their types — the "spuriously matches every decl"
+    # hazard already noted at arg_actual_types. This surfaces when an expression has a VARIABLE HEAD, e.g. a
+    # let* binding pair `($r1 (Add Z Z))`: its head `$r1` was typed by this query, and a 1-arg arrow decl like
+    # `(: assert (-> Atom (->)))` matched the pair's arity and leaked its `(->)` return into inference,
+    # producing a spurious `(BadArgType 1 Expression ->)` in unrelated type-checked code (regressed b5).
+    # Guard is alloc-free (early return + no query) — the OLD path ran a full-space `(: $v $T)` scan per
+    # var-headed subterm; measured atom_types(Var) 0 ns vs the query cost.
+    atom isa Var && return NO_TYPES
     T = freshvar("T"); out = Atom[]
     haskey(_GROUNDED_OP_TYPES, atom) &&
         push!(out, get!(() -> _parse_type(_GROUNDED_OP_TYPES[atom]), _GROUNDED_OP_TYPE_CACHE, atom))

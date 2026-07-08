@@ -73,14 +73,11 @@
            (Error (assertAlphaEqualToResultMsg $actual $expected) $msg))))
 
 ; ── assert (hyperon stdlib.metta:700): evaluate $atom; the unit atom () if it is True, else an Error.
-;    Faithful to hyperon's `(unify $eval-atom True () (Error …))`; the lazy Atom-typed $atom is kept
+;    Faithful to hyperon (incl. the type `(: assert (-> Atom (->)))`): the lazy Atom-typed $atom is kept
 ;    UNEVALUATED so the failure Error preserves the raw atom — `(assert (and True False))` ⇒
 ;    `(Error (assert (and True False)) ((and True False) not True))` (test_stdlib:85) — while `==` reduces
-;    it for the True check. NOTE: the return type is `%Undefined%`, NOT hyperon's `(->)`: a 1-arg
-;    `(-> Atom (->))` decl perturbs Core's gradual type-checker and regresses b5_types_prelim (a real
-;    checker quirk — the 2-arg `(-> Atom Atom (->))` on assertEqual is fine). `%Undefined%` keeps the lazy
-;    arg without the leak.
-(: assert (-> Atom %Undefined%))
+;    it for the True check.
+(: assert (-> Atom (->)))
 (= (assert $atom)
    (if (== $atom True)
        ()
@@ -96,9 +93,9 @@
 ; ── help! (hyperon stdlib.metta:882) / pragma! (stdlib.metta:1241): a doc-print helper and a runtime
 ;    directive. Both return the unit atom (): the doc DATA source (get-doc) is implemented separately, and
 ;    Core's type checking is always-on, so these are the nop→() contract (LeaTTa Stdlib.lean:230,242).
-;    Left UNTYPED (their args need no laziness; eager eval is fine — and a `(-> … (->))` decl would hit the
-;    same b5 type-checker quirk noted on assert above).
+(: help! (-> Atom (->)))
 (= (help! $atom) ())
+(: pragma! (-> Atom Atom (->)))
 (= (pragma! $key $value) ())
 ; ── noeval / empty (hyperon stdlib.metta:270/622 ; CeTTa lib/stdlib.metta:360/462 — both upstreams AGREE) ──
 ; noeval: Atom-typed so the arg is NOT pre-evaluated; returns it unreduced (evaluation control).
