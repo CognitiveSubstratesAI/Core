@@ -32,9 +32,10 @@ string-diffing** (immune to render-format false positives). Per directive:
 | LEATTA_SPECIFIC | space/parallel-model ops Core lacks (`fork-space`, `hyperpose`) | ledger (exact baseline) |
 
 `_MODULE_PATH[]` is seeded with `corpus/` so `!(import! &kb c2_spaces_kb)` resolves (the former
-import!-path artifact). Current state (2026-07-08): **255 PASS + 10 MISSING_OP + 5 LEATTA_SPECIFIC = 270,
-0 CORE_BUG** (the `assert*Msg` / `assertAlphaEqual` family was implemented as stdlib rules, dropping
-`test_stdlib` missing 13 → 4). The MISSING_OP/LEATTA counts are frozen per-file: a **drop** = a coverage win (implement the
+import!-path artifact). Current state (2026-07-08): **266 PASS + 1 MISSING_OP + 3 LEATTA_SPECIFIC = 270,
+0 CORE_BUG** (the `assert*Msg`/`assertAlphaEqual` family plus `assert`, `help!`, `pragma!`, `hyperpose`
+were implemented as stdlib rules; only `sort-strings` — needs an atom-ordering primitive — and
+`fork-space` remain as ledger gaps). The MISSING_OP/LEATTA counts are frozen per-file: a **drop** = a coverage win (implement the
 op → update the baseline); a **rise** = a regression or a newly-unimplemented op. Either forces a
 deliberate baseline update, keeping the ledger honest.
 
