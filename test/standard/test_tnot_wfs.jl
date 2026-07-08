@@ -63,3 +63,31 @@ end
     @test Sym("undefined") != U                             # … which is DISTINCT from the truth value
     @test isempty(_wfs(prCol, "!(barc)"))                   # ¬foo is FALSE (foo has a real answer)
 end
+
+@testset "WFS tnot — UNDEFINED propagates through strict grounded ops (soundness)" begin
+    # A strict grounded op (arithmetic/comparison) fed the WFS `undefined` sentinel must PROPAGATE it, not
+    # leave a stuck term a downstream tnot misreads as a real answer. Confirmed hole (2026-07-08, upstream
+    # conformance audit): `(+ 1 (tnot u))` used to stick as `(+ 1 undefined)` ⇒ tnot of it returned Empty
+    # (unsound); the guard in _num_binop/_num_cmp now propagates UNDEFINED ⇒ tnot correctly stays undefined.
+    U0 = "!(table! u) !(table! g) (= (u) (tnot (u)))"       # u :- ¬u  ⇒ u = undefined
+    @test _wfs(U0 * " (= (g) (+ 1 (tnot (u))))", "!(g)") == Atom[U]         # (+ 1 undefined) ⇒ undefined
+    @test _wfs(U0 * " (= (g) (+ 1 (tnot (u))))", "!(tnot (g))") == Atom[U]  # ¬g undefined (was Empty — the bug)
+    @test _wfs(U0 * " (= (g) (< (tnot (u)) 2))", "!(tnot (g))") == Atom[U]  # (< undefined 2) ⇒ undefined
+    # the fix must trigger ONLY on the sentinel — normal arithmetic/comparison is unchanged:
+    @test _wfs("", "!(+ 1 2)") == Atom[Grounded(3)]
+    @test _wfs("", "!(< 1 2)") == Atom[Sym("True")]
+    @test _wfs("", "!(< 3 2)") == Atom[Sym("False")]
+    # systemic fix (2026-07-08 grounded-op audit): the sentinel is contagious through EVERY strict grounded op,
+    # not just arithmetic — boolean / equality / case / list / math-library all propagate it now.
+    @test _wfs(U0 * " (= (g) (not (tnot (u))))", "!(g)") == Atom[U]              # ¬⊥ = ⊥
+    @test _wfs(U0 * " (= (g) (and (tnot (u)) True))", "!(g)") == Atom[U]         # and/or propagate (sound; full Kleene deferred)
+    @test _wfs(U0 * " (= (g) (or (tnot (u)) False))", "!(g)") == Atom[U]
+    @test _wfs(U0 * " (= (g) (== (tnot (u)) 1))", "!(g)") == Atom[U]             # == contagious (no fabricated False)
+    @test _wfs(U0 * " (= (g) (case (tnot (u)) ((\$x hit))))", "!(g)") == Atom[U]  # case: no catch-all launder
+    @test _wfs(U0 * " (= (g) (size-atom (tnot (u))))", "!(g)") == Atom[U]        # list op
+    @test _wfs(U0 * " (= (g) (sqrt-math (tnot (u))))", "!(g)") == Atom[U]        # math library (was the Error-atom class)
+    # normal grounded ops UNAFFECTED (fix triggers ONLY on the out-of-band sentinel):
+    @test _wfs("", "!(and True False)") == Atom[Sym("False")]
+    @test _wfs("", "!(not True)") == Atom[Sym("False")]
+    @test _wfs("", "!(size-atom (a b c))") == Atom[Grounded(3)]
+end
