@@ -848,6 +848,17 @@ const _COMPONENT = Dict{Atom,Atom}()          # key → SCC root (union-find; me
 const _NEG_BARRIER = Set{Atom}()              # in-progress keys sitting BEHIND an active tnot (negation)
 const _NEG_DEPTH = Ref(0)                      # active tnot-drive depth (>0 ⇒ evaluating under a negation)
 const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key under negation ⇒ unsound 2-valued
+# WFS Stage B increment 2 — phase-fixed interpretation for the Van Gelder alternating fixpoint. During
+# `_wfs_complete!`, an IN-SCC `tnot(G)` reads this FIXED bound I (succeeds iff G has no DEFINITE answer in I)
+# instead of driving G + tainting (the taint is what makes the tabler over-conservative on dynamically-
+# stratified SCCs). OUT-of-SCC `tnot` (key ∉ _WFS_BOUND) and all off-WFS execution (_WFS_ACTIVE=false) are
+# untouched ⇒ 234-conformance byte-identical.
+const _WFS_BOUND  = Ref(Dict{Atom,Vector{Atom}}())   # SCC-member key ↦ bound answer-set I (read-only in a phase)
+const _WFS_ACTIVE = Ref(false)                        # true only inside an `_S_P!` phase
+const _SCC_NEG    = Set{Atom}()                       # in-progress goals re-entered ACROSS a tnot barrier (a
+#   positive edge closing a cycle through negation) ⇒ their SCC needs `_wfs_complete!`. Set at the source in
+#   `tabled_eval`'s consumer path; the routing checks whether any SCC member is marked. Replaces the old
+#   hardcoded `tnot`-body scan (`_body_has_tnot`/`_scc_has_negation`) — same info, from the machinery that owns it.
 # WFS bottom / third truth value. MUST be OUT-OF-BAND: a plain `Sym("undefined")` COLLIDES with a user datum
 # literally named `undefined` — a tabled predicate whose real answer is that symbol would be mis-read as the
 # truth value at the classification in TNOT (`== UNDEFINED`), a soundness bug (returns undefined when the true
@@ -860,7 +871,8 @@ Base.show(io::IO, ::WFSBottom) = print(io, "undefined")
 const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; NOT a program Sym
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
-                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false)
+                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG);
+                   _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
@@ -1035,37 +1047,76 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
 end
 
 # ── WFS Stage B (Prolog-parity precision on dynamically-stratified programs) ──────────────────────────
-# Does the SCC contain an internal NEGATIVE edge — a member's `(=)` body that calls `tnot`? Over-approximate
-# (a `tnot` on a NON-member goal also flags; harmless — the WFS completion generalizes the plain fixpoint and
-# agrees with it whenever there is no genuine recursion-through-negation). A negation-bearing SCC routes to the
-# alternating-fixpoint WFS completion; a purely-positive SCC keeps the byte-identical naive fixpoint (fib path).
-_body_has_tnot(a::Atom)::Bool = a isa Expression && !isempty(a.children) &&
-    (((a.children[1] isa Sym) && (a.children[1]::Sym).name === :tnot) || any(_body_has_tnot, a.children))
-function _scc_has_negation(members::Vector{Atom}, space::Space)::Bool
-    for m in members
-        X = freshvar("B")
-        for qb in query(space, Expression(Sym("="), m, X)), mb in merge_bindings(Bindings(), qb)
-            is_present(mb, X) && _body_has_tnot(subst(X, mb)) && return true
+# Which SCCs need the alternating-fixpoint WFS completion? EXACTLY those with recursion-through-negation — a
+# positive edge that closes a cycle back through a `tnot` barrier. That is DETECTED DYNAMICALLY, at the source,
+# by the existing negation machinery: when a CONSUMER (positive variant re-entry) reads an in-progress goal that
+# sits behind an active `tnot` (`_NEG_DEPTH>0 && key ∈ _NEG_BARRIER`), the SCC is marked in `_SCC_NEG` (below,
+# in `tabled_eval`). Routing reads that mark. No static body-scan for the `tnot` symbol — that was brittle (it
+# missed the resolved `Grounded(SpaceOp("tnot"))` form vs a bare `Sym(:tnot)`) and redundant (it re-derived what
+# `_NEG_TAINT` already knows). A purely-positive / stratified SCC never trips the barrier ⇒ byte-identical naive
+# fixpoint (fib path); only genuine recursion-through-negation routes to `_wfs_complete!`.
+
+# "definite" = has ≥1 REAL (non-UNDEFINED) answer — mirrors the provably-true test at TNOT (`any(a != UNDEFINED)`),
+# so an only-UNDEFINED set is NOT treated as membership (keeps the layered-undefined case sound).
+@inline _wfs_definite(S)::Bool = any(a -> a != UNDEFINED, S)
+
+# S_P(I): the least model of the van Gelder reduct P/I over the SCC, materialized into _PARTIAL.
+#   • positive in-SCC edges (g2:-g1) read the GROWING _PARTIAL via the consumer path (tabled_eval);
+#   • in-SCC tnot(G) reads the FIXED bound I (=_WFS_BOUND) — no drive, no taint, no inprog-guard (TNOT branch);
+#   • out-of-SCC goals read completed _ANSWER_TABLE exactly as today.
+# _PARTIAL is RESTARTED from ⊥ each call (a genuine lfp) — that dissolves positive loops without a separate
+# answer-completion pass (getting this wrong re-introduces spurious `true`s). MUST-FIX (adversary): reset EACH
+# member — including a mid-phase newcomer that joins comp() during this call — to ⊥ on its FIRST appearance, so
+# no member ever reads a stale cross-phase _PARTIAL under the current bound (the only unsoundness path found).
+function _S_P!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom,
+               bound::Dict{Atom,Vector{Atom}})::Dict{Atom,Vector{Atom}}
+    comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
+    savedB = _WFS_BOUND[]; savedA = _WFS_ACTIVE[]
+    _WFS_BOUND[] = bound; _WFS_ACTIVE[] = true
+    seen = Set{Atom}()
+    try
+        while true
+            for m in comp()                                       # ⊥-restart, newcomer-safe (MUST-FIX):
+                (m in seen) || (_PARTIAL[m] = Atom[]; push!(seen, m))
+            end
+            grew = false
+            for m in comp()
+                np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
+                _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
+                length(_PARTIAL[m]) != n0 && (grew = true)
+            end
+            grew || break
         end
+        return Dict{Atom,Vector{Atom}}(m => copy(_PARTIAL[m]) for m in comp())
+    finally
+        _WFS_BOUND[] = savedB; _WFS_ACTIVE[] = savedA             # nest-safe (mirrors _NEG_BARRIER save/restore)
     end
-    false
 end
 
-# WFS completion for a negation-bearing SCC — Van Gelder alternating fixpoint (fills _PARTIAL[m] in place,
-# growing the component as needed). STUB (increment 1): currently mirrors the positive naive fixpoint so the
-# routing is byte-identical; the two-phase optimistic/pessimistic computation lands in the next increment.
+# WFS completion for a negation-bearing SCC — Van Gelder ALTERNATING FIXPOINT (option A, answer-set level).
+#   K = lfp(S_P∘S_P) from ∅ = well-founded TRUE atoms;   U = S_P(K) = TRUE ∪ UNDEFINED.
+# Classify each member: definite in K ⇒ true (well-founded answers); in U but unfounded in K ⇒ undefined;
+# not even in the optimistic U ⇒ false. Leaves the classified set in _PARTIAL[m] for tabled_eval to cache.
 function _wfs_complete!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom)
     comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
+    K = Dict{Atom,Vector{Atom}}(m => Atom[] for m in members)     # ⊥
+    local U::Dict{Atom,Vector{Atom}} = K
     while true
-        grew = false
-        for m in members
-            np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
-            _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
-            length(_PARTIAL[m]) != n0 && (grew = true)
-        end
-        grew || break
+        U     = _S_P!(members, typ, space, key, K)               # Upper = S_P(K)        (optimistic step)
+        Knext = _S_P!(members, typ, space, key, U)               # T(K)  = S_P(S_P(K))   (pessimistic step)
         members = comp()
+        converged = length(Knext) == length(K) &&
+            all(m -> haskey(K, m) && issetequal(K[m], Knext[m]), keys(Knext))
+        K = Knext
+        converged && break                                       # at break: U = S_P(K) (the true upper bound)
     end
+    for m in comp()
+        km = get(K, m, Atom[]); um = get(U, m, Atom[])
+        _PARTIAL[m] = _wfs_definite(km) ? km :                   # TRUE  — well-founded definite answers
+                      !isempty(um)      ? Atom[UNDEFINED] :      # UNDEFINED — in U, unfounded in K
+                                          Atom[]                  # FALSE — not even in the optimistic U
+    end
+    return nothing
 end
 
 # Dynamic-SCC completion — the SOUNDNESS extension over single-goal suspend. SWI completes an ENTIRE SCC
@@ -1087,7 +1138,10 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     end
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
-        (_NEG_DEPTH[] > 0 && key in _NEG_BARRIER) && (_NEG_TAINT[] = true)        #   positive edge crossing a tnot
+        if _NEG_DEPTH[] > 0 && key in _NEG_BARRIER                                #   positive edge crossing a tnot
+            _NEG_TAINT[] = true                                                   #   ⇒ recursion-through-negation:
+            push!(_SCC_NEG, key)                                                  #   mark this SCC → `_wfs_complete!`
+        end
         ki = findfirst(g -> g == key, _GEN_STACK)                                #   union key..top into one SCC
         if ki !== nothing
             root = _scc_root(key)
@@ -1108,7 +1162,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]            # I am the ROOT: my SCC members
         members = comp()
         if !(length(members) == 1 && !(key in _PARTIAL_READ))                    # singleton+no self-rec ⇒ 1 pass
-            if _scc_has_negation(members, space)                                 # WFS Stage B: negative edge in SCC
+            if any(m -> m in _SCC_NEG, members)                                  # WFS Stage B: recursion-thru-negation
                 _wfs_complete!(members, typ, space, key)                         #   ⇒ alternating-fixpoint completion
             else
                 while true                                                       # positive SCC: joint naive fixpoint
@@ -1132,6 +1186,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             filter!(g -> _scc_root(g) != key, _GEN_STACK)
             for m in done
                 delete!(_TABLE_INPROG, m); delete!(_PARTIAL, m); delete!(_COMPONENT, m); delete!(_PARTIAL_READ, m)
+                delete!(_SCC_NEG, m)
             end
         end
     end
@@ -1159,6 +1214,12 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
     isempty(collect_vars(G)) || return ExecOk(Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
         "tnot: non-ground goal (instantiation_error)")])
     key = _canonical_goal(G, space, Bindings())
+    if _WFS_ACTIVE[] && haskey(_WFS_BOUND[], key)                        # WFS Stage B: IN-SCC negation during the
+        S = _WFS_BOUND[][key]                                            #   alternating fixpoint — read the phase-
+        return _wfs_definite(S) ? ExecOk(Atom[]) :                       #   FIXED bound I (no drive/taint/inprog):
+               isempty(S)       ? ExecOk(Atom[Sym("True")]) :            #     G∈I definite ⇒ ¬G false (Empty)
+                                  ExecOk(Atom[UNDEFINED])               #     G∉I empty    ⇒ ¬G true
+    end                                                                 #     I[G] only-undef ⇒ ¬G undefined
     key in _TABLE_INPROG && return ExecOk(Atom[UNDEFINED])                # live negative loop ⇒ WFS bottom
     saved = copy(_NEG_BARRIER); union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
     st = _NEG_TAINT[]; _NEG_TAINT[] = false; _NEG_DEPTH[] += 1            #   a consumer reading a barrier key

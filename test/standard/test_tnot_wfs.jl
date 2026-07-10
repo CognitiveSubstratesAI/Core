@@ -54,6 +54,26 @@ end
     @test _wfs(pr2, "!(pp)") == Atom[U]
     @test _wfs(pr2, "!(qq)") == Atom[U]
 
+    # ── WFS Stage B increment 2 — canonical dynamically-stratified SCC (Van Gelder alternating fixpoint).
+    #    A POSITIVE cycle (g2:-g1) fused with a negative edge (g1:-tnot(g2)); g2 is founded TRUE via tnot(g3)
+    #    INDEPENDENT of the loop, so g1 is FALSE. swipl 9.0.4 WFS (verified): g1=false, g2=true(unconditional),
+    #    g3=false. Pre-inc-2 Core returned g1=undefined (the tnot-taint over-conservatism). g1-as-entry builds
+    #    the {g1,g2} SCC via the positive g2:-g1 consumer edge ⇒ _wfs_complete! ⇒ FALSE. ──
+    prG = raw"""
+        !(table! g1) !(table! g2) !(table! g3)
+        (= (g1) (tnot (g2)))
+        (= (g1) (g3))
+        (= (g2) (tnot (g3)))
+        (= (g2) (g1))
+        (= (g2) (g2))
+    """
+    @test isempty(_wfs(prG, "!(g1)"))                       # g1 FALSE (was Atom[U] before Stage B inc-2)
+    Interpreter.untable_all!()
+    sG = Space(); load_core_stdlib!(sG); load_metta!(sG, prG)
+    @test isempty(load_metta!(sG, "!(g1)"))                 # FALSE
+    @test load_metta!(sG, "!(g2)") == Atom[Sym("True")]     # TRUE (cached member of the completed SCC)
+    @test isempty(load_metta!(sG, "!(g3)"))                 # FALSE (no rule)
+
     # ── REGRESSION (Hazard A): a user datum literally named `undefined` must NOT collide with the WFS truth
     #    value. `foo` reduces to the SYMBOL `undefined`; tnot(foo) must see foo as provably-true ⇒ EMPTY
     #    (false), NOT `undefined`. Before UNDEFINED became an out-of-band Grounded sentinel this returned
