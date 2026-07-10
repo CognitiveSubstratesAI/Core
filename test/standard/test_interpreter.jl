@@ -220,3 +220,27 @@ end
     @test load_metta!(s, "!(case (unify (A B) (A B) ok Empty) ((ok yes) (Empty nok)))") == Atom[S("yes")]
     @test load_metta!(s, "!(case foo ((foo yes) (Empty nok)))")                          == Atom[S("yes")]
 end
+
+@testset "get-atoms enumeration is INERT — never re-fires a stored (=) body (regression, omission 638bc7f)" begin
+    # Fixed by the `(-> %Undefined% Atom)` intrinsic type on GET_ATOMS. Untyped, get-atoms re-mettad each
+    # enumerated result under the caller's %Undefined% type, so a stored side-effecting rule
+    # `(= (r) (add-atom &d …))` had its BODY re-reduced and the `add-atom` RE-FIRED (get-atoms returned
+    # `(= (r) ())` — body reduced to unit). Oracle: hyperon/PeTTa/CeTTa are all INERT here — get-atoms is
+    # pure data retrieval (hyperon GetAtomsOp::type_ = `(-> Space Atom)`; the `Atom` return routes results
+    # through interpreter.rs:1005 `typ==Atom ⇒ return verbatim`). The bug was invisible to LeaTTa/234-
+    # conformance because no corpus test enumerates a rule-holding space (5-engine differential in scratchpad).
+    s = Space(); load_core_stdlib!(s)
+    load_metta!(s, raw"!(bind! &d (new-space))")
+    load_metta!(s, raw"!(add-atom &d (item x))")
+    load_metta!(s, raw"!(bind! &prog (new-space))")
+    load_metta!(s, raw"!(add-atom &prog (= (r) (add-atom &d (SIDE))))")
+    @test isempty(load_metta!(s, raw"!(match &d (SIDE) fired)"))           # (SIDE) absent before enumeration
+    load_metta!(s, raw"!(get-atoms &prog)")                               # enumerate the rule-holding space
+    @test isempty(load_metta!(s, raw"!(match &d (SIDE) fired)"))           # STILL absent ⇒ INERT (was [fired] = bug)
+    @test occursin("add-atom", string(load_metta!(s, raw"!(collapse (get-atoms &prog))")))  # body intact, not ()
+    # the fix must NOT break normal enumeration of inert data:
+    s2 = Space(); load_core_stdlib!(s2)
+    load_metta!(s2, raw"!(bind! &x (new-space))")
+    load_metta!(s2, raw"!(add-atom &x (fact a))"); load_metta!(s2, raw"!(add-atom &x (fact b))")
+    @test load_metta!(s2, raw"!(size-atom (collapse (get-atoms &x)))") == Atom[Grounded(2)]
+end

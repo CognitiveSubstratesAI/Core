@@ -2210,6 +2210,17 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
 # (kept out of the space). Defined here, after the ops exist.
 _GROUNDED_OP_TYPES[ADD_ATOM]    = "(-> %Undefined% Atom (->))"
 _GROUNDED_OP_TYPES[REMOVE_ATOM] = "(-> %Undefined% Atom (->))"
+# get-atoms returns the space's atoms as INERT DATA (hyperon GetAtomsOp::type_ = (-> Space Atom),
+# interpreter.rs:1005 `typ == Atom ⇒ return result verbatim`). Without this the result took the untyped
+# path and was re-mettad under the caller's %Undefined% type — so an enumerated stored rule like
+# `(= (r) (add-atom &d …))` had its body RE-REDUCED and its side effect RE-FIRED (get-atoms returned
+# `(= (r) ())`, the body reduced to unit). The `Atom` return type is load-bearing: it routes enumerated
+# results through the type==Atom short-circuit so bodies are never reduced. Space arg = %Undefined%
+# (a grounded Space's actual type is reported as SpaceType, not the stdlib `Space`, so a literal
+# `(-> Space Atom)` mis-fires as BadArgType). Verified: enumeration inert + basic get-atoms unchanged,
+# byte-matching hyperon/PeTTa/CeTTa. This was an original OMISSION at get-atoms' introduction (638bc7f);
+# every sibling stored-atom op (add-atom/remove-atom/== /state) had its intrinsic type — get-atoms alone did not.
+_GROUNDED_OP_TYPES[GET_ATOMS]   = "(-> %Undefined% Atom)"
 _GROUNDED_OP_TYPES[TRACE_BANG]  = "(-> %Undefined% Atom %Undefined%)"   # arg1 raw so (trace! msg (quote …)) works
 # == is polymorphic same-type (hyperon (-> $t $t Bool)) → the checker emits (BadArgType 2 …) on a
 # mismatch like (== 5 "S"). Now safe: the iterative driver doesn't overflow on the typed path (this
