@@ -472,4 +472,23 @@ using Test
         @test r.matched[1][2] == ["(reached 0 2)", "(reached 1 3)"]
         @test r.deferred == [raw"(+ 1 2)"]                 # non-match ! → interpreter lane (deferred)
     end
+
+    @testset "expr_to_atom — byte-level de Bruijn round-trip (co-reference reconstruction)" begin
+        M = MeTTaCore.Interpreter.StandardMeTTa
+        # (= (f $x) $x): both $x are ONE Var; typed→bytes→typed must return them co-referential.
+        vx = M.Var("x")
+        a  = M.Expression(M.Atom[M.Sym("="), M.Expression(M.Atom[M.Sym("f"), vx]), vx])
+        e  = MC.sexpr_to_expr(typed_atom_to_expr(a))
+        a2 = expr_to_atom(e)
+        @test a2.children[2].children[2] === a2.children[3]          # co-reference RECONSTRUCTED
+        # alpha-variants collapse to identical bytes (storage dedup); distinct vars do not.
+        @test MC.sexpr_to_expr(raw"(= (f $x) $x)").buf == MC.sexpr_to_expr(raw"(= (f $y) $y)").buf
+        @test MC.sexpr_to_expr(raw"(f $x $y)").buf != MC.sexpr_to_expr(raw"(f $x $x)").buf
+        # symbols route through parse_atom: numbers rebuild as Grounded (not Sym).
+        a3 = expr_to_atom(MC.sexpr_to_expr(raw"(f 42 $x)"))
+        @test a3.children[2] isa M.Grounded && a3.children[2].value == 42
+        @test a3.children[1] isa M.Sym && a3.children[3] isa M.Var
+        # atom → bytes → atom → bytes is a fixpoint (write/read consistency).
+        @test MC.sexpr_to_expr(typed_atom_to_expr(expr_to_atom(e))).buf == e.buf
+    end
 end

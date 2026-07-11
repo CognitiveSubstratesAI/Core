@@ -203,7 +203,7 @@ export core_calculus!, core_calculus_at!
 export mm2_run!, mm2_partition, mm2_is_exec_rule, mm2_split_forms
 export mm2_route!, mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args, mm2_is_relational
 export mm2_lower_equals_arith, mm2_is_arith_body, mm2_lower_eq, mm2_eq_bisim
-export typed_atom_to_expr, mm2_lane_from_atoms, mm2_lane_from_space, mm2_lane_saturate!, mm2_lane_saturate_seminaive!, mc_closure!
+export typed_atom_to_expr, expr_to_atom, mm2_lane_from_atoms, mm2_lane_from_space, mm2_lane_saturate!, mm2_lane_saturate_seminaive!, mc_closure!
 # Reflectable HE small-step rule-table (CeTTa-adopted)
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest
