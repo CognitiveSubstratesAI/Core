@@ -484,6 +484,10 @@ using Test
         # alpha-variants collapse to identical bytes (storage dedup); distinct vars do not.
         @test MC.sexpr_to_expr(raw"(= (f $x) $x)").buf == MC.sexpr_to_expr(raw"(= (f $y) $y)").buf
         @test MC.sexpr_to_expr(raw"(f $x $y)").buf != MC.sexpr_to_expr(raw"(f $x $x)").buf
+        # DISTINCT vars, SAME base name (id 0 vs 7, as rename_fresh produces) must NOT collapse.
+        d  = M.Expression(M.Atom[M.Sym("f"), M.Var("x", UInt64(0)), M.Var("x", UInt64(7))])
+        dr = expr_to_atom(MC.sexpr_to_expr(typed_atom_to_expr(d)))
+        @test dr.children[2] !== dr.children[3]
         # symbols route through parse_atom: numbers rebuild as Grounded (not Sym).
         a3 = expr_to_atom(MC.sexpr_to_expr(raw"(f 42 $x)"))
         @test a3.children[2] isa M.Grounded && a3.children[2].value == 42

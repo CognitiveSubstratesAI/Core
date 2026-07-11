@@ -500,7 +500,7 @@ function _typed_atom_to_expr!(io::IO, a)
     if a isa _MM2_ATOM.Sym
         print(io, a.name)
     elseif a isa _MM2_ATOM.Var
-        print(io, "\$", a.name)                          # drop internal #id — MORK assigns De Bruijn on parse
+        print(io, "\$", a.name, a.id == 0 ? "" : "#$(a.id)")  # keep #id (mirrors Var's show): DISTINCT Vars with the same base name (post rename_fresh) must NOT collapse into one on MORK's name-based de Bruijn
     elseif a isa _MM2_ATOM.Expression
         print(io, "(")
         for (k, c) in enumerate(a.children); k > 1 && print(io, " "); _typed_atom_to_expr!(io, c); end
