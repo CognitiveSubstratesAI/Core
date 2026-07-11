@@ -488,6 +488,10 @@ using Test
         d  = M.Expression(M.Atom[M.Sym("f"), M.Var("x", UInt64(0)), M.Var("x", UInt64(7))])
         dr = expr_to_atom(MC.sexpr_to_expr(typed_atom_to_expr(d)))
         @test dr.children[2] !== dr.children[3]
+        # complementary direction (fix must NOT over-correct): the SAME renamed var (id≠0) twice MUST co-refer.
+        v7 = M.Var("x", UInt64(7))
+        cr = expr_to_atom(MC.sexpr_to_expr(typed_atom_to_expr(M.Expression(M.Atom[M.Sym("f"), v7, v7]))))
+        @test cr.children[2] === cr.children[3]
         # symbols route through parse_atom: numbers rebuild as Grounded (not Sym).
         a3 = expr_to_atom(MC.sexpr_to_expr(raw"(f 42 $x)"))
         @test a3.children[2] isa M.Grounded && a3.children[2].value == 42
