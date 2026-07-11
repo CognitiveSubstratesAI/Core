@@ -498,5 +498,9 @@ using Test
         @test a3.children[1] isa M.Sym && a3.children[3] isa M.Var
         # atom → bytes → atom → bytes is a fixpoint (write/read consistency).
         @test MC.sexpr_to_expr(typed_atom_to_expr(expr_to_atom(e))).buf == e.buf
+        # THIRD direction: a synthetic var must NOT capture a source var of the same spelling (`$_0`).
+        rv = expr_to_atom(MC.sexpr_to_expr(raw"(f $x)")).children[2]   # reconstructed ⇒ synthetic var
+        @test rv isa M.Var && rv.id != 0                              # synthetic ⇒ id≠0 by construction
+        @test rv != M.Var("_0", UInt64(0))                            # ≠ a source var written $_0 (id 0)
     end
 end

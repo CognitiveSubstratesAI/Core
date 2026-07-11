@@ -538,7 +538,9 @@ function _expr_to_atom!(e::MORK.Expr, pos::Base.RefValue{Int}, vars::Vector{_MM2
         k = Int(tag.arity); pos[] += 1
         return _MM2_ATOM.Expression(_MM2_ATOM.Atom[_expr_to_atom!(e, pos, vars) for _ in 1:k])
     elseif tag isa MORK.ExprNewVar
-        pos[] += 1; v = _MM2_ATOM.Var("_$(length(vars))"); push!(vars, v); return v
+        # id≠0 (source vars are always id 0) ⇒ a synthetic var can NEVER capture a source var spelled
+        # `$_0`: distinctness comes from the `id` FIELD, not the name string (the day's whole lesson).
+        pos[] += 1; v = _MM2_ATOM.Var("_$(length(vars))", UInt64(length(vars) + 1)); push!(vars, v); return v
     else  # ExprVarRef(idx) — 0-based back-reference to the idx-th introduced var
         pos[] += 1
         return vars[Int(tag.idx) + 1]
