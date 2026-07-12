@@ -21,7 +21,6 @@ const _HCHECKS = Tuple{String,String}[
     ("no stdlib shadowing",                  joinpath(_HROOT, "test_no_stdlib_shadow.jl")),
     ("type system",                          joinpath(_HROOT, "test_types.jl")),
 ]
-_HFULL && push!(_HCHECKS, ("ECAN acceptance (13 examples)", joinpath(_HROOT, "ecan", "test_ecan.jl")))
 
 _hresults = Tuple{String,Bool}[]
 for (name, path) in _HCHECKS

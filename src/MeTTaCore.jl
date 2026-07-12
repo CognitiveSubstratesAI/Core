@@ -43,8 +43,7 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
 
 # WILLIAM (Adaptive Compression and Discovery Service) — Pattern B1 Pkg dep.
 # Its `__init__` registers the `WILLIAM.mine-patterns` grounded primitive into
-# MORK.GROUNDED_REGISTRY at module load; the `(library william)` resolver
-# entry is installed below after _PACKAGE_REGISTRY is in scope (Eval.jl).
+# MORK.GROUNDED_REGISTRY at module load.
 using AdaptiveCompression
 
 include("space/CoreSpace.jl")
@@ -53,12 +52,8 @@ include("parser/Parser.jl")
 include("primitives/Primitives.jl")
 include("primitives/AtomOps.jl")
 include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundation) — NOT legacy
-# ⚠️ OBSOLETE — legacy interpreter being RETIRED (docs/ARCHITECTURE_TARGET.md: the Interpreter supersedes
-# eval_metta). Retained ONLY because a handful of full-Eval test scripts (test_types, test_metamo,
-# test_actpc_chem, test_william, test_moses full-Eval path, …) have not yet migrated to the Interpreter
-# harness. DO NOT build new code on eval_metta / run_metta. Delete after migration.
-# (EvalND_obsolete.jl / eval_nd removed 2026-06-30 — its sole consumer was the test_ecan_dual tracker.)
-include("eval/Eval_obsolete.jl")     # eval_metta / run_metta / run_file (legacy tree-walker)
+# (Eval_obsolete.jl — the legacy Vector{Any} tree-walker eval_metta/run_metta/run_file — was RETIRED
+#  2026-07-12. All tests migrated to the Interpreter harness or were dropped with their reworked algorithms.)
 
 # Standard-MeTTa Interpreter (faithful hyperon interpreter.rs port of the minimal-MeTTa instruction set).
 # Fully SELF-CONTAINED — it does NOT touch eval_metta/eval_nd and shares no types with the MORK-backed
@@ -75,12 +70,9 @@ include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (ex
 include("standard/DualTrack.jl")     # dual-track capstone: mc_run unified entry (auto-dispatch by form)
 include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
-# Point `(library william)` resolution at the AdaptiveCompression package dir.
-# `_resolve_library` already has step-2 fallback to `_PACKAGE_REGISTRY[name]`;
-# we just need to install the entry.  The actual `.metta` lives at
-# `pkgdir(AdaptiveCompression)/william.metta` (matches AdaptiveCompression's
-# repo layout: william.metta at package root, examples/ alongside).
-_PACKAGE_REGISTRY["william"] = pkgdir(AdaptiveCompression)
+# (The legacy `(library william)` registry entry — `_PACKAGE_REGISTRY["william"]` — was removed with
+#  Eval_obsolete.jl. The modern import! resolver uses `Interpreter._MODULE_PATH`; the WILLIAM rework will
+#  register william there if/when it needs `(import! &self (library william))`.)
 
 # stdlib directory relative to this package root
 const _STDLIB_DIR = joinpath(@__DIR__, "..", "stdlib")
@@ -116,66 +108,10 @@ function load_stdlib!(space::CoreSpace)
     space
 end
 
-"""
-    register_all_primitives!(eval_fn=nothing)
-
-Register all grounded primitives into MORK.GROUNDED_REGISTRY.
-Pass `eval_fn` (a String→String callback) to enable foldl/map/filter.
-"""
-function register_all_primitives!(eval_fn::Union{Function,Nothing} = nothing)
-    register_core_primitives!()
-    _register_atom_ops!(
-        eval_fn !== nothing ? eval_fn :
-            (s -> begin
-                sp = default_space()
-                r = eval_metta(from_sexpr(s), sp)
-                to_sexpr(r)
-            end)
-    )
-end
-
-"""
-    register_for_space!(space::CoreSpace; use_supercompiler=false)
-
-Register all primitives with `foldl-atom`/`map-atom`/`filter-atom` wired
-to evaluate sub-expressions in `space`.
-
-When `use_supercompiler=true`, all exec atoms evaluated in this space are
-routed through `MorkSupercompiler.plan!` which applies join-order reordering
-and Rule-of-64 source decomposition before running MORK calculus.  Output
-contract is identical to the default path (same trie mutations, no approx
-pipeline engaged).  NOTE: this tier-1 `plan!` route fires only through the
-LEGACY eval path (`Eval_obsolete.jl`) — the modern `mc_run` lanes do not read
-this flag.  The first-class tier-2 entry is [`sc_execute!`](@ref)
-(reached via `mc_run(...; supercompile=true)` on the Direct lane, or
-`saturate=true` on the MeTTa-IL lane).
-
-Opt-in rationale: SET semantics is safe by construction (PipelineDecompose's
-flow_vars carries every final-template variable through every intermediate
-_sc_tmp* hop — verified transitively for chained decompositions).  CountSink
-safety is conditional: dedup only collapses identical *final* atoms, so
-count-shaped reads are correct iff distinct binding paths never produce the
-same final atom.  Algorithms with that property (MetaMo, MOSES) can safely
-opt in.  Algorithms where two paths legitimately produce duplicate finals
-(WILLIAM.count, WILLIAM.dict-size) need workload-level verification first.
-
-Flag grain: per-space, not per-rule.  Every exec atom in this space gets
-decomposed.  Acceptable for spaces holding a coherent algorithm library;
-for spaces mixing safe and unsafe rules, this is too coarse and would need
-per-exec-atom markers in the byte trie.
-
-Usage:
-    s = new_core_space()
-    register_for_space!(s)                          # default: raw MORK calculus
-    register_for_space!(s; use_supercompiler=true)  # Rule-of-64 decomposition
-    load_stdlib!(s)
-    run_metta("!(import! &self (library william))", s)
-"""
-function register_for_space!(space::CoreSpace; use_supercompiler::Bool = false)
-    use_supercompiler && enable_sc!(space)
-    register_core_primitives!()
-    _register_atom_ops!(expr_str -> to_sexpr(eval_metta(from_sexpr(expr_str), space)))
-end
+# register_all_primitives! / register_for_space! were REMOVED with the Eval_obsolete.jl tree-walker
+# (2026-07-12): they wired the legacy foldl/map/filter atom-ops to eval_metta. The modern Interpreter
+# path carries its own grounded ops; `register_core_primitives!` (Primitives.jl) remains for direct
+# GROUNDED_REGISTRY population, and `enable_sc!(space)` remains the supercompiler opt-in.
 
 """
     sc_execute!(space::CoreSpace, program::AbstractString; opts=SC_DEFAULTS) -> SCResult
@@ -228,8 +164,7 @@ export snapshot_space_to_act!, load_act_source, act_exists, set_act_dir!
 export open_node!, close_node!
 export to_sexpr, from_sexpr, to_sexpr_query, _tokenise
 export parse_metta, parse_sexpr
-export eval_metta, run_metta, run_file, default_space
-export register_core_primitives!, register_all_primitives!, register_for_space!, load_stdlib!
+export register_core_primitives!, load_stdlib!
 export register_grounded!, is_grounded, GROUNDED_REGISTRY
 export mork_unify, mork_apply, mork_rule_rewrite   # E1.0 native-engine bridge
 
