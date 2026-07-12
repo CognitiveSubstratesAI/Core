@@ -1518,6 +1518,7 @@ const _GROUNDED_OP_TYPE_CACHE = Dict{Atom,Atom}()
 const _ATOM_TYPE_MEMO = Dict{Atom,Tuple{UInt,Int,Vector{Atom}}}()
 const _TYPE_MEMO_ON = Ref(true)     # gate for one release; health 4/4 proves parity before it's load-bearing
 const _TYPE_MEMO_CAP = 1 << 20      # bound growth on long-running servers (clears wholesale on overflow)
+const _DECL_TYPE_MEMO = Dict{Atom,Tuple{UInt,Int,Vector{Atom}}}()   # declared-types memo (atom_types); same keying/invalidation as _ATOM_TYPE_MEMO
 
 const NO_TYPES = Atom[]     # shared empty-types sentinel (no caller mutates an atom_types result); same
                             # zero-alloc convention as EMPTY_VARS — the early-return below is alloc-free.
@@ -1532,6 +1533,23 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     # Guard is alloc-free (early return + no query) — the OLD path ran a full-space `(: $v $T)` scan per
     # var-headed subterm; measured atom_types(Var) 0 ns vs the query cost.
     atom isa Var && return NO_TYPES
+    # DECLARED-type memo (mirrors the arg_actual_types memo, ADR-059): a ground atom's declared types depend
+    # ONLY on the space's `:` decls (which bump type_epoch), so cache by (atom, space identity, epoch). The
+    # head-op lookup in metta_instr runs atom_types(op) on EVERY application; memoising it collapses the
+    # per-reduction `(: op $T)` space-query to a hit (the dominant cost on untyped/var-heavy libs like PLN).
+    # Ground-only; a var-headed Expression recurses uncached exactly as before. Byte-identical to recomputation.
+    if _TYPE_MEMO_ON[] && !(atom isa Expression && atom.has_vars)
+        sid = objectid(space)
+        hit = get(_DECL_TYPE_MEMO, atom, nothing)
+        (hit !== nothing && hit[1] == sid && hit[2] == space.type_epoch) && return hit[3]
+        res = _atom_types_uncached(atom, space)
+        length(_DECL_TYPE_MEMO) < _TYPE_MEMO_CAP || empty!(_DECL_TYPE_MEMO)
+        _DECL_TYPE_MEMO[atom] = (sid, space.type_epoch, res)
+        return res
+    end
+    _atom_types_uncached(atom, space)
+end
+function _atom_types_uncached(atom::Atom, space::Space)::Vector{Atom}
     T = freshvar("T"); out = Atom[]
     haskey(_GROUNDED_OP_TYPES, atom) &&
         push!(out, get!(() -> _parse_type(_GROUNDED_OP_TYPES[atom]), _GROUNDED_OP_TYPE_CACHE, atom))
