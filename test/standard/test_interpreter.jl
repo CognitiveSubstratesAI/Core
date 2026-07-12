@@ -34,6 +34,29 @@ rule(lhs, rhs) = E(S("="), lhs, rhs)
     @test metta_run(E(S("nope"), Grounded(1)), Space()) == Atom[E(S("nope"), Grounded(1))]
 end
 
+# Regression: `case` and `foldl-atom` must DISTRIBUTE / FORK over a nondeterministic argument, not
+# collapse to one result. Verified against 4 reference engines (hyperon-experimental / CeTTa / MeTTa-TS /
+# PeTTa): (case (superpose (a b c)) …) → [a,b,c]; foldl of a superpose op forks the accumulator. Before
+# the 2026-07-12 fix Core returned a single result (case: flattened loop break-both; foldl: acc=rs[1]).
+@testset "case / foldl distribute over nondeterminism (4-engine verified)" begin
+    sp = Space(); load_core_stdlib!(sp)
+    q(s) = load_metta!(sp, s)
+    # case distributes: N alternatives → N results (catch-all clause)
+    @test Set(q(raw"!(case (superpose (a b c)) (($x $x)))")) == Set(Atom[S("a"), S("b"), S("c")])
+    @test Set(q(raw"!(case (superpose (1 2)) ((1 one) (2 two)))")) == Set(Atom[S("one"), S("two")])
+    # a no-match alternative is dropped (hyperon/CeTTa arbiter — not laundered to Empty)
+    @test Set(q(raw"!(case (superpose (1 2 9)) ((1 one) (2 two)))")) == Set(Atom[S("one"), S("two")])
+    # deterministic case unchanged
+    @test q("!(case foo ((foo matched) (bar other)))") == Atom[S("matched")]
+    # foldl forks over a nondeterministic op → multiset {0,2,2,3} (4 paths), not one
+    let r = q(raw"!(foldl-atom (1 2) 0 $a $b (superpose ((+ $a $b) (* $a $b))))")
+        @test length(r) == 4
+        @test Set(r) == Set(Atom[Grounded(0), Grounded(2), Grounded(3)])
+    end
+    # deterministic foldl unchanged
+    @test q(raw"!(foldl-atom (1 2 3) 0 $a $b (+ $a $b))") == Atom[Grounded(6)]
+end
+
 @testset "metta driver: gradual types — if / let (lazy args, Phase 1b)" begin
     decl(n, ty) = E(S(":"), S(n), ty)
     arrow(xs...) = E(S("->"), xs...)

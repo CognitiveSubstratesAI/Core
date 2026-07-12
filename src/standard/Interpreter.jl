@@ -2009,11 +2009,19 @@ const GET_TYPE = Grounded(SpaceOp("get-type",
 const FOLDL_ATOM = Grounded(SpaceOp("foldl-atom", function (xs, space)
     (length(xs) == 5 && xs[1] isa Expression && xs[3] isa Var && xs[4] isa Var) || return ExecNoReduce()
     list, acc, avar, bvar, op = xs[1], xs[2], xs[3], xs[4], xs[5]
+    # foldl FORKS over a nondeterministic op: each op result is an independent accumulator path.
+    # Verified 3-engine (hyperon/CeTTa/MeTTa-TS): fold (superpose ((+ $a $b)(* $a $b))) over (1 2) → {0,2,2,3},
+    # not one path. Deterministic ops (sum-list/product-list) keep exactly one accumulator, unchanged.
+    accs = Atom[acc]
     for item in list.children
-        rs = metta_run(_replace_var(_replace_var(op, avar, acc), bvar, item), space)
-        acc = isempty(rs) ? EMPTY : rs[1]
+        next = Atom[]
+        for a in accs
+            rs = metta_run(_replace_var(_replace_var(op, avar, a), bvar, item), space)
+            isempty(rs) ? push!(next, EMPTY) : append!(next, reverse(rs))   # reverse: forward order
+        end
+        accs = next
     end
-    ExecOk(Atom[acc])
+    ExecOk(accs)
 end))
 # case (grounded SpaceOp): evaluate $atom, return the body of the first case pattern it matches
 const CASE = Grounded(SpaceOp("case", function (xs, space)
@@ -2021,14 +2029,22 @@ const CASE = Grounded(SpaceOp("case", function (xs, space)
     # hyperon (stdlib.metta case §): an EMPTY result set matches the special `Empty` case pattern (NOT `()`).
     results = metta_run(xs[1], space); isempty(results) && (results = Atom[Sym("Empty")])
     out = Atom[]; binds = Bindings[]
-    for res in results, clause in xs[2].children
+    # case DISTRIBUTES over a nondeterministic scrutinee: EACH alternative independently yields its first
+    # matching clause's body. Verified 4-engine (hyperon/CeTTa/MeTTa-TS/PeTTa): (superpose (a b c)) → [a,b,c],
+    # not one result. A no-match alternative is dropped (hyperon/CeTTa arbiter). metta_run returns reverse
+    # order, so iterate reversed to emit forward (cf. COLLAPSE above).
+    for res in reverse(results)
         if res == UNDEFINED                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
-            push!(out, UNDEFINED); push!(binds, Bindings()); break
+            push!(out, UNDEFINED); push!(binds, Bindings())
+            continue
         end
-        (clause isa Expression && length(clause.children) == 2) || continue
-        ms = match_atoms(clause.children[1], res)
-        if !isempty(ms)
-            push!(out, subst(clause.children[2], ms[1])); push!(binds, ms[1]); break
+        for clause in xs[2].children
+            (clause isa Expression && length(clause.children) == 2) || continue
+            ms = match_atoms(clause.children[1], res)
+            if !isempty(ms)
+                push!(out, subst(clause.children[2], ms[1])); push!(binds, ms[1])
+                break                                         # first matching clause for THIS alternative
+            end
         end
     end
     ExecOk(out, binds)
