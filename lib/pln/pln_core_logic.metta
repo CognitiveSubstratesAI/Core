@@ -87,9 +87,27 @@
                  (TupleConcat ($x $head) $tail)
                  (TupleConcat ($head) (InsertSorted $x $tail))))))
 
-;; InsertionSort main
+;; InsertionSort main — canonicalises an evidence stamp to a total order so that
+;; StampDisjoint's overlap test is order-independent.
+;;
+;; ⚠️ WAS `(msort $L)` — and `msort` IS NOT DEFINED ANYWHERE (one grep hit repo-wide: this
+;; call site). It silently returned the UNREDUCED term `(msort (s1 s2))` instead of a sorted
+;; tuple, so EVERY derived sentence's stamp (built here at :502 / :553) was malformed. Verified
+;; by execution — the gate then broke in BOTH directions:
+;;   · derived-vs-derived: (StampDisjoint (msort (s1 s2)) (msort (s3 s4))) => False on fully
+;;     DISJOINT evidence — both stamps contain the symbol `msort`, so every pair "overlaps".
+;;     Legitimate revisions are blocked  ⇒ INFERENCE STARVATION.
+;;   · seed-vs-derived: (StampDisjoint (s1) (msort (s1 s2))) => True although s1 is in BOTH —
+;;     `s1` is nested inside the unreduced term, so superpose never sees it. The gate fails OPEN
+;;     and licenses re-counting the same evidence ⇒ EVIDENCE FABRICATION (ωPLN Prop 7.1: D_dc>0).
+;; `sort-atom` is grounded (src/standard/Interpreter.jl:2229) and verified on stamp-shaped data:
+;; (s3 s1 s2)->(s1 s2 s3), ()->(), (s1)->(s1), (s2 s1 s2)->(s1 s2 s2). Any total order suffices;
+;; sorting is for canonicalisation, not dedup. Found by auditing our PLN against Goertzel's ωPLN
+;; law catalogue (docs/specs/omegaclaw/omegapln_implementation_v3_spec.md §26.2/App C).
+;; The original recursive impl (via the still-live InsertSorted, :81-89) is kept below for
+;; reference; it compares with `<` and so is numeric-only, whereas stamps are symbols.
 (= (InsertionSort $L $Ret)
-   (msort $L))
+   (sort-atom $L))
 ;   (if (== $L ())
 ;       $Ret
 ;       (let* (($x (car-atom $L))
