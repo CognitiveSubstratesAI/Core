@@ -16,18 +16,24 @@ anonymises variable names (de Bruijn); __var_x preserves them.
 
 For query patterns, call `to_sexpr_query` which uses dollar-variables directly.
 """
-function to_sexpr(x::Any) :: String
+# The S-expression-convertible domain: exactly what to_sexpr / to_sexpr_atom / to_sexpr_query and
+# core_add! / core_remove! accept (the MORK "Vector-form" representation + raw sexpr strings). An
+# explicit union — NOT `::Any` — so the store boundary fails CLOSED at dispatch on an unexpected
+# type (e.g. an interpreter `Atom`, which must go through `typed_atom_to_expr`, not the old
+# `string(x)` fallback that silently mis-serialised it). GUARANTEE not CONVENTION.
+const SExprConvertible = Union{AbstractString, Symbol, Bool, Number, Tuple, AbstractVector}
+
+function to_sexpr(x::SExprConvertible) :: String
     if x isa Symbol
         s = string(x)
         startswith(s, "\$") && return "__var_" * s[2:end]
         return s
     end
-    x isa String  && return x   # passthrough: String input is treated as raw S-expr by core_add!/core_remove!
-    x isa Bool    && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
-    x isa Number  && return string(x)
-    x isa Tuple   && return "($(join(to_sexpr.(x), " ")))"   # Tuple same as Vector
-    x isa Vector  && return "($(join(to_sexpr.(x), " ")))"
-    string(x)
+    x isa AbstractString && return String(x)   # passthrough: treated as raw S-expr by core_add!/core_remove!
+    x isa Bool           && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
+    x isa Number         && return string(x)
+    x isa Tuple          && return "($(join(to_sexpr.(x), " ")))"        # Tuple same as Vector
+    "($(join(to_sexpr.(x), " ")))"                                        # x::AbstractVector (all other cases)
 end
 
 """
@@ -41,8 +47,8 @@ symbol `:hi`.
 `to_sexpr` itself preserves the legacy raw-S-expr passthrough semantics for
 String inputs (used by `core_add!`/`core_remove!`).
 """
-function to_sexpr_atom(x::Any) :: String
-    x isa String && return "\"" * escape_string(x) * "\""
+function to_sexpr_atom(x::SExprConvertible) :: String
+    x isa AbstractString && return "\"" * escape_string(String(x)) * "\""
     to_sexpr(x)
 end
 
@@ -50,18 +56,18 @@ end
 Convert a pattern to S-expression, keeping dollar-variables as MORK wildcards.
 Use for `core_match` queries — do NOT use for storage (variable names lost).
 """
-function to_sexpr_query(x::Any) :: String
+function to_sexpr_query(x::SExprConvertible) :: String
     if x isa Symbol
         s = string(x)
         # __var_x is the storage form of $x — convert back so MORK treats it as wildcard
         startswith(s, "__var_") && return "\$" * s[7:end]
         return s   # $x stays as-is — MORK parses it as a wildcard variable
     end
-    x isa String  && return x   # passthrough — query patterns may contain raw S-expr fragments
-    x isa Bool    && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
-    x isa Number  && return string(x)
-    x isa Vector  && return "($(join(to_sexpr_query.(x), " ")))"
-    string(x)
+    x isa AbstractString && return String(x)   # passthrough — query patterns may contain raw S-expr fragments
+    x isa Bool           && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
+    x isa Number         && return string(x)
+    x isa Tuple          && return "($(join(to_sexpr_query.(x), " ")))"
+    "($(join(to_sexpr_query.(x), " ")))"       # x::AbstractVector
 end
 
 """Parse a MORK S-expression string into a Julia value."""
@@ -349,7 +355,7 @@ whole-trie behavior — `space_add_all_sexpr!` is used directly.
 For prefixed spaces (Stage 1 multi-space), the atom is parsed once and
 stored via byte-level `set_val_at!` with the prefix prepended.
 """
-function core_add!(s::CoreSpace, atom::Any)
+function core_add!(s::CoreSpace, atom::SExprConvertible)
     sexpr = to_sexpr(atom)
     isempty(sexpr) && return nothing
     with_write_permit(s) do
@@ -383,7 +389,7 @@ The atom is looked up at byte-path `s.prefix ++ atom_bytes`; only that
 exact path is removed.  For root-prefixed spaces this is unchanged from
 the pre-Stage-1 behavior.
 """
-function core_remove!(s::CoreSpace, atom::Any)
+function core_remove!(s::CoreSpace, atom::SExprConvertible)
     sexpr = to_sexpr(atom)
     isempty(sexpr) && return nothing
     with_write_permit(s) do
