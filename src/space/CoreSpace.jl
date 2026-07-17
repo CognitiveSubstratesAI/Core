@@ -518,20 +518,45 @@ function _concrete_token(el::Symbol)
 end
 _concrete_token(::Any) = nothing   # nested expr / variable / other → stop pinning
 
+# Emit the constant byte-prefix of `el` into `bytes`, mirroring MORK's structural pre-order
+# encoding (arity byte; symbol = size byte + token bytes; nested expr = arity byte + children).
+# Returns (pinned_count, stopped): stopped=true means a variable / non-concrete element was
+# hit, so NO further sibling may be pinned — a trie prefix must be contiguous, and everything
+# after the first variable is non-constant.  Recursing into nested exprs is what lets a RULE
+# pattern `(= (f a) $body)` narrow on its nested head `f` (measured: O(N)→O(1), commit that
+# added benchmark/store_match_scaling.jl); the previous flat-only walk pinned just `=` and
+# full-scanned, because a nested head is not a `_concrete_token`.  Mirrors `_const_prefix`
+# (MORK Space.jl) — same walk, on the Julia Vector form instead of MORK.Expr bytes.
+function _emit_prefix!(bytes::Vector{UInt8}, el)::Tuple{Int, Bool}
+    if el isa Vector && !isempty(el)
+        push!(bytes, item_byte(ExprArity(UInt8(length(el)))))
+        n = 0
+        for child in el
+            c, stopped = _emit_prefix!(bytes, child)
+            n += c
+            stopped && return (n, true)      # variable inside the nested expr → prefix ends here
+        end
+        return (n, false)
+    end
+    tok = _concrete_token(el)
+    tok === nothing && return (0, true)      # variable / other → stop
+    tb = Vector{UInt8}(tok)
+    length(tb) > 63 && return (0, true)      # multi-byte symbol size — stop pinning here
+    push!(bytes, item_byte(ExprSymbol(UInt8(length(tb)))))
+    append!(bytes, tb)
+    (1, false)
+end
+
 function _pattern_prefix_bytes(pattern)
     (pattern isa Vector && length(pattern) >= 2) || return nothing
     bytes  = UInt8[item_byte(ExprArity(UInt8(length(pattern))))]
     pinned = 0
     for el in pattern
-        tok = _concrete_token(el)
-        tok === nothing && break
-        tb = Vector{UInt8}(tok)
-        length(tb) > 63 && break          # multi-byte symbol size — stop pinning here
-        push!(bytes, item_byte(ExprSymbol(UInt8(length(tb)))))
-        append!(bytes, tb)
-        pinned += 1
+        n, stopped = _emit_prefix!(bytes, el)
+        pinned += n
+        stopped && break
     end
-    # Worth narrowing only if at least one ARG beyond the functor is pinned.
+    # Worth narrowing only if at least one ARG-side symbol beyond the functor is pinned.
     pinned >= 2 ? bytes : nothing
 end
 
