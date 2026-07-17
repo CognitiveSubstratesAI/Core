@@ -451,6 +451,20 @@ function remove_atom!(s::Space, a::Atom)
     s
 end
 
+# ── Store-accessor interface (Phase 1 of the MORK-backing migration) ──────────────────────────
+# Every store access OUTSIDE the store's own methods (add_atom!/remove_atom!/query and the index
+# internals) goes through these accessors, so a MORK-trie-backed store can satisfy the SAME
+# interface without the eval loop or external callers reaching into `.atoms`/`.lib_count`. Today
+# they wrap the Julia `Vector{Atom}` verbatim — ZERO behaviour change; Phase 2 adds MORK-backed
+# methods. `.atoms` was reached directly at ~9 sites (get-atoms, _match_pat, fork-space,
+# auto_table!, MM2Router own-atoms/dedup, the server's own-atom counts); all now route here.
+all_atoms(s::Space) = s.atoms                                   # every atom, incl. the flattened library
+own_atoms(s::Space) = @view s.atoms[(s.lib_count + 1):end]      # own atoms only (excludes imported library)
+atom_count(s::Space) = length(s.atoms)
+own_atom_count(s::Space) = length(s.atoms) - s.lib_count
+contains_atom(s::Space, a::Atom) = any(==(a), s.atoms)
+clone_store(s::Space) = (f = Space(copy(s.atoms)); f.lib_count = s.lib_count; f)
+
 const _VAR_COUNTER = Ref(UInt64(0))
 freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
 
@@ -957,8 +971,8 @@ an impurity-propagation fixpoint over a conservative pure-primitive whitelist, s
 unknown/impure op is left untabled — result-preserving, only faster. Returns the heads it tabled/skipped.
 """
 function auto_table!(space::Space)
-    pure = _pure_heads(_rules_of(space.atoms))                              # analyze ALL rules (stdlib deps too)
-    user = keys(_rules_of(@view space.atoms[(space.lib_count + 1):end]))    # but only TABLE the user's own heads
+    pure = _pure_heads(_rules_of(all_atoms(space)))                         # analyze ALL rules (stdlib deps too)
+    user = keys(_rules_of(own_atoms(space)))                               # but only TABLE the user's own heads
     up = intersect(pure, user)
     for h in up; table!(h); end
     (tabled = sort!(collect(up)), skipped = sort!(collect(setdiff(user, up))))
@@ -1980,14 +1994,14 @@ end))
 const GET_ATOMS = Grounded(SpaceOp("get-atoms", function (xs, space)
     length(xs) == 1 || return ExecNoReduce()
     tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
-    own = @view tgt.atoms[(tgt.lib_count + 1):end]          # own atoms only — not the imported library
+    own = own_atoms(tgt)                                    # own atoms only — not the imported library
     ExecOk(Atom[rename_fresh(a) for a in own])
 end))
 const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
 # all binding sets under which `pat` matches some atom of `space`, extending `b0`
 function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     out = Bindings[]
-    for atom in space.atoms, mb in match_atoms(subst(pat, b0), rename_fresh(atom))
+    for atom in all_atoms(space), mb in match_atoms(subst(pat, b0), rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))
     end
     out
@@ -2125,7 +2139,7 @@ const NEW_SPACE = Grounded(Operation("new-space", (xs::Vector{Atom}) -> ExecOk(A
 const FORK_SPACE = Grounded(Operation("fork-space", function (xs::Vector{Atom})
     (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa Space) || return ExecNoReduce()
     parent = xs[1].value
-    fork = Space(copy(parent.atoms)); fork.lib_count = parent.lib_count
+    fork = clone_store(parent)
     ExecOk(Atom[Grounded(fork)])
 end))
 const ADD_ATOM = Grounded(SpaceOp("add-atom", function (xs, space)
@@ -2341,7 +2355,7 @@ function load_metta!(space::Space, text::AbstractString; as_library::Bool=false,
     end
     # mark everything loaded so far as imported-library content, hidden from `get-atoms` (hyperon: a
     # dependency lives in a child space and is not returned by get-atoms of the importing space).
-    as_library && (space.lib_count = length(space.atoms))
+    as_library && (space.lib_count = atom_count(space))
     auto_table && !as_library && auto_table!(space)   # opt-in: auto-table the just-loaded user program's pure fns
     results
 end

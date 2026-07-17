@@ -651,7 +651,7 @@ Convenience over `mm2_lane_from_atoms`: mirror a LIVE interpreter `Space`'s OWN 
 (`atoms[lib_count+1:end]` — excludes the imported stdlib) into a MORK lane. The whole-Space live-eval handoff.
 """
 mm2_lane_from_space(isp::Interpreter.Space)::CoreSpace =
-    mm2_lane_from_atoms(@view isp.atoms[(isp.lib_count + 1):end])
+    mm2_lane_from_atoms(Interpreter.own_atoms(isp))
 
 """
     mm2_lane_saturate!(atoms; max_rounds=64) -> CoreSpace
@@ -781,14 +781,14 @@ interpreter's `(=)` reduction semantics for everything else are untouched. So a 
 transitive closure on the substrate, then query it with the interpreter (`!(match &self …)`).
 """
 function mc_closure!(isp::Interpreter.Space; rounds::Int = 64)::Int
-    own = collect(@view isp.atoms[(isp.lib_count + 1):end])
+    own = collect(Interpreter.own_atoms(isp))
     cs = mm2_lane_saturate!(own; max_rounds = rounds)
     added = 0
     for line in split(space_dump_all_sexpr(cs.inner), '\n')
         s = strip(line); isempty(s) && continue
         mm2_head(s) == "exec" && continue                        # skip MM2 exec-rule artifacts
         atom = Interpreter.parse_program(s)[1][2]
-        if !any(==(atom), isp.atoms)
+        if !Interpreter.contains_atom(isp, atom)
             Interpreter.add_atom!(isp, atom); added += 1
         end
     end
