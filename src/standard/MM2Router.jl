@@ -435,8 +435,18 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
     # gate (1): every (=) lowered; no user-authored raw execs
     any(f -> mm2_head(f) == "=", p.data) && return (; served, remaining)
     any(t -> !t[1] && mm2_head(t[2]) == "exec", forms) && return (; served, remaining)
-    # collect rule heads; gate (2): one clause per head
+    # Collect rule heads AND build the reduction exec list.
+    # Gate (2) "one clause per head" is REMOVED — multiple clauses now CO-FIRE via the collect-all
+    # shape (MM2 spec Control_04): each relational clause lowers to an ADD-ONLY exec at priority 0
+    # (every matching clause fires, MeTTa's defining semantics), and the matched redex is deleted
+    # ONCE per distinct LHS at priority 1. The old single-clause `(O (+R)(-L))` deleted the redex
+    # per-clause (spec Control_05 "match first"), so a second overlapping clause never fired — that
+    # is exactly why the gate rejected them. Collect-all == match-first for one clause (verified),
+    # and == the interpreter for many (bisimulation-tested). Priority sequencing (prio-0 batch fires
+    # before prio-1 delete) is honored by our `space_metta_calculus!` (verified by execution).
+    # `heads`/`rules` still drive gates (3)/(4) + the per-bang head check.
     heads = Set{String}(); rules = Tuple{String, String, String}[]     # (head, lhs, rhs)
+    co_exec = String[]; seen_lhs = Set{String}()
     for (bang, f) in forms
         (bang || mm2_head(f) != "=") && continue
         a = mm2_expr_args(f)
@@ -444,8 +454,18 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
         lhs, rhs = a[2], a[3]
         startswith(strip(lhs), "(") || return (; served, remaining)
         h = mm2_head(lhs)
-        h in heads && return (; served, remaining)                      # overlapping clauses
         push!(heads, h); push!(rules, (h, lhs, rhs))
+        if mm2_is_relational(f)
+            push!(co_exec, "(exec 0 (I $lhs) (O (+ $rhs)))")           # collect-all: add-only @prio 0
+            if !(lhs in seen_lhs)
+                push!(co_exec, "(exec 1 (I $lhs) (O (- $lhs)))")       # delete redex once @prio 1
+                push!(seen_lhs, lhs)
+            end
+        elseif mm2_is_arith_body(f)
+            push!(co_exec, mm2_lower_equals_arith(f))                  # arith body → pure-sink (unchanged)
+        else
+            return (; served, remaining)                              # non-lowerable (= …) — can't ZAM-serve
+        end
     end
     isempty(heads) && return (; served, remaining)
     # gates (3)+(4): no nested rule-head calls; top-level chain graph must be acyclic
@@ -480,7 +500,7 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
         end
         scr = new_core_space()
         space_add_all_sexpr!(scr.inner, b)
-        for e in p.exec; space_add_all_sexpr!(scr.inner, e); end
+        for e in co_exec; space_add_all_sexpr!(scr.inner, e); end
         space_metta_calculus!(scr.inner, steps)
         dump = [strip(l) for l in split(space_dump_all_sexpr(scr.inner), '\n') if !isempty(strip(l))]
         reduct = sort(String[String(x) for x in dump

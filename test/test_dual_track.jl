@@ -271,10 +271,10 @@ using MORK   # space dump for the supercompiler-opt-in test
     end
 
     @testset "direct lane: ZAM demand-injection readback (fastlane-first, literal)" begin
-        # Bangs whose (=) rules are in the reduction-servable SAFE SUBSET (all lowered · one clause
-        # per head · acyclic · no nested rule-head calls) are answered ON the ZAM via scratch-space
-        # redex injection + readback; everything else falls back to the interpreter. Outside the
-        # subset the ZAM could diverge from the interpreter's normal form, so it is never trusted.
+        # Bangs whose (=) rules are in the reduction-servable SAFE SUBSET (all lowered · acyclic ·
+        # no nested rule-head calls; MULTI-CLAUSE heads now co-fire, see (d)) are answered ON the ZAM
+        # via scratch-space redex injection + readback; everything else falls back to the interpreter.
+        # Outside the subset the ZAM could diverge from the interpreter's normal form, so it is never trusted.
 
         # (a) single servable rule: answered BY THE ZAM, same answer the interpreter would give
         wr = raw"(= (wrapit $x) (wrapped $x))" * "\n!(wrapit a)"
@@ -295,13 +295,29 @@ using MORK   # space dump for the supercompiler-opt-in test
         @test isempty(rC.results.zam_served)
         @test ("(f (f a))", ["(wrapped (wrapped a))"]) in rC.results.evaluated
 
-        # (d) multi-clause head: the reduction exec DELETES the redex — a second clause would never
-        #     fire on the ZAM — so multi-clause heads are gated to the interpreter (collect-all: BOTH)
+        # (d) multi-clause head — CO-FIRING (spec Control_04): both clauses now fire ON THE ZAM via
+        #     the collect-all shape (add-only exec @prio 0 per clause + one redex-delete @prio 1),
+        #     == the interpreter's collect-all. Previously the per-clause `(-L)` redex-delete (spec
+        #     Control_05 "match first") serialized clauses so only ONE fired, and multi-clause heads
+        #     were gated to the interpreter; the gate was removed once co-firing was bisim-verified.
         mcp = raw"(= (c $x) (r1 $x))" * "\n" * raw"(= (c $x) (r2 $x))" * "\n!(c k)"
         csD = MC.new_core_space(); rD = mc_run(csD, "", mcp)
-        @test isempty(rD.results.zam_served)
+        @test rD.results.zam_served == ["(c k)"]            # NOW co-fired on the ZAM, not the interpreter
         ansD = only([a for (b, a) in rD.results.evaluated if b == "(c k)"])
-        @test sort(ansD) == ["(r1 k)", "(r2 k)"]            # interpreter collect-all preserved
+        @test sort(ansD) == ["(r1 k)", "(r2 k)"]            # collect-all == interpreter
+
+        # (d2) co-firing edge cases, ZAM-served AND == interpreter (bisimulation regression locks):
+        #      • UNIFIABLE LHS — a ground redex `(u a)` matches both `(u a)` and `(u $z)`, both fire
+        umcp = raw"(= (u a) x)" * "\n" * raw"(= (u $z) w)" * "\n!(u a)"
+        csU = MC.new_core_space(); rU = mc_run(csU, "", umcp)
+        @test rU.results.zam_served == ["(u a)"]
+        @test sort(only([a for (b, a) in rU.results.evaluated if b == "(u a)"])) == ["w", "x"]
+        #      • CO-FIRING CHAIN — (h a) reduces to {(p b),(p c)} which each reduce, in one calculus call
+        chn = raw"(= (h a) (p b))" * "\n" * raw"(= (h a) (p c))" * "\n" *
+              raw"(= (p b) done_b)" * "\n" * raw"(= (p c) done_c)" * "\n!(h a)"
+        csH = MC.new_core_space(); rH = mc_run(csH, "", chn)
+        @test rH.results.zam_served == ["(h a)"]
+        @test sort(only([a for (b, a) in rH.results.evaluated if b == "(h a)"])) == ["done_b", "done_c"]
 
         # (e) cyclic rule graph: gate rejects (needs the absent reduction re-fire loop) — test the
         #     router helper directly (no eval: the interpreter would not terminate on this either)
