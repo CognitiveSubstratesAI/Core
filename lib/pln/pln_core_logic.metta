@@ -179,6 +179,20 @@
               (and (<= $smallest $ABs)
                    (<= $ABs $largest)))))
 
+;; valid-strength — L-C4 domain guard. A PLN strength is the mean of a first-order
+;; probability and MUST lie in [0,1]; s>1 (or s<0) is out-of-domain, never legitimate
+;; (canonical itself treats >1 as something to bound — see Truth_Revision's (min 1.0 $f)).
+;; Pure-MeTTa predicate composing primitives — no grounded op, no Error atom — same
+;; Bool + (if … fallback) shape as conditional-probability-consistency above. Used at the
+;; ORIGIN of Induction/Abduction/equivalenceToImplication/TransitiveSimilarityStrength to
+;; REJECT an out-of-domain inference (from probabilistically-inconsistent input TVs) rather
+;; than let it flow downstream where Truth_Revision's (min 1.0 $f) would silently launder it
+;; into a confident belief. The four bodies are byte-identical to canonical trueagi-io/PLN +
+;; PeTTa — only their domain PRECONDITION was missing (deduction has it, these four lacked it).
+(: valid-strength (-> Number Bool))
+(= (valid-strength $s)
+   (and (<= 0.0 $s) (<= $s 1.0)))
+
 (= (Consistency_ImplicationImplicantConjunction $As $Bs $Cs $ACs $BCs)
    ; Conditional probability consistency checks:
    ; P(C|A) <= P(C)/P(A)  =>  $sAC <= $sC / $sA
@@ -239,10 +253,13 @@
                     (stv $sC $cC)
                     (stv $sBA $cBA)
                     (stv $sBC $cBC))
-   (stv (+ (/safe (* (* $sBA $sBC) $sB) $sA)
-           (* (- 1 (/safe (* $sBA $sB) $sA))
-              (/safe (- $sC (* $sB $sBC)) (- 1 $sB))))
-        (Truth_w2c (* (* $sBC $cBC) $cBA))))
+   (let* (($s (+ (/safe (* (* $sBA $sBC) $sB) $sA)
+                 (* (- 1 (/safe (* $sBA $sB) $sA))
+                    (/safe (- $sC (* $sB $sBC)) (- 1 $sB))))))
+         (if (valid-strength $s)
+             (stv $s (Truth_w2c (* (* $sBC $cBC) $cBA)))
+             ;; L-C4: out-of-domain strength (inconsistent input TVs) — reject at origin
+             (stv 1 0))))
 
 ; Abduction formula: PLN book "Appendix A: Comparison of PLN Rules with NARS Rules", page 307
 (= (Truth_Abduction (stv $sA $cA)
@@ -250,11 +267,14 @@
                     (stv $sC $cC)
                     (stv $sAB $cAB)
                     (stv $sCB $cCB))
-   (stv (+ (/safe (* (* $sAB $sCB) $sC)
-                  $sB)
-           (/safe (* $sC (* (- 1 $sAB) (- 1 $sCB)))
-                  (- 1 $sB)))
-        (Truth_w2c (* (* $sAB $cAB) $cCB))))
+   (let* (($s (+ (/safe (* (* $sAB $sCB) $sC)
+                        $sB)
+                 (/safe (* $sC (* (- 1 $sAB) (- 1 $sCB)))
+                        (- 1 $sB)))))
+         (if (valid-strength $s)
+             (stv $s (Truth_w2c (* (* $sAB $cAB) $cCB)))
+             ;; L-C4: out-of-domain strength (term1 diverges as sB→0) — reject at origin
+             (stv 1 0))))
 
 ;Modus Ponens: PLN book "5.7.1 Modus Ponens", page 111:
 ;; Strength: Ps*PQs + 0.02*(1-Ps)
@@ -322,16 +342,23 @@
                         $ABs
                         ;; Formula based on PLN book formula for sim2inh
                         (/safe (* (+ 1.0 (/safe $Bs $As)) $ABs) (+ 1.0 $ABs)))))
-          (stv $ConclS $ABc)))
+          (if (valid-strength $ConclS)
+              (stv $ConclS $ABc)
+              ;; L-C4: sim2inh factor (1+Bs/As) explodes for small As — reject at origin
+              (stv 1 0))))
 
 ; see https://github.com/opencog/pln/blob/master/opencog/pln/rules/wip/formulas.scm#L160-L173
 (= (TransitiveSimilarityStrength $sA $sB $sC $sAB $sBC)
-   (let* (($T1 (/ (* (+ 1.0 (/ $sB $sA)) $sAB) (+ 1.0 $sAB)))
-          ($T2 (/ (* (+ 1.0 (/ $sC $sB)) $sBC) (+ 1.0 $sBC)))
-          ($T3 (/ (* (+ 1.0 (/ $sB $sC)) $sBC) (+ 1.0 $sBC)))
-          ($T4 (/ (* (+ 1.0 (/ $sA $sB)) $sAB) (+ 1.0 $sAB))))
-         (invert (- (+ (invert (+ (* $T1 $T2) (* (negate $T1) (/safe (- $sC (* $sB $T2)) (negate $sB)))))
-                       (invert (+ (* $T3 $T4) (* (negate $T3) (/safe (- $sC (* $sB $T4)) (negate $sB)))))) 1.0))))
+   (let* (($T1 (/safe (* (+ 1.0 (/safe $sB $sA)) $sAB) (+ 1.0 $sAB)))
+          ($T2 (/safe (* (+ 1.0 (/safe $sC $sB)) $sBC) (+ 1.0 $sBC)))
+          ($T3 (/safe (* (+ 1.0 (/safe $sB $sC)) $sBC) (+ 1.0 $sBC)))
+          ($T4 (/safe (* (+ 1.0 (/safe $sA $sB)) $sAB) (+ 1.0 $sAB)))
+          ($s (invert (- (+ (invert (+ (* $T1 $T2) (* (negate $T1) (/safe (- $sC (* $sB $T2)) (negate $sB)))))
+                            (invert (+ (* $T3 $T4) (* (negate $T3) (/safe (- $sC (* $sB $T4)) (negate $sB)))))) 1.0))))
+         ;; L-C4: sim2inh terms T1..T4 are unbounded when node strengths differ; the bare `/` here
+         ;; also risked Inf/NaN on a zero node-strength — harden to /safe and REJECT the out-of-domain
+         ;; result at origin. (empty) prunes, mirroring simpleDeductionStrength's guard on the same path.
+         (if (valid-strength $s) $s (empty))))
 
 ; see https://github.com/opencog/pln/blob/master/opencog/pln/rules/wip/transitive-similarity.scm
 ;; Truth_transitiveSimilarity — see opencog/pln/rules/wip/transitive-similarity.scm
