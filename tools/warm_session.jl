@@ -34,18 +34,33 @@ function _serve()
             if n != seen && !isempty(n)
                 seen = n
                 code = read(INF, String)
-                try
-                    isdefined(Main, :Revise) && Base.invokelatest(Main.Revise.revise)
-                catch
+                # Revise FIRST, and surface failures LOUDLY. A bare `catch; end` here was the
+                # swallow-revise-errors bug (feedback_warm_harness_swallows_revise_errors): a failed
+                # revision drains the queue, throws, gets swallowed, and the session silently runs
+                # STALE code — a silent-wrong-answer machine. `throw=true` + REFUSE to run the snippet
+                # on failure, so a stale result can never masquerade as a fresh one.
+                revise_fail = nothing
+                if isdefined(Main, :Revise)
+                    try
+                        Base.invokelatest(Main.Revise.revise; throw = true)
+                    catch e
+                        revise_fail = (e, catch_backtrace())
+                    end
                 end
                 open(OUTF, "w") do io
                     redirect_stdout(io) do
                         redirect_stderr(io) do
-                            try
-                                Base.include_string(Main, code)
-                            catch e
-                                showerror(io, e, catch_backtrace())
+                            if revise_fail !== nothing
+                                println(io, "REVISE FAILED — refusing to run this snippet (session would be STALE):")
+                                showerror(io, revise_fail[1], revise_fail[2])
                                 println(io)
+                            else
+                                try
+                                    Base.include_string(Main, code)
+                                catch e
+                                    showerror(io, e, catch_backtrace())
+                                    println(io)
+                                end
                             end
                         end
                     end
