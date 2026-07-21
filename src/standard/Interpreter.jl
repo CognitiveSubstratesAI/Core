@@ -123,6 +123,13 @@ mutable struct Frame
     ret::Function          # continuation invoked (by interpret_stack) when a child finishes
     finished::Bool
     depth::Int
+    tco::Bool              # PROVENANCE: set true ONLY on driver-generated metta reduce-again frames (metta_instr →
+                           # push_nested tco=true), never derivable from atom syntax. The TCO frame-collapse
+                           # (:~1440) collapses ONLY tco frames, so a user-written `(chain (metta-call…) $r $r)`
+                           # (same shape, tco=false) is immune — a GUARANTEE, not a shape-match convention.
+    # Default tco=false so every existing 6-arg `Frame(a,v,p,r,f,d)` construction stays valid & non-collapsible.
+    Frame(a::Atom, v::Set{Var}, p::Union{Frame,Nothing}, r::Function, f::Bool, d::Int, tco::Bool=false) =
+        new(a, v, p, r, f, d, tco)
 end
 const Plan = Vector{Tuple{Frame,Bindings}}
 
@@ -738,11 +745,14 @@ end
 # preserved because a fanned-out child yields several finished frames, each firing ret.
 
 # set up `atom` to be evaluated (interpreter.rs atom_to_stack:640)
-function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)::Vector{Tuple{Frame,Bindings}}
+# `tco` marks driver-generated metta reduce continuations (originates ONLY at metta_instr's reduce-prog push;
+# users cannot invoke push_nested, so the flag is unforgeable). It flows to setup_chain, which marks the frame
+# and propagates one hop to the `(chain (metta-call…) $r $r)` wrapper — see setup_chain.
+function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int, tco::Bool=false)::Vector{Tuple{Frame,Bindings}}
     name = head_name(atom)
-    if name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(atom, b, prev, depth)
+    if name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(atom, b, prev, depth, tco)
     elseif name === Symbol("function"); return setup_function(atom, b, prev, depth)
-    else;                      return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth), b)]
+    else;                      return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth, tco), b)]
     end
 end
 
@@ -752,22 +762,27 @@ function eval_result(res::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::
     head_name(res) === Symbol("function") ? setup_function(res, b, prev, depth) : finished_result(res, b, prev)
 end
 
-# chain (interpreter.rs chain:687 / chain_ret:675): one-step nested, bind var, subst templ, EXECUTE it
-function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
+# chain (interpreter.rs chain:687 / chain_ret:675): one-step nested, bind var, subst templ, EXECUTE it.
+# `tco`: when this chain is driver-generated (metta reduce-prog), mark the frame AND propagate the flag one hop
+# to the templ — but STOP at the `metta-call` wrapper (its templ is the identity var, not another driver chain).
+# That marks exactly the interpret-tuple/function outer chain and its `(chain (metta-call…) $r $r)` inner wrapper
+# (the collapsible frame), and nothing downstream — so `tco` is a precise, unforgeable provenance signal.
+function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int, tco::Bool=false)
     (atom isa Expression && length(atom.children) == 4) ||
         return finished_result(error_atom(atom, "expected (chain <nested> <var> <templ>)"), b, prev)
     nested, var, templ = atom.children[2], atom.children[3], atom.children[4]
     var isa Var ||
         return finished_result(error_atom(atom, "chain: second argument must be a variable"), b, prev)
+    propagate = tco && head_name(nested) !== Symbol("metta-call")   # C1(interpret-tuple)→C2(metta-call): yes; C2→templ: no
     cont = function (self::Frame, result::Atom, rb::Bindings)
         bs = add_var_binding(rb, var, result)
         isempty(bs) && return nothing
         nb = bs[1]
-        pushed = push_nested(subst(templ, nb), nb, self.prev, depth)
+        pushed = push_nested(subst(templ, nb), nb, self.prev, depth, propagate)
         isempty(pushed) ? nothing : pushed[1]
     end
-    parent = Frame(atom, _cumvars(prev, atom), prev, cont, false, depth)
-    push_nested(subst(nested, b), b, parent, depth + 1)   # apply bindings so a var-bound minimal op evaluates
+    parent = Frame(atom, _cumvars(prev, atom), prev, cont, false, depth, tco)
+    push_nested(subst(nested, b), b, parent, depth + 1)   # apply bindings so a var-bound minimal op evaluates (nested runs plain: no tco)
 end
 
 # function/return (interpreter.rs function_to_stack:704 / function_ret:723): loop until (return x)
@@ -1294,7 +1309,7 @@ function metta_instr(f::Frame, b::Bindings, space)
             reduced = freshvar("reduced"); result = freshvar("result")
             prog = _chain(_op("interpret-function", atom, ft, rt), reduced,
                      _chain(_op("metta-call", reduced, rt), result, result))
-            append!(out, push_nested(prog, b, f.prev, f.depth + 1))
+            append!(out, push_nested(prog, b, f.prev, f.depth + 1, true))   # tco=true: driver reduce-prog (see setup_chain)
         end
         !isempty(out) && return out                          # some function type applied
         !isempty(errs) && return errs                        # all rejected → type errors (BadArgType)
@@ -1302,7 +1317,7 @@ function metta_instr(f::Frame, b::Bindings, space)
     reduced = freshvar("reduced"); result = freshvar("result")  # untyped tuple path
     prog = _chain(_op("interpret-tuple", atom), reduced,
               _chain(_op("metta-call", reduced, typ), result, result))
-    push_nested(prog, b, f.prev, f.depth + 1)
+    push_nested(prog, b, f.prev, f.depth + 1, true)   # tco=true: driver reduce-prog (see setup_chain)
 end
 
 # (interpret-function <expr> <op_type> <ret_type>) (interpreter.rs:1224): evaluate op, then args by their
@@ -1393,9 +1408,64 @@ function metta_noreduce_instr(f::Frame, b::Bindings)
                          push_nested(_metta(r, a.children[4]), b, f.prev, f.depth)
 end
 
+# ── tail-call frame-collapse (TCO) ────────────────────────────────────────────
+# The metta driver wraps every reduce-again in `(chain (metta-call reduced typ) result result)`. Left in place,
+# ONE such frame is retained per recursion level (prev-chain grows O(N)) AND its cumulative live-var set
+# `_cumvars` grows O(N), so `narrow_bindings` re-scans O(N) per finish ⇒ a tail-recursive MeTTa loop is O(N²)
+# (measured 120× on the OmegaClaw agent tick). Re-anchoring the reduce-again PAST these frames elides them: the
+# `result` var is a freshvar (appears only as this chain's var+templ), so forwarding the metta-call's result V
+# to the grandparent is proper TCO — mirroring CeTTa's `goto tail_call` / typescript-metta's `reduceTrampoline`
+# — and fixes BOTH the frame retention AND `_cumvars` growth in one move. Non-identity chains (interpret-tuple/
+# args/cons continuations = genuine NON-tail positions) STOP the walk, so non-tail recursion still grows.
+#
+# ⚠️ TWO soundness conditions, each learned from a failing gate — the frame is NOT a pure pass-through:
+#
+#  (1) typ-GATE (LeaTTa `switch-minimal` regression): the frame's continuation runs `push_nested(V, …)`, which
+#      SPECIAL-CASES a `function`/`chain`-headed V (:743-744) — EXECUTING it, not treating it as data. V is
+#      function/chain-headed ONLY when the reduction LAZILY short-circuits (:1267-1269), requiring `typ ∈
+#      {Atom, Expression}`. So collapse ONLY when `typ ∉ {Atom, Expression}`. Hot loops (untyped → %Undefined%,
+#      numeric → Number) still collapse; lazy-typed stdlib helpers (switch/if-minimal, ret Atom) correctly skip.
+#
+#  (2) PROVENANCE flag (adversary counterexample): the frame's continuation also runs `add_var_binding($r, V)`.
+#      For a driver frame $r is a fresh dead var (elision is invisible), but a USER can hand-write the SAME shape
+#      `(chain (metta-call…) $r $r)` with $r SHARED with a sibling — there the binding is LIVE and eliding it
+#      diverges (`(P mv mv)` → `(P mv $r)`). A syntactic shape-match cannot tell these apart. So the collapse
+#      fires ONLY on frames carrying the `Frame.tco` flag, which originates SOLELY at the driver's reduce-prog
+#      push below (users cannot invoke push_nested) — a GUARANTEE of driver provenance, not a shape convention.
+const _TAIL_COLLAPSE = Ref(true)
+const EXPRESSION_SYM = Sym("Expression")   # metatype tag of any function/chain expression (the lazy-return type)
+"Enable/disable tail-call frame-collapse (TCO) at the metta reduce-again seam. Default ON. `false` = exact pre-TCO behavior (for oracle A/B / bisimulation)."
+tail_collapse!(on::Bool=true) = (_TAIL_COLLAPSE[] = on)
+
+# A driver-generated metta reduce continuation: `(chain (metta-call …) $r $r)` with an IDENTITY templ. The
+# `fr.tco` PROVENANCE flag is the GUARANTEE (set only by the driver's reduce-prog push, unforgeable from atom
+# syntax) — this is what makes a user-written `(chain (metta-call…) $r $r)` with a SHARED $r immune (that frame
+# has tco=false, so its `add_var_binding($r, …)` is never elided). The syntactic checks (identity templ +
+# metta-call nested) are defense-in-depth, disambiguating the wrapper (C2) from the outer chain (C1), both tco.
+@inline function _is_metta_reduce_cont(fr::Frame)::Bool
+    fr.tco || return false
+    a = fr.atom
+    (a isa Expression && length(a.children) == 4 && head_name(a) === Symbol("chain") &&
+        a.children[3] isa Var && a.children[3] === a.children[4]) || return false
+    n = a.children[2]
+    n isa Expression && head_name(n) === Symbol("metta-call")
+end
+
+# Walk past consecutive identity metta-reduce continuations to the first real ancestor (the TCO anchor). Gated
+# by `typ`: under a lazy-return type (Atom/Expression) the metta-call may surface a bare function/chain that the
+# skipped frame's `push_nested` would EXECUTE — so we must NOT collapse there (safety depends on V, governed by
+# THIS typ, so gating the current metta-call's typ suffices even for multi-frame walks).
+@inline function _collapse_anchor(prev::Union{Frame,Nothing}, typ::Atom)::Union{Frame,Nothing}
+    (_TAIL_COLLAPSE[] && typ != ATOM_T && typ != EXPRESSION_SYM) || return prev
+    a = prev
+    while a !== nothing && _is_metta_reduce_cont(a); a = a.prev; end
+    a
+end
+
 # (metta-call <atom> <type>) — metta_call (interpreter.rs:1415): grounded → execute; else → query
 # (= atom $X). Each result is RE-MET TA'd via a pushed `(metta result type)` FRAME (reduce-again) — so a
-# deep MeTTa recursion grows the heap plan, not the Julia stack. Non-reducible → finish as-is.
+# deep MeTTa recursion grows the heap plan, not the Julia stack. Non-reducible → finish as-is. The reduce-again
+# push anchors at `_collapse_anchor(f.prev, typ)` (TCO) so tail recursion does NOT retain the identity pass-through.
 function metta_call_instr(f::Frame, b::Bindings, space)
     a = f.atom
     atom = subst(a.children[2], b); typ = a.children[3]
@@ -1404,6 +1474,7 @@ function metta_call_instr(f::Frame, b::Bindings, space)
     (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
     op = atom.children[1]
     op isa Var && return finished_result(atom, b, f.prev)
+    anchor = _collapse_anchor(f.prev, typ)   # TCO: re-anchor past identity frames (gated: skip under lazy typ)
     out = Tuple{Frame,Bindings}[]
     if is_executable(op)
         r = execute(op::Grounded, Atom[atom.children[2:end]...], space)
@@ -1411,7 +1482,7 @@ function metta_call_instr(f::Frame, b::Bindings, space)
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
             for (j, res) in enumerate(r.results)
                 bset = (j <= length(r.binds)) ? merge_bindings(b, r.binds[j]) : Bindings[b]
-                for mb in bset; append!(out, push_nested(_metta(res, typ), mb, f.prev, f.depth + 1)); end
+                for mb in bset; append!(out, push_nested(_metta(res, typ), mb, anchor, f.depth + 1)); end
             end
             return out
         elseif r isa ExecNoReduce
@@ -1427,7 +1498,7 @@ function metta_call_instr(f::Frame, b::Bindings, space)
         for qb in qres, mb in merge_bindings(b, qb)
             is_present(mb, X) || continue                # resolve-filter (identical to Interpreter.jl :309)
             reduced = true
-            append!(out, push_nested(_metta(subst(X, mb), typ), mb, f.prev, f.depth + 1))
+            append!(out, push_nested(_metta(subst(X, mb), typ), mb, anchor, f.depth + 1))
         end
         reduced || return finished_result(atom, b, f.prev)                   # no real rewrite survived → non-reducible
         return out
