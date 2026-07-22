@@ -2058,13 +2058,36 @@ const ASSERT_ALPHA_EQUAL_TO_RESULT = Grounded(SpaceOp("assertAlphaEqualToResult"
     Set(_alpha1(x) for x in metta_run(xs[1], space)) == Set(_alpha1(x) for x in xs[2].children) ?
         ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertAlphaEqualToResult", xs[1], xs[2])])
 end))
+# ── space-argument resolution, failing CLOSED ─────────────────────────────────────────────────────
+#
+# `get-atoms`/`match`/`add-atom`/`remove-atom` each used to write
+#     tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+# which silently retargets the AMBIENT space whenever argument 1 is not a Space. For an unresolved
+# token or an unbound variable that is the documented `&self` default and stays. But when argument 1
+# is a Grounded holding a CONCRETE non-Space value, the caller unambiguously meant a specific space
+# and named something else — and the op would carry on and report success against the wrong store.
+#
+# That is the fail-OPEN shape this project bans, in the worst possible place: the ambient space during
+# a `lib/pln` evaluation is the RULE LIBRARY, so `(add-atom <not-a-space> (belief …))` writes a fact
+# into the space that holds `(= (Truth_Deduction …) …)` and returns unit. Nothing would surface it.
+#
+# This distinction is also the precondition for a multi-backend Space (ADR-016): the moment a
+# MORK-trie-backed store can be passed as an argument, "not the concrete `Space` struct" stops meaning
+# "not a space" — and a silent fallback would send those writes to the interpreter's own store.
+# Returns `nothing` for "a concrete value that is not a Space"; callers must refuse.
+@inline function _space_arg(a::Atom, ambient::Space)::Union{Space,Nothing}
+    a isa Grounded || return ambient                 # unresolved token / variable ⇒ &self, as before
+    a.value isa Space ? a.value::Space : nothing     # concrete non-Space ⇒ caller fails closed
+end
+
 # get-atoms (hyperon space.rs:127, type (-> Space Atom)): one result per atom of the space, variables
 # freshened (make_variables_unique). NOTE: Core FLATTENS imported stdlib into &self rather than keeping
 # it as a grounded child-space (hyperon's model), so `(get-atoms &self)` here returns the flattened rules
 # — the f1 directive that expects an empty &self at start-up stays a documented known-gap.
 const GET_ATOMS = Grounded(SpaceOp("get-atoms", function (xs, space)
     length(xs) == 1 || return ExecNoReduce()
-    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+    tgt = _space_arg(xs[1], space)
+    tgt === nothing && return ExecRuntime("get-atoms: first argument is not a Space")
     own = own_atoms(tgt)                                    # own atoms only — not the imported library
     ExecOk(Atom[rename_fresh(a) for a in own])
 end))
@@ -2081,7 +2104,8 @@ end
 # all sub-patterns must match with consistent bindings (a join). Carries bindings to the caller.
 const MATCH = Grounded(SpaceOp("match", function (xs, space)
     length(xs) == 3 || return ExecNoReduce()
-    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space  # named space or &self
+    tgt = _space_arg(xs[1], space)                          # named space or &self
+    tgt === nothing && return ExecRuntime("match: first argument is not a Space")
     pat, tmpl = xs[2], xs[3]
     binds = Bindings[Bindings()]
     if pat isa Expression && !isempty(pat.children) && pat.children[1] == Sym(",")
@@ -2215,13 +2239,15 @@ const FORK_SPACE = Grounded(Operation("fork-space", function (xs::Vector{Atom})
 end))
 const ADD_ATOM = Grounded(SpaceOp("add-atom", function (xs, space)
     length(xs) == 2 || return ExecNoReduce()
-    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+    tgt = _space_arg(xs[1], space)
+    tgt === nothing && return ExecRuntime("add-atom: first argument is not a Space")
     add_atom!(tgt, xs[2])
     ExecOk(Atom[Expression(Atom[])])             # unit ()
 end))
 const REMOVE_ATOM = Grounded(SpaceOp("remove-atom", function (xs, space)
     length(xs) == 2 || return ExecNoReduce()
-    tgt = (xs[1] isa Grounded && xs[1].value isa Space) ? xs[1].value::Space : space
+    tgt = _space_arg(xs[1], space)
+    tgt === nothing && return ExecRuntime("remove-atom: first argument is not a Space")
     remove_atom!(tgt, xs[2])
     ExecOk(Atom[Expression(Atom[])])
 end))

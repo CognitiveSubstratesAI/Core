@@ -35,6 +35,7 @@ module StandardMeTTaTests
     include("standard/test_interpreter.jl")
     include("standard/test_tnot_wfs.jl")
     include("standard/test_stdlib.jl")
+    include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
     include("standard/test_conformance.jl")
     include("oracle/leatta/test_leatta_oracle.jl")   # differential vs the Lean-4 machine-proved MeTTa
 end
