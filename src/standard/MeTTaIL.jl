@@ -82,14 +82,27 @@ end
 # descent IS the congruence — mettail-rust spells it out as explicit `rw_cat` rules ONLY because
 # Ascent is relational and cannot descend into subterms; on a term engine it is structural.
 
-function _normalize_subterm(rules::Vector{String}, term::AbstractString)::String
+# PARSE-HOISTED. The rules are FIXED for a whole normalization, and the previous form called the
+# STRING method `mork_rule_rewrite(rule::AbstractString, data::AbstractString)` — which parses BOTH
+# arguments — once per (subterm × rule). PROFILED (2026-07-23, `(d (Mul x (Mul x x)))`):
+#   398 `sexpr_to_expr` calls for ONE normalization; 83% of samples inside the string
+#   `mork_rule_rewrite`, 54% directly in `sexpr_to_expr`/`sexpr_parse!`; 1.03 ms, 0.43 MiB, gc 0%.
+# So roughly half the parses were re-parsing the same four rule strings. Now: rules are parsed ONCE
+# by the caller, and each subterm is parsed ONCE instead of once per rule — parse count drops from
+# (subterms × rules × 2) to (subterms + rules). Pure implementation change: same innermost-to-fixpoint
+# congruence, same results (guarded by the test_mettail/test_gslt congruence tests + JeTTa's own
+# Derivative.metta oracle, which both lanes already reproduce byte-for-byte).
+function _normalize_subterm(rules::Vector{MORK.Expr}, term::AbstractString)::String
     term = strip(term)
     if startswith(term, "(")                          # compound: normalize children first (← congruence)
         term = "(" * join([_normalize_subterm(rules, a) for a in mm2_expr_args(term)], " ") * ")"
     end
+    te = MORK.sexpr_to_expr(String(term))             # parse the TERM once, not once per rule
     for rule in rules                                 # then a top-level reduction; renormalize on success
-        r = mork_rule_rewrite(rule, term)
-        r !== nothing && r != term && return _normalize_subterm(rules, r)
+        r = mork_rule_rewrite(rule, te)               # Expr method — no parsing of either side
+        r === nothing && continue
+        rs = strip(MORK.expr_serialize(r.buf))
+        rs != term && return _normalize_subterm(rules, rs)
     end
     term
 end
@@ -103,8 +116,12 @@ the subterm traversal — so GSLT/mettail-rust explicit congruence rules (`let S
 only by relational backends, are unnecessary here.
 """
 function metta_il_normalize(program::AbstractString, term::AbstractString)::String
-    rules = String["(= $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))"
-                   for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"]
+    # Parse each `(= LHS RHS)` rule to a MORK.Expr ONCE for the whole normalization (see the
+    # profile note on `_normalize_subterm`). Head and body must stay in ONE parsed expr so they
+    # share a variable namespace — MORK vars are POSITIONAL (MorkBridge.jl CRUX); parsing them
+    # separately silently reorders indices, e.g. `(q $y $x)` over `(p a b)` yielding `(q a b)`.
+    rules = MORK.Expr[MORK.sexpr_to_expr("(= $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))")
+                      for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"]
     _normalize_subterm(rules, term)
 end
 
