@@ -212,6 +212,52 @@ using Test
         @test !mm2_is_relational(raw"(foo $x)")                                  # not a (= …) form
     end
 
+    # ── REGRESSION: the gate was FAIL-OPEN on NESTED operator positions ────────────────────────
+    # Every assertion above has a FLAT body, which is exactly why the hole survived. `mm2_collect_heads!`
+    # pushed `args[1]` verbatim — opaque even when compound — and never descended into it, so a grounded
+    # op sitting in a nested OPERATOR slot was invisible to a classifier whose docstring promises "EVERY
+    # operator-position head". Measured consequence, all defaults, no opt-in flag:
+    #     (= (f $x) (let* (($y (+ $x 1))) $y))
+    #       heads = ["f","let*","($y (+ $x 1))"]   ← `+` NEVER SEEN, `($y …)` opaque
+    #       ⇒ relational=true ⇒ gate (1) passes ⇒ ZAM SERVES the bang
+    #       interpreter !(f 5) = 6   but   mc_run = "(let* (($ (+ 5 1))) _1)"   ← SILENT WRONG ANSWER
+    # `evaluated = vcat(zam.served, _mc_fallback_eval(…))` (DualTrack.jl:156-157), so a ZAM-served bang
+    # never reaches the interpreter to be corrected. Blast radius when found: of 899 `(=)` rules across
+    # 75 production `.metta` files, 345 were admitted; after the fix 290 are — so 55 were being admitted
+    # on a false classification. (Not zero, which is the datum that says PATCH the gate rather than
+    # delete the lane.)
+    @testset "grounded-op guard: NESTED operator positions (fail-open regression)" begin
+        # the exact reproducer — a grounded op two levels down, inside an operator slot
+        @test !mm2_is_relational(raw"(= (f $x) (let* (($y (+ $x 1))) $y))")
+        # the head list must now actually CONTAIN the op it previously missed
+        let hs = String[]
+            MC.mm2_collect_heads!(hs, raw"(let* (($y (+ $x 1))) $y)")   # not exported — qualify
+            @test "+" in hs                       # was absent ⇒ the classifier could not see it
+        end
+        # a COMPOUND in operator position is never a plain relation symbol, on its own
+        @test !mm2_is_relational(raw"(= (f $x) ((g $x) 1))")
+
+        # the four special forms that are in NEITHER TOKEN_REGISTRY NOR MINIMAL_OPS — enumerated by
+        # execution, not by reading. Before the fix each was treated as an ordinary relation symbol.
+        @test !mm2_is_relational(raw"(= (f $x) (if $x a b))")
+        @test !mm2_is_relational(raw"(= (f $x) (let $y $x $y))")
+        @test !mm2_is_relational(raw"(= (f $x) (let* (($y $x)) $y))")
+        @test !mm2_is_relational(raw"(= (f $x) (quote $x))")
+
+        # NO OVER-REJECTION: genuinely relational rules, including a nested CONSTRUCTOR (not an op)
+        # in the RHS, must still be admitted — otherwise the fix would silently disable the lane.
+        @test mm2_is_relational(raw"(= (p $x) (q $x))")
+        @test mm2_is_relational(raw"(= (edge $x $y) (path $x $y))")
+        @test mm2_is_relational(raw"(= (add (S $x) $y) (S (add $x $y)))")
+
+        # END-TO-END: mc_run must now agree with the interpreter on the reproducer (defaults only).
+        let cs = MeTTaCore.new_core_space()
+            r = MeTTaCore.mc_run(cs, "", raw"(= (f $x) (let* (($y (+ $x 1))) $y))" * "\n!(f 5)")
+            @test isempty(r.results.zam_served)                  # the ZAM must DEFER, not serve
+            @test r.results.evaluated == [("(f 5)", ["6"])]      # …and the answer is the interpreter's
+        end
+    end
+
     @testset "mm2_partition auto-routes relational (= …), leaves grounded in data" begin
         # relational rule auto-lowered into exec; fact stays data
         p = mm2_partition("(ancestor a b)\n" * raw"(= (ancestor $x $y) (parent $x $y))")

@@ -69,13 +69,51 @@ end
 mm2_is_exec_rule(form::AbstractString)::Bool = mm2_head(form) == "exec"
 
 # ── (=)→exec auto-routing guard (the grounded-op classifier) ──
+#
+# Sentinel for "operator position held a COMPOUND, not a symbol". It is deliberately unrepresentable
+# in source (NUL), so it can never collide with a real head and `mm2_is_relational` can reject on it.
+const _MM2_COMPOUND_HEAD = "\0compound-operator"
+
+# Special forms the interpreter dispatches STRUCTURALLY (in `interpret_expr_step`/SpecialForms) rather
+# than as grounded `Operation`s, so they appear in NEITHER `TOKEN_REGISTRY` NOR `MINIMAL_OPS` — the two
+# authorities `mm2_is_relational` consults. Enumerated by EXECUTION 2026-07-23, not by reading:
+#   let=✗/✗  let*=✗/✗  if=✗/✗  quote=✗/✗      (case/if-equal/and/or/not/match/superpose/collapse ARE
+#                                               in TOKEN_REGISTRY; eval/chain/function ARE in MINIMAL_OPS)
+# Without this set a body whose only non-relation head is `if` or `let*` was classified RELATIONAL and
+# auto-lowered to an exec — see the fail-open note on `mm2_collect_heads!` below.
+const _MM2_SPECIAL_FORMS = Set{String}(["let", "let*", "if", "quote"])
+
 # Collect the operator-position head of `form` and of every nested sub-expression (recursively).
+#
+# FAIL-OPEN BUG FIXED 2026-07-23 (found by an adversarial lane audit; `mc_run` returned a WRONG ANSWER
+# through its DEFAULT path). The previous body was:
+#     push!(heads, args[1])
+#     for k in 2:length(args); mm2_collect_heads!(heads, args[k]); end
+# `args[1]` was pushed VERBATIM — as an opaque string even when it was itself a compound — and was
+# never descended into. So any grounded op sitting in a nested OPERATOR slot was invisible to the
+# classifier, whose docstring promises "EVERY operator-position head". Reproduced end-to-end:
+#     (= (f $x) (let* (($y (+ $x 1))) $y))
+#       heads = ["f", "let*", "($y (+ $x 1))"]        ← `+` never seen; `($y …)` opaque
+#       mm2_is_relational = true  ⇒ gate (1) passes ⇒ ZAM serves the bang
+#       interpreter !(f 5) = 6    but  mc_run = "(let* (($ (+ 5 1))) _1)"   ← SILENT WRONG ANSWER
+# Two holes conspired: this one, and `let*` being absent from both authorities (see
+# `_MM2_SPECIAL_FORMS`). Because `evaluated = vcat(zam.served, _mc_fallback_eval(…))`
+# (`DualTrack.jl:156-157`), a ZAM-served bang never reaches the interpreter to be corrected.
+#
+# Now: a compound in operator position is BOTH flagged (it is not a plain relation symbol) AND
+# descended into (the grounded op may be nested inside it).
 function mm2_collect_heads!(heads::Vector{String}, form::AbstractString)
     t = strip(form)
     (startswith(t, "(") && endswith(t, ")")) || return heads     # leaf (var/sym/number) — no head
     args = try mm2_expr_args(t) catch; return heads end
     isempty(args) && return heads
-    push!(heads, args[1])
+    h = strip(args[1])
+    if startswith(h, "(")                    # compound operator position ⇒ not a relation symbol
+        push!(heads, _MM2_COMPOUND_HEAD)
+        mm2_collect_heads!(heads, h)         # …and look INSIDE it — this is what was missing
+    else
+        push!(heads, String(h))
+    end
     for k in 2:length(args); mm2_collect_heads!(heads, args[k]); end
     heads
 end
@@ -99,6 +137,8 @@ function mm2_is_relational(rule::AbstractString)::Bool
     mm2_collect_heads!(heads, a[2]); mm2_collect_heads!(heads, a[3])
     for h in heads
         h == "," && continue
+        h == _MM2_COMPOUND_HEAD && return false      # compound in operator position — never a relation
+        h in _MM2_SPECIAL_FORMS && return false      # structurally-dispatched form, in neither authority
         (haskey(Interpreter.TOKEN_REGISTRY, h) || Symbol(h) in Interpreter.MINIMAL_OPS) && return false
     end
     true

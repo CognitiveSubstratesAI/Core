@@ -95,6 +95,62 @@ using Test
             @test "(far 0 2)" in R && "(far 1 3)" in R      # stage 2 consumes stage 1's output
         end
     end
+    # ── CHARACTERIZATION: the grounded-op boundary of `metta_il_normalize` ────────────────────────
+    #
+    # This pins a REAL, CURRENT LIMITATION so it is executable and discoverable rather than folklore.
+    # `metta_il_normalize` reduces via `mork_rule_rewrite` = `expr_unify` + `expr_apply` and NOTHING
+    # else (`src/eval/MorkBridge.jl:50-58`): there is no grounded-op dispatch on that path, and MORK's
+    # `GROUNDED_REGISTRY` holds only WILLIAM's three ops — no arithmetic. So this lane implements the
+    # REWRITING half of the MeTTa evaluation model and none of the EVALUATION half (language spec
+    # §5.5 `interpret_tuple` evaluates the head via `metta(…)`; §5.10 `metta_call` executes grounded
+    # ops — `docs/specs/metta grammar/metta_language_spec.md`).
+    #
+    # The `trace!` probe below is the sharpest demonstration: `trace!` prints its evaluated first arg
+    # and returns the second, so an ENGINE THAT EVALUATES prints, and one that only REWRITES leaves the
+    # call sitting in the output as a literal term. Measured 2026-07-23 — the interpreter prints three
+    # `[fire]` lines and yields `(S (S (S Z)))`; this lane prints NOTHING and returns the nested
+    # `trace!` terms, correctly structured. i.e. THE RECURSION IS RIGHT AND THE EVALUATION IS ABSENT.
+    #
+    # CONSEQUENCE (why this matters, not just trivia): a rule body containing even ONE grounded op is
+    # not merely unreduced here — a self-recursive rule DIVERGES, because the unreduced argument grows
+    # while still matching the rule head. `fib` ran 240 s to SIGTERM in an isolated process. And a
+    # MIXED symbolic+arithmetic workload returns a WRONG ANSWER rather than failing loudly
+    # (`(nat (S (S (S Z))))` → `(+ 1 (+ 1 (+ 1 0)))` instead of `3`).
+    #
+    # WHEN GROUNDED DISPATCH LANDS (register arithmetic in MORK's `GROUNDED_REGISTRY` + evaluate a
+    # grounded head with ground args in `_normalize_subterm` — upstream mettail-rust separates exactly
+    # this as `mettail_runtime::numeric_cast_dispatch` vs the `language!` rewriting), THIS TESTSET MUST
+    # BE INVERTED: the trace lines should print and `no_ops` should reduce to `3`. Failing here is then
+    # the SIGNAL that the boundary moved, not a regression.
+    @testset "grounded-op boundary (characterization — invert when dispatch lands)" begin
+        # (a) pure symbolic recursion: correct, and congruence descends under the constructor
+        peano = raw"""
+        (~> (add Z $y) $y)
+        (~> (add (S $x) $y) (S (add $x $y)))
+        """
+        @test metta_il_normalize(peano, "(add (S (S Z)) (S Z))") == "(S (S (S Z)))"
+
+        # (b) a grounded op in the body is REWRITTEN, never EXECUTED — it survives verbatim
+        traced = raw"""
+        (~> (add Z $y) (trace! "base" $y))
+        (~> (add (S $x) $y) (trace! "step" (S (add $x $y))))
+        """
+        out = metta_il_normalize(traced, "(add (S (S Z)) (S Z))")
+        @test occursin("trace!", out)          # the call is still there ⇒ it never ran
+        @test count("trace!", out) == 3        # …once per firing: step, step, base — recursion CORRECT
+
+        # (c) arithmetic does not reduce: the single-step evidence behind the divergence
+        @test metta_il_normalize(raw"(~> (f $n) (- $n 1))", "(f 5)") == "(- 5 1)"    # not "4"
+        @test metta_il_normalize(raw"(~> (f $n) (< $n 2))", "(f 5)") == "(< 5 2)"    # not "False"
+
+        # (d) MIXED symbolic + arithmetic ⇒ silently WRONG (worse than diverging: it returns)
+        natmix = raw"""
+        (~> (nat Z) 0)
+        (~> (nat (S $x)) (+ 1 (nat $x)))
+        """
+        @test metta_il_normalize(natmix, "(nat (S (S (S Z))))") == "(+ 1 (+ 1 (+ 1 0)))"   # NOT "3"
+    end
+
     # NOTE: the GSLT theory algebra (composition/parameterization) lives in GSLT.jl / test_gslt.jl;
     # equations-as-rewrite orientation (Knuth-Bendix) is the remaining (a)-tail item.
 end
