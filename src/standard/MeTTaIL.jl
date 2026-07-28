@@ -28,16 +28,64 @@ function metta_il_lower_rewrite(rw::AbstractString)::String
     "(exec 0 $src (, $rhs))"
 end
 
-"Lower a MeTTa-IL program (its `(~> LHS RHS)` rewrites) to MM2 exec rules."
-metta_il_lower(program::AbstractString)::String =
+"""
+    _il_assert_all_rewrites(program, who)
+
+Raise unless EVERY form in `program` is a `(~> LHS RHS)` base rewrite.
+
+This lane's contract is "program = rewrites, facts arrive via the `data` argument". Nothing enforced
+it, and every lowering entry filtered with `if !bang && mm2_head(f) == "~>"`, so any other form was
+DROPPED WITHOUT A WORD. That is reachable from `mc_run`, which selects this lane on the mere PRESENCE
+of a `~>` head (DualTrack.jl:109) and will therefore hand it mixed programs that violate the contract.
+
+Measured before this guard existed — `(~> (p \$x) (q \$x))` + `(= (q A) B)` + `(p A)` ran as lane
+`:rewrite`, lowered ONLY the `~>` form, returned `String[]`, and left the space EMPTY: the rule and
+the ground fact both vanished silently. A wrong answer with no diagnostic is the worst failure shape
+we have ([[feedback_port_defect_taxonomy]] silent-narrowing), so the drop is now loud.
+
+⚠️ This does NOT make the lane accept `(=)`. Whether MeTTa-IL SHOULD consume `(=)` — i.e. be the
+§3.4 compilation bridge rather than a `~>`-only side lane — is an open architectural question. This
+guard only guarantees we find out by an error instead of by a missing answer.
+"""
+function _il_assert_all_rewrites(program::AbstractString, who::AbstractString)
+    bad = String[]
+    bangs = String[]
+    for (bang, f) in mm2_split_forms(program)
+        if bang
+            push!(bangs, strip(f))
+        elseif mm2_head(f) != "~>"
+            push!(bad, strip(f))
+        end
+    end
+    (isempty(bad) && isempty(bangs)) && return nothing
+    msg = "$who: this lane lowers ONLY `(~> LHS RHS)` base rewrites, but the program contains " *
+          "forms it would silently discard.\n"
+    isempty(bad) || (msg *= "  unsupported forms ($(length(bad))): " *
+                            join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n")
+    isempty(bangs) || (msg *= "  `!` directives ($(length(bangs))): " *
+                              join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n")
+    msg *= "  → ground FACTS belong in the `data` argument, not the program.\n" *
+           "  → `(=)` rules are not lowered by this lane; run them on the :direct lane (mc_run " *
+           "mode=:direct) or express them as `(~> LHS RHS)`."
+    error(msg)
+end
+
+"Lower a MeTTa-IL program (its `(~> LHS RHS)` rewrites) to MM2 exec rules.
+RAISES on any non-`~>` form rather than dropping it — see `_il_assert_all_rewrites`."
+function metta_il_lower(program::AbstractString)::String
+    _il_assert_all_rewrites(program, "metta_il_lower")
     join([metta_il_lower_rewrite(strip(f)) for (bang, f) in mm2_split_forms(program)
           if !bang && mm2_head(f) == "~>"], "\n")
+end
 
 "Lower a MeTTa-IL program's rewrites to KBSaturation forward rules `(==> LHS RHS)` (for recursive
-closure). `(~> LHS RHS)` and `(==> BODY HEAD)` are the same forward-derivation; `==>` runs to fixpoint."
-metta_il_lower_saturation(program::AbstractString)::String =
+closure). `(~> LHS RHS)` and `(==> BODY HEAD)` are the same forward-derivation; `==>` runs to fixpoint.
+RAISES on any non-`~>` form rather than dropping it — see `_il_assert_all_rewrites`."
+function metta_il_lower_saturation(program::AbstractString)::String
+    _il_assert_all_rewrites(program, "metta_il_lower_saturation")
     join(["(==> $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))"
           for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"], "\n")
+end
 
 """
     metta_il_run!(cs::CoreSpace, data, program; steps=1_000_000, saturate=false) -> Vector{String}
@@ -51,6 +99,9 @@ Run a MeTTa-IL program's rewrites over `data` on the native MORK `cs`, returning
 function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractString;
                        steps::Int = 1_000_000, saturate::Bool = false,
                        use_magic_sets::Bool = false, magic_query::AbstractString = "", magic_bound::Int = 0)
+    # Guard FIRST — before `data` touches the space. The lowering entries below also check, but by
+    # then we would have mutated `cs` and then thrown, leaving a half-loaded space behind.
+    _il_assert_all_rewrites(program, "metta_il_run!")
     isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
     if saturate
         rules = metta_il_lower_saturation(program)
@@ -116,6 +167,10 @@ the subterm traversal — so GSLT/mettail-rust explicit congruence rules (`let S
 only by relational backends, are unnecessary here.
 """
 function metta_il_normalize(program::AbstractString, term::AbstractString)::String
+    # Same silent-drop hole as the lowering entries: a non-`~>` form was filtered out below without a
+    # word, so a rule the caller believed was in the calculus simply would not fire and the term would
+    # come back under-reduced — indistinguishable from "already in normal form".
+    _il_assert_all_rewrites(program, "metta_il_normalize")
     # Parse each `(= LHS RHS)` rule to a MORK.Expr ONCE for the whole normalization (see the
     # profile note on `_normalize_subterm`). Head and body must stay in ONE parsed expr so they
     # share a variable namespace — MORK vars are POSITIONAL (MorkBridge.jl CRUX); parsing them

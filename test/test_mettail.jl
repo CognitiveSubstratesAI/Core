@@ -57,6 +57,30 @@ using Test
         @test metta_il_run!(cs3, "(edge 0 1)\n(edge 1 0)", il; saturate = true) ==
               ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
     end
+    @testset "REGRESSION: non-`~>` forms RAISE instead of vanishing silently" begin
+        # Before the guard, this lane filtered every entry with `if !bang && mm2_head(f) == "~>"`,
+        # so anything else was DROPPED WITHOUT A WORD. Reachable from mc_run, which picks :rewrite on
+        # the mere PRESENCE of a `~>` head — so a mixed program lost its other forms and returned
+        # String[] with an EMPTY space. Measured before the fix:
+        #   (~> (p $x) (q $x)) + (= (q A) B) + (p A)
+        #     → lane :rewrite, lowered ONLY the ~> form, results String[], space empty.
+        # A wrong answer with no diagnostic; now it is an error naming what it would have discarded.
+        mixed = "(~> (p \$x) (q \$x))\n(= (q A) B)\n(p A)"
+        @test_throws Exception metta_il_lower(mixed)
+        @test_throws Exception metta_il_lower_saturation(mixed)
+        @test_throws Exception metta_il_normalize(mixed, "(p A)")
+        cs = MC.new_core_space()
+        @test_throws Exception metta_il_run!(cs, "", mixed)
+        # and the space must be UNTOUCHED — the guard runs before any ingest, so a raise cannot
+        # leave a half-loaded space behind
+        @test isempty(MC.core_atoms(cs))
+        # a `!` directive is discarded just as silently — also caught
+        @test_throws Exception metta_il_lower("(~> (p \$x) (q \$x))\n!(match &self (p \$x) \$x)")
+        # the honest path still works: facts via `data`, rewrites via `program`
+        cs2 = MC.new_core_space()
+        @test metta_il_run!(cs2, "(p A)", "(~> (p \$x) (q \$x))") == ["(q A)"]
+    end
+
     @testset "congruence via subterm reduction (metta_il_normalize)" begin
         # CALCULUS `~>` = term reduction with congruence (reduce inside contexts), NOT additive derivation.
         bool = raw"""
