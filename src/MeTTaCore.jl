@@ -63,6 +63,8 @@ include("standard/Interpreter.jl")
 
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Interpreter` submodule above.
+include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Interpreter's
+                                     # _MODULE_PATH, so it must follow standard/Interpreter.jl)
 include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
