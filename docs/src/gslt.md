@@ -34,7 +34,11 @@ recursive closure). [`theory_rewrites`](@ref) returns the flattened rewrite set;
 
 ## Equation orientation
 
-[`theory_orient_equations`](@ref) orients equations into rewrites where provably terminating (RHS strictly
-fewer function symbols, no new variables) — unit/simplification laws orient; commutativity / associativity /
+[`theory_orient_equations`](@ref) orients equations into rewrites where provably terminating: the RHS must
+have strictly fewer function symbols **and** no variable may occur more often in the RHS than in the LHS
+(non-duplication). Both halves are load-bearing — the symbol count is a measure on the *rule*, and
+substitution multiplies each variable's instance, so a duplicating rule such as `(= (f (h $x)) (g $x $x))`
+grows the term (`|Lσ| = 2 + |t|` vs `|Rσ| = 1 + 2|t|`) even though the rule itself shrinks. Non-duplication
+subsumes the older "no new variables" test. Unit/simplification laws orient; commutativity / associativity /
 distributivity are **flagged** (they need AC-matching or an LPO/KBO reduction order — the deeper follow-on).
 Oriented rewrites feed [`metta_il_normalize`](@ref).

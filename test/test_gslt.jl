@@ -192,3 +192,41 @@ end
         @test metta_il_normalize(join(o.oriented, "\n"), raw"(f (Mult One b))") == "(f b)"  # + congruence
     end
 end
+
+@testset "orientation REJECTS duplicating equations (termination soundness)" begin
+    # REGRESSION. The check was `_eq_symbols(rhs) < _eq_symbols(lhs) && issubset(_eq_vars(rhs), _eq_vars(lhs))`
+    # and the comment claimed it "guarantees termination". `issubset` is a SET test, so it cannot see
+    # DUPLICATION. Measured before the fix, `(= (f (h $x)) (g $x $x))` was ORIENTED:
+    #     symbols 1 < 2 ✓     vars {$x} ⊆ {$x} ✓     ⇒ accepted as terminating
+    # But counting symbols in the RULE is only a termination measure when variables are not duplicated,
+    # because substitution multiplies each variable's instance. With σ = {$x ↦ t}:
+    #     |Lσ| = 2 + |t|      |Rσ| = 1 + 2·|t|       ⇒ the RHS is BIGGER once |t| > 1
+    # so the rewrite grows the term without bound. The required condition is non-duplication:
+    # for every variable, occurrences in RHS ≤ occurrences in LHS.
+    dup = raw"(f (h $x))", raw"(g $x $x)"
+    @test MC._eq_symbols(dup[2]) < MC._eq_symbols(dup[1])          # the OLD symbol test still passes …
+    @test issubset(MC._eq_vars(dup[2]), MC._eq_vars(dup[1]))       # … and the OLD variable test too …
+    @test !MC._eq_non_duplicating(dup[1], dup[2])                  # … but non-duplication REJECTS it
+
+    # non-duplicating shrinking rules still orient
+    @test MC._eq_non_duplicating(raw"(f $x $y)", raw"(g $x)")      # dropping a variable is fine
+    @test MC._eq_non_duplicating(raw"(f $x)", raw"(g $x)")         # 1 → 1 is fine
+    @test MC._eq_non_duplicating("(f a)", "b")                     # ground rules are fine
+    # a FRESH variable on the RHS is rejected too — non-duplication subsumes "no new variables"
+    @test !MC._eq_non_duplicating(raw"(f $x)", raw"(g $y)")
+    # occurrence counting itself
+    @test MC._eq_var_counts(raw"(g $x $x $y)") == Dict("\$x" => 2, "\$y" => 1)
+    @test isempty(MC._eq_var_counts("(f a b)"))
+
+    # end-to-end through theory_orient_equations: a duplicating law must be FLAGGED, not oriented
+    env = load_theories("""
+    (theory DupLaw ()
+      (equations
+        (= (f (h \$x)) (g \$x \$x))
+        (= (unit \$x) \$x)))
+    """)
+    o = theory_orient_equations("DupLaw", env)
+    @test any(r -> occursin("unit", r), o.oriented)                # the shrinking law orients
+    @test !any(r -> occursin("(g ", r), o.oriented)                # the duplicating one does NOT
+    @test any(e -> occursin("(g ", e), o.flagged)                  # it is flagged instead
+end

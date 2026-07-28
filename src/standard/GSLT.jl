@@ -125,14 +125,53 @@ theory_instantiate(name::AbstractString, env::Dict{String, Theory}, overrides::D
     theory_flatten(name, env; bindings = overrides)
 
 # --- Equation orientation (a-tail) -------------------------------------------------------------------
-# Knuth-Bendix orientation is undecidable in general; this is the SOUND, INCOMPLETE fragment: orient
-# `(= L R)` as `(~> L R)` only when every application STRICTLY shrinks the term (fewer function symbols
-# on the RHS) and the RHS introduces no new variables — which guarantees termination. This orients
+# Knuth-Bendix orientation is undecidable in general; this is a SOUND, INCOMPLETE fragment: orient
+# `(= L R)` as `(~> L R)` only when the RHS has strictly fewer function symbols AND no variable occurs
+# more often in the RHS than in the LHS (NON-DUPLICATION). Both halves are load-bearing — the symbol
+# count alone is a measure on the RULE, and substitution multiplies each variable's instance, so a
+# duplicating rule can grow the term even while the rule shrinks. This orients
 # unit/simplification laws and FLAGS the rest (commutativity, associativity, distributivity — equal-or-
 # larger RHS) as non-orientable; those need AC-matching or an explicit reduction order (LPO/KBO), the
 # deeper follow-on. Oriented rewrites are usable directly by `metta_il_normalize`.
 _eq_tokens(s::AbstractString) = filter(!isempty, split(replace(String(s), '(' => ' ', ')' => ' ')))
 _eq_vars(s::AbstractString) = Set(t for t in _eq_tokens(s) if startswith(t, "\$"))
+
+"""
+    _eq_var_counts(s) -> Dict{String,Int}
+
+Per-variable OCCURRENCE COUNTS, not the variable SET.
+
+The orientation test used `issubset(_eq_vars(rhs), _eq_vars(lhs))` — "the RHS introduces no new
+variables" — and claimed that plus a shrinking symbol count "guarantees termination". It does not:
+`issubset` is a SET test, so it cannot see DUPLICATION. Measured before this fix,
+`(= (f (h \$x)) (g \$x \$x))` was ORIENTED:
+
+    symbols 1 < 2 ✓      vars {\$x} ⊆ {\$x} ✓      ⇒ accepted as terminating
+
+but it duplicates `\$x`, and counting symbols in the RULE is only a termination measure when
+variables are not duplicated — substitution multiplies each variable's instance. With σ = {\$x ↦ t}:
+
+    |Lσ| = 2 + |t|        |Rσ| = 1 + 2·|t|        ⇒ the RHS is BIGGER once |t| > 1
+
+so the rewrite can grow the term without bound. The required side condition is the standard
+non-duplication one: **for every variable, occurrences in the RHS ≤ occurrences in the LHS.**
+That subsumes the old "no new variables" test (a fresh variable has 0 occurrences on the left and
+≥1 on the right, so it fails the count test too).
+"""
+function _eq_var_counts(s::AbstractString)::Dict{String, Int}
+    counts = Dict{String, Int}()
+    for t in _eq_tokens(s)
+        startswith(t, "\$") || continue
+        counts[String(t)] = get(counts, String(t), 0) + 1
+    end
+    counts
+end
+
+"True iff no variable occurs more often in `rhs` than in `lhs` (non-duplication)."
+function _eq_non_duplicating(lhs::AbstractString, rhs::AbstractString)::Bool
+    lc = _eq_var_counts(lhs)
+    all(kv -> kv.second <= get(lc, kv.first, 0), _eq_var_counts(rhs))
+end
 _eq_symbols(s::AbstractString) = count(t -> !startswith(t, "\$"), _eq_tokens(s))
 
 """
@@ -147,7 +186,7 @@ function theory_orient_equations(name::AbstractString, env::Dict{String, Theory}
     for eq in theory_flatten(name, env).equations
         a = mm2_expr_args(eq)
         if length(a) == 3 && a[1] == "=" &&
-           _eq_symbols(a[3]) < _eq_symbols(a[2]) && issubset(_eq_vars(a[3]), _eq_vars(a[2]))
+           _eq_symbols(a[3]) < _eq_symbols(a[2]) && _eq_non_duplicating(a[2], a[3])
             push!(oriented, "(~> $(a[2]) $(a[3]))")
         else
             push!(flagged, eq)
