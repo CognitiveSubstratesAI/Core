@@ -95,6 +95,12 @@ include("test_subrep.jl")
 # MorkSupercompiler tier-2 (`execute!`) integrated into Core's MORK path via `sc_execute!`.
 include("test_supercompiler_core.jl")
 
+# LangDef rule-table (CeTTa-adopted). BOTH files existed since the port and NEITHER was wired in —
+# runtests.jl referenced "langdef" zero times, so the test whose entire job is verifying the WELD
+# between the table and the interpreter has never run in CI. Wired 2026-07-28.
+include("test_langdef_pack.jl")
+include("test_langdef_welding.jl")
+
 @testset "MorkBridge (E1.0) — native unify + shared-var rule rewrite" begin
     # E1.0 foundation: rewrite via MORK's verified engine (expr_unify + expr_apply), not Core's
     # Julia-structural _unify / string-replace. The crossed-variable case is the one that breaks

@@ -48,7 +48,55 @@ function _langdef_disabled()::Set{String}
     _LANGDEF_DISABLED[] = s
     s
 end
-@inline rule_enabled(name::String)::Bool = !(name in _langdef_disabled())
+
+# ── the WELD: name => live, injected by LangDefPack.jl ────────────────────────────
+#
+# `rule_enabled` used to be `!(name in _langdef_disabled())`, which FAILED OPEN in two ways:
+#   * a MISTYPED rule name is not in the disabled set, so it read as ENABLED — a disable-to-prove
+#     test could silently prove nothing (`langdef_disable!("HES_Chian")` disabled no branch at all);
+#   * a rule the table marks `live = false` still ran, because the table was never consulted.
+# The table already had the correct predicate (`langdef_rule_enabled`, LangDefPack.jl:123, which
+# returns `r.live`) — the interpreter simply reimplemented a weaker one and never called it. That is
+# GUARANTEE-vs-CONVENTION: the mechanism looked welded and was not.
+#
+# Direction matters. This submodule is deliberately SELF-CONTAINED, and it is included at
+# MeTTaCore.jl:62 while LangDefPack.jl is included at :69 — so it cannot reference the table, at load
+# time or otherwise, without inverting that dependency. Instead it declares an INJECTION POINT which
+# LangDefPack.jl fills at its own load time. Interpreter still reaches out to nothing.
+const _LANGDEF_LIVE = Dict{String, Bool}()
+
+"Register the rule table (called by LangDefPack.jl at load). Idempotent; last registration wins."
+function _langdef_register!(pairs)
+    empty!(_LANGDEF_LIVE)
+    for (name, live) in pairs
+        _LANGDEF_LIVE[String(name)] = live
+    end
+    _LANGDEF_LIVE
+end
+
+"""
+    rule_enabled(name) -> Bool
+
+True iff `name` is a KNOWN live rule that is not currently disabled.
+
+FAILS CLOSED: an unregistered name raises rather than defaulting to enabled, so a typo in a
+disable-to-prove test surfaces immediately instead of quietly proving nothing.
+"""
+@inline function rule_enabled(name::String)::Bool
+    live = get(_LANGDEF_LIVE, name, nothing)
+    if live === nothing
+        isempty(_LANGDEF_LIVE) && error(
+            "rule_enabled(\"$name\"): the LangDef rule table was never registered. " *
+            "LangDefPack.jl must call Interpreter._langdef_register! at load; without it every " *
+            "gated branch would fall open.")
+        error("rule_enabled(\"$name\"): not a rule in HE_SMALL_STEP_RULES. Known rules: " *
+              join(sort(collect(keys(_LANGDEF_LIVE))), ", ") *
+              ". (A mistyped name previously read as ENABLED, so a disable-to-prove test could " *
+              "silently prove nothing.)")
+    end
+    live::Bool || return false          # table says the rule is structural, not executable
+    !(name in _langdef_disabled())
+end
 langdef_disable!(names::String...) = (_LANGDEF_DISABLED[] = Set(collect(names)); nothing)  # disable-to-prove
 langdef_reset!() = (_LANGDEF_DISABLED[] = nothing; nothing)                                 # re-read env on next check
 

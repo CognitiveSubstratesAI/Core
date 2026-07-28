@@ -139,3 +139,14 @@ function langdef_step_rules_atom(pack::LangDefPack)::String
     "(step-rules $(pack.language_id) $(pack.granularity) \"$digest\" " *
     "(schema $(pack.schema_version)) (rules $rules) $disabled)"
 end
+
+# ── weld the table into the interpreter ──────────────────────────────────────────────────────
+#
+# This table is the SINGLE SOURCE for which rule names exist and which are live. Before this,
+# `Interpreter.rule_enabled` reimplemented the predicate as `!(name in disabled)` and never read the
+# table at all — so an unknown/mistyped name read as ENABLED and a `live = false` rule still ran.
+#
+# The injection runs HERE rather than the interpreter importing the table because Interpreter.jl is
+# included first (MeTTaCore.jl:62 vs :69) and is deliberately self-contained: it declares the
+# injection point, this file fills it, and the dependency stays one-directional.
+Interpreter._langdef_register!((r.name, r.live) for r in HE_SMALL_STEP_RULES)
