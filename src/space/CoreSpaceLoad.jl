@@ -193,9 +193,22 @@ function load_metta!(cs::CoreSpace, text::AbstractString;
                      as_library::Bool = false, imported::Set{String} = Set{String}())
     as_library  # accepted for signature parity; see the docstring — deliberately not honoured yet
     pending = String[]
+    # ⚠️ PARSE WITH CORE'S PARSER, then add the parsed EXPRESSION — never hand raw source text to
+    # `core_add!`. On a string, `core_add!` forwards to `space_add_all_sexpr!` (MORK's reader), which
+    # encodes `$x` as anonymous de-Bruijn NewVar/VarRef bytes: `(= (foo $x $y) (bar $y $x))` comes
+    # back as `(= (foo $ $) (bar _2 _1))`. That is alpha-equivalent for MORK's OWN matcher, but
+    # `_is_var_symbol` accepts only `$…`/`__var_…`, so `_1`/`_2` read as GROUND symbols to Core —
+    # the rule bodies silently stop being rules. `to_sexpr` on a parsed atom maps `$x → __var_x`
+    # (a named ground symbol) which survives the trie round trip, which is why the Vector path is
+    # the documented-correct one (MeTTaCore.jl `load_stdlib!` takes it for exactly this reason).
+    # Measured on lib/quantale: 25 of 31 atoms carry a variable, i.e. the string path corrupted 81%.
     flush!() = begin
-        isempty(pending) || core_add!(cs, join(pending, "\n"))
-        empty!(pending)
+        if !isempty(pending)
+            for e in parse_metta(join(pending, "\n"))
+                core_add!(cs, e)
+            end
+            empty!(pending)
+        end
     end
     for form in _cs_split_top_level(text)
         is_dir, body = _cs_split_bang(form)
@@ -227,7 +240,13 @@ function load_metta!(cs::CoreSpace, text::AbstractString;
         elseif h == "remove-atom"
             parts = _cs_split_top_level(body[nextind(body, 1):prevind(body, lastindex(body))])
             length(parts) >= 3 || error("load_metta!(CoreSpace): malformed remove-atom in `$form`")
-            core_remove!(cs, parts[3])
+            # Parse for the same reason `flush!` does: a raw string is re-encoded by MORK's reader,
+            # so an atom containing a variable would be looked up at a byte path that can never
+            # match the one `core_add!` wrote. (The single real occurrence in lib/ is ground, so
+            # this is correctness-by-construction rather than a fix to an observed failure.)
+            for e in parse_metta(parts[3])
+                core_remove!(cs, e)
+            end
         else
             error("load_metta!(CoreSpace): directive `$h` is not supported on a MORK-backed space " *
                   "(form: `$form`). Only import! and remove-atom appear in lib/; add explicit " *

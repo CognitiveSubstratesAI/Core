@@ -39,6 +39,39 @@ const MC = MeTTaCore
         end
     end
 
+    @testset "VARIABLES survive the trie round trip" begin
+        # REGRESSION. The first version of this loader handed raw source text to `core_add!`, which
+        # forwards a string to MORK's reader — that encodes `$x` as anonymous de-Bruijn bytes, so
+        # `(= (foo $x $y) (bar $y $x))` came back as `(= (foo $ $) (bar _2 _1))`. Alpha-equivalent
+        # for MORK's own matcher, but `_is_var_symbol` accepts only `$…`/`__var_…`, so `_1`/`_2`
+        # read as GROUND symbols to Core and the rule body silently stopped being a rule.
+        # The atom COUNT is identical either way — only this property distinguishes them, which is
+        # why counting was not enough.
+        cs = MC.new_core_space()
+        MC.load_metta!(cs, "(= (foo \$x \$y) (bar \$y \$x))")
+        atoms = MC.core_atoms(cs)
+        @test length(atoms) == 1
+        rule = atoms[1]
+        @test rule[2][2] == Symbol("\$x") && rule[2][3] == Symbol("\$y")   # head vars keep names
+        @test rule[3][2] == Symbol("\$y") && rule[3][3] == Symbol("\$x")   # body vars, order swapped
+        # And the same via the real lib path. Asserted as the CORRUPTION SIGNATURE rather than a
+        # count, because a count is weak here: the string path preserves the atom count exactly, and
+        # a count of variable-bearing atoms is only as good as the predicate (my first probe used
+        # `occursin("var", …)` and counted `q-var-unit` — a substring, not a variable).
+        # Under the string path EVERY variable degrades to one of two shapes: a bare `$` (NewVar,
+        # name discarded) or `_N` (VarRef back-reference, which Core reads as a ground symbol).
+        # Neither may appear.
+        cs2 = MC.new_core_space()
+        MC.load_core_lib!(cs2, "quantale")
+        anysym(f, x) = x isa AbstractVector ? any(y -> anysym(f, y), x) : (x isa Symbol && f(x))
+        bare_newvar(s) = s === Symbol("\$")
+        debruijn_ref(s) = occursin(r"^_\d+$", String(s))
+        atoms2 = MC.core_atoms(cs2)
+        @test !any(a -> anysym(bare_newvar, a), atoms2)     # no name-discarded NewVar
+        @test !any(a -> anysym(debruijn_ref, a), atoms2)    # no VarRef masquerading as ground
+        @test count(a -> anysym(MC._is_var_symbol, a), atoms2) == 24   # measured; ALL bare `$` before
+    end
+
     @testset "both library shapes resolve" begin
         # lib/ contains BOTH shapes: a single entry module (quantale/quantale.metta) and a bare
         # directory with no `<name>.metta` entry (subrep/, hyperseed/). Assuming the entry-file
@@ -81,8 +114,8 @@ const MC = MeTTaCore
         # ⚠️ `:(q-prob-times)` is NOT the symbol — the hyphens make Julia parse it as subtraction.
         # `Symbol("...")` is required for any MeTTa identifier containing `-`.
         probe = Symbol("q-prob-times")
-        flat(x) = x isa AbstractVector ? reduce(vcat, map(flat, x); init = Any[]) : Any[x]
-        @test probe in Set(flat(MC.core_atoms(cs)))               # present in the shared trie …
+        holds(x) = x isa AbstractVector ? any(holds, x) : x === probe
+        @test any(holds, MC.core_atoms(cs))                       # present in the shared trie …
 
         isp = MC.Interpreter.Space()                              # … and NOT in a fresh interpreter
         MC.Interpreter.load_core_stdlib!(isp)                     #     space carrying only stdlib
