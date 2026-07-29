@@ -19,29 +19,15 @@ Cross-verified against:
 """
     _gnum(s) -> Union{Int, Float64, Nothing}
 
-Parse a grounded numeric argument PRESERVING ITS TYPE — Int stays Int, float stays Float64.
+Type-preserving numeric parse for a grounded argument — a thin local alias for `MORK.grounded_num`.
 
-⚠️ This is a bug fix, MEASURED 2026-07-29. The previous version parsed EVERY argument as `Float64`
-and then demoted any integral result back with `isinteger(r) ? string(Int(r)) : string(r)`. Two
-consequences, both observed by running this registry against the interpreter (the lane that passes
-the 234-directive hyperon conformance and LeaTTa 270/270):
-
-  1. INTEGER PRECISION LOSS past 2^53, because Int64 arithmetic was done in a 53-bit mantissa:
-         (* 123456789 987654321) -> 121932631112635264   exact 121932631112635269   (off by 5)
-         (+ 9007199254740993 1)  -> 9007199254740992     exact 9007199254740994     (off by 2)
-  2. FLOAT TYPE DEMOTION on integral results — distinct ATOMS in MeTTa, not just formatting:
-         (+ 1.5 2.5) -> 4  (interpreter: 4.0)      (/ 10 2) -> 5  (interpreter: 5.0)
-     `from_sexpr("4")` is `Int64`, `from_sexpr("4.0")` is `Float64`, so the two lanes were putting
-     DIFFERENT atoms in the space for the same expression.
-
-Parsing Int first and letting Julia's own promotion apply reproduces the interpreter exactly:
-Int⊕Int stays exact Int, any Float operand promotes, and `/` on two Ints yields Float64 (5.0) as
-MeTTa requires.
+DO NOT reimplement here. This used to be its own copy, one of THREE (with `_g2atom` below and
+`MorkSupercompiler`'s `_kb_num`), all parsing every operand as `Float64`; the full account of the
+defect that caused — exact numbers, the broken KBSaturation bisimulation, and the numeric-model
+decision — lives at `MORK.grounded_num`, which is the single definition all consumers now share.
+Keeping the rationale in one place is the same discipline as keeping the code in one place.
 """
-_gnum(s::AbstractString) = begin
-    n = tryparse(Int, s)
-    n !== nothing ? n : tryparse(Float64, s)
-end
+_gnum(s::AbstractString) = MORK.grounded_num(s)
 
 function _register_arithmetic!()
     for (name, op) in [("+", +), ("-", -), ("*", *), ("/", /), ("%", rem)]
@@ -157,8 +143,7 @@ rules are stated IN TERMS of it ("abs/trunc/ceil/floor/round PRESERVE type; sqrt
 Float"), so collapsing `4` and `4.0` makes those rules unstatable.
 """
 _g2atom(s::AbstractString) = begin
-    n = tryparse(Int, s);     n !== nothing && return StandardMeTTa.Grounded(n)
-    f = tryparse(Float64, s); f !== nothing && return StandardMeTTa.Grounded(f)
+    v = MORK.grounded_num(s); v !== nothing && return StandardMeTTa.Grounded(v)   # 2nd copy, gone
     # STRING is GROUNDED, not SYMBOL — `GROUNDED ::= STRING | WORD` (metta_grammar.ebnf). Without this
     # a quoted literal fell through to `Sym(Symbol("\"hello\""))`, i.e. a symbol whose NAME included
     # the quotes, where the interpreter's own `parse_atom` (Interpreter.jl:2453) yields
