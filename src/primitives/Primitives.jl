@@ -159,6 +159,11 @@ Float"), so collapsing `4` and `4.0` makes those rules unstatable.
 _g2atom(s::AbstractString) = begin
     n = tryparse(Int, s);     n !== nothing && return StandardMeTTa.Grounded(n)
     f = tryparse(Float64, s); f !== nothing && return StandardMeTTa.Grounded(f)
+    # STRING is GROUNDED, not SYMBOL — `GROUNDED ::= STRING | WORD` (metta_grammar.ebnf). Without this
+    # a quoted literal fell through to `Sym(Symbol("\"hello\""))`, i.e. a symbol whose NAME included
+    # the quotes, where the interpreter's own `parse_atom` (Interpreter.jl:2453) yields
+    # `Grounded("hello")`. Same unquoting rule as the parser: strip the leading quote.
+    startswith(s, "\"") && return StandardMeTTa.Grounded(String(s[nextind(s, 1):(endswith(s, "\"") && length(s) >= 2 ? prevind(s, lastindex(s)) : lastindex(s))]))
     # VARIABLE is one of the grammar's FOUR atom kinds (metta_grammar.ebnf), so it must not fall
     # through to Sym. Two spellings reach here: parse-time `$x`, and `__var_x` — the GROUND symbol
     # `load_metta!(::CoreSpace)` writes so a variable's NAME survives the MORK round trip. Collapsing

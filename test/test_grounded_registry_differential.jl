@@ -165,6 +165,40 @@ const MKg = MeTTaCore.MORK
         @test MCg.mm2_is_relational(raw"(= (f $x) (get-state $x))") == false
     end
 
+    @testset "_g2atom follows metta_grammar.ebnf, ALL productions — not just ATOM's four names" begin
+        # docs/specs/metta_grammar.ebnf is the declared parser-of-record. The productions that bind
+        # here, and which each one caught:
+        #   ATOM      ::= SYMBOL | VARIABLE | GROUNDED | EXPRESSION
+        #   GROUNDED  ::= STRING | WORD        <- a quoted STRING is GROUNDED, NOT Symbol. `_g2atom`
+        #                                         had no STRING case, so `"hello"` became a Sym whose
+        #                                         NAME included the quote characters.
+        #   VARIABLE  ::= '$', (CHAR | '"'), {CHAR | '"'}
+        #   WORD      ::= (CHAR | '#'), {CHAR | '"' | '#'}   <- '#' may LEAD, '"' is legal in the BODY
+        #   CHAR      ::= any char except WHITESPACE and ( '"' | '#' | '(' | ')' | ';' )
+        # Note GROUNDED and SYMBOL are SYNTACTICALLY IDENTICAL for the WORD case — the distinction is
+        # semantic (numeric literal / known grounded name), not something the grammar can decide. That
+        # is why the numeric probe below expects Grounded while the bare word expects Symbol.
+        A = MCg.StandardMeTTa
+
+        @test MCg._g2atom("42")      isa A.Grounded      # GROUNDED via numeric WORD
+        @test MCg._g2atom("3.5")     isa A.Grounded
+        @test MCg._g2atom("\"hi\"")  isa A.Grounded      # GROUNDED via STRING  (was Sym)
+        @test MCg._g2atom("\"hi\"").value == "hi"        # …and unquoted, as parse_atom does
+        @test MCg._g2atom("foo")     isa A.Sym           # SYMBOL
+        @test MCg._g2atom("#tag")    isa A.Sym           # WORD may LEAD with '#'
+        @test MCg._g2atom("fo\"o")   isa A.Sym           # '"' legal in a WORD body
+        @test MCg._g2atom("\$x")     isa A.Var           # VARIABLE
+        @test MCg._g2atom("__var_x") isa A.Var           # VARIABLE, Core's stored spelling
+        @test MCg._g2atom("(A B)")   isa A.Expression    # EXPRESSION, via expr_to_atom
+
+        # and the four kinds must be DISTINGUISHED, not merely constructed — this is the collapse
+        # (SYMBOL == VARIABLE as one Julia Symbol) that SExprConvertible has and `__var_` patches.
+        @test A.metatype(MCg._g2atom("foo"))     != A.metatype(MCg._g2atom("\$x"))
+        @test A.metatype(MCg._g2atom("42"))      != A.metatype(MCg._g2atom("foo"))
+        @test A.metatype(MCg._g2atom("(A B)"))   != A.metatype(MCg._g2atom("foo"))
+        @test A.metatype(MCg._g2atom("\"hi\""))  == A.metatype(MCg._g2atom("42"))   # both GROUNDED
+    end
+
     @testset "⚠️ KNOWN DIVERGENCE, pinned not fixed: (% x 0)" begin
         # MORK declines rather than crashing or inventing NaN (it used to return NaN, because
         # integer rem was being done in floats).
