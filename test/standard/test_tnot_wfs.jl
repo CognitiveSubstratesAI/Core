@@ -6,7 +6,7 @@
 # NOT a `Sym("undefined")` — the last testset is the regression that a user datum named `undefined` no longer
 # collides with the truth value (the Hazard-A soundness bug).
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 using Test
 
 const U = Interpreter.UNDEFINED               # WFS bottom / third truth value (out-of-band sentinel)

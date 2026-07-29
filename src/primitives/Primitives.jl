@@ -157,10 +157,28 @@ rules are stated IN TERMS of it ("abs/trunc/ceil/floor/round PRESERVE type; sqrt
 Float"), so collapsing `4` and `4.0` makes those rules unstatable.
 """
 _g2atom(s::AbstractString) = begin
-    n = tryparse(Int, s);     n !== nothing && return Interpreter.StandardMeTTa.Grounded(n)
-    f = tryparse(Float64, s); f !== nothing && return Interpreter.StandardMeTTa.Grounded(f)
-    Interpreter.StandardMeTTa.Sym(Symbol(s))
+    n = tryparse(Int, s);     n !== nothing && return StandardMeTTa.Grounded(n)
+    f = tryparse(Float64, s); f !== nothing && return StandardMeTTa.Grounded(f)
+    # VARIABLE is one of the grammar's FOUR atom kinds (metta_grammar.ebnf), so it must not fall
+    # through to Sym. Two spellings reach here: parse-time `$x`, and `__var_x` — the GROUND symbol
+    # `load_metta!(::CoreSpace)` writes so a variable's NAME survives the MORK round trip. Collapsing
+    # either into a Sym is what makes `(get-metatype __var_x)` answer Symbol instead of Variable.
+    (startswith(s, "\$") || startswith(s, _CORE_VAR_PREFIX_G)) &&
+        return StandardMeTTa.Var(startswith(s, "\$") ? s[nextind(s, 1):end] : s[7:end])
+    # EXPRESSION — the fourth kind. Do NOT hand-roll a parser: `expr_to_atom` (MM2Router.jl:638) is
+    # the byte-level reader that already rebuilds structure AND de Bruijn co-reference. Wrapping the
+    # text in a single Sym is what made `(get-metatype (A B))` answer Symbol instead of Expression
+    # (a regression I introduced and measured on the way in).
+    if startswith(s, "(")
+        return try
+            expr_to_atom(MORK.sexpr_to_expr(String(s)))
+        catch
+            StandardMeTTa.Sym(Symbol(s))   # unparseable: treat as an opaque symbol
+        end
+    end
+    StandardMeTTa.Sym(Symbol(s))
 end
+const _CORE_VAR_PREFIX_G = "__var_"
 
 """
     _delegate_grounded(name, args) -> Union{String, Nothing}
@@ -204,8 +222,8 @@ function _delegate_grounded(name::String, args)
     R = Interpreter.TOKEN_REGISTRY
     haskey(R, name) || return nothing
     g = R[name]
-    (g isa Interpreter.StandardMeTTa.Grounded && g.value isa Interpreter.Operation) || return nothing
-    r = Interpreter.execute(g, Interpreter.StandardMeTTa.Atom[_g2atom(a) for a in args], nothing)
+    (g isa StandardMeTTa.Grounded && g.value isa Interpreter.Operation) || return nothing
+    r = Interpreter.execute(g, StandardMeTTa.Atom[_g2atom(a) for a in args], nothing)
     r isa Interpreter.ExecOk || return nothing
     length(r.results) == 1 || return nothing
     string(r.results[1])
@@ -347,29 +365,30 @@ end
 # get-type, type-cast, match-types — per MeTTa spec §Type System
 
 function _register_type_ops!()
-    MORK.register_grounded!("get-type", args -> begin
-        isempty(args) && return "%Undefined%"
-        s = strip(args[1])
-        # Grounded type inference from value
-        tryparse(Int, s) !== nothing    && return "Number"
-        tryparse(Float64, s) !== nothing && return "Number"
-        (s == "True" || s == "False" || s == "true" || s == "false") && return "Bool"
-        startswith(s, "\"")            && return "String"
-        startswith(s, "(")             && return "Expression"
-        startswith(s, "\$")            && return "Variable"
-        "Symbol"
-    end)
+    # 🔴 `get-type` is NOT registered here — REMOVED 2026-07-29. It is unimplementable on this lane.
+    #
+    # `get-type` answers "what type is DECLARED for this atom", which means querying the SPACE for
+    # `(: x T)` atoms. The interpreter's is a SpaceOp for exactly that reason:
+    #     GET_TYPE = Grounded(SpaceOp("get-type", (xs, space) -> arg_actual_types(xs[1], space)))
+    #                                                     ^^^^^  Interpreter.jl:2181
+    # This shim receives a decoded STRING and has no space, so the old implementation guessed from
+    # the argument's TEXT instead — which is `get-metatype`'s question, not `get-type`'s. Measured
+    # divergence against the interpreter (the lane gated by hyperon-234 + the 21/21 type-system
+    # conformance):
+    #     (get-type True)  -> "Bool"        interpreter %Undefined%   (nothing is declared for True)
+    #     (get-type (A B)) -> "Expression"  interpreter %Undefined%
+    #     (get-type foo)   -> "Symbol"      interpreter %Undefined%
+    # `%Undefined%` is the CORRECT answer for an undeclared atom; the shim's more-informative-looking
+    # replies were a category error. Removed rather than made to decline, for the same reason as the
+    # state ops: a registered name returning `nothing` yields 0 paths and
+    # `isempty(result_paths) && break` (MORK Space.jl:556) drops the whole join row silently.
+    # `mm2_is_relational` already keeps this head on the interpreter lane.
 
-    MORK.register_grounded!("get-metatype", args -> begin
-        isempty(args) && return "Symbol"
-        s = strip(args[1])
-        # Variables arrive either as parse-time `$x` or eval-renamed `__var_x`.
-        (startswith(s, "\$") || startswith(s, "__var_")) && return "Variable"
-        startswith(s, "(")   && return "Expression"
-        tryparse(Float64, s) !== nothing && return "Grounded"
-        (s == "True" || s == "False" || s == "true" || s == "false") && return "Grounded"
-        "Symbol"
-    end)
+    # `get-metatype` DOES belong here — it asks only "which of the four grammar kinds is this atom",
+    # needs no space, and the interpreter's is a pure `Operation` (Interpreter.jl:2043), so it can be
+    # delegated. Doing so fixes `(get-metatype True)`: Core's `True` is a `Sym`, not a grounded Bool,
+    # so the answer is Symbol — the old local copy said Grounded.
+    MORK.register_grounded!("get-metatype", args -> _delegate_grounded("get-metatype", args))
 
     MORK.register_grounded!("match-types", args -> begin
         length(args) < 4 && return nothing

@@ -17,7 +17,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN demand sweep — DAG max-join (§4.4): dedup + max-over-paths" begin
     sp = Space()

@@ -29,7 +29,7 @@ using MeTTaCore
 using Test
 
 const SM = MeTTaCore.Interpreter                       # metta_run / load_metta! / Space / parse
-const SA = MeTTaCore.Interpreter.StandardMeTTa         # Sym / Var / Expression / Bindings / match_atoms
+const SA = MeTTaCore.StandardMeTTa         # Sym / Var / Expression / Bindings / match_atoms
 
 const _ROOT   = dirname(@__DIR__)
 const _STDLIB = joinpath(_ROOT, "src", "standard", "stdlib.metta")

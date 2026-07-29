@@ -7,7 +7,7 @@
 # (known divergences + bugs-to-fix + known-missing ops). A regression (fails go up) OR an unrecorded
 # improvement (a fix lands, fails go down) BOTH fail this test, forcing the baseline to stay truthful.
 # The matrix prints every run so the incomplete state is always visible.
-using MeTTaCore.Interpreter, MeTTaCore.Interpreter.StandardMeTTa, Test
+using MeTTaCore.Interpreter, MeTTaCore.StandardMeTTa, Test
 const SM = MeTTaCore.Interpreter
 const UNIT_DIR = joinpath(@__DIR__, "unit")
 

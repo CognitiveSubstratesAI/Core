@@ -574,7 +574,7 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
 end
 
 # ── typed Atom → MM2 sexpr (the LIVE-eval handoff: load_metta!/eval hold typed Atoms, not strings) ──
-const _MM2_ATOM = Interpreter.StandardMeTTa
+const _MM2_ATOM = StandardMeTTa
 function _typed_atom_to_expr!(io::IO, a)
     if a isa _MM2_ATOM.Sym
         print(io, a.name)

@@ -17,8 +17,14 @@
 
 module Interpreter
 
-include("Atoms.jl")
-using .StandardMeTTa
+# `StandardMeTTa` (the grammar's four ATOM kinds) is no longer INCLUDED here — it was hoisted to
+# `MeTTaCore.jl`, ABOVE the store/parser/primitives, on 2026-07-29. It is standalone and never
+# depended on this module; nesting it here made the grammar's type a private member of the evaluator,
+# which forced `CoreSpace` to invent `SExprConvertible` (SYMBOL and VARIABLE collapsed into one Julia
+# `Symbol`, hence `__var_`) and forced the compiler lane to depend on this module to reach a grounded
+# op. Now it is a sibling both lanes use. `using ..StandardMeTTa` = the PARENT's copy, so there is
+# exactly one atom type in the process.
+using ..StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
 export metta_run, metta_results, parse_program, load_metta!, load_core_stdlib!, tokenize, metta_debug!

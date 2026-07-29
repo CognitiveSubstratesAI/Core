@@ -33,7 +33,7 @@
 # / LEATTA_SPECIFIC / import!-path (the last fixed here by seeding _MODULE_PATH with the corpus dir).
 # ============================================================================================
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 using Test
 const _LI = Interpreter
 

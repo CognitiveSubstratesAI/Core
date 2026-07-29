@@ -31,7 +31,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa          # Space, load_metta!, Expression, Sym, …
+using MeTTaCore.StandardMeTTa          # Space, load_metta!, Expression, Sym, …
 
 @testset "PLN forward maps — book contract (lib/pln Truth_*)" begin
     sp = Space()

@@ -2,7 +2,7 @@
 # worked examples in hyperon docs/minimal-metta.md (cons-atom/decons-atom/unify).
 # eval/chain/function/collapse are Phase 0c/0d — not yet ported.
 using MeTTaCore.Interpreter                  # precompiled submodule (was: include fresh → recompiled per file)
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 using Test
 
 # build helpers

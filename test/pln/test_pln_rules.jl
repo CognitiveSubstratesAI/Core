@@ -15,7 +15,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN rules — conjunction/disjunction/negation (forward + demand via dispatch, vs oracle)" begin
     sp = Space()

@@ -17,7 +17,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN rows-only — induction + abduction (5-premise chain-rule + singularities + sens_A=0) vs oracle" begin
     sp = Space()

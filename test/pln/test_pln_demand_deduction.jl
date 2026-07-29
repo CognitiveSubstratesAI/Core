@@ -17,7 +17,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN demand adjoint — deduction (4-premise, §3.3 Eq1 vs oracle :213) + non-circular property" begin
     sp = Space()

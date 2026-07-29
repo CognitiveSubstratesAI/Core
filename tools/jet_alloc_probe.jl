@@ -4,7 +4,7 @@
 #   JULIA_LOAD_PATH="@:@v#.#:@stdlib" julia --project=. tools/jet_alloc_probe.jl
 using MeTTaCore, JET, AllocCheck
 const SM = MeTTaCore.Interpreter
-const SA = MeTTaCore.Interpreter.StandardMeTTa
+const SA = MeTTaCore.StandardMeTTa
 using .SA: Atom, Sym, Var, Expression, Bindings
 
 b   = Bindings()

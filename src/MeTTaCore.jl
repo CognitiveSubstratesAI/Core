@@ -46,6 +46,25 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
 # MORK.GROUNDED_REGISTRY at module load.
 using AdaptiveCompression
 
+# ── THE GRAMMAR'S ATOM TYPE — hoisted out of `module Interpreter` (2026-07-29) ────────────────────
+# `metta_grammar.ebnf`, our declared parser-of-record, says
+#     ATOM = SYMBOL | VARIABLE | GROUNDED | EXPRESSION
+# and `StandardMeTTa` implements exactly those four. It is STANDALONE — its own header says "this
+# module is standalone — it does NOT touch eval_metta / eval_nd" — but it used to be `include`d INSIDE
+# `module Interpreter` (Interpreter.jl:20), which made the grammar's type a private member of the
+# EVALUATOR.
+#
+# 🔴 WHY THAT MATTERED. Everything here was originally written interpreter-first, so the shared
+# foundation accreted inside the evaluator. The consequences were structural, not stylistic:
+#   • `CoreSpace` loads BELOW (line 49) and so could not reach `Atom` at all. It declared its own
+#     element type, `SExprConvertible`, which uses ONE Julia `Symbol` for BOTH grammar-SYMBOL and
+#     grammar-VARIABLE — and `__var_` exists solely to undo that collapse on the MORK round trip.
+#   • The compiler lane could not call a grounded op without depending on the FALLBACK's module,
+#     which inverts the standing compiler-primary directive.
+# Hoisting it here — ABOVE the store, the parser, the primitives and the MORK bridge — is what lets
+# both of those be fixed. Pure move: same code, earlier position.
+include("standard/Atoms.jl")
+
 include("space/CoreSpace.jl")
 include("space/CoreSpaceActIO.jl")   # Stage 1 .act lifecycle (snapshot / load / open_node! / close_node!)
 include("parser/Parser.jl")

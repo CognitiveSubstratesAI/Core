@@ -11,7 +11,7 @@
 # ~free, A2′ is validated. Run:  julia --project=. tools/spike_a2prime_concatT.jl
 using MeTTaCore
 const SM = MeTTaCore.Interpreter
-const SA = MeTTaCore.Interpreter.StandardMeTTa
+const SA = MeTTaCore.StandardMeTTa
 using .SA: Atom, Sym, Expression
 
 # ── the MeTTa def (for the interpreted side) ─────────────────────────────────

@@ -23,7 +23,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "space ops fail CLOSED on a non-Space argument" begin
     sp = Space()

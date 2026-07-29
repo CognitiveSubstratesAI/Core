@@ -15,7 +15,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN rows-only — inversion (3-premise + singularity cap) + negation demand vs oracle" begin
     sp = Space()

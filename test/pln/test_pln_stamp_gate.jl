@@ -26,7 +26,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN evidence-overlap gate — stamp canonicalisation + StampDisjoint" begin
     sp = Space()

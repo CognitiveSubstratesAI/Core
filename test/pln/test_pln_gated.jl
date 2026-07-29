@@ -21,7 +21,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 const _GFG = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta")
 const _GML = "(message A (stv 0.95 0.95)) (message AB (stv 0.99 0.80)) (message BC (stv 0.95 0.60)) (factor f1 hmp (premises A AB) (conclusion B)) (factor f2 hmp (premises B BC) (conclusion C)) (produces B f1) (produces C f2)"

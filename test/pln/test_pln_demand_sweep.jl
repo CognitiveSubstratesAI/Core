@@ -22,7 +22,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN demand sweep — multi-factor (§4.4 vs generated oracle golden) + threading control" begin
     sp = Space()

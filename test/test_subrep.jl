@@ -16,7 +16,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 include(joinpath(@__DIR__, "assert_guard.jl"))
 
 const _CDS = joinpath(@__DIR__, "..", "lib", "subrep", "cds.metta")

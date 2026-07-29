@@ -15,7 +15,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN demand adjoint — single HMP factor (§3.3 Eq1 vs oracle) + transpose discrimination" begin
     sp = Space()

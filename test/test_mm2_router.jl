@@ -520,7 +520,7 @@ using Test
     end
 
     @testset "expr_to_atom — byte-level de Bruijn round-trip (co-reference reconstruction)" begin
-        M = MeTTaCore.Interpreter.StandardMeTTa
+        M = MeTTaCore.StandardMeTTa
         # (= (f $x) $x): both $x are ONE Var; typed→bytes→typed must return them co-referential.
         vx = M.Var("x")
         a  = M.Expression(M.Atom[M.Sym("="), M.Expression(M.Atom[M.Sym("f"), vx]), vx])

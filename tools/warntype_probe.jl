@@ -2,7 +2,7 @@
 # functions; flag instabilities (Any / Core.Box / wide Union) that force boxing + allocation.
 using MeTTaCore, InteractiveUtils
 const SM = MeTTaCore.Interpreter
-const SA = MeTTaCore.Interpreter.StandardMeTTa
+const SA = MeTTaCore.StandardMeTTa
 using .SA: Atom, Sym, Var, Expression, Bindings
 
 probe(f, args, label) = begin

@@ -30,7 +30,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 const _LIBPLN = joinpath(@__DIR__, "..", "..", "lib", "pln")
 

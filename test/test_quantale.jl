@@ -19,7 +19,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 include(joinpath(@__DIR__, "assert_guard.jl"))   # silent-test guard (shared convention)
 
 const _QUANT = joinpath(@__DIR__, "..", "lib", "quantale", "quantale.metta")

@@ -3,7 +3,7 @@
 # ALLOCATION profiling (not CPU) to find WHAT allocates. Run: julia --project=. tools/profile_concatT.jl
 using MeTTaCore, Profile
 const SM = MeTTaCore.Interpreter
-const SA = MeTTaCore.Interpreter.StandardMeTTa
+const SA = MeTTaCore.StandardMeTTa
 
 sp = SM.Space(); SM.load_core_stdlib!(sp)
 SM.load_metta!(sp, "(= (concatT \$a \$b) (if (== \$a ()) \$b (let \$rest (concatT (cdr-atom \$a) \$b) (cons-atom (car-atom \$a) \$rest))))")

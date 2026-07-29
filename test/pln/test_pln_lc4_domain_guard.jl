@@ -20,7 +20,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN L-C4 — out-of-domain truth strengths rejected at origin (not clamped)" begin
     sp = Space()

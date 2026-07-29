@@ -9,7 +9,7 @@
 
 using Test
 using MeTTaCore.Interpreter
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 
 @testset "PLN factor graph — forward supply (§6.1 Mammal/Lassie vs oracle)" begin
     sp = Space()

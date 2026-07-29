@@ -12,7 +12,7 @@
 # all-zero; any future regression (errors go up) OR unrecorded change fails this test and must be
 # explained. Keep it honest: when adding a new vendored script, add its real count here, don't cherry-pick.
 using MeTTaCore.Interpreter                  # precompiled submodule (was: include fresh → recompiled per file)
-using MeTTaCore.Interpreter.StandardMeTTa
+using MeTTaCore.StandardMeTTa
 using Test
 
 const CONF_DIR = joinpath(@__DIR__, "conformance")
