@@ -66,9 +66,16 @@ const MKg = MeTTaCore.MORK
         end
     end
 
-    @testset "'not applicable' is signalled consistently" begin
-        # MORK says `nothing`; the interpreter says ExecNoReduce. Both mean "leave it unreduced",
-        # so these are NOT a divergence — pinned so the equivalence stays deliberate.
+    @testset "'not applicable' is signalled consistently AT THE REGISTRY BOUNDARY" begin
+        # ⚠️ CORRECTED 2026-07-29. An earlier version of this comment claimed MORK's `nothing` and the
+        # interpreter's `ExecNoReduce` "both mean leave it unreduced", i.e. were equivalent. They agree
+        # at the REGISTRY boundary (both = "no result"), which is what the assertions below pin — but
+        # their CONSUMERS diverge, so do not read this as semantic equivalence:
+        #   ExecNoReduce -> the interpreter leaves the term unreduced; it is still in the answer.
+        #   nothing      -> `GroundedSource` yields 0 paths, and `isempty(result_paths) && break`
+        #                   (MORK/src/kernel/Space.jl:556) SILENTLY DROPS THE WHOLE JOIN MATCH —
+        #                   no Error atom, no warning, the row just disappears.
+        # Same signal, different blast radius. That is a real gap in the shim, tracked separately.
         @test gcall("+", [1])       === nothing        # wrong arity
         @test gcall("+", ["a", "b"]) === nothing        # non-numeric
         @test gcall("<", ["a", 1])  === nothing
