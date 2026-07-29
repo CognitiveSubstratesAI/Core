@@ -60,3 +60,162 @@ function mork_rule_rewrite(rule::AbstractString, data::AbstractString)
     r = mork_rule_rewrite(MORK.sexpr_to_expr(String(rule)), MORK.sexpr_to_expr(String(data)))
     r === nothing ? nothing : strip(MORK.expr_serialize(r.buf))
 end
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# E1.1 — RUNNING TRIE-STORED RULES NATIVELY (the two blockers, measured 2026-07-29)
+#
+# The trie DOES hold executable rewrite rules: `space_add_all_sexpr!` stores exactly the bytes
+# `sexpr_to_expr` produces (verified: `get_val_at(btm, e.buf) !== nothing`), variables land as native
+# `Tag(NewVar)`/`Tag(VarRef)`, and `mork_rule_rewrite` rewrites straight from those bytes. Two things
+# in CORE — not in MORK — stopped us using that:
+#
+#   BLOCKER 1 — EVERY read path serializes to TEXT, and the text form is LOSSY for rewriting.
+#     `core_atoms` uses `space_dump_all_sexpr` for a root space, and even its prefix branch does
+#     `rel_bytes` -> `expr_serialize` -> text. A rule dumped and re-parsed loses its binding
+#     structure: `(= (swap $a $b) (pair $b $a))` dumps as `(= (swap $ $) (pair _2 _1))`, and
+#     re-parsing that yields NO MATCH (2-var) or `(plus _1 _1)` instead of `(plus N N)` (1-var).
+#     MEASURED, same rules, same trie, only the read path differs:
+#         via text dump   (dbl N) -> (plus _1 _1) ✗   (swap X Y) -> NO MATCH ✗
+#         via byte paths  (dbl N) -> (plus N N)   ✓   (swap X Y) -> (pair Y X) ✓
+#
+#   BLOCKER 2 — `load_metta!(::CoreSpace)` stores `__var_x` GROUND SYMBOLS, not native vars.
+#     That is deliberate (`MeTTaCore.jl:96-100`): MORK's de-Bruijn encoding drops variable NAMES on
+#     serialisation, so Core stores `$x` as the named ground symbol `__var_x` to survive the round
+#     trip. The cost is that `expr_unify` treats `__var_x` as a CONSTANT, so every stored lib rule is
+#     INERT to the native rewriter (`mork_rule_rewrite` returns `nothing` on all of them).
+#
+# The fix below is ADDITIVE and changes NO storage: keep `__var_x` on disk (names preserved, the
+# interpreter's view unchanged) and convert to native vars ON THE REWRITE PATH.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+const _CORE_VAR_PREFIX = "__var_"
+
+"""
+    mork_native_vars(e::MORK.Expr) -> MORK.Expr
+
+Rewrite Core's `__var_NAME` ground symbols into MORK-native variables, so a rule stored by
+`load_metta!(::CoreSpace)` becomes unifiable by `expr_unify`.
+
+First occurrence of a name becomes `Tag(NewVar)` (0xC0); each later occurrence becomes
+`Tag(VarRef(k))` (0x80|k) where `k` is that variable's 0-based ordinal among the NewVars — the same
+de-Bruijn discipline MORK's own reader produces for `\$x`. Every other byte is copied through.
+
+The scan is a flat pass because the encoding is prefix-free (Expr.jl:5-8):
+    Arity      0x00..0x3F  (no payload)
+    VarRef     0x80..0xBF  (no payload)
+    NewVar     0xC0        (no payload)
+    SymbolSize 0xC1..0xFF  (low 6 bits = byte count that FOLLOWS)
+
+⚠️ Pre-existing `Tag(VarRef)` bytes are copied unchanged. A rule may therefore not MIX native
+variables with `__var_` symbols — Core's loader never produces such a mix (it writes one or the
+other for the whole atom), and mixing would make the back-reference indices inconsistent.
+"""
+function mork_native_vars(e::MORK.Expr)::MORK.Expr
+    src = e.buf
+    out = UInt8[]
+    sizehint!(out, length(src))
+    seen = Dict{String, UInt8}()      # var name -> its 0-based NewVar ordinal
+    nvars = UInt8(0)
+    i = 1
+    @inbounds while i <= length(src)
+        b = src[i]
+        if b >= 0xC1                                   # SymbolSize(n) + n payload bytes
+            n = Int(b & 0x3F)
+            name = String(@view src[(i + 1):(i + n)])
+            if startswith(name, _CORE_VAR_PREFIX)
+                k = get(seen, name, nothing)
+                if k === nothing
+                    seen[name] = nvars
+                    nvars += UInt8(1)
+                    push!(out, 0xC0)                   # NewVar — first occurrence
+                else
+                    push!(out, 0x80 | k)               # VarRef(k) — back-reference
+                end
+            else
+                push!(out, b)
+                append!(out, @view src[(i + 1):(i + n)])
+            end
+            i += 1 + n
+        else                                           # Arity / VarRef / NewVar — no payload
+            push!(out, b)
+            i += 1
+        end
+    end
+    MORK.Expr(out)
+end
+
+"""
+    core_rule_exprs(cs::CoreSpace) -> Vector{MORK.Expr}
+
+Every `(= head body)` rule in `cs`, as native-variable `MORK.Expr` ready for `mork_rule_rewrite`.
+
+**Reads RAW BYTE PATHS and never calls `expr_serialize`** — that is the whole point (see BLOCKER 1).
+Going through the text dump silently mangles variable bindings, which reads as "the rule did not
+match" rather than as an error.
+"""
+function core_rule_exprs(cs::CoreSpace)::Vector{MORK.Expr}
+    rules = MORK.Expr[]
+    with_read_permit(cs) do
+        rz = read_zipper_at_path(cs.inner.btm, cs.prefix)
+        while zipper_to_next_val!(rz)
+            e = mork_native_vars(MORK.Expr(collect(zipper_path(rz))))
+            args = MORK.ExprEnv[]
+            try
+                MORK.ee_args!(MORK.ExprEnv(UInt8(0), UInt8(0), UInt32(0), e), args)
+            catch
+                continue                                # not a well-formed expr — skip, don't throw
+            end
+            length(args) >= 3 || continue               # not a 3-element form
+            # keep only `(= _ _)`: the head symbol must be exactly "="
+            h = args[1]
+            hb = h.base.buf
+            o = Int(h.offset) + 1
+            (o <= length(hb) && hb[o] >= 0xC1 && Int(hb[o] & 0x3F) == 1 &&
+             o + 1 <= length(hb) && hb[o + 1] == UInt8('=')) || continue
+            push!(rules, e)
+        end
+    end
+    rules
+end
+
+"""
+    core_rewrite_step(rules, term) -> Union{MORK.Expr, Nothing}
+
+First rule in `rules` whose head unifies with `term`, applied. `nothing` if none match.
+Committed choice (MeTTa's default, whitepaper §3.3) — first match wins, source order.
+"""
+function core_rewrite_step(rules::Vector{MORK.Expr}, term::MORK.Expr)
+    for r in rules
+        out = mork_rule_rewrite(r, term)
+        out === nothing || return out
+    end
+    nothing
+end
+
+"""
+    core_normalize(cs::CoreSpace, term::AbstractString; max_steps=1000) -> String
+
+Rewrite `term` to a fixpoint using the rules stored in `cs`'s trie — the native path, no MM2
+translation and no text round-trip between steps.
+
+This is the runtime shape whitepaper Fig-2 draws: MeTTa rules live in the MORK Atomspace and
+execution IS metagraph rewriting over them (`docs/specs/Mork/Reflective_Metagraph_Rewriting_spec.md`
+§1: *"MeTTa programs ARE metagraph rewrite rules … Execution is metagraph rewriting"*). MM2 stays
+what §3.3 says it is — a kernel tier for performance-sensitive algorithms, not the compilation target.
+
+⚠️ TOP-LEVEL ONLY, and PURELY SYNTACTIC. No congruence descent into subterms and no grounded-op
+evaluation, so `(+ 1 2)` does not reduce. `metta_il_normalize` has the innermost-subterm driver but
+recurses on STRINGS (253 KiB/rewrite measured); merging the two is the next step.
+"""
+function core_normalize(cs::CoreSpace, term::AbstractString; max_steps::Int = 1000)::String
+    rules = core_rule_exprs(cs)
+    cur = MORK.sexpr_to_expr(String(term))
+    for _ in 1:max_steps
+        nxt = core_rewrite_step(rules, cur)
+        nxt === nothing && break
+        cur = nxt
+    end
+    strip(MORK.expr_serialize(cur.buf))
+end
+
+export mork_native_vars, core_rule_exprs, core_rewrite_step, core_normalize

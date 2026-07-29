@@ -16,7 +16,13 @@ using MeTTaCore.Interpreter.StandardMeTTa
 using Test
 
 const CONF_DIR = joinpath(@__DIR__, "conformance")
-Interpreter._MODULE_PATH[] = [CONF_DIR]              # so `import! &kb c2_spaces_kb` resolves the module file
+# APPEND, do not REPLACE. This line used to be `_MODULE_PATH[] = [CONF_DIR]`, which destructively
+# wiped the module path — including Core's `lib/` — for EVERY test file that runs after this one in
+# runtests.jl, with no restore. Symptom: `load_core_lib!` works in an earlier test file and errors
+# in a later one ("library not found"), i.e. a failure whose cause is TEST ORDER, not the code under
+# test. `test/oracle/leatta/test_leatta_oracle.jl:123-124,179` already did this correctly
+# (push + filter! to restore); this file did not. Idempotent so repeated includes cannot duplicate.
+CONF_DIR in Interpreter._MODULE_PATH[] || push!(Interpreter._MODULE_PATH[], CONF_DIR)
 const STDLIB   = read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String)
 
 # baseline = expected number of error directives per script (0 = fully passing).
