@@ -205,7 +205,7 @@ function _alpha_eq_val(a, b, ab::Dict{Symbol,Symbol}, ba::Dict{Symbol,Symbol}) :
         end
         return prev_ab === b && prev_ba === a
     end
-    a_is_var || b_is_var && return false
+    (a_is_var || b_is_var) && return false
     if a isa Vector && b isa Vector
         length(a) == length(b) || return false
         return all(i -> _alpha_eq_val(a[i], b[i], ab, ba), eachindex(a))
@@ -404,11 +404,11 @@ function _register_metamo_primitives!()
         end
         cur_toks = MeTTaCore._tokenise(cur_s[2:prevind(cur_s, lastindex(cur_s))])
         tgt_toks = MeTTaCore._tokenise(tgt_s[2:prevind(tgt_s, lastindex(tgt_s))])
-        isempty(cur_toks) || isempty(tgt_toks) && return args[2]
+        (isempty(cur_toks) || isempty(tgt_toks)) && return args[2]
         tag = cur_toks[1]   # preserve the G or M tag
         cur_nums = tryparse.(Float64, cur_toks[2:end])
         tgt_nums = tryparse.(Float64, tgt_toks[2:end])
-        any(isnothing, cur_nums) || any(isnothing, tgt_nums) && return args[2]
+        (any(isnothing, cur_nums) || any(isnothing, tgt_nums)) && return args[2]
         length(cur_nums) != length(tgt_nums) && return args[2]
         blended = [(1-alpha) * c + alpha * t
                    for (c, t) in zip(cur_nums, tgt_nums)]
