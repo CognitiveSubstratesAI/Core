@@ -74,6 +74,50 @@ const MKg = MeTTaCore.MORK
         @test gcall("<", ["a", 1])  === nothing
     end
 
+    @testset "*-math delegates to the hyperon-faithful implementation" begin
+        # `CoreMathOps.jl` (Interpreter.jl:2520) implements this surface faithfully to
+        # hyperon-experimental's lib/src/metta/runner/stdlib/math.rs and states its rules. The MORK
+        # registry used to RE-IMPLEMENT all sixteen and diverged on 9 of 14 probed cases; it now
+        # delegates. These assert the RULES, not just agreement, so a future re-implementation that
+        # happens to agree on one case still fails.
+        #
+        # NOTE the division of labour, which is not duplication:
+        #   CoreMathOps.jl   = hyperon stdlib grounded atoms  (this surface)
+        #   CoreNumericOps.jl = the numpy-equivalent adapter  (norm/dotProduct/softmax/… ) —
+        #                       a DIFFERENT surface, TOKEN_REGISTRY only, no MORK counterpart.
+
+        # ALWAYS Float — even when the result is integral
+        @test gcall("sqrt-math", [4])  == "2.0"        # was "2"
+        @test gcall("sin-math", [0])   == "0.0"        # was "0"
+
+        # PRESERVE type — Int stays Int, Float stays Float
+        @test gcall("abs-math", [-5])     == "5"
+        @test gcall("abs-math", [-5.5])   == "5.5"
+        @test gcall("floor-math", [2.7])  == "2.0"     # was "2"
+        @test gcall("ceil-math", [2.1])   == "3.0"     # was "3"
+        @test gcall("trunc-math", [2.9])  == "2.0"     # was "2"
+
+        # domain errors become NaN "like Rust f64" — they must NOT throw out of MeTTa
+        @test gcall("sqrt-math", [-4]) == "NaN"        # was THREW DomainError
+        @test gcall("asin-math", [2])  == "NaN"        # was THREW DomainError
+
+        # symbols, not booleans
+        @test gcall("isnan-math", [1]) == "False"
+        @test gcall("isinf-math", [1]) == "False"
+
+        # hyperon's log-math takes TWO arguments (base, value). The old copy took ONE and answered
+        # `0` for (log-math 1); delegation makes it decline instead.
+        @test gcall("log-math", [1]) === nothing
+
+        # and every shared *-math op agrees with the interpreter on a normal input
+        for (op, args) in [("sqrt-math", [4]), ("abs-math", [-5]), ("abs-math", [-5.5]),
+                           ("floor-math", [2.7]), ("ceil-math", [2.1]), ("trunc-math", [2.9]),
+                           ("round-math", [2.5]), ("sin-math", [0]), ("cos-math", [0]),
+                           ("pow-math", [2, 3]), ("isnan-math", [1]), ("isinf-math", [1])]
+            @test gcall(op, args) == icall(op, args)[1]
+        end
+    end
+
     @testset "⚠️ KNOWN DIVERGENCE, pinned not fixed: (% x 0)" begin
         # MORK declines rather than crashing or inventing NaN (it used to return NaN, because
         # integer rem was being done in floats).

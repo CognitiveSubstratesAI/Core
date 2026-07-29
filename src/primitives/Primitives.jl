@@ -144,39 +144,84 @@ end
 
 # ── Extended math (*-math suffix — Mettatron/CeTTa convention) ───────────────
 
+"""
+    _g2atom(s) -> Atom
+
+A grounded ARGUMENT string as a typed interpreter atom, preserving Int vs Float. The distinction is
+load-bearing: `metta_grammar.ebnf` makes GROUNDED one of the four ATOM kinds, and hyperon's math
+rules are stated IN TERMS of it ("abs/trunc/ceil/floor/round PRESERVE type; sqrt/log/trig ALWAYS
+Float"), so collapsing `4` and `4.0` makes those rules unstatable.
+"""
+_g2atom(s::AbstractString) = begin
+    n = tryparse(Int, s);     n !== nothing && return Interpreter.StandardMeTTa.Grounded(n)
+    f = tryparse(Float64, s); f !== nothing && return Interpreter.StandardMeTTa.Grounded(f)
+    Interpreter.StandardMeTTa.Sym(Symbol(s))
+end
+
+"""
+    _delegate_grounded(name, args) -> Union{String, Nothing}
+
+Run a MORK-lane grounded call through the INTERPRETER'S implementation of the same op, and return
+its result as an s-expression string.
+
+⚠️ WHY THIS DELEGATES INSTEAD OF COMPUTING (measured 2026-07-29). `CoreMathOps.jl` (included at
+`Interpreter.jl:2520`) already implements the `*-math` surface FAITHFULLY to hyperon-experimental's
+`lib/src/metta/runner/stdlib/math.rs`, and documents its rules verbatim:
+
+    sqrt/log/sin/asin/cos/acos/tan/atan  -> ALWAYS Float
+    abs/trunc/ceil/floor/round           -> PRESERVE type (Int->Int, Float->Float)
+    isnan/isinf                          -> True/False symbol
+    domain errors (sqrt(-x), asin(>1))   -> NaN, like Rust f64 (Julia THROWS, so it is caught)
+
+This file previously re-implemented all sixteen with `isinteger(r) ? string(Int(r)) : string(r)` and
+an UNGUARDED `_fn(x)`. Differentially tested against the faithful implementation, **9 of 14 cases
+diverged**:
+
+    (sqrt-math 4)    -> 2                  faithful 2.0     (the ALWAYS-Float rule)
+    (sqrt-math -4)   -> THREW DomainError  faithful NaN     (host exception escaping MeTTa)
+    (asin-math 2)    -> THREW DomainError  faithful NaN
+    (floor-math 2.7) -> 2                  faithful 2.0     (the PRESERVE-type rule)
+    (ceil-math 2.1)  -> 3                  faithful 3.0
+    (log-math 1)     -> 0                  faithful ARITY ERROR — hyperon's log-math takes TWO
+                                           arguments (base, value); this copy took one
+
+A second implementation of a surface that already has a faithful one is not a second lane, it is a
+divergence generator. Delegating gives ONE source of truth and fixes all nine at once.
+
+Resolution is deferred to CALL time, which is what makes this legal: `Primitives.jl` is included at
+`MeTTaCore.jl:52`, before `module Interpreter` exists at :62 — but these closures only ever run once
+a grounded op is invoked, by which point it does.
+
+`ExecNoReduce`/`ExecRuntime` both return `nothing` (= "not applicable", the registry's own protocol),
+so a host exception can never escape. Carrying `ExecRuntime`'s message through as a MeTTa `Error`
+atom needs the registry's return protocol to grow an error case — tracked, not done here.
+"""
+function _delegate_grounded(name::String, args)
+    R = Interpreter.TOKEN_REGISTRY
+    haskey(R, name) || return nothing
+    g = R[name]
+    (g isa Interpreter.StandardMeTTa.Grounded && g.value isa Interpreter.Operation) || return nothing
+    r = Interpreter.execute(g, Interpreter.StandardMeTTa.Atom[_g2atom(a) for a in args], nothing)
+    r isa Interpreter.ExecOk || return nothing
+    length(r.results) == 1 || return nothing
+    string(r.results[1])
+end
+
 function _register_math!()
-    for (name, fn) in [
-        ("sqrt-math", sqrt), ("abs-math",   abs),
-        ("log-math",  log),  ("exp-math",   exp),
-        ("floor-math", floor), ("ceil-math", ceil),
-        ("round-math", round), ("trunc-math", trunc),
-        ("sin-math",  sin),  ("cos-math",  cos),  ("tan-math",  tan),
-        ("asin-math", asin), ("acos-math", acos), ("atan-math", atan),
-    ]
-        local _fn = fn
-        MORK.register_grounded!(name, args -> begin
-            isempty(args) && return nothing
-            x = tryparse(Float64, args[1])
-            x === nothing && return nothing
-            r = _fn(x)
-            isinteger(r) ? string(Int(r)) : string(r)
-        end)
+    # Every op here EXISTS in CoreMathOps.jl (hyperon-faithful) — delegate, never re-derive.
+    for name in ["sqrt-math", "abs-math", "log-math", "floor-math", "ceil-math", "round-math",
+                 "trunc-math", "sin-math", "cos-math", "tan-math", "asin-math", "acos-math",
+                 "atan-math", "pow-math", "isnan-math", "isinf-math"]
+        local _n = name
+        MORK.register_grounded!(_n, args -> _delegate_grounded(_n, args))
     end
-    MORK.register_grounded!("pow-math", args -> begin
-        length(args) < 2 && return nothing
-        b = tryparse(Float64, args[1]); e = tryparse(Float64, args[2])
-        (b === nothing || e === nothing) && return nothing
-        string(b ^ e)
-    end)
-    MORK.register_grounded!("isnan-math", args -> begin
-        isempty(args) && return "False"
+    # `exp-math` has NO counterpart in CoreMathOps (hyperon's math.rs does not define it) — it is our
+    # own addition, so it is implemented here, following the same ALWAYS-Float + catch-domain rule.
+    MORK.register_grounded!("exp-math", args -> begin
+        isempty(args) && return nothing
         x = tryparse(Float64, args[1])
-        x !== nothing && isnan(x) ? "True" : "False"
-    end)
-    MORK.register_grounded!("isinf-math", args -> begin
-        isempty(args) && return "False"
-        x = tryparse(Float64, args[1])
-        x !== nothing && isinf(x) ? "True" : "False"
+        x === nothing && return nothing
+        string(try exp(x) catch e; e isa DomainError ? NaN : rethrow() end)
     end)
 end
 
