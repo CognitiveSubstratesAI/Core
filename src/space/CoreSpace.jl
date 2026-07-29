@@ -163,7 +163,7 @@ Fields:
 mutable struct CoreSpace
     inner            :: Space
     prefix           :: Vector{UInt8}
-    rule_cache       :: Dict{Symbol, Vector{Tuple{Vector{Any}, Any}}}
+    rule_cache       :: Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}
     named_spaces     :: Dict{Symbol, CoreSpace}
     use_supercompiler :: Bool
 end
@@ -180,7 +180,7 @@ For shared-trie semantics (multi-space on one node), use
 """
 new_core_space() = CoreSpace(new_space(),
     UInt8[],
-    Dict{Symbol, Vector{Tuple{Vector{Any}, Any}}}(),
+    Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}(),
     Dict{Symbol, CoreSpace}(),
     false)
 
@@ -198,7 +198,7 @@ a concurrent embedding without an external coarse lock would reattach it there.
 """
 new_core_space(shared::Space, prefix::Vector{UInt8}) =
     CoreSpace(shared, copy(prefix),
-              Dict{Symbol, Vector{Tuple{Vector{Any}, Any}}}(),
+              Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}(),
               Dict{Symbol, CoreSpace}(),
               false)
 
@@ -509,7 +509,7 @@ function _walk_atoms(f::Function, s::CoreSpace)
 end
 
 """
-    core_match(s, pattern) → Vector{Any}
+    core_match(s, pattern) → Vector{SExprConvertible}
 
 Query the trie for atoms matching `pattern`. Dollar-prefixed variables act as wildcards.
 Returns a list of CANDIDATE atoms — callers (typically `_eval_match`) apply
@@ -541,7 +541,10 @@ function _concrete_token(el::Symbol)
     str = string(el)
     (startswith(str, "\$") || startswith(str, "__var_")) ? nothing : str
 end
-_concrete_token(::Any) = nothing   # nested expr / variable / other → stop pinning
+# Typed catch-all: String / Bool / Tuple / nested Vector -> not a pinnable token. NOT `::Any`, which
+# fails OPEN (silently accepts any type); this fails CLOSED — an element outside the store's declared
+# union is a MethodError at the boundary rather than a silent `nothing` that degrades to a full scan.
+_concrete_token(::SExprConvertible) = nothing
 
 # Emit the constant byte-prefix of `el` into `bytes`, mirroring MORK's structural pre-order
 # encoding (arity byte; symbol = size byte + token bytes; nested expr = arity byte + children).
@@ -601,9 +604,9 @@ function _walk_atoms_narrowed(f::Function, s::CoreSpace, prefix_bytes::Vector{UI
     end
 end
 
-function core_match(s::CoreSpace, pattern::Any) :: Vector{Any}
-    pattern === nothing && return Any[]
-    results = Any[]
+core_match(::CoreSpace, ::Nothing) = SExprConvertible[]   # explicit, was an `=== nothing` guard under `::Any`
+function core_match(s::CoreSpace, pattern::SExprConvertible) :: Vector{SExprConvertible}
+    results = SExprConvertible[]
     prefix  = _pattern_prefix_bytes(pattern)
     with_read_permit(s) do
         if prefix === nothing
@@ -620,7 +623,7 @@ function core_match(s::CoreSpace, pattern::Any) :: Vector{Any}
 end
 
 """
-    core_rules(s, head_sym) → Vector{Tuple{Vector{Any}, Any}}
+    core_rules(s, head_sym) → Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}
 
 Scan the trie for `(= (head_sym args...) body)` rule atoms.
 Returns list of (head_args, body) tuples.
@@ -634,11 +637,11 @@ Implementation note: same trie-walk + Julia-side filter as `core_match`
 match real rules).  The narrow shape filter `atom[1] === :(=) && atom[2][1]
 === head_sym` rejects ~99% of stdlib atoms without allocation.
 """
-function core_rules(s::CoreSpace, head_sym::Symbol) :: Vector{Tuple{Vector{Any}, Any}}
+function core_rules(s::CoreSpace, head_sym::Symbol) :: Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}
     cached = get(s.rule_cache, head_sym, nothing)
     cached !== nothing && return cached
 
-    rules = Tuple{Vector{Any}, Any}[]
+    rules = Tuple{Vector{SExprConvertible}, SExprConvertible}[]
     with_read_permit(s) do
         _walk_atoms(s) do atom
             # Stay inside the length-3 gate — preserves inertness of malformed
@@ -655,7 +658,7 @@ function core_rules(s::CoreSpace, head_sym::Symbol) :: Vector{Tuple{Vector{Any},
             if head_part isa Vector && !isempty(head_part) && head_part[1] === head_sym
                 push!(rules, (head_part[2:end], body))
             elseif head_part isa Symbol && head_part === head_sym
-                push!(rules, (Any[], body))
+                push!(rules, (SExprConvertible[], body))
             end
         end
     end
@@ -671,7 +674,7 @@ Scoped to `s.prefix`:
   zipper; `zipper_path(rz)` returns paths RELATIVE to the anchor so they
   are the bare atom expression bytes (no manual prefix stripping needed).
 """
-function core_atoms(s::CoreSpace) :: Vector{Any}
+function core_atoms(s::CoreSpace) :: Vector{SExprConvertible}
     if isempty(s.prefix)
         return [from_sexpr(strip(line))
                 for line in split(space_dump_all_sexpr(s.inner), '\n')
@@ -681,7 +684,7 @@ function core_atoms(s::CoreSpace) :: Vector{Any}
     # relative-to-anchor path.  Mirrors the cmd_copy pattern in MORK Commands.jl.
     # Acquired under read permit so concurrent writers in the same prefix
     # serialize properly.
-    results = Any[]
+    results = SExprConvertible[]
     with_read_permit(s) do
         rz = read_zipper_at_path(s.inner.btm, s.prefix)
         while zipper_to_next_val!(rz)

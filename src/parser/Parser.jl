@@ -141,7 +141,7 @@ function parse_tokens(tokens::Vector{String}, i::Int)
     token = tokens[i]
 
     if token == "("
-        elements = Any[]
+        elements = SExprConvertible[]
         i += 1
         while i <= length(tokens) && tokens[i] != ")"
             elem, i = parse_tokens(tokens, i)
@@ -168,13 +168,22 @@ end
 
 
 """
-parse_metta(source) → Vector{Any}
+parse_metta(source) → Vector{SExprConvertible}
 
 Parse a MeTTa source string into a list of Julia values.
 Lines starting with `!` are wrapped as `[:!, expr]` (execution directive).
-Returns plain Julia: Symbol, Vector{Any}, Number, Bool, String.
+Returns plain Julia: Symbol, Vector{SExprConvertible}, Number, Bool, String.
+
+⚠️ GRAMMAR DEVIATION, recorded 2026-07-29. `metta_grammar.ebnf` (our parser-of-record) says
+`ATOM = SYMBOL | VARIABLE | GROUNDED | EXPRESSION` — FOUR kinds. This representation has no
+VARIABLE: a variable comes back as a Julia `Symbol` whose name happens to start with a dollar sign, i.e.
+SYMBOL and VARIABLE are the SAME Julia type here. That collapse is why the MORK store needs
+`__var_` prefixed ground symbols to keep variables distinguishable across a round trip.
+The grammar-faithful type already exists — `Atoms.jl`'s `Sym | Var | Expression | Grounded` —
+but it is defined INSIDE `module Interpreter`, so the store cannot reach it without depending on
+the evaluator. Hoisting that type out is the fix; `SExprConvertible` types what is stored TODAY.
 """
-function parse_metta(source::AbstractString) :: Vector{Any}
+function parse_metta(source::AbstractString) :: Vector{SExprConvertible}
     tokens = tokenize(source)
     # Split `!`-prefixed tokens so the `!` directive fires uniformly:
     #   !42          → ["!", "42"]
@@ -196,7 +205,7 @@ function parse_metta(source::AbstractString) :: Vector{Any}
     end
     tokens = expanded
 
-    exprs  = Any[]
+    exprs  = SExprConvertible[]
     i = 1
     while i <= length(tokens)
         if tokens[i] == "!"
