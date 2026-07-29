@@ -125,10 +125,29 @@ True iff `(= LHS RHS)` is safe to auto-lower to the MORK exec lane: EVERY operat
 LHS/RHS is a plain relation symbol — NONE is a grounded op or a special form. Authority = the interpreter's
 `TOKEN_REGISTRY` (grounded ops: `+ - * / < == and match superpose collapse foldl-atom case …`) ∪
 `MINIMAL_OPS` (eval/chain/function/unify/cons-atom/decons-atom/…). Conservative: any grounded/special head
-⇒ `false` (stay in the Interpreter lane). NB the authority is the INTERPRETER registry, NOT MORK's
-`GROUNDED_REGISTRY` (which holds only the 3 WILLIAM ops — arithmetic is a calculus source/sink TYPE there,
-so `MORK.is_grounded("+")` is false and would misclassify `(= (fib …) (+ …))` as relational). The `,`
-conjunction marker is allowed (it is the exec source list, not an operator).
+⇒ `false` (stay in the Interpreter lane). The `,` conjunction marker is allowed (it is the exec source
+list, not an operator).
+
+🔴 **THIS GUARD IS LOAD-BEARING — do not relax it.** It is the ONLY thing keeping the 44 op names that
+exist in BOTH `TOKEN_REGISTRY` and `MORK.GROUNDED_REGISTRY` on the interpreter lane, where the
+hyperon-faithful implementations live. Measured 2026-07-29: the two lanes disagree on ARITY
+(`(+ 1 2 3)` → the MORK shim silently ignores args 3+ and answers `3`; the interpreter leaves it
+unreduced), on `get-type`/`get-metatype`, and on the whole `get-state`/`change-state!` family. Remove
+the guard and those divergences stop being latent.
+
+⚠️ **The justification that USED to be here was factually FALSE**, which is worse than no justification —
+it invited exactly that removal. It claimed `GROUNDED_REGISTRY` "holds only the 3 WILLIAM ops" and that
+`MORK.is_grounded("+")` is false. Measured: the registry holds **69 ops** (arithmetic, comparison, logic,
+`*-math`, state, type, I/O) and **`is_grounded("+") == true`**. `register_core_primitives!`
+(`Core/src/primitives/Primitives.jl`) fills it. So the right conclusion was reached from a wrong premise.
+
+The authority is still the INTERPRETER registry, but for the REAL reason: `TOKEN_REGISTRY` is the
+TOKENIZER (its one read site is `parse_atom`, `Interpreter.jl:2456`) feeding hyperon's grounded-ATOM
+model, where dispatch is by atom kind (`is_executable`, `Interpreter.jl:392`). `GROUNDED_REGISTRY` is a
+name-keyed string-FFI shim inside MORK's join engine, reachable only from an `I`-pattern in an `exec`
+form. Deciding "is this head grounded?" for a MeTTa rule is a question about the ATOM MODEL, so the
+tokenizer is the correct authority — not because the other table is empty, but because it answers a
+different question.
 """
 function mm2_is_relational(rule::AbstractString)::Bool
     a = try mm2_expr_args(rule) catch; return false end
