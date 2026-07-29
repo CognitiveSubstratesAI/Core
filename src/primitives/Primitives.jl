@@ -16,14 +16,46 @@ Cross-verified against:
 
 # ── Arithmetic ────────────────────────────────────────────────────────────────
 
+"""
+    _gnum(s) -> Union{Int, Float64, Nothing}
+
+Parse a grounded numeric argument PRESERVING ITS TYPE — Int stays Int, float stays Float64.
+
+⚠️ This is a bug fix, MEASURED 2026-07-29. The previous version parsed EVERY argument as `Float64`
+and then demoted any integral result back with `isinteger(r) ? string(Int(r)) : string(r)`. Two
+consequences, both observed by running this registry against the interpreter (the lane that passes
+the 234-directive hyperon conformance and LeaTTa 270/270):
+
+  1. INTEGER PRECISION LOSS past 2^53, because Int64 arithmetic was done in a 53-bit mantissa:
+         (* 123456789 987654321) -> 121932631112635264   exact 121932631112635269   (off by 5)
+         (+ 9007199254740993 1)  -> 9007199254740992     exact 9007199254740994     (off by 2)
+  2. FLOAT TYPE DEMOTION on integral results — distinct ATOMS in MeTTa, not just formatting:
+         (+ 1.5 2.5) -> 4  (interpreter: 4.0)      (/ 10 2) -> 5  (interpreter: 5.0)
+     `from_sexpr("4")` is `Int64`, `from_sexpr("4.0")` is `Float64`, so the two lanes were putting
+     DIFFERENT atoms in the space for the same expression.
+
+Parsing Int first and letting Julia's own promotion apply reproduces the interpreter exactly:
+Int⊕Int stays exact Int, any Float operand promotes, and `/` on two Ints yields Float64 (5.0) as
+MeTTa requires.
+"""
+_gnum(s::AbstractString) = begin
+    n = tryparse(Int, s)
+    n !== nothing ? n : tryparse(Float64, s)
+end
+
 function _register_arithmetic!()
     for (name, op) in [("+", +), ("-", -), ("*", *), ("/", /), ("%", rem)]
         MORK.register_grounded!(name, args -> begin
             length(args) < 2 && return nothing
-            a = tryparse(Float64, args[1]); b = tryparse(Float64, args[2])
+            a = _gnum(args[1]); b = _gnum(args[2])
             (a === nothing || b === nothing) && return nothing
-            r = op(a, b)
-            isinteger(r) ? string(Int(r)) : string(r)
+            # `rem(::Int, 0)` throws a Julia DivideError. A HOST exception must never escape into
+            # MeTTa evaluation, so decline (leave the term unreduced) instead of crashing — and
+            # instead of the old code's silent `NaN`, which came from doing integer rem in floats.
+            # (The interpreter's own `%` DOES currently throw here; tracked separately, since
+            # changing it needs the hyperon oracle to say what `(% 7 0)` should produce.)
+            (op === rem && b isa Integer && b == 0) && return nothing
+            string(op(a, b))
         end)
     end
 end
@@ -31,10 +63,13 @@ end
 # ── Comparison ────────────────────────────────────────────────────────────────
 
 function _register_comparison!()
+    # `_gnum`, not `tryparse(Float64, …)` — the SAME precision defect applied here: two distinct
+    # Int64s above 2^53 coerce to the same Float64, so `(< 9007199254740993 9007199254740994)`
+    # compared EQUAL and answered False. Type-preserving parse + Julia's own promotion is exact.
     for (name, op) in [("<", <), (">", >), ("<=", <=), (">=", >=), ("==", ==)]
         MORK.register_grounded!(name, args -> begin
             length(args) < 2 && return nothing
-            a = tryparse(Float64, args[1]); b = tryparse(Float64, args[2])
+            a = _gnum(args[1]); b = _gnum(args[2])
             if a !== nothing && b !== nothing
                 return op(a, b) ? "True" : "False"
             end

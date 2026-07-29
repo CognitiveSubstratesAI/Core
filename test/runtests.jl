@@ -100,6 +100,7 @@ include("test_supercompiler_core.jl")
 # between the table and the interpreter has never run in CI. Wired 2026-07-28.
 include("test_mork_native_rewrite.jl")   # native rewrite over trie-stored rules (byte paths, no MM2)
 include("test_primitives_guards.jl")   # guard-clause fail-open regressions (operator precedence)
+include("test_grounded_registry_differential.jl")  # MORK.GROUNDED_REGISTRY vs Interpreter.TOKEN_REGISTRY
 include("test_langdef_pack.jl")
 include("test_langdef_welding.jl")
 
