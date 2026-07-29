@@ -55,8 +55,14 @@ fi
 
 DRIVER="$(mktemp "${TMPDIR:-/tmp}/core_run_tests_XXXXXX.jl")"
 trap 'rm -f "$DRIVER"' EXIT
+# The status variable is `__core_run_tests_ok__`, NOT `ok`. MORK's runner uses `ok`, and copying that
+# verbatim broke the FULL suite here (found 2026-07-29 by running it): the driver binds `ok` at top
+# level in Main, then `test/test_types.jl:19` defines a FUNCTION named `ok` and Julia refuses —
+# "cannot define function ok; it already has a value". Single-file runs never hit it, so the port
+# looked fine. Any name the driver binds in Main is in the same namespace as every test file's
+# top-level definitions; keep it collision-proof.
 cat > "$DRIVER" <<EOF
-ok = try
+__core_run_tests_ok__ = try
     include(raw"$ROOT/tools/repl.jl")
     include(raw"$ABS_TARGET")
     true
@@ -64,7 +70,7 @@ catch e
     showerror(stderr, e); println(stderr)
     false
 end
-exit(ok ? 0 : 1)
+exit(__core_run_tests_ok__ ? 0 : 1)
 EOF
 
 julia --project=. --threads="${JULIA_TEST_THREADS:-4}" -i "$DRIVER" < /dev/null
