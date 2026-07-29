@@ -182,7 +182,24 @@ end
     core_rewrite_step(rules, term) -> Union{MORK.Expr, Nothing}
 
 First rule in `rules` whose head unifies with `term`, applied. `nothing` if none match.
-Committed choice (MeTTa's default, whitepaper §3.3) — first match wins, source order.
+
+⚠️ TWO MEASURED LIMITS — do not read this as MeTTa's evaluation semantics (an earlier version of
+this docstring claimed "committed choice … first match wins, source order"; BOTH halves were false,
+measured 2026-07-29):
+
+ 1. **"First" is TRIE order, not SOURCE order.** `core_rule_exprs` walks the trie, which is
+    byte-lexicographic — the MORK trie does not record insertion order. Loading
+    `(= (f \$n) nonzero)` THEN `(= (f 0) zero)` reads back `(= (f 0) zero)` first, and reversing the
+    source text changes nothing. So a multi-clause head resolves by byte order, and which clause
+    wins is independent of how the program was written.
+
+ 2. **One answer, not all.** MeTTa evaluation is nondeterministic. On the same two clauses Core's
+    interpreter returns BOTH — `(f 0)` → `Atom[zero, nonzero]`, and their ORDER tracks source order.
+    This returns a single rewrite.
+
+Both are pinned by `test_mork_native_rewrite.jl` so they stay visible. Closing #1 needs an insertion
+ordinal carried alongside the atom (an encoding decision, not a local fix); closing #2 needs the
+step to return all unifying rules.
 """
 function core_rewrite_step(rules::Vector{MORK.Expr}, term::MORK.Expr)
     for r in rules
@@ -206,6 +223,16 @@ what §3.3 says it is — a kernel tier for performance-sensitive algorithms, no
 ⚠️ TOP-LEVEL ONLY, and PURELY SYNTACTIC. No congruence descent into subterms and no grounded-op
 evaluation, so `(+ 1 2)` does not reduce. `metta_il_normalize` has the innermost-subterm driver but
 recurses on STRINGS (253 KiB/rewrite measured); merging the two is the next step.
+
+⚠️ Inherits both limits of `core_rewrite_step` — rules are applied in TRIE (byte-lexicographic)
+order, not source order, and one rewrite is taken per step rather than all. For a multi-clause head
+this is NOT the interpreter's answer set. See that docstring.
+
+Grounded ops, when wired, come from **MORK's own `GROUNDED_REGISTRY`** (`MORK/src/kernel/Sources.jl`),
+which Core already populates with ~40 primitives via `register_core_primitives!`
+(`Core/src/primitives/Primitives.jl`) — arithmetic included. Not the interpreter's `TOKEN_REGISTRY`:
+that is the fallback lane's table and reaching into it from here would invert the standing
+compiler-primary directive.
 """
 function core_normalize(cs::CoreSpace, term::AbstractString; max_steps::Int = 1000)::String
     rules = core_rule_exprs(cs)

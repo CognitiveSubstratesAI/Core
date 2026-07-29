@@ -449,12 +449,31 @@ matches `core_atoms`'s fast path.  For prefixed spaces, walks the subtrie
 via `read_zipper_at_path` + `zipper_to_next_val!` and serializes each
 relative-to-anchor path through `expr_serialize`.
 
-Why we walk instead of `space_query_multi`: MORK's `space_query_multi` short-
-circuits arity-1 patterns (`(, single)`) and returns the pattern itself
-without iterating the trie.  Any single-pattern match would therefore find
-nothing — which broke `(match &self pat tpl)` until this rewrite.  The
-read-zipper walk is the canonical "enumerate atoms" path (mirroring
-`space_dump_all_sexpr`); callers do structural filtering in Julia.
+Why we walk instead of `space_query_multi` — ⚠️ CORRECTED 2026-07-29, the original reason
+here was WRONG and it steered work away from the right primitive.
+
+The claim was: "`space_query_multi` short-circuits arity-1 patterns (`(, single)`)
+and returns the pattern itself without iterating, so any single-pattern match
+finds nothing."  Measured, that is false.  The short-circuit at
+`MORK/src/kernel/Space.jl:370` fires on `n_factors == 1`, and `n_factors` is
+the TOP-LEVEL arity — `(, P)` encodes as `[Arity(2)][,][P]`, i.e. **arity 2**,
+so it does NOT short-circuit and DOES iterate the trie correctly:
+
+    (, (likes \$who pizza))   -> 2 matches, correct atoms
+    (, (= (dbl \$x) \$rhs))    -> 1 match, exactly that rule
+    (likes \$who pizza)       -> 0   <- UNWRAPPED: arity 3, read as a THREE-FACTOR
+                                       conjunction (likes ⋈ \$who ⋈ pizza)
+    (foo)                    -> short-circuits (genuine arity 1)
+
+So what broke `(match &self pat tpl)` was passing the pattern **without the
+`(, …)` wrapper**, not an arity-1 short-circuit.  `PatternMiner.jl` wraps and
+gets correct counts from the same primitive.
+
+The walk is retained because it is the canonical "enumerate ALL atoms" path
+(mirroring `space_dump_all_sexpr`) and `core_match` returns candidates for a
+Julia-side `_unify`.  But it is O(N) where an indexed descent is available:
+routing `core_match` through a comma-wrapped `space_query_multi` is a live
+optimization, not a blocked one.
 """
 function _walk_atoms(f::Function, s::CoreSpace)
     if isempty(s.prefix)

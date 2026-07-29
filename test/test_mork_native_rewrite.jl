@@ -87,6 +87,33 @@ const MK = MeTTaCore.MORK
         @test occursin("+", out)                               # … but (+ …) is NOT computed
     end
 
+    @testset "RULE ORDER is TRIE order, not SOURCE order — measured limit" begin
+        # MeTTa's answer set depends on source order. The MORK trie stores no insertion order, so a
+        # multi-clause head resolves byte-lexicographically instead. Pinned because the first version
+        # of `core_rewrite_step`'s docstring claimed the opposite ("first match wins, source order").
+        src_a = raw"(= (f $n) nonzero)" * "\n" * raw"(= (f 0) zero)"
+        src_b = raw"(= (f 0) zero)"     * "\n" * raw"(= (f $n) nonzero)"   # SAME rules, reversed
+
+        step(src) = begin
+            cs = MC.new_core_space(); MC.load_metta!(cs, src)
+            r = MC.core_rewrite_step(MC.core_rule_exprs(cs), MK.sexpr_to_expr("(f 0)"))
+            r === nothing ? nothing : strip(MK.expr_serialize(r.buf))
+        end
+        @test step(src_a) == step(src_b)      # reversing the SOURCE changes nothing …
+        @test step(src_a) == "zero"           # … it is the byte-lexicographically first clause
+
+        # The interpreter — the source-ordered store — disagrees on BOTH counts: it returns ALL
+        # matches, and their order follows the source. This is the gap a single store has to close.
+        IN = MC.Interpreter
+        interp(src) = begin
+            sp = IN.Space(); IN.load_metta!(sp, src)
+            [string(a) for a in IN.metta_run(IN.parse_program("!(f 0)")[1][2], sp)]
+        end
+        @test interp(src_a) == ["zero", "nonzero"]
+        @test interp(src_b) == ["nonzero", "zero"]     # source order IS observable here
+        @test length(interp(src_a)) == 2               # …and it is NOT single-answer
+    end
+
     @testset "storage is UNCHANGED — the conversion is read-side only" begin
         # The whole point of converting on read: `__var_` stays on disk so variable NAMES survive and
         # the interpreter's view of the space is untouched.
