@@ -212,7 +212,7 @@ function parse_metta(source::AbstractString) :: Vector{SExprConvertible}
             i += 1
             i > length(tokens) && error("Unexpected end of input after '!'")
             expr, i = parse_tokens(tokens, i)
-            push!(exprs, Any[:!, expr])
+            push!(exprs, SExprConvertible[:!, expr])
         else
             expr, i = parse_tokens(tokens, i)
             push!(exprs, expr)

@@ -71,8 +71,11 @@ function to_sexpr_query(x::SExprConvertible) :: String
 end
 
 """Parse a MORK S-expression string into a Julia value."""
-from_sexpr(s::AbstractString) :: Any = from_sexpr(String(s))
-function from_sexpr(s::String) :: Any
+# Returns `nothing` for an EMPTY string (line below) — so the honest type is a Union, not `Any`.
+# `Any` hid that: callers pushing into a `Vector{SExprConvertible}` accept `nothing` silently under
+# `Any` and a null atom enters the store. Typed, that same push is a MethodError at the boundary.
+from_sexpr(s::AbstractString) :: Union{SExprConvertible, Nothing} = from_sexpr(String(s))
+function from_sexpr(s::String) :: Union{SExprConvertible, Nothing}
     s = strip(s)
     isempty(s) && return nothing
     s == "True"  && return true
@@ -94,8 +97,11 @@ function from_sexpr(s::String) :: Any
     if startswith(s, "(") && endswith(s, ")")
         inner  = s[2:end-1]
         tokens = _tokenise(inner)
-        isempty(tokens) && return []
-        return Any[from_sexpr(t) for t in tokens]
+        isempty(tokens) && return SExprConvertible[]   # NOT `[]` — a bare literal is Vector{Any}
+        # SExprConvertible, not Any: `_tokenise` never yields an empty token, so no element can be
+        # `nothing` here — and if that ever changes this throws at the boundary instead of storing a
+        # null atom. Fails CLOSED, per this file's stated store-boundary discipline (line 21).
+        return SExprConvertible[from_sexpr(t) for t in tokens]
     end
 
     Symbol(s)
