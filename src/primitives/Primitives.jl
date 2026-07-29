@@ -46,7 +46,11 @@ end
 function _register_arithmetic!()
     for (name, op) in [("+", +), ("-", -), ("*", *), ("/", /), ("%", rem)]
         MORK.register_grounded!(name, args -> begin
-            length(args) < 2 && return nothing
+            # STRICTLY BINARY (was `< 2`, which admitted 2 OR MORE and then read only args[1..2],
+            # so `(+ 1 2 3)` answered 3 with argument 3 SILENTLY IGNORED — measured 2026-07-29).
+            # The interpreter's `_num_binop` requires exactly 2 (`length(xs) == 2 || ExecNoReduce`),
+            # so anything else must decline here too, not quietly truncate.
+            length(args) == 2 || return nothing
             a = _gnum(args[1]); b = _gnum(args[2])
             (a === nothing || b === nothing) && return nothing
             # `rem(::Int, 0)` throws a Julia DivideError. A HOST exception must never escape into
@@ -68,7 +72,7 @@ function _register_comparison!()
     # compared EQUAL and answered False. Type-preserving parse + Julia's own promotion is exact.
     for (name, op) in [("<", <), (">", >), ("<=", <=), (">=", >=), ("==", ==)]
         MORK.register_grounded!(name, args -> begin
-            length(args) < 2 && return nothing
+            length(args) == 2 || return nothing      # strictly binary — see _register_arithmetic!
             a = _gnum(args[1]); b = _gnum(args[2])
             if a !== nothing && b !== nothing
                 return op(a, b) ? "True" : "False"
@@ -297,27 +301,46 @@ end
 # Per MeTTa spec: mutable state via (State <value>) atom wrapper.
 # States are atoms in the space; change-state! replaces the State atom.
 
+"""
+    _register_state_ops!()
+
+🔴 REGISTERS NOTHING, DELIBERATELY (2026-07-29). Mutable state is not representable on this lane.
+
+This used to register `new-state` / `get-state` / `change-state!` as string transforms, and all three
+were unsound. Measured:
+
+    new-state 42               -> "(State 42)"      a String, not a handle
+    change-state! <that> 99    -> "(State 99)"      a NEW string; NOTHING is mutated
+    get-state <that> AFTER     -> "42"              the STALE value
+    get-state "no-such-handle" -> "no-such-handle"  echoes its argument back
+
+The old `change-state!` said so itself — *"actual mutation via bind! in calling context"* — but this
+lane has no `bind!`, so no caller ever performed the mutation. `get-state` on a non-State argument
+fell through to `else s`, returning the argument unchanged.
+
+Both violate LeaTTa's kernel-checked model of exactly this boundary
+(`MettaHyperonFull/Core/MorkGroundedRegistry.lean`, proofs in `Proofs/MorkGroundedRegistry.lean`):
+
+    structure Registry where live : Nat → Option Atom        -- handle id ⇒ CURRENT value
+    theorem passesHandle_bound_same  -- a row holding the CURRENT live value passes
+    theorem passesHandle_missing_handle : passesHandle … = false   -- a MISSING handle FAILS
+
+A `String` cannot be a `HostHandle`: there is no identity to re-read, so `currentValue` can never
+observe a mutation, and an unknown handle fails OPEN instead of closed.
+
+WHY REMOVED RATHER THAN MADE TO DECLINE: a name that IS registered but returns `nothing` yields 0
+paths from `GroundedSource`, and `isempty(result_paths) && break` (`MORK/src/kernel/Space.jl:556`)
+then SILENTLY DROPS THE WHOLE JOIN ROW — no error, no warning. Leaving the name unregistered lets the
+`I`-pattern fall through to an ordinary structural trie source, which is the honest "not implemented
+here". Declining would have been quieter AND more wrong.
+
+The working implementation is the interpreter's, over a genuinely mutable `StateCell`
+(`Interpreter.jl:384`, a `mutable struct`) reached through the grounded-ATOM model — and
+`mm2_is_relational` already keeps these heads on that lane. Restoring them here needs the atom-based
+boundary (`expr_to_atom`), not another string transform.
+"""
 function _register_state_ops!()
-    MORK.register_grounded!("new-state", args -> begin
-        init = isempty(args) ? "()" : join(args, " ")
-        "(State $init)"
-    end)
-
-    MORK.register_grounded!("get-state", args -> begin
-        isempty(args) && return nothing
-        s = strip(args[1])
-        if startswith(s, "(State ") && endswith(s, ")")
-            strip(s[8:end-1])
-        else
-            s
-        end
-    end)
-
-    MORK.register_grounded!("change-state!", args -> begin
-        length(args) < 2 && return nothing
-        # Return new State atom; actual mutation via bind! in calling context
-        "(State $(args[2]))"
-    end)
+    return nothing
 end
 
 # ── Type system ops ───────────────────────────────────────────────────────────
@@ -524,6 +547,10 @@ function register_core_primitives!()
     _register_vector_ops!()
     _register_repr!()
     _register_equality_ops!()
+    # _register_state_ops! is a DELIBERATE NO-OP since 2026-07-29 — mutable state is not
+    # representable as a string transform (it silently never mutated, and an unknown handle failed
+    # OPEN). See its docstring for the measurements and LeaTTa's proved laws. Kept as a call so the
+    # explanation is reachable from here; the working implementation is the interpreter's StateCell.
     _register_state_ops!()
     _register_type_ops!()
     _register_format_ops!()

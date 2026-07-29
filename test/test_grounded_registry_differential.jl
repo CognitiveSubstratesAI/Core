@@ -125,6 +125,46 @@ const MKg = MeTTaCore.MORK
         end
     end
 
+    @testset "arity is STRICTLY BINARY — extra args must not be silently ignored" begin
+        # Was `length(args) < 2`, which admitted 2 OR MORE and then read only args[1..2]:
+        #     (+ 1 2 3)  -> "3"     argument 3 silently dropped
+        # The interpreter is strict (`length(xs) == 2 || ExecNoReduce`), so it left the term
+        # unreduced. Now both refuse.
+        for (op, args) in [("+", [1,2,3]), ("-", [10,1,1]), ("*", [2,3,4]), ("/", [8,2,2]),
+                           ("%", [7,3,1]), ("<", [1,2,3]), (">", [3,2,1]), ("<=", [1,2,3]),
+                           (">=", [3,2,1]), ("==", [1,1,9])]
+            @test gcall(op, args) === nothing          # declines instead of truncating
+        end
+        # …and the binary cases still work
+        @test gcall("+", [1,2]) == "3"
+        @test gcall("<", [1,2]) == "True"
+        # under-arity was already declined; keep it pinned
+        @test gcall("+", [1]) === nothing
+        @test gcall("+", Int[]) === nothing
+    end
+
+    @testset "mutable-state ops are ABSENT from the MORK lane, deliberately" begin
+        # A String cannot be a LeaTTa `HostHandle`: `Registry.live : Nat -> Option Atom` requires an
+        # identity that can be re-read, so a string transform can never observe a mutation, and an
+        # unknown handle failed OPEN (it echoed its argument). Measured before removal:
+        #     new-state 42 -> "(State 42)" ; change-state! -> "(State 99)" ; get-state -> "42" (stale)
+        #     get-state "no-such-handle"   -> "no-such-handle"
+        # LeaTTa proves the opposite: `passesHandle_missing_handle : passesHandle … = false`.
+        for n in ["new-state", "get-state", "change-state!"]
+            @test !haskey(G, n)                        # NOT registered ⇒ falls through to a trie source
+            @test !MKg.is_grounded(n)
+        end
+        # Removing beats declining: a registered name returning `nothing` yields 0 paths and
+        # `isempty(result_paths) && break` (MORK Space.jl:556) drops the whole join row silently.
+
+        # The working implementation is the interpreter's, over a genuinely mutable StateCell.
+        @test haskey(INg.TOKEN_REGISTRY, "new-state")
+        @test haskey(INg.TOKEN_REGISTRY, "get-state")
+        @test haskey(INg.TOKEN_REGISTRY, "change-state!")
+        # and mm2_is_relational keeps these heads OFF the MORK lane, so nothing regressed
+        @test MCg.mm2_is_relational(raw"(= (f $x) (get-state $x))") == false
+    end
+
     @testset "⚠️ KNOWN DIVERGENCE, pinned not fixed: (% x 0)" begin
         # MORK declines rather than crashing or inventing NaN (it used to return NaN, because
         # integer rem was being done in floats).
