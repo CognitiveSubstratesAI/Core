@@ -1,6 +1,6 @@
 # Core Grounded Numeric Ops — the MeTTa↔Julia numeric adapter (spec)
 
-**Status:** spec (gate before build). **Target:** `src/standard/CoreNumericOps.jl` — grounded ops on the
+**Status:** spec (gate before build). **Target:** `src/standard/NumpyOps.jl` — grounded ops on the
 StandardMeTTa.Minimal engine.
 
 > **NOT a numpy reimplementation.** Julia's `LinearAlgebra` / `Statistics` / broadcasting **are** the numerics
@@ -118,13 +118,13 @@ Union of py-calls across the 4 packages → **they do not share a numeric surfac
   across all array ops — IS the work; `norm(v)` in the middle is trivial. There is no point in evaluation where
   a bare `Vector{Float64}` exists outside the op, so the boundary is irreducible (and it's what keeps
   "Minimal = faithful core + named extensions" a checkable invariant — see §7 gate).
-- **File:** new `src/standard/CoreNumericOps.jl` (NOT crammed into `CoreExtensions.jl`'s scalar tier), `include`d
+- **File:** new `src/standard/NumpyOps.jl` (NOT crammed into `CoreExtensions.jl`'s scalar tier), `include`d
   in `Minimal.jl` after `CoreExtensions.jl`, registering into Minimal's **`TOKEN_REGISTRY`** (additive).
 - **Registry reconciliation — DECISION (made, not defaulted):** Minimal-facing numeric grounded ops register
   into `TOKEN_REGISTRY`; that is the ONE numeric-grounded discipline going forward. FactorVSA's shim into the
   *legacy MORK* `GROUNDED_REGISTRY` is **TRANSITIONAL** — a temporary artifact of FactorVSA predating the
   Minimal migration; when FactorVSA itself migrates onto Minimal it gets a Minimal-facing registration. NOT
-  two registries by design. CoreNumericOps establishes `TOKEN_REGISTRY` as the target *deliberately*, not by accident.
+  two registries by design. NumpyOps establishes `TOKEN_REGISTRY` as the target *deliberately*, not by accident.
 - **Interface:** op names match the ports' calls (`vectorAdd`/`norm`/…) so a port's
   `(= (vectorAdd …) (py-call …))` becomes the grounded op; symbolic code above is untouched.
 - **Boundary gate (like 234/234 for the faithful core):** the array layer's gate = passing

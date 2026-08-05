@@ -7,7 +7,7 @@ How hyperon organizes its stdlib (verified from `lib/src/metta/`):
 
 This sheet maps each hyperon item → Core status (✅ present · ⚠️ divergent · ❌ missing) and where it lives in Core.
 Enumerated from source on both sides (hyperon `register_token`/`stdlib.metta`; Core `Minimal.jl` `TOKEN_REGISTRY`
-+ `CoreMathOps.jl`/`CoreNumericOps.jl` + `stdlib.metta`/`CoreExtensions.metta`). Complements `CORELIB_COVERAGE.md`
++ `CoreMathOps.jl`/`NumpyOps.jl` + `stdlib.metta`/`CoreExtensions.metta`). Complements `CORELIB_COVERAGE.md`
 (which is organized by *test corpus module*); this one is organized by *hyperon's implementation layer*.
 
 > **Key cross-cutting divergence:** hyperon implements much of the assert family + several atom/control ops as
@@ -28,7 +28,7 @@ that collapses hyperon's three rlib crates and eliminates the entire `c`+`python
 |---|---|---|
 | `./hyperon-common` (rlib) | utility collections/refs, not MeTTa-specific | native Julia stdlib + utils (no separate unit) |
 | `./hyperon-atom` (rlib) | Atom API: types, `matcher`, `iter`, `serial`, `subexpr` | `src/standard/Atoms.jl` + match/`unify` in `Minimal.jl` |
-| `./lib` (rlib) | atomspace + interpreter + stdlib (= **L1/L2/L3** below) | `Minimal.jl` + `CoreMathOps`/`CoreNumericOps.jl` + `stdlib.metta`/`CoreExtensions.metta`; atomspace = MORK/PathMap `CoreSpace` |
+| `./lib` (rlib) | atomspace + interpreter + stdlib (= **L1/L2/L3** below) | `Minimal.jl` + `CoreMathOps`/`NumpyOps.jl` + `stdlib.metta`/`CoreExtensions.metta`; atomspace = MORK/PathMap `CoreSpace` |
 | `./c` (libhyperonc) | C-API export via cbindgen, for non-Rust langs | — none (host-native; no FFI boundary) |
 | `./python` (libhyperonpy + `hyperon`) | pybind11 proxy → C API + Python lib | — none (used directly from Julia; MeTTaJam HTTP = optional remote access) |
 | `./repl` (metta_repl) | Rust REPL depending on `./lib` | `tools/repl.jl` (explicitly modeled on hyperon's `repl/` crate) |
@@ -126,5 +126,5 @@ module/package system and a handful of peripherals; the *rule library* (L3) is ~
 scripts, which is why `test_conformance.jl` is 234/234 while the function floor is incomplete.
 
 Provenance: hyperon `lib/src/metta/{interpreter.rs, runner/stdlib/{arithmetics,atom,core,math,debug,string,space,
-module,package}.rs, stdlib.metta}`; Core `src/standard/{Minimal.jl, CoreMathOps.jl, CoreNumericOps.jl, stdlib.metta,
+module,package}.rs, stdlib.metta}`; Core `src/standard/{Minimal.jl, CoreMathOps.jl, NumpyOps.jl, stdlib.metta,
 CoreExtensions.metta}`. Counts are approximate (±a couple) where a name is both a rule and a grounded helper.

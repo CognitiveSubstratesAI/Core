@@ -8,7 +8,7 @@ faithfulness" legible.
 - **Names** come from hyperon's `stdlib.metta` `@doc` index (138) — used ONLY as the checklist of names.
 - **Present/missing** verified against Core's *actual source* (read, not doc-trusted): Minimal's
   `TOKEN_REGISTRY` grounded ops + the minimal-metta instruction set + type/error consts +
-  `stdlib.metta`/`CoreExtensions.metta` rule defs + `CoreMathOps.jl`/`CoreNumericOps.jl`.
+  `stdlib.metta`/`CoreExtensions.metta` rule defs + `CoreMathOps.jl`/`NumpyOps.jl`.
 - **Faithful vs divergent** comes from the **unit corpus** (`test/standard/unit/`, hyperon's own
   `#[test]` cases) — behavioral ground truth, not my judgment.
 - **HONESTY RULE:** "present" ≠ "faithful." A present function is only *certified faithful* if the unit
@@ -160,5 +160,5 @@ remaining hyperon test cases for these functions into the corpus.
 
 ## Verification provenance
 Present/missing: grepped+spot-verified against `Minimal.jl`/`stdlib.metta`/`CoreExtensions.metta`/
-`CoreMathOps.jl`/`CoreNumericOps.jl` this pass (the ambiguous ~18 individually re-checked at source:line).
+`CoreMathOps.jl`/`NumpyOps.jl` this pass (the ambiguous ~18 individually re-checked at source:line).
 Faithful/divergent: the `test/standard/unit/` baselines. The `@doc` index was used for names only.

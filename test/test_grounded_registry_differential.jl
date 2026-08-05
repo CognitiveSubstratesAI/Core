@@ -90,7 +90,7 @@ const MKg = MeTTaCore.MORK
         #
         # NOTE the division of labour, which is not duplication:
         #   CoreMathOps.jl   = hyperon stdlib grounded atoms  (this surface)
-        #   CoreNumericOps.jl = the numpy-equivalent adapter  (norm/dotProduct/softmax/… ) —
+        #   NumpyOps.jl = the numpy-equivalent adapter  (norm/dotProduct/softmax/… ) —
         #                       a DIFFERENT surface, TOKEN_REGISTRY only, no MORK counterpart.
 
         # ALWAYS Float — even when the result is integral

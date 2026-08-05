@@ -1,4 +1,4 @@
-# Conformance gate for the MeTTa↔Julia numeric adapter (src/standard/CoreNumericOps.jl).
+# Conformance gate for the MeTTa↔Julia numeric adapter (src/standard/NumpyOps.jl).
 # ✓ values are upstream MetaMo's core/tests/helpers_test.metta (the numpy spec); ⊘ values are derived
 # from the numpy CONVENTION (read from helpers.py), NEVER from this Julia layer's output (would be circular).
 # Tolerance: ops replicate upstream's rounding (std→2, vectorAdd→8) IN the op, so a tight atol suffices.
@@ -15,7 +15,7 @@ function _ae(g, e; atol=1e-9)
     g == e
 end
 
-@testset "CoreNumericOps — numpy-equivalence gate (helpers_test.metta + derived)" begin
+@testset "NumpyOps — numpy-equivalence gate (helpers_test.metta + derived)" begin
     @testset "vec→scalar (✓ helpers_test)" begin
         @test _ae(qn("!(norm (3 4))"), 5.0);                @test _ae(qn("!(norm ())"), 0.0)
         @test _ae(qn("!(sum (1 2 3 4))"), 10.0);            @test _ae(qn("!(sum ())"), 0.0);  @test _ae(qn("!(sum (1))"), 1.0)

@@ -65,7 +65,7 @@ engine. Core should compile/wire MeTTa onto the MORK engine the same way. So:
 | Type system | `types.rs` | `lang.c`/`compile.c` | `clpfd` + Prolog | embedded in `Minimal.jl` |
 | Space + matching | `hyperon-space` | `space.c` + 4-engine `space_match_backend` vtable (native/pathmap/**mork**) | Prolog dynamic DB (`assertz`/`retract`, first-arg indexed) | **MORK/PathMap `CoreSpace`** (the engine) + Minimal placeholder `Space` |
 | Nondeterminism | hand-written | `SearchContext` choice-point + trail | **WAM backtracking** + `findall` | `collapse-bind`/`superpose-bind` (hand-rolled) → choice-point/trail |
-| Grounded stdlib | `runner/stdlib/*.rs` | `grounded.c`/`cetta_stdlib.c` | Prolog builtins | `Minimal` ops + `CoreMathOps`/`CoreNumericOps` |
+| Grounded stdlib | `runner/stdlib/*.rs` | `grounded.c`/`cetta_stdlib.c` | Prolog builtins | `Minimal` ops + `CoreMathOps`/`NumpyOps` |
 | Rule corelib | `stdlib.metta` | `lib/stdlib.metta` (~99) | `lib_he.metta` (independent reimpl) | `standard/stdlib.metta` (partial) |
 | Runner / session | `runner/` (`MeTTa`/`RunnerState`/`Environment`) | `session.c` + `library.c` (profiles, modules) — **NOT** `runtime.c` (that's the LLVM shim) | `main.pl` | **none** (loose `load_metta!`) |
 | Host API | `python/` (pybind11 proxy to C API) | `foreign.c` + `native_handle.c` | `janus` (SWI↔Python) | bare Julia exports |

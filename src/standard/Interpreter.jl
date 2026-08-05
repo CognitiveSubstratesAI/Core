@@ -2522,7 +2522,7 @@ end
 
 # ── Core grounded extensions (additive; NOT part of the hyperon-faithful core) ──
 include("CoreExtensions.jl")
-include("CoreNumericOps.jl")   # MeTTa↔Julia numeric adapter (numpy-equivalent grounded ops)
+include("NumpyOps.jl")   # MeTTa↔Julia numeric adapter (numpy-equivalent grounded ops)
 include("CoreMathOps.jl")      # hyperon math library (sqrt/pow/log/trig/…) as grounded ops
 
 # ── Precompile workload ───────────────────────────────────────────────────────
