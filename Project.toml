@@ -4,20 +4,17 @@ version = "0.1.0"
 authors = ["PRIMUS Team"]
 
 [deps]
-AdaptiveCompression = "ac000001-0000-4000-8000-000000000001"
 MORK = "162375cb-4023-4ef9-895b-22c0041d5c13"
 MorkSupercompiler = "d4e7c9f0-1234-5678-abcd-ef0123456789"
 PathMap = "a8b3d4e5-f012-4567-89ab-cdef01234567"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 
 [sources]
-AdaptiveCompression = {url = "https://github.com/sivaji1012/adaptive-compression"}
 MORK = {path = "../MORK"}
 MorkSupercompiler = {path = "../MorkSupercompiler"}
 PathMap = {path = "../PathMap"}
 
 [compat]
-AdaptiveCompression = "0.2"
 MORK = "0.1"
 MorkSupercompiler = "0.1"
 PathMap = "0.3"

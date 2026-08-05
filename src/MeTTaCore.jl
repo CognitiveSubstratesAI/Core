@@ -41,10 +41,19 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
                set_val_at!, remove_val_at!,
                act_from_zipper, act_save, ArenaCompactTree
 
-# WILLIAM (Adaptive Compression and Discovery Service) — Pattern B1 Pkg dep.
-# Its `__init__` registers the `WILLIAM.mine-patterns` grounded primitive into
-# MORK.GROUNDED_REGISTRY at module load.
-using AdaptiveCompression
+# WILLIAM / AdaptiveCompression REMOVED 2026-08-05. Its `__init__` registered three grounded ops —
+# `WILLIAM.mine-patterns`, `WILLIAM.prefix-of?`, `WILLIAM.continuation-of-prefix` — and ALL THREE had
+# ZERO call sites across every .jl/.metta/lib/test in the tree. The package itself was a string shim:
+# `mine_patterns` unpacked text to Vector{SNode}, called `MorkSupercompiler.run_trie_miner`, and
+# re-serialised. WorldModel now calls that miner directly (`WorldModel/src/Mining.jl`).
+#
+# It had to go: its only checkout lives OUTSIDE the workspace (`~/WILLIAM.retired`) behind a remote
+# that 403s, so Core/OmegaClaw/MettaJam resolved it from a DEPOT COPY that any `Pkg.gc` could delete
+# with no way to restore — while WorldModel pinned `path = "../WILLIAM"`, a directory that does not
+# exist, so WorldModel could not load standalone at all.
+#
+# ⚠️ The LGG capability is unaffected and stays MORK-native: `WILLIAM.lgg` is registered inline in
+# `primitives/Primitives.jl` over MORK's own `_au_merge!` (upstream `anti_unify`, expr/src/lib.rs:669).
 
 # ── THE GRAMMAR'S ATOM TYPE — hoisted out of `module Interpreter` (2026-07-29) ────────────────────
 # `metta_grammar.ebnf`, our declared parser-of-record, says
