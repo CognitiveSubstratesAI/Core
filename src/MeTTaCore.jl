@@ -98,6 +98,7 @@ include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeT
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
 include("standard/DualTrack.jl")     # dual-track capstone: mc_run unified entry (auto-dispatch by form)
+include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS via the compiler lane
 include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
 # (The legacy `(library william)` registry entry — `_PACKAGE_REGISTRY["william"]` — was removed with
@@ -181,6 +182,8 @@ export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, the
 export theory_orient_equations
 # Dual-track capstone — one entry over both execution lanes
 export mc_run
+# LibPolicy — policy constants stay MeTTa atoms; Julia asks, never copies (see LibPolicy.jl header)
+export policy_space, reset_policy_space!, lib_policy, lib_policy_int, lib_policy_names
 # Frequent-pattern miner (Hyperon Pattern Miner core) on def/match/emit
 export pattern_support, pattern_support_interp, pattern_support_native, mine_frequent
 # MORK-native prefix-locality miner (MORK-Miner)

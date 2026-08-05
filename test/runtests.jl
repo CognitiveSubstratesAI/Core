@@ -7,6 +7,7 @@ using MeTTaCore
 # StandardMeTTaTests / test_conformance / the LeaTTa oracle).
 include("test_corespace.jl")
 include("test_corespace_load.jl")   # load_metta!(::CoreSpace) — libs into the shared MORK trie
+include("test_lib_policy.jl")        # policy constants stay MeTTa atoms; Julia asks, never copies
 include("test_multiset_semantics.jl")  # MeTTa surface = MULTISET, MORK trie = SET — both pinned
 
 # PLN factor-graph suite (test/pln/) — demand-driven backward chaining on the lib/pln substrate:
