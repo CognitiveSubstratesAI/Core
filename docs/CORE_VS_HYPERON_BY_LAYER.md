@@ -1,5 +1,14 @@
 # Core ⇄ hyperon-experimental — comparison by hyperon's layer taxonomy
 
+> ⚠️ **Numeric seam — three MEASURED divergences from the reference, unfixed** (2026-08-05):
+> `(/ 7 2)` returns `3.5` where hyperon/LeaTTa/CeTTa all return integer `3`; `(% 7 0)` leaks a raw
+> Julia `DivideError` where all three return a `DivisionByZero` error; an out-of-range integer
+> literal silently becomes a `Float64` where hyperon hard-errors. None is visible from any green
+> gate — the LeaTTa corpus exercises `/` once with a Float operand and `%` once with a non-zero
+> divisor, in 270 directives. Full evidence + the open bignum decision:
+> [`NUMERIC_SEAM_DIVERGENCES_2026-08-05.md`](NUMERIC_SEAM_DIVERGENCES_2026-08-05.md).
+
+
 How hyperon organizes its stdlib (verified from `lib/src/metta/`):
 - **Layer 1 — Minimal-MeTTa instructions** (`interpreter.rs`): the reduced instruction set the evaluator runs.
 - **Layer 2 — Grounded operations** (`runner/stdlib/*.rs`): Rust-implemented atoms, one file per module.
