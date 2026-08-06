@@ -409,6 +409,24 @@ function _num_binop(name, f)
         ExecOk(Atom[Grounded(f(x.value, y.value))])
     end))
 end
+# `/` and `%` do NOT use Julia's operators: Int÷Int must be INTEGER division and a zero divisor
+# must be a DivisionByZero decision, not Inf/NaN or an escaping host DivideError. Both come from
+# NumericSeam, the single owner (see its docstring for the hyperon/LeaTTa/CeTTa basis).
+using ..NumericSeam: SeamError, seam_div, seam_mod
+
+function _num_binop_seam(name, f)
+    Grounded(Operation(name, function (xs::Vector{Atom})
+        length(xs) == 2 || return ExecNoReduce()
+        x, y = xs[1], xs[2]
+        (x == UNDEFINED || y == UNDEFINED) && return ExecOk(Atom[UNDEFINED])
+        (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
+        r = f(x.value, y.value)
+        r isa SeamError && return ExecOk(Atom[Expression(Atom[
+            Sym("Error"), Expression(Atom[Sym(name), x, y]), Sym("DivisionByZero")])])
+        ExecOk(Atom[Grounded(r)])
+    end))
+end
+
 const PLUS  = _num_binop("+", +)
 const MINUS = _num_binop("-", -)
 # comparisons return the True/False SYMBOLS (so unify against `True` works)
@@ -1971,8 +1989,11 @@ end
 # token registry (regex/string → constructor), exactly as the spec describes.
 # ═══════════════════════════════════════════════════════════════════════════════
 const TIMES  = _num_binop("*", *)
+# Kept for reference/back-compat; the REGISTRY binds the seam-routed pair below.
 const DIVIDE = _num_binop("/", /)
 const MOD    = _num_binop("%", %)
+const DIVIDE_SEAM = _num_binop_seam("/", seam_div)
+const MOD_SEAM    = _num_binop_seam("%", seam_mod)
 const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
 const EQ_OP = Grounded(Operation("==", xs -> length(xs) != 2 ? ExecNoReduce() :
     (xs[1] == UNDEFINED || xs[2] == UNDEFINED) ? ExecOk(Atom[UNDEFINED]) :        # WFS bottom contagious through ==
@@ -2380,7 +2401,7 @@ end))
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
 const TOKEN_REGISTRY = Dict{String,Atom}(
     "mork-closure" => MORK_CLOSURE,
-    "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE, "%" => MOD,
+    "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE_SEAM, "%" => MOD_SEAM,
     "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
     "and" => AND, "or" => OR, "not" => NOT, "id" => ID,
     "if-equal" => IF_EQUAL, "atom-subst" => ATOM_SUBST, "sealed" => SEALED,

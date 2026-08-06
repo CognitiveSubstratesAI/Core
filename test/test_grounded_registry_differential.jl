@@ -47,7 +47,10 @@ const MKg = MeTTaCore.MORK
 
     @testset "FLOAT results keep their type — `4` and `4.0` are different ATOMS" begin
         @test gcall("+", [1.5, 2.5]) == "4.0"      # was "4"
-        @test gcall("/", [10, 2])    == "5.0"      # was "5"
+        # 🔴 REVERTED to "5" on 2026-08-06. The `# was "5"` note records when Int÷Int→Float was
+        # introduced; it was never conformant — hyperon returns Number::Integer(a/b). The type
+        # distinction this testset asserts still holds, it just no longer applies to Int÷Int.
+        @test gcall("/", [10, 2])    == "5"
         @test gcall("+", [1, 2])     == "3"        # Int⊕Int stays Int
         @test MCg.from_sexpr("4")   isa Int64      # …which is why the distinction is observable
         @test MCg.from_sexpr("4.0") isa Float64
@@ -205,9 +208,13 @@ const MKg = MeTTaCore.MORK
         @test gcall("%", [7, 0]) === nothing
         @test gcall("%", [7.0, 0.0]) == "NaN"          # float rem is genuinely NaN
 
-        # The INTERPRETER throws a raw Julia DivideError — a HOST exception escaping into MeTTa
-        # evaluation. That is wrong (MeTTa should see an Error atom, per "Error is poison"), but
-        # what it should return instead needs the hyperon oracle, so it is pinned, not changed.
-        @test_throws DivideError icall("%", [7, 0])
+        # 🟢 RESOLVED 2026-08-06 — the oracle answered. This comment previously said "what it should
+        # return instead needs the hyperon oracle, so it is pinned, not changed". hyperon guards
+        # DivisionByZero (arithmetics.rs:154-155) and LeaTTa PROVES the shape
+        # `Error (% a b) DivisionByZero` (Stdlib.lean:95-101). The interpreter no longer throws.
+        let r = icall("%", [7, 0])          # icall stringifies: Vector{String}, one per result
+            @test length(r) == 1
+            @test occursin("Error", r[1]) && occursin("DivisionByZero", r[1])
+        end
     end
 end

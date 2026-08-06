@@ -212,8 +212,14 @@
    (/safe $c (- 1 $c)))
 
 (: Truth_w2c (-> Number Number))
+;; ⚠️ `(* 1.0 $w)` is LOAD-BEARING, not noise. MeTTa `/` on two Integers is INTEGER division
+;; (hyperon arithmetics.rs:154-155 `Number::Integer(a / b)`; LeaTTa proves `Ground.int (a / b)`;
+;; measured on upstream's own binary: `!(/ 7 2)` -> [3]). Core promoted Int/Int to Float until
+;; 2026-08-06, and this formula silently relied on that: with a bare `(/safe $w (+ $w 1))` and an
+;; integer count, Truth_w2c can only ever return 0 or 1. A confidence is a REAL in [0,1), so the
+;; float is part of the formula, not a workaround. Do not "simplify" it away.
 (= (Truth_w2c $w)
-   (/safe $w (+ $w 1)))
+   (/safe (* 1.0 $w) (+ $w 1)))
 
 ; Deduction formula: PLN book "1.4 Truth-value Formulas", page 15:
 ; borrowed from https://github.com/trueagi-io/hyperon-pln/blob/main/metta/pln/dependent-types/DeductionDTL.metta

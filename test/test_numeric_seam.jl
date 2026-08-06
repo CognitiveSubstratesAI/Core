@@ -54,48 +54,27 @@ nsq(src) = (r = _NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
         @test nsq("!(/ 4 6.4)") ≈ 0.625       # Float operand ⇒ Float, agreed by everyone
     end
 
-    @testset "DIVERGENCE 1 — Int ÷ Int must yield an Int" begin
-        # hyperon `/` is hand-written; its Integer/Integer branch returns Number::Integer(a / b)
-        #   (lib/src/metta/runner/stdlib/arithmetics.rs:154-155) — Rust truncating division.
+    @testset "FIXED 2026-08-06: Int ÷ Int yields an Int (was divergence 1)" begin
+        # hyperon `/` Integer/Integer branch returns Number::Integer(a / b)
+        #   (arithmetics.rs:154-155) — Rust truncating division.
         # LeaTTa PROVES the same: divOp → Ground.int (a / b) (MettaHyperonFull/Minimal/Stdlib.lean:91).
-        # CeTTa likewise returns an int.
-        # Core: Interpreter.jl:403 `_num_binop("/", /)` uses Julia's `/`, which promotes to Float64.
-        @test_broken nsq("!(/ 7 2)") == 3
-        @test_broken nsq("!(/ -7 2)") == -3
-
-        # The TYPE differs even when the value is exact — this is the sharper half. hyperon's Number
-        # equality is loose so 2.0 == 2 may hold, but `get-type` and any type-directed dispatch see
-        # a Float where the reference has an Integer.
-        @test_broken nsq("!(/ 4 2)") isa Integer
+        # Was 3.5 / 2.0 / -3.5 until NumericSeam.seam_div became the single owner.
+        @test nsq("!(/ 7 2)") == 3
+        @test nsq("!(/ -7 2)") == -3
+        @test nsq("!(/ 4 2)") == 2
+        @test nsq("!(/ 4 2)") isa Integer     # the TYPE, not just the value
     end
 
-    @testset "DIVERGENCE 2 — division by zero must not escape as a host exception" begin
-        # Under MeTTa's partial semantics a bad argument reduces to inert or to an error atom so
-        # nondeterministic evaluation continues on other branches. Core throws a raw Julia
-        # DivideError straight through the evaluator.
-        #
-        # ALREADY HALF-HANDLED, and the two lanes disagree: Primitives.jl:44-46 DECLINES on the MORK
-        # lane rather than throwing, with the comment "The interpreter's own `%` DOES currently throw
-        # here; tracked separately, since changing it needs the hyperon oracle to say what (% 7 0)
-        # should produce." THE ORACLE HAS ANSWERED: hyperon guards DivisionByZero (arithmetics.rs:154)
-        # and LeaTTa's modOp returns `Error (% a b) DivisionByZero`
-        # (MettaHyperonFull/Minimal/Stdlib.lean:95-101, docstring citing "Hyperon's checked_div").
-        # `%` by zero THROWS. Must reduce instead.
-        @test_broken (try nsq("!(% 7 0)"); true catch; false end)
-
-        # `/` by zero does NOT throw — it returns Inf, because Core has no Int÷Int path at all and
-        # promotes to Float first. (Caught by @test_broken reporting "Unexpected Pass" on an earlier
-        # version of this test that only asserted "must not throw" — which passed trivially. The
-        # mechanism found a wrong assumption in the test itself on its first run.)
-        #
-        # LeaTTa's divOp docstring draws the line exactly: "Integer division by zero raises a
-        # DivisionByZero error (Hyperon's checked_div); float division follows IEEE (x/0.0 = ±inf)".
-        # So Inf is CORRECT for floats and WRONG for ints — the same root cause as divergence 1.
-        @test nsq("!(/ 7 0)") == Inf              # current behaviour, pinned
-        @test_broken nsq("!(/ 7 0)") != Inf       # should be a DivisionByZero error atom
-        # ⚠️ `!== NaN` would be VACUOUS — NaN is never === itself, so that comparison is true for
-        # every value. @test_broken caught it as a second "Unexpected Pass". Use isnan.
-        @test_broken !isnan(nsq("!(/ 0 0)"))      # currently NaN; should be a DivisionByZero error
+    @testset "FIXED 2026-08-06: division by zero is an error atom (was divergence 2)" begin
+        # A raw Julia DivideError used to escape the evaluator for `%`, and `/` returned Inf/NaN.
+        # Both now reduce to the shape LeaTTa proves (Stdlib.lean:86-101, docstring citing
+        # "Hyperon's checked_div"): Error (op a b) DivisionByZero.
+        iserr(r, op, a, b) = r isa AbstractVector && length(r) == 3 &&
+                             r[1] === :Error && r[3] === :DivisionByZero &&
+                             r[2] == Any[op, a, b]
+        @test iserr(nsq("!(% 7 0)"), :%, 7, 0)      # no longer throws
+        @test iserr(nsq("!(/ 7 0)"), :/, 7, 0)      # no longer Inf
+        @test iserr(nsq("!(/ 0 0)"), :/, 0, 0)      # no longer NaN
     end
 
     @testset "CONFORMANT: float division by zero IS IEEE" begin
@@ -115,6 +94,29 @@ nsq(src) = (r = _NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
         # promotes (CeTTa), silently reinterpreting an integer literal as a Float is wrong under both.
         @test_broken !(nsq("!(+ 9223372036854775808 0)") isa AbstractFloat)
         @test_broken !(nsq("!(+ 99999999999999999999999 1)") isa AbstractFloat)
+    end
+
+    @testset "CONFORMANT: trace!'s type — the DOCS are wrong, not us" begin
+        # metta-lang.dev/docs/learn/tutorials/stdlib_overview/console_output.html states
+        #   ! (get-type (trace! (Expecting 3) (+ 1 2))) ; Number
+        # and hyperon's OWN stdlib.metta:1272-1277 @doc agrees ("Both arguments will be evaluated
+        # before processing", "@return Evaluated second input").
+        #
+        # BOTH ARE WRONG ABOUT THE IMPLEMENTATION. debug.rs:53 declares
+        # (-> %Undefined% Atom %Undefined%) — the second parameter is Atom-typed, i.e. raw.
+        # MEASURED 2026-08-06 on upstream's own prebuilt target/release/metta-repl:
+        #     ! (get-type (trace! (Expecting 3) (+ 1 2)))   ->  [%Undefined%]
+        #     ! (trace! (Expecting 3) (+ 1 2))              ->  [3]
+        #     ! (get-type (+ 1 2))                          ->  [Number]     (control)
+        # Core returns %Undefined% too. We are CONFORMANT; two documents disagree with the
+        # implementation they document.
+        #
+        # Pinned because a future session reading that docs page would "fix" Core toward Number and
+        # break conformance — the same shape as the (max,+) ECAN kernel, which was also built from a
+        # plausible document rather than from the reference.
+        @test nsq("!(get-type (trace! (Expecting 3) (+ 1 2)))") == Symbol("%Undefined%")
+        @test nsq("!(get-type (+ 1 2))") == :Number          # control: get-type resolves normally
+        @test nsq("!(trace! (Expecting 3) (+ 1 2))") == 3    # returns arg1, then evaluated
     end
 
     @testset "the two lowerings of + - * / % are not co-located and disagree" begin

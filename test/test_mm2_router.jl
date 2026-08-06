@@ -133,9 +133,13 @@ using Test
         @test mm2_is_arith_body(raw"(= (f $x) (+ $x 3))")
         @test mm2_is_arith_body(raw"(= (f $x) (+ (* $x 2) 1))")          # nested tree
         @test mm2_is_arith_body(raw"(= (g $x $y) (- (* $x $y) 1))")      # arity-2 + nested
-        @test mm2_is_arith_body(raw"(= (f $x) (/ $x 2))")               # / ⇒ FLOAT mode (accepted)
+        @test mm2_is_arith_body(raw"(= (f $x) (/ $x 2))")               # / ⇒ i64 mode (conformant 2026-08-06)
         @test mm2_is_arith_body(raw"(= (g $x) (+ $x 1.5))")            # float literal ⇒ FLOAT mode
-        @test !mm2_is_arith_body(raw"(= (f $x) (+ (/ $x 2) (% $y 3)))")  # / and % mixed → un-typeable → rejected
+        # 🔴 BOUNDARY MOVED 2026-08-06. This asserted REJECTION while `/` forced f64 and `%` was int-only,
+        # so a mixed tree could not be typed. `/` on integers is now i64 division (NumericSeam.seam_div;
+        # hyperon arithmetics.rs:154-155), so both share a mode and the tree IS typeable — a widened
+        # boundary, not a regression.
+        @test mm2_is_arith_body(raw"(= (f $x) (+ (/ $x 2) (% $y 3)))")   # both i64 now → accepted
         @test !mm2_is_arith_body(raw"(= (id $x) $x)")                   # bare-var RHS = reduction, not arith
         @test !mm2_is_arith_body(raw"(= (ancestor $x $y) (parent $x $y))")  # relational, not arith
         @test !mm2_is_arith_body(raw"(= (f $x) (+ $x a))")             # non-numeric leaf `a`
@@ -144,8 +148,8 @@ using Test
         # lowering: leaves→<t>_from_string, root→<t>_to_string, redex deleted via (- LHS)
         @test mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))") ==       # INT: i64 ops
               raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 3)))) (- (f $x))))"
-        @test mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))") ==       # FLOAT: f64 ops (div forces it)
-              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (f64_to_string (div_f64 (f64_from_string $x) (f64_from_string 2)))) (- (f $x))))"
+        @test mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))") ==       # INT: i64 ops (div_i64)
+              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (div_i64 (i64_from_string $x) (i64_from_string 2)))) (- (f $x))))"
 
         # bisimulation: the MORK pure-sink reduct == the interpreter's normal form (Int64 / Float64), redex DELETED
         bisim(rule, call) = begin
@@ -166,11 +170,11 @@ using Test
                 (raw"(= (f $x) (% $x 3))",       "(f 10)",  "1"),
                 (raw"(= (f $x) (+ (* $x 2) 1))", "(f 5)",   "11"),
                 (raw"(= (g $x $y) (+ $x $y))",   "(g 3 4)", "7"),
-                (raw"(= (f $x) (/ $x 2))",       "(f 10)",  "5.0"),    # FLOAT (/ forces f64)
-                (raw"(= (f $x) (/ $x 3))",       "(f 10)",  "3.3333333333333335"),  # full-precision rendering
+                (raw"(= (f $x) (/ $x 2))",       "(f 10)",  "5"),      # Int÷Int = INTEGER division (conformant 2026-08-06)
+                (raw"(= (f $x) (/ $x 3))",       "(f 10)",  "3"),      # truncating: hyperon Number::Integer(a/b)
                 (raw"(= (g $x) (+ $x 1.5))",     "(g 2)",   "3.5"),    # float literal; int arg promoted
                 (raw"(= (h $x) (* $x 2.0))",     "(h 3)",   "6.0"),
-                (raw"(= (k $x) (/ (+ $x 1) 2))", "(k 9)",   "5.0")]    # nested, float-propagated
+                (raw"(= (k $x) (/ (+ $x 1) 2))", "(k 9)",   "5")]      # nested, stays i64
             dump, interp = bisim(rule, call)
             @test interp == [val]                          # interpreter-oracle sanity
             @test val in dump                              # MM2 pure-sink computed the same value
@@ -182,7 +186,7 @@ using Test
     @testset "mm2_lower_eq dispatch + mm2_eq_bisim interpreter-oracle harness" begin
         # dispatch: arithmetic body → arith pure-sink lowering; else → reduction form
         @test mm2_lower_eq(raw"(= (f $x) (+ $x 3))") == mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))")
-        @test mm2_lower_eq(raw"(= (f $x) (/ $x 2))") == mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))")  # float
+        @test mm2_lower_eq(raw"(= (f $x) (/ $x 2))") == mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))")  # i64 div
         @test mm2_lower_eq(raw"(= (id $x) $x)") == mm2_lower_equals(raw"(= (id $x) $x)"; mode = :reduction)
 
         # the harness: MORK reduct set-equals the interpreter normal form across the reduction/arith subset
@@ -190,8 +194,8 @@ using Test
                 (raw"(= (id $x) $x)",            "(id a)"),        # symbolic identity
                 (raw"(= (dup $x) (pair $x $x))", "(dup a)"),       # shared-var template duplication
                 (raw"(= (f $x) (+ $x 3))",       "(f 5)"),         # int arith
-                (raw"(= (f $x) (/ $x 2))",       "(f 10)"),        # float arith
-                (raw"(= (k $x) (/ (+ $x 1) 2))", "(k 9)")]         # nested, float-propagated
+                (raw"(= (f $x) (/ $x 2))",       "(f 10)"),        # integer division
+                (raw"(= (k $x) (/ (+ $x 1) 2))", "(k 9)")]         # nested i64
             r = mm2_eq_bisim(rule, query)
             @test r.ok                                             # MORK reduct ≡ interpreter normal form
             @test r.reduct == r.interp

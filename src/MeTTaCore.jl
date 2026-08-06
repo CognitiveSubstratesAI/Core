@@ -72,6 +72,7 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
 #     which inverts the standing compiler-primary directive.
 # Hoisting it here — ABOVE the store, the parser, the primitives and the MORK bridge — is what lets
 # both of those be fixed. Pure move: same code, earlier position.
+include("standard/NumericSeam.jl")  # §3.4 boundary decisions — ONE owner for / % and int literals
 include("standard/Atoms.jl")
 
 include("space/CoreSpace.jl")
@@ -181,6 +182,7 @@ export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # d
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
 export theory_orient_equations
 # Dual-track capstone — one entry over both execution lanes
+export SeamError, seam_div, seam_mod, seam_parse_integer
 export mc_run
 # LibPolicy — policy constants stay MeTTa atoms; Julia asks, never copies (see LibPolicy.jl header)
 export policy_space, reset_policy_space!, lib_policy, lib_policy_int, lib_policy_names

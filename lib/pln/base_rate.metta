@@ -28,7 +28,10 @@
 (= (BaseRateTv $ext $universe)
    (if (or (<= $universe 0) (<= $ext 0))
        no-evidence
-       (let* (($s (/safe $ext $universe))
+       ;; `(* 1.0 $ext)` is LOAD-BEARING — see the note on Truth_w2c in pln_core_logic.metta.
+       ;; MeTTa `/` on two Integers is INTEGER division (conformant with hyperon/LeaTTa since
+       ;; 2026-08-06), and a base rate P(ext|universe) is a REAL in [0,1]. Bare `(/safe 3 7)` = 0.
+       (let* (($s (/safe (* 1.0 $ext) $universe))
               ($c (Truth_w2c $ext)))
           (stv $s $c))))
 

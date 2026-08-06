@@ -30,7 +30,14 @@ Keeping the rationale in one place is the same discipline as keeping the code in
 _gnum(s::AbstractString) = MORK.grounded_num(s)
 
 function _register_arithmetic!()
-    for (name, op) in [("+", +), ("-", -), ("*", *), ("/", /), ("%", rem)]
+    # `/` and `%` come from NumericSeam — the SINGLE owner both lanes consult. Int÷Int is INTEGER
+    # division and a zero divisor is a DivisionByZero DECISION (hyperon arithmetics.rs:154-155;
+    # LeaTTa Stdlib.lean:86-101). This lane RENDERS that decision as a decline (`nothing`, leaving
+    # the term unreduced) rather than an atom, which is what it already did for `(% x 0)` and what
+    # `gcall("%", [7,0]) === nothing` pins. The interpreter renders the same decision as an
+    # `(Error … DivisionByZero)` atom. Same decision, two renderings — that is the seam's contract.
+    for (name, op) in [("+", +), ("-", -), ("*", *),
+                       ("/", NumericSeam.seam_div), ("%", NumericSeam.seam_mod)]
         MORK.register_grounded!(name, args -> begin
             # STRICTLY BINARY (was `< 2`, which admitted 2 OR MORE and then read only args[1..2],
             # so `(+ 1 2 3)` answered 3 with argument 3 SILENTLY IGNORED — measured 2026-07-29).
@@ -44,8 +51,9 @@ function _register_arithmetic!()
             # instead of the old code's silent `NaN`, which came from doing integer rem in floats.
             # (The interpreter's own `%` DOES currently throw here; tracked separately, since
             # changing it needs the hyperon oracle to say what `(% 7 0)` should produce.)
-            (op === rem && b isa Integer && b == 0) && return nothing
-            string(op(a, b))
+            r = op(a, b)
+            r isa NumericSeam.SeamError && return nothing   # decline; see the note above
+            string(r)
         end)
     end
 end

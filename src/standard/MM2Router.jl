@@ -302,12 +302,19 @@ end
 #
 # TWO numeric modes, chosen to bisimulate the interpreter's own promotion (verified by oracle):
 #  - INT (i64): `+ - * %`, all-integer tree → the interpreter's `(* 5 2)` = Int64 `10`.
-#  - FLOAT (f64): a `/` op OR any float literal forces f64 — MeTTa `/` is REAL division (`(/ 10 2)` →
-#    `5.0`), and float-ness propagates up the tree. Both sides are Julia Float64 + `string`, so rendering
-#    is bit-identical (incl. `3.3333333333333335`). `%` is int-only, `/` is float-only; a tree mixing the
-#    two (`(+ (/ …) (% …))`) is REJECTED (can't type it consistently) — the documented boundary.
+#  - FLOAT (f64): any FLOAT LITERAL forces f64, and float-ness propagates up the tree. Both sides are
+#    Julia Float64 + `string`, so rendering is bit-identical (incl. `3.3333333333333335`).
+#
+#  🔴 CORRECTED 2026-08-06. This block previously read "a `/` op OR any float literal forces f64 —
+#  MeTTa `/` is REAL division (`(/ 10 2)` → `5.0`)". THAT PREMISE WAS FALSE, and it was load-bearing:
+#  hyperon's `/` Integer/Integer branch returns `Number::Integer(a / b)` (arithmetics.rs:154-155),
+#  LeaTTa PROVES `Ground.int (a / b)` (Stdlib.lean:91), and upstream's own release binary answers
+#  `!(/ 7 2)` -> [3]. Both lanes implemented real division and AGREED WITH EACH OTHER, so the bisim
+#  gate stayed green while both diverged from the reference — the oracle was us.
+#  `/` on two integers now maps to `div_i64` (MORK Pure.jl:736, Julia truncating `div`), matching
+#  NumericSeam.seam_div, which is the single owner both lanes consult.
 const _MM2_ARITH_ALLOPS = ("+", "-", "*", "/", "%")
-const _MM2_ARITH_I64 = Dict{String,String}("+" => "sum_i64", "-" => "sub_i64", "*" => "product_i64", "%" => "mod_i64")
+const _MM2_ARITH_I64 = Dict{String,String}("+" => "sum_i64", "-" => "sub_i64", "*" => "product_i64", "%" => "mod_i64", "/" => "div_i64")
 const _MM2_ARITH_F64 = Dict{String,String}("+" => "sum_f64", "-" => "sub_f64", "*" => "product_f64", "/" => "div_f64")
 const _MM2_ARITH_NARY = Set{String}(["+", "*"])          # n-ary folds; the rest are strictly binary
 
@@ -330,7 +337,7 @@ function _mm2_arith_scan(node::AbstractString)::Tuple{Bool,Bool}
     (a[1] in _MM2_ARITH_ALLOPS) || return (false, false)
     nargs = length(a) - 1
     (a[1] in _MM2_ARITH_NARY ? nargs >= 2 : nargs == 2) || return (false, false)
-    isfloat = a[1] == "/"                                  # division forces f64
+    isfloat = false                                        # `/` no longer forces f64 — see below
     for c in @view a[2:end]
         ok, cf = _mm2_arith_scan(c)
         ok || return (false, false)
