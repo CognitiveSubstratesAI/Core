@@ -269,10 +269,26 @@ indistinguishable; the mode is intent, not inference):
   matching LHS, DERIVE RHS and **KEEP LHS**. Correct for relations, e.g. `(= (parent \$x \$y) (ancestor \$x \$y))`.
   A conjunctive LHS `(, …)` passes through as the source list. (Same shape as `mm2_lower_match`.)
 
-- `:reduction` → `(exec 0 (I LHS) (O (+ RHS) (- LHS)))`. FUNCTION-EVAL: for every data atom matching LHS,
+- `:reduction` → `(exec 0 (, LHS) (O (+ RHS) (- LHS)))`. FUNCTION-EVAL: for every data atom matching LHS,
   ADD RHS and **REMOVE the matched LHS redex** — reduce to normal form. Correct for function defs, e.g.
   `(= (id \$x) \$x)` reduces `(id a)` → `a` (deleting `(id a)`). Mirrors MorkSupercompiler `_lower_eq_snode`
   and the interpreter's reduce-to-normal-form semantics; LHS is a single redex term.
+
+  ⚠️ THE SOURCE FUNCTOR IS `,` — NOT `I`. This emitted `(I LHS)` until 2026-08-06 and upstream MORK
+  **panics** on it. The functor is not cosmetic: it selects the source DISCIPLINE (`space.rs:1671-1687`).
+      `,` → no_source=true  → each source element is a plain trie pattern (the compat read).
+      `I` → no_source=false → each source element is routed through `ASource::new`, which accepts ONLY
+                              typed sources — BTM / ACT / z3 / `==` / `!=` — and otherwise hits
+                              `unreachable!()` (`sources.rs:220-233`).
+  A lowered MeTTa LHS is a plain pattern, so it belongs under `,`. MEASURED on the upstream release binary:
+      `(exec 0 (I (id \$x)) (O (+ \$x) (- (id \$x))))` → panicked at kernel/src/sources.rs:233
+      `(exec 0 (, (id \$x)) (O (+ \$x) (- (id \$x))))` → runs, yields `a` / `b`, redexes deleted ✓
+  It went unseen for the same reason every port defect here does: OUR `asource_new` returns
+  `CompatSource(e)` as a FALLBACK (`MORK/src/kernel/Sources.jl:642`) where upstream is a partial function
+  that panics. We accept a strict SUPERSET of upstream, so no test of ours can ever see the divergence —
+  the oracle has to be the upstream binary. `:reduction` is the DEFAULT mode (`:181`, `:209`, `:891`), so
+  this was the default compiled lane. See `MORK/test/conformance/ADAPTATIONS.md` (and its PathMap
+  sibling `PathMap/test/differential/ADAPTATIONS.md`) plus `workflows/mm2_xcheck.sh`.
 
 Both are the `(=)→MM2` bridge for the RELATIONAL/grounded-free subset; grounded ops (arithmetic, control)
 still need the interpreter or KBSaturation lane and are gated out upstream by `mm2_is_relational`.
@@ -283,7 +299,10 @@ function mm2_lower_equals(rule::AbstractString; mode::Symbol = :relational)::Str
         error("mm2_lower_equals: expected (= LHS RHS), got: $rule")
     lhs, rhs = a[2], a[3]
     if mode === :reduction
-        return "(exec 0 (I $lhs) (O (+ $rhs) (- $lhs)))"      # delete redex + add reduct (function-eval)
+        # Source functor MUST be `,` — `I` means "typed source" upstream and panics on a plain
+        # pattern (sources.rs:233). See the docstring above for the measured evidence.
+        src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
+        return "(exec 0 $src (O (+ $rhs) (- $lhs)))"          # delete redex + add reduct (function-eval)
     elseif mode === :relational
         src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
         return "(exec 0 $src (, $rhs))"                        # keep LHS + add RHS (forward-closure)
@@ -396,7 +415,7 @@ end
     mm2_lower_equals_arith(rule) -> String
 
 Lower `(= (f …) ARITH)` (an arithmetic function def) to a pure-sink REDUCTION exec:
-`(exec 0 (I LHS) (O (pure \$__r \$__r (<t>_to_string TREE)) (- LHS)))` — match the redex, compute the
+`(exec 0 (, LHS) (O (pure \$__r \$__r (<t>_to_string TREE)) (- LHS)))` — match the redex, compute the
 value write-side via the `pure` sink, add the value, and delete the redex. INT (`i64`) or FLOAT (`f64`)
 mode is inferred to bisimulate the interpreter's promotion. Errors if the RHS is not a pure arithmetic
 tree (check `mm2_is_arith_body` first).
@@ -412,7 +431,9 @@ function mm2_lower_equals_arith(rule::AbstractString)::String
     tree === nothing &&
         error("mm2_lower_equals_arith: RHS is not a pure arithmetic tree ($(isfloat ? "f64" : "i64") mode): $rhs")
     cast = isfloat ? "f64_to_string" : "i64_to_string"
-    "(exec 0 (I $lhs) (O (pure \$__r \$__r ($cast $tree)) (- $lhs)))"
+    # `,` not `I` — a plain pattern under `I` panics upstream (sources.rs:233); see mm2_lower_equals.
+    src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
+    "(exec 0 $src (O (pure \$__r \$__r ($cast $tree)) (- $lhs)))"
 end
 
 # ── unified interpreter-faithful (=)→MM2 lowering + the interpreter-oracle bisim harness ──────────────
@@ -522,9 +543,13 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
         h = mm2_head(lhs)
         push!(heads, h); push!(rules, (h, lhs, rhs))
         if mm2_is_relational(f)
-            push!(co_exec, "(exec 0 (I $lhs) (O (+ $rhs)))")           # collect-all: add-only @prio 0
+            # `,` not `I` — a plain pattern under `I` panics upstream (sources.rs:233). MEASURED:
+            #   (exec 0 (, (f $x)) (O (+ (g $x))))  → (f a) (g a)   [keeps LHS, adds RHS] ✓
+            #   (exec 0 (, (f $x)) (O (- (f $x))))  → ∅              [redex deleted]       ✓
+            src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
+            push!(co_exec, "(exec 0 $src (O (+ $rhs)))")               # collect-all: add-only @prio 0
             if !(lhs in seen_lhs)
-                push!(co_exec, "(exec 1 (I $lhs) (O (- $lhs)))")       # delete redex once @prio 1
+                push!(co_exec, "(exec 1 $src (O (- $lhs)))")           # delete redex once @prio 1
                 push!(seen_lhs, lhs)
             end
         elseif mm2_is_arith_body(f)

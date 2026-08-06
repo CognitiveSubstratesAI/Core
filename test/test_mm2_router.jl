@@ -92,9 +92,14 @@ using Test
     end
 
     @testset "(= …) reduction-mode lowering (delete-redex) vs relational (keep-redex)" begin
-        # reduction: (= L R) → (exec 0 (I L) (O (+ R) (- L))) — consume the redex, add the reduct
+        # reduction: (= L R) → (exec 0 (, L) (O (+ R) (- L))) — consume the redex, add the reduct.
+        # SOURCE FUNCTOR IS `,` NOT `I`. These assertions pinned `(I …)` until 2026-08-06; upstream
+        # MORK PANICS on it (sources.rs:233 unreachable!) because `I` means "typed source"
+        # (BTM/ACT/z3/==/!=), not "plain pattern". Our asource_new falls back to CompatSource where
+        # upstream is partial, so the lane worked and these tests cemented the divergence. The oracle
+        # is the upstream binary, not us — see MM2Router.mm2_lower_equals for the measurements.
         @test mm2_lower_equals(raw"(= (myf $x) (wrap $x))"; mode = :reduction) ==
-              raw"(exec 0 (I (myf $x)) (O (+ (wrap $x)) (- (myf $x))))"
+              raw"(exec 0 (, (myf $x)) (O (+ (wrap $x)) (- (myf $x))))"
         @test mm2_lower_equals(raw"(= (myf $x) (wrap $x))"; mode = :relational) ==
               raw"(exec 0 (, (myf $x)) (, (wrap $x)))"          # default unchanged (forward-closure)
         @test_throws ErrorException mm2_lower_equals(raw"(= (myf $x) (wrap $x))"; mode = :bogus)
@@ -123,7 +128,7 @@ using Test
         @test mm2_lower_equals(raw"""(= (name $x) "John Doe")""") ==
               raw"""(exec 0 (, (name $x)) (, "John Doe"))"""
         @test mm2_lower_equals(raw"""(= (name $x) "John Doe")"""; mode = :reduction) ==
-              raw"""(exec 0 (I (name $x)) (O (+ "John Doe") (- (name $x))))"""
+              raw"""(exec 0 (, (name $x)) (O (+ "John Doe") (- (name $x))))"""
     end
 
     # ── piece 3c: (= (f …) ARITH) arith body → pure-sink reduction (Phase-2, R7 lane-1; int + float) ──
@@ -147,9 +152,9 @@ using Test
 
         # lowering: leaves→<t>_from_string, root→<t>_to_string, redex deleted via (- LHS)
         @test mm2_lower_equals_arith(raw"(= (f $x) (+ $x 3))") ==       # INT: i64 ops
-              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 3)))) (- (f $x))))"
+              raw"(exec 0 (, (f $x)) (O (pure $__r $__r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 3)))) (- (f $x))))"
         @test mm2_lower_equals_arith(raw"(= (f $x) (/ $x 2))") ==       # INT: i64 ops (div_i64)
-              raw"(exec 0 (I (f $x)) (O (pure $__r $__r (i64_to_string (div_i64 (i64_from_string $x) (i64_from_string 2)))) (- (f $x))))"
+              raw"(exec 0 (, (f $x)) (O (pure $__r $__r (i64_to_string (div_i64 (i64_from_string $x) (i64_from_string 2)))) (- (f $x))))"
 
         # bisimulation: the MORK pure-sink reduct == the interpreter's normal form (Int64 / Float64), redex DELETED
         bisim(rule, call) = begin
