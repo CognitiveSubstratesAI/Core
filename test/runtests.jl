@@ -11,6 +11,9 @@ include("test_lib_policy.jl")        # policy constants stay MeTTa atoms; Julia 
 # UNWIRED until 2026-08-05: a conformance gate against upstream MetaMo helpers_test.metta that
 # nothing ran — not runtests, not bin/health, not CI. Wired now; see NumpyOps.jl header.
 include("test_numpyops.jl")
+# The Int/Float boundary vs hyperon/LeaTTa/CeTTa. @test_broken lines are MEASURED divergences the
+# vendored LeaTTa corpus structurally cannot cover — see docs/NUMERIC_SEAM_DIVERGENCES_2026-08-05.md
+include("test_numeric_seam.jl")
 include("test_multiset_semantics.jl")  # MeTTa surface = MULTISET, MORK trie = SET — both pinned
 
 # PLN factor-graph suite (test/pln/) — demand-driven backward chaining on the lib/pln substrate:
