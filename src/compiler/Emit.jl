@@ -42,6 +42,25 @@ import ..CompilerANormal: Goal, GUnify, GCall, GBranch, GDisj, GFindall, GResidu
 # MORK owns the pure-op namespace; the emitter validates every name it emits against it (below).
 import MORK
 
+# ── JOIN ORDERING — the single largest lever on this substrate ───────────────────────────────────
+# MORK's own wiki (`MORK.wiki/Backward-Forward-Chainer-optimization.md`) records a **~1500×** speedup
+# from reordering conjuncts ALONE — same rules, same engine, same answers:
+#
+#     BEFORE  (, (sol $ski $shi (c: … $b) $f) (decFn $shi $hi) (lte $hi $ki))
+#     AFTER   (, (gte $ki $hi) (incFn $hi $shi) (sol $ski $shi (c: … $b) $f))
+#     16s → milliseconds;  imim1: 25m5s → 0.885s
+#
+# Their diagnosis was 220M trie transitions against only 10K unifications — nearly all the time in
+# trie SEARCH, because a conjunct iterated a variable that a later conjunct would have bound.
+#
+# We already own a cost-based planner: `MorkSupercompiler/src/planner/` (891 LOC — Selectivity,
+# QueryPlanner, Statistics), wired into SCPipeline stage 2, MGCompiler and Stepper. The emitter was
+# the one consumer that did not call it, so it emitted conjuncts in whatever order A-normalization
+# produced. MEASURED before this: the compiled lane ran ECAN_Policies in 28.5 ms against the
+# interpreter's 10.9 ms — a comparison taken on an UNPLANNED join, and therefore not a fair verdict
+# on the execution model.
+import MorkSupercompiler: JoinNode, plan_join_order, SAtom, EFF_READ
+
 # ── rendering IR back to s-expression text ───────────────────────────────────────────────────────
 # Text, not bytes, for now: MORK's `space_add_all_sexpr!` is the stable entry, and the byte-level
 # `Expr` path is an optimisation that must not be conflated with getting the semantics right.
@@ -243,6 +262,53 @@ function _arith_tree(node::IRAtom, env::Dict{Base.Symbol,GCall}, float::Bool,
     "($cast " * _apply_subst(s, sub) * ")"
 end
 
+# ── join ordering ────────────────────────────────────────────────────────────────────────────────
+
+"Variables mentioned in a rendered source term, as bare names (`\$x` → `\"x\"`)."
+_term_vars(s::AbstractString)::Set{String} =
+    Set{String}(m.captures[1] for m in eachmatch(r"\$([A-Za-z_][A-Za-z0-9_\-]*)", s))
+
+"""
+    _plan_sources(srcs) -> Vector{String}
+
+Reorder exec source conjuncts by the cost-based planner, leaving `srcs[1]` (the redex) pinned first.
+
+THE REDEX IS PINNED, and that is deliberate: it is what the rule fires on, so narrowing the trie on
+it before anything else is always right, and it is the only conjunct guaranteed present.
+
+Everything after it is planned. Variable flow is computed the way `build_join_nodes` does it — a
+variable is INTRODUCED by the first conjunct that mentions it and CONSTRAINS every later one — and
+`plan_join_order` then greedily picks the lowest effective cardinality given what is already bound,
+penalising unbound dependencies (`UNBOUND_DEP_PENALTY = 4`).
+
+Cardinality is a static placeholder: at emit time there is no space to count against, so every
+conjunct is given equal weight and the ordering is driven purely by variable binding. That is the
+part the wiki's example turns on — `(gte \$ki \$hi)` first because `\$ki` is already bound, not
+because it is smaller. When emission gains access to live statistics, pass real counts here instead.
+"""
+function _plan_sources(srcs::Vector{String})::Vector{String}
+    length(srcs) <= 2 && return srcs                # redex + at most one goal: nothing to order
+    redex, rest = srcs[1], srcs[2:end]
+
+    bound = _term_vars(redex)                       # the redex binds first
+    nodes = JoinNode[]
+    introduced = copy(bound)
+    for s in rest
+        vs = _term_vars(s)
+        out = setdiff(vs, introduced)               # variables this conjunct introduces
+        inn = intersect(vs, introduced)             # variables it constrains
+        union!(introduced, out)
+        push!(nodes, JoinNode(SAtom(s), 1, out, inn, EFF_READ))
+    end
+    perm = try
+        plan_join_order(nodes)
+    catch
+        return srcs                                 # planner unavailable ⇒ emit unplanned, never fail
+    end
+    (length(perm) == length(rest) && sort(perm) == collect(1:length(rest))) || return srcs
+    String[redex; rest[perm]]
+end
+
 # ── clauses → exec rules ─────────────────────────────────────────────────────────────────────────
 
 """
@@ -353,6 +419,9 @@ function emit_clause(clause::ANClause; priority::Integer = 0,
     out = _apply_subst(render(clause.out), sub)
     startswith(out, "<unrenderable") && return nothing
 
+    # Conjunct ORDER is the largest performance lever on this substrate (~1500x upstream). See
+    # `_plan_sources` — the redex stays pinned first, the rest go through the cost-based planner.
+    srcs = _plan_sources(srcs)
     "(exec $priority (, " * join(srcs, " ") * ") (O (+ " * out * ")))"
 end
 
