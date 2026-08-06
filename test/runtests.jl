@@ -43,6 +43,14 @@ module StandardMeTTaTests
     include("standard/test_minimal.jl")
     include("standard/test_interpreter.jl")
     include("standard/test_tnot_wfs.jl")
+    # The LIVE swipl differential. test_tnot_wfs.jl's header claims oracle verification but its
+    # assertions are pinned literals and it never invokes swipl (measured 2026-08-06); this is the
+    # file that actually runs the oracle. Skips LOUDLY if swipl is absent — never silently passes.
+    include("standard/test_wfs_swipl_differential.jl")
+    # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
+    # because the rest silently falls back to the interpreter. This is the only thing that makes
+    # that incompleteness cost something: the emitted count may not decrease.
+    include("compiler/test_coverage_ratchet.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
     include("standard/test_conformance.jl")

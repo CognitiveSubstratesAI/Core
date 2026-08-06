@@ -75,6 +75,15 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
 include("standard/NumericSeam.jl")  # §3.4 boundary decisions — ONE owner for / % and int literals
 include("standard/Atoms.jl")
 
+# ── THE COMPILER ─────────────────────────────────────────────────────────────────────────────────
+# Stage 1: the IR data type. Core had none — every "compiled" path was String→String, which is why
+# the exec source functor got hand-typed at four sites and three were wrong. Node set ported from
+# JeTTa (`dev-zone/jetta`), the only MeTTa-specific compiler IR among our references; names kept
+# verbatim so we stay diffable against it. A frontend and passes are separate files, not yet written.
+# `module CompilerIR` — its `Symbol`/`Variable`/`Expression`/`Grounded` are the COMPILER's layer and
+# must not be confused with the surface ATOM grammar in standard/Atoms.jl directly above.
+include("compiler/IR.jl")
+
 include("space/CoreSpace.jl")
 include("space/CoreSpaceActIO.jl")   # Stage 1 .act lifecycle (snapshot / load / open_node! / close_node!)
 include("parser/Parser.jl")
@@ -89,6 +98,23 @@ include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundati
 # engine above; it lives here only so its ~28s one-time compile is BAKED INTO the precompile cache
 # (`MeTTaCore.Interpreter`) instead of being recompiled on every fresh `include`. Accessed as `MeTTaCore.Interpreter`.
 include("standard/Interpreter.jl")
+
+# Compiler stage 2: surface Atom → CompilerIR, with resolution (per-clause variable identity),
+# special forms as NODES, and structural heads. Included AFTER Interpreter because it consults the
+# interpreter's EXISTING SLG registry (`_TABLED_HEADS`, Interpreter.jl:979-982) rather than declaring
+# a second one — SLG/WFS was already adopted there and is reused, not rebuilt.
+include("compiler/Frontend.jl")
+
+# Compiler stage 3: A-normalization of rule bodies to GOAL LISTS — a direct port of PeTTa's
+# `translator.pl` (`translate_clause/3`, `translate_expr/3`), the Prolog lineage Core already took
+# SLG from. `let` becomes ONE unification goal, `let*` is nested `let`, `if`/`case` become branch
+# goals sharing an output, `superpose` a disjunction, `collapse` a findall. Pure — emits nothing.
+include("compiler/ANormal.jl")
+
+# Compiler stage 4: A-normalized clauses → MORK exec rules. The first stage whose output RUNS.
+# One emitter owns every syntactic decision about the exec form — source functor, template functor,
+# priority — so it cannot drift the way N hand-written call sites did.
+include("compiler/Emit.jl")
 
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Interpreter` submodule above.
