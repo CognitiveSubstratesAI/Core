@@ -41,7 +41,18 @@ using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded
 # `tabled_definitions` at the bottom. Nothing else in this file touches the evaluator.
 import ..Interpreter
 
-# ── special-form table (CeTTa's surface⇄IR symbol pairing, mm2_lower.c) ──────────────────────────
+# ── special-form table ───────────────────────────────────────────────────────────────────────────
+# ⚠️ THIS LINE USED TO CITE "CeTTa's surface⇄IR symbol pairing, mm2_lower.c" AS PRECEDENT. IT IS NOT.
+# Verified 2026-08-07 against the source: `mm2_lower.c` takes atoms ALREADY PARSED FROM MM2 SURFACE
+# TEXT and renames their heads into inert IR symbols so CeTTa's HE evaluator will NOT reduce them —
+# `mm2_exec`, `mm2_pattern_and`, `mm2_pattern_btm`, `mm2_guard_eq`, `mm2_sink_add`, `mm2_sink_remove`,
+# `mm2_sink_z3` (:47-57) — and `mm2_raise_atom_impl` (:107-151) is the exact inverse. The direction is
+# MM2 → inert → MM2, a round trip; it is never MeTTa → IR.
+#
+# The symbol sets have ZERO overlap with ours: theirs is MM2 CALCULUS vocabulary (exec/pattern/guard/
+# sink), ours is MeTTa LANGUAGE vocabulary (let/if/case/match/…). Same shape, opposite purpose — theirs
+# PROTECTS atoms from an evaluator, ours CLASSIFIES forms for a compiler. A borrowed citation that does
+# not survive reading the cited file is worse than none.
 # Surface spelling on the left, IR kind on the right. A pass dispatches on the KIND; only this table
 # ever compares a surface string, so adding a spelling is one line and cannot drift across sites the
 # way `_MM2_SPECIAL_FORMS` + `_MM2_ARITH_I64` + the four exec templates did.
