@@ -103,6 +103,31 @@ end
     @info "compiler coverage TOTAL" emitted=total_em total=total_tot floor=FLOOR_TOTAL
     @test total_em >= FLOOR_TOTAL
 
+    # ── THE DECLINE HISTOGRAM IS A MEASUREMENT, SO IT RUNS ─────────────────────────────────────
+    # These figures drive every "what to build next" decision. They were previously narrated in a
+    # CURATED CODEMAP ROW -- the artifact meant to BE the trusted source, not a stray docstring -- and
+    # within a day they were wrong AND THE RANKING HAD INVERTED:
+    #
+    #     CODEMAP row said  call_in_body 237 · residual 209 · control_flow 177 · mixed_arithmetic 95
+    #     re-measured       residual 301 · call_in_body 180 · control_flow 146 · mixed_arithmetic 91
+    #
+    # `residual` overtook `call_in_body` as the largest bucket, which changes the priority order. A
+    # number in prose is a measurement AT A TIME and does not announce when it expires; a number in a
+    # test cannot go stale silently. Prints on every run so a shifted ranking is visible immediately.
+    hist = Dict{Symbol,Int}()
+    for f in files
+        haskey(programs, f) || continue
+        cls = try _RA.translate_program(programs[f]) catch; continue end
+        r = _RE.emit_program(cls; extra_funs = allfuns)
+        for cl in r.declined
+            k = _RE.decline_reason(cl)
+            hist[k] = get(hist, k, 0) + 1
+        end
+    end
+    @info "compiler DECLINE HISTOGRAM (re-measured every run)" sort(collect(hist), by = x -> -x[2])
+    @test sum(values(hist)) == total_tot - total_em      # every decline is attributed
+    @test haskey(hist, :residual) && haskey(hist, :call_in_body)
+
     # A ratchet that only ever passes teaches nothing. If coverage has RISEN, say so loudly so the
     # floor gets raised in the same commit rather than drifting stale and stopping being a ratchet.
     if total_em > FLOOR_TOTAL
