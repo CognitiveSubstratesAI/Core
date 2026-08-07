@@ -209,7 +209,24 @@ function lower_special(c::Ctx, kind::SpecialKind, surface::Base.Symbol,
         b === nothing || return b
     elseif kind === SPECIAL_IF && length(args) == 3
         return lower_if(c, args)
-    elseif (kind === SPECIAL_CASE || kind === SPECIAL_MATCH) && length(args) >= 2
+    elseif kind === SPECIAL_CASE && length(args) == 2
+        # ⚠️ `SPECIAL_MATCH` USED TO BE ACCEPTED HERE TOO, AND IT SILENTLY DISCARDED THE PATTERN.
+        # `lower_case` takes `scrut = args[1]` and `arms = args[end]`. Those are the right slots for
+        # `(case SCRUT ARMS)` — but `(match SPACE PATTERN TEMPLATE)` is a THREE-argument space query,
+        # so the same read makes the SPACE the scrutinee, the TEMPLATE the arm list, and never looks
+        # at `args[2]` at all. MEASURED 2026-08-07:
+        #
+        #   (match &self ($a $b) ((p 1) (q 2)))  ⟹  IRMatch(scrutinee = &self, 2 branches)
+        #                                            the pattern ($a $b) is ABSENT FROM THE IR
+        #
+        # It only reached that shape when the TEMPLATE happened to parse as a list of 2-element
+        # pairs; otherwise `lower_case` returned `nothing` and the form fell through to `IRSpecial`
+        # anyway. So the common outcome was already the honest decline and the rare one was a WRONG
+        # ANSWER — the worst possible split, because coverage never showed it.
+        #
+        # `match` now always falls to `IRSpecial`, which preserves all three arguments for the pass
+        # that will lower it. Arity is pinned to exactly 2 for the same reason: a `case` of another
+        # arity is not a shape this function can read correctly either.
         m = lower_case(c, kind, args)
         m === nothing || return m
     elseif kind === SPECIAL_SUPERPOSE
