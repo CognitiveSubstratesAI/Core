@@ -1,3 +1,47 @@
+# ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+# ║ STATUS 2026-08-07 — OBSOLESCENT. Being disconnected, NOT deleted. Read before extending.     ║
+# ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+#
+# This file lowers MeTTa SURFACE `(=)` straight to MM2 exec rules. Hyperon Deep-Dive 2026 Figure 2 has
+# no such arrow — MeTTa compiles to MeTTa-IL, and MM2 kernels reach a node by a dashed "runs on" edge
+# (§3.6: MM2 is where HUMANS write hot loops). A 10-agent audit put it precisely: "Fig-2 REQUIRES an
+# MM2 emitter; what it forbids is reaching MM2 WITHOUT PASSING THROUGH THE IR." This file is that
+# defect — not because it emits MM2, but because it emits MM2 from surface syntax with no IR between.
+#
+# SCOPED BY MEASUREMENT (2026-08-07), because an audit dissent put the arrow anywhere from 150 to 550
+# LOC. Runtime-verified, three INDEPENDENT lowering entry points, 219 LOC of bodies:
+#
+#   mm2_partition        :133  string program -> exec.  REDUCTION form  (O (+ RHS) (- LHS))
+#   _mm2_classify_atoms  :576  typed ATOMS   -> exec.  RELATIONAL form (, RHS)   -- reached by the
+#                              three mm2_lane_* entries, NOT through mm2_partition
+#   mm2_zam_answers      :447  builds its own co_exec at :488; calls mm2_partition only to GATE
+#
+# ⚠️ THE SAME RULE LOWERS DIFFERENTLY DEPENDING ON THE ENTRY. Measured: `(= (f $x) (g $x))` becomes
+# `(exec 0 (, (f $x)) (O (+ (g $x)) (- (f $x))))` via mm2_partition and `(exec 0 (, (f $a)) (, (g $a)))`
+# via mm2_lane_from_atoms. Reduction vs forward derivation, from one source rule. Do not assume a
+# single semantics for "the MM2 lane".
+#
+# WHAT HAS ALREADY LEFT THIS FILE (both behaviour-neutral, both suite-verified):
+#   standard/SexprForms.jl      mm2_split_forms · mm2_head · mm2_expr_args  -- ~56 call sites across
+#                               MeTTaIL/GSLT/DualTrack/PatternMiner; they made every IL consumer a
+#                               consumer of this router
+#   standard/AtomExprBridge.jl  typed_atom_to_expr · expr_to_atom -- LIVE in CoreSpace/Primitives:172;
+#                               without expr_to_atom's de-Bruijn co-reference `!(get-metatype (A B))`
+#                               regresses to `Symbol`
+#
+# DISCONNECTED 2026-08-07: `mm2_partition` and the four `mm2_lane_*` entries are no longer EXPORTED.
+# Defined, working, internally reachable — just not public surface, so nothing new can bind to them.
+#
+# 🔴 STILL LIVE, DO NOT DISCONNECT YET: `mm2_zam_answers` is called from `DualTrack.jl:155`, inside the
+# `:direct` lane that also owns the tree's ONLY `_TABLED_HEADS` snapshot and `auto_table!` enablement.
+# Removing it needs the IL to carry `(=)` reduction first — which it cannot today (see
+# `workflows/SPECMAP_METTAIL.md` C4: `metta_il_normalize` reduces but is first-match and `String`-typed,
+# i.e. one answer).
+#
+# 🔴 ALSO STILL HERE, deliberately: `mm2_is_relational` looked lane-neutral but depends on
+# `mm2_collect_heads!`, `_MM2_COMPOUND_HEAD` and `_MM2_SPECIAL_FORMS`. Whether `_MM2_SPECIAL_FORMS`
+# belongs to the ATOM MODEL or to this router is a judgement call, not a cut-and-paste.
+#
 # MM2Router.jl — dual-lane program routing.
 #
 # Adopted from CeTTa's MM2 loader dispatch (`src/library.c` mm2-load: partition a loaded program by

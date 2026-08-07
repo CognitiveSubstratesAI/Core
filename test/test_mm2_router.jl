@@ -11,7 +11,7 @@ using Test
     prog  = facts * "\n" * rule
 
     @testset "partition into exec / data / bang lanes" begin
-        p = mm2_partition(prog)
+        p = MC.mm2_partition(prog)
         @test isempty(p.bangs)
         @test length(p.exec) == 1 && mm2_is_exec_rule(p.exec[1])
         @test length(p.data) == 3 && all(!mm2_is_exec_rule, p.data)
@@ -269,17 +269,17 @@ using Test
 
     @testset "mm2_partition auto-routes relational (= …), leaves grounded in data" begin
         # relational rule auto-lowered into exec; fact stays data
-        p = mm2_partition("(ancestor a b)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
+        p = MC.mm2_partition("(ancestor a b)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
         @test length(p.exec) == 1 && occursin("exec 0", p.exec[1])
         @test p.data == ["(ancestor a b)"]
         # arith-body rule: NOW auto-lowered to a pure-sink reduction exec (Phase-2 wired, arith_exec
         # default ON — interpreter-bisim-proven lowering); the kill switch restores the old routing
-        pg = mm2_partition(raw"(= (fib $n) (+ $n 1))")
+        pg = MC.mm2_partition(raw"(= (fib $n) (+ $n 1))")
         @test length(pg.exec) == 1 && occursin("(pure ", pg.exec[1]) && isempty(pg.data)
-        pg0 = mm2_partition(raw"(= (fib $n) (+ $n 1))"; arith_exec = false)
+        pg0 = MC.mm2_partition(raw"(= (fib $n) (+ $n 1))"; arith_exec = false)
         @test isempty(pg0.exec) && pg0.data == [raw"(= (fib $n) (+ $n 1))"]
         # non-arith grounded rule (if/<) still stays in the data lane (interpreter territory)
-        pif = mm2_partition(raw"(= (f $n) (if (< $n 2) $n 0))")
+        pif = MC.mm2_partition(raw"(= (f $n) (if (< $n 2) $n 0))")
         @test isempty(pif.exec) && length(pif.data) == 1
         # end-to-end: a program with a relational (= …) rule now fires through the MORK lane unaided
         cs = MC.new_core_space()
@@ -349,7 +349,7 @@ using Test
 
         prog  = "(ancestor a b)\n(ancestor b c)\n" * raw"(= (ancestor $x $y) (parent $x $y))"
         atoms = [p[2] for p in SM.parse_program(prog)]
-        cs = mm2_lane_from_atoms(atoms)                       # build the MORK mirror from typed atoms
+        cs = MC.mm2_lane_from_atoms(atoms)                       # build the MORK mirror from typed atoms
         MC.space_metta_calculus!(cs.inner, 1_000_000)
         R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
                          if occursin("parent", l)]))
@@ -367,7 +367,7 @@ using Test
         SM = MeTTaCore.Interpreter
         mork_derive(facts, rule, head) = begin
             atoms = [p[2] for p in SM.parse_program(facts * "\n" * rule)]
-            cs = mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs.inner, 1_000_000)
+            cs = MC.mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs.inner, 1_000_000)
             sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n') if occursin(head, l)]))
         end
         interp_match(facts, lhs, rhs, head) = begin
@@ -392,7 +392,7 @@ using Test
         # mm2_lane_from_space — mirror a LIVE Space's own atoms (excludes stdlib)
         isp = SM.Space(); SM.load_core_stdlib!(isp)
         SM.load_metta!(isp, "(ancestor a b)\n(ancestor b c)\n" * raw"(= (ancestor $x $y) (parent $x $y))")
-        cs = mm2_lane_from_space(isp); MC.space_metta_calculus!(cs.inner, 1_000_000)
+        cs = MC.mm2_lane_from_space(isp); MC.space_metta_calculus!(cs.inner, 1_000_000)
         R = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
                          if occursin("parent", l)]))
         @test R == ["(parent a b)", "(parent b c)"]
@@ -408,10 +408,10 @@ using Test
         reach(cs) = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
                                  if occursin("reach", l)]))
         # single-pass MISSES the 3-hop (exec consumed after one fire — MM2 spec)
-        cs1 = mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs1.inner, 1_000_000)
+        cs1 = MC.mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs1.inner, 1_000_000)
         @test !("(reach a d)" in reach(cs1))
         # the fixpoint driver reaches the full closure (re-fire until stable)
-        R = sort(string.(reach(mm2_lane_saturate!(atoms))))
+        R = sort(string.(reach(MC.mm2_lane_saturate!(atoms))))
         @test R == sort(["(reach a b)", "(reach b c)", "(reach c d)",
                          "(reach a c)", "(reach b d)", "(reach a d)"])
     end
@@ -427,12 +427,12 @@ using Test
                                  if occursin("reach", l)]))
         expected = sort(["(reach a b)", "(reach b c)", "(reach c d)",
                          "(reach a c)", "(reach b d)", "(reach a d)"])
-        @test reach(mm2_lane_saturate_seminaive!(atoms)) == expected            # full closure, incl 3-hop
+        @test reach(MC.mm2_lane_saturate_seminaive!(atoms)) == expected            # full closure, incl 3-hop
         # ≡ the naive driver, fact-for-fact
-        @test reach(mm2_lane_saturate_seminaive!(atoms)) == reach(mm2_lane_saturate!(atoms))
+        @test reach(MC.mm2_lane_saturate_seminaive!(atoms)) == reach(MC.mm2_lane_saturate!(atoms))
         # no (d …) delta-tag artifacts leak into the final space
         @test !any(l -> startswith(strip(l), "(d "),
-                   split(MC.space_dump_all_sexpr(mm2_lane_saturate_seminaive!(atoms).inner), '\n'))
+                   split(MC.space_dump_all_sexpr(MC.mm2_lane_saturate_seminaive!(atoms).inner), '\n'))
         # derived-relation analysis + variant generation (the semi-naive transform)
         @test MeTTaCore._mm2_derived_relations(
             ["(exec 0 (, (edge \$x \$y) (reach \$y \$z)) (, (reach \$x \$z)))"]) == Set(["reach"])
