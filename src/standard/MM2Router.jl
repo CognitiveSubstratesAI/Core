@@ -15,55 +15,7 @@
 # `(exec …)` rules — they got `add_atom!`'d INERT into the interpreter space, never reaching the MORK
 # engine. This router detects them and routes data+exec to the native MORK lane.
 
-# ── top-level form splitter: paren-depth aware, `!`-prefix aware, `;`-comment aware ──
-function mm2_split_forms(program::AbstractString)::Vector{Tuple{Bool, String}}
-    forms = Tuple{Bool, String}[]
-    s = collect(program); n = length(s); i = 1
-    while i <= n
-        while i <= n && (isspace(s[i]) || s[i] == ';')
-            if s[i] == ';'
-                while i <= n && s[i] != '\n'; i += 1; end
-            else
-                i += 1
-            end
-        end
-        i > n && break
-        bang = false
-        if s[i] == '!'
-            bang = true; i += 1
-            while i <= n && isspace(s[i]); i += 1; end
-        end
-        i > n && break
-        start = i
-        if s[i] == '('
-            depth = 0; instr = false; esc = false        # string-aware: (/)/whitespace inside "…" are literal
-            while i <= n
-                c = s[i]
-                if instr
-                    esc ? (esc = false) : c == '\\' ? (esc = true) : c == '"' && (instr = false)
-                elseif c == '"'; instr = true
-                elseif c == '('; depth += 1
-                elseif c == ')'; depth -= 1
-                end
-                i += 1
-                (depth == 0 && !instr) && break
-            end
-        else
-            while i <= n && !isspace(s[i]); i += 1; end
-        end
-        push!(forms, (bang, String(s[start:i-1])))
-    end
-    forms
-end
 
-"Head symbol of a top-level form (`\"exec\"` for an exec-rule)."
-function mm2_head(form::AbstractString)::String
-    t = lstrip(form)
-    startswith(t, "(") || return strip(t)
-    inner = SubString(t, nextind(t, firstindex(t)))
-    j = findfirst(c -> isspace(c) || c == '(' || c == ')', inner)
-    j === nothing ? strip(inner) : strip(SubString(inner, firstindex(inner), prevind(inner, j)))
-end
 
 "True iff `form` is an `(exec …)` rule (the MM2-program lane)."
 mm2_is_exec_rule(form::AbstractString)::Bool = mm2_head(form) == "exec"
@@ -221,26 +173,6 @@ end
 
 # ── piece 2: the match→exec bridge (route a `!(match …)` into the MM2 lane) ──
 
-"Top-level argument forms of a paren expr, e.g. `(match S P T)` → [\"match\",\"S\",\"P\",\"T\"]."
-function mm2_expr_args(form::AbstractString)::Vector{String}
-    t = strip(form)
-    (startswith(t, "(") && endswith(t, ")")) || error("mm2_expr_args: not an expr: $form")
-    inner = SubString(t, nextind(t, firstindex(t)), prevind(t, lastindex(t)))
-    args = String[]; depth = 0; buf = IOBuffer()
-    instr = false; esc = false                            # string-aware: (/)/whitespace inside "…" are literal
-    for c in inner
-        if instr; print(buf, c)
-            esc ? (esc = false) : c == '\\' ? (esc = true) : c == '"' && (instr = false)
-        elseif c == '"'; instr = true; print(buf, c)
-        elseif c == '('; depth += 1; print(buf, c)
-        elseif c == ')'; depth -= 1; print(buf, c)
-        elseif isspace(c) && depth == 0
-            s = String(take!(buf)); isempty(s) || push!(args, s)
-        else; print(buf, c); end
-    end
-    s = String(take!(buf)); isempty(s) || push!(args, s)
-    args
-end
 
 """
     mm2_lower_match(query) -> String

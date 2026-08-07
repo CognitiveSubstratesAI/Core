@@ -132,6 +132,7 @@ include("compiler/Emit.jl")
 # MORK-backed engine), NOT inside the self-contained `Interpreter` submodule above.
 include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Interpreter's
                                      # _MODULE_PATH, so it must follow standard/Interpreter.jl)
+include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST precede every consumer
 include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
