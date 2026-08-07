@@ -37,11 +37,17 @@ const _RE = MeTTaCore.CompilerEmit
 const _RS = MeTTaCore.StandardMeTTa
 const _RI = MeTTaCore.Interpreter
 
-# ── THE FLOOR — measured 2026-08-06. Raise these when the compiler improves. ─────────────────────
-const FLOOR_STDLIB  = 9      # of 61  clauses
-const FLOOR_STANDARD = 7     # of 51
-const FLOOR_LIB     = 259    # of 888
-const FLOOR_TOTAL   = 275    # of 1000
+# ── THE FLOOR — raised 2026-08-07 by the STAGED CALL CONVENTION. ─────────────────────────────────
+# Every number below is MEASURED from the run that raised it, never apportioned by guess.
+#   275 -> 366 of 1000 (27.5% -> 36.6%), of which 91 clauses are staged.
+# `call_in_body` fell 180 -> 89, and the survivors are two DIFFERENT problems, measured not assumed:
+#   68  call a head that is not defined in the corpus (a MORK pure op, or genuinely missing)
+#   21  are recursive, across 13 distinct heads (Map.items, PLN.Derive, reverse, genList, ...)
+# Recursion is declined deliberately: a stage number comes from call DEPTH and a cycle has none.
+const FLOOR_STDLIB  = 10     # of 61  clauses
+const FLOOR_STANDARD = 8     # of 51
+const FLOOR_LIB     = 348    # of 888
+const FLOOR_TOTAL   = 366    # of 1000
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
@@ -110,6 +116,7 @@ end
     #
     #     CODEMAP row said  call_in_body 237 · residual 209 · control_flow 177 · mixed_arithmetic 95
     #     re-measured       residual 301 · call_in_body 180 · control_flow 146 · mixed_arithmetic 91
+    #     after staging     residual 301 · control_flow 146 · mixed_arithmetic 91 · call_in_body 89
     #
     # `residual` overtook `call_in_body` as the largest bucket, which changes the priority order. A
     # number in prose is a measurement AT A TIME and does not announce when it expires; a number in a

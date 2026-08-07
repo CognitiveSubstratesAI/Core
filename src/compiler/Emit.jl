@@ -337,6 +337,7 @@ FUNCTORS: source `,` (plain patterns — `I` means "typed source" and makes upst
 upstream binary; see the exec contract at the head of this file.
 """
 function emit_clause(clause::ANClause; priority::Integer = 0,
+                     publish::Bool = false,
                      funs::Set{Base.Symbol} = Set{Base.Symbol}())::Union{String,Nothing}
     sub = _unify_subst(clause.goals)
     sub === nothing && return nothing
@@ -399,7 +400,13 @@ function emit_clause(clause::ANClause; priority::Integer = 0,
         tree = _arith_tree(clause.out, env, float, sub)
         tree === nothing && return nothing
         cast = float ? "f64_to_string" : "i64_to_string"
-        return "(exec $priority (, $redex) (O (pure \$__r \$__r ($cast $tree))))"
+        # A CALLED head must also publish `(=val redex v)`. The `pure` sink's first argument is the
+        # TEMPLATE (grounding.mm2:36-40 writes `(NormalizedResult $name (f64 $res))` that way), so the
+        # keyed form is a second sink over the same expression rather than a second stage.
+        pure1 = "(pure \$__r \$__r ($cast $tree))"
+        publish || return "(exec $priority (, $redex) (O $pure1))"
+        pure2 = "(pure (=val $redex \$__r2) \$__r2 ($cast $tree))"
+        return "(exec $priority (, $redex) (O $pure1 $pure2))"
     end
 
     for g in clause.goals
@@ -422,7 +429,8 @@ function emit_clause(clause::ANClause; priority::Integer = 0,
     # Conjunct ORDER is the largest performance lever on this substrate (~1500x upstream). See
     # `_plan_sources` — the redex stays pinned first, the rest go through the cost-based planner.
     srcs = _plan_sources(srcs)
-    "(exec $priority (, " * join(srcs, " ") * ") (O (+ " * out * ")))"
+    tmpl = publish ? "(+ " * out * ") (+ (=val " * redex * " " * out * "))" : "(+ " * out * ")"
+    "(exec $priority (, " * join(srcs, " ") * ") (O " * tmpl * ")"[1:end] * ")"
 end
 
 """
@@ -440,6 +448,193 @@ function clause_redex(clause::ANClause)::Union{String,Nothing}
         push!(parts, _apply_subst(s, sub))
     end
     "(" * join(parts, " ") * ")"
+end
+
+
+# ── THE STAGED CALL CONVENTION ───────────────────────────────────────────────────────────────────
+#
+# `emit_clause` declines every clause whose body calls another defined function, because a reduction
+# consumes its redex and adds a BARE value: `(= (g) 42)` turns `(g)` into `42` and never creates
+# anything a caller could match. The fix is a KEYED RESULT — reduction additionally publishes
+# `(=val (g) 42)`, which IS matchable — plus staging so the callee publishes before the caller looks.
+#
+# Four stages, the shape of upstream `MORK/kernel/resources/grounding.mm2` (exec 0/1/2 add-only,
+# exec 3 deletes only intermediates):
+#
+#   DEMAND   (exec d (, (f)) (O (+ (g))))                              -- (f) present ⇒ want (g)
+#   PRODUCE  (exec p (, (g)) (O (+ 42) (+ (=val (g) 42))))             -- bare answer + keyed result
+#   CONSUME  (exec q (, (f) (=val (g) $t)) (O (+ $t) (+ (=val (f) $t))))
+#   CLEANUP  (exec c (, (=val $__k $__v)) (O (- (=val $__k $__v))))    -- intermediates only
+#
+# PRODUCE and CONSUME are the SAME rule: a non-leaf consumes its callees' keyed results and produces
+# its own. Only the stage number differs.
+#
+# WHY `(=val k v)` AND NOT RESULT-AS-LAST-ARGUMENT. `GCall` renders `(g $t)`, and `SPECMAP:84` flags
+# these as two competing conventions to be chosen between deliberately. Result-as-last-argument
+# cannot work here for the reason above, and it also COLLIDES with data: `(parent $x $y)` is a fact,
+# and appending an output turns a 2-ary fact into a 3-ary pattern that matches nothing (this exact
+# bug shipped once). Keying on the whole redex has neither problem, and `(=val …)` doubles as the
+# fired-marker the exec calculus otherwise lacks.
+
+"""
+    _call_term(g, sub) -> String | nothing
+
+The CALLEE TERM of a call — `(g a\$_1…a\$_n)`, arity n, NO appended output. This is what DEMAND adds
+and what the `(=val …)` key is built from, so it must be byte-identical to the callee's own redex as
+`clause_redex` renders it — the two are matched against each other through the trie.
+"""
+function _call_term(g::GCall, sub::Dict{Base.Symbol,String})::Union{String,Nothing}
+    parts = String[String(g.head)]
+    for a in g.args
+        s = render(a); startswith(s, "<unrenderable") && return nothing
+        push!(parts, _apply_subst(s, sub))
+    end
+    "(" * join(parts, " ") * ")"
+end
+
+"""
+    _call_graph(clauses, funs) -> Dict{Symbol,Set{Symbol}}
+
+head ⇒ the defined heads its clauses call. Calls to MORK pure ops are excluded: nothing publishes a
+`(=val …)` for them, so they can never be staged.
+"""
+function _call_graph(clauses::Vector{ANClause},
+                     funs::Set{Base.Symbol})::Dict{Base.Symbol,Set{Base.Symbol}}
+    g = Dict{Base.Symbol,Set{Base.Symbol}}()
+    for cl in clauses
+        s = get!(() -> Set{Base.Symbol}(), g, cl.name)
+        for goal in cl.goals
+            goal isa GCall && goal.head in funs && push!(s, goal.head)
+        end
+    end
+    g
+end
+
+"""
+    _cyclic_heads(graph) -> Set{Symbol}
+
+Heads that lie on, or reach, a call cycle. Staging assigns each head a stage from its call DEPTH, and
+a cycle has no finite depth — so recursive heads are excluded and keep the honest decline. Direct
+self-recursion counts: a head calling itself is a 1-cycle.
+
+Declining is the correct behaviour rather than a gap to paper over. A recursive call needs a fixpoint
+at ONE stage (or a trampoline), not a deeper stage; emitting it with a made-up depth would produce a
+rule that fires once and then silently stops, which is worse than not emitting it.
+"""
+function _cyclic_heads(graph::Dict{Base.Symbol,Set{Base.Symbol}})::Set{Base.Symbol}
+    color = Dict{Base.Symbol,Int}()             # 0 unvisited · 1 on the current path · 2 finished
+    bad = Set{Base.Symbol}()
+    function dfs(n::Base.Symbol)::Bool          # true ⇒ n lies on or reaches a cycle
+        c = get(color, n, 0)
+        c == 1 && (push!(bad, n); return true)  # back edge
+        c == 2 && return n in bad
+        color[n] = 1
+        hit = false
+        for k in get(graph, n, Base.Symbol[])
+            haskey(graph, k) || continue
+            dfs(k) && (hit = true)
+        end
+        color[n] = 2
+        hit && push!(bad, n)
+        hit
+    end
+    for n in keys(graph); dfs(n); end
+    bad
+end
+
+"""
+    _call_levels(graph, cyclic) -> Dict{Symbol,Int}
+
+Longest call depth: 0 for a head that calls nothing, else `1 + max(level(callee))`. Cyclic heads are
+skipped. This is `KBSaturation._stratify`'s job — dependency graph ⇒ strata under a strictly-greater
+constraint — reused in shape, with producer/consumer edges in place of negation edges.
+"""
+function _call_levels(graph::Dict{Base.Symbol,Set{Base.Symbol}},
+                      cyclic::Set{Base.Symbol})::Dict{Base.Symbol,Int}
+    lvl = Dict{Base.Symbol,Int}()
+    function level(n::Base.Symbol)::Int
+        haskey(lvl, n) && return lvl[n]
+        lvl[n] = 0
+        best = 0
+        for k in get(graph, n, Base.Symbol[])
+            (haskey(graph, k) && !(k in cyclic)) || continue
+            best = max(best, level(k) + 1)
+        end
+        lvl[n] = best
+    end
+    for n in keys(graph)
+        n in cyclic || level(n)
+    end
+    lvl
+end
+
+"""
+    emit_clause_staged(clause, level, lmax; priority, funs) -> Vector{String} | nothing
+
+A clause whose body calls defined functions, as DEMAND + PRODUCE/CONSUME rules. `nothing` when it
+falls outside the staged fragment — an arithmetic body (the `pure` sink path in `emit_clause` already
+handles it), a call to an undefined head, or anything unrenderable.
+
+STAGE NUMBERING, and why it degenerates correctly. With `L = level(head)` and `M = lmax`:
+
+    DEMAND          priority + (M − L)     callers demand BEFORE callees, so depth descends
+    PRODUCE/CONSUME priority + M + L       callees publish BEFORE callers read, so depth ascends
+    CLEANUP         priority + 2M + 1      (emitted by `emit_program`)
+
+When no clause has a call, `M = 0` and every head has `L = 0`, so PRODUCE lands on `priority` and
+CLEANUP on `priority + 1` — exactly the two-stage scheme this file already used. The staged numbering
+is a generalisation of it, not a replacement, which is why call-free clauses keep byte-identical
+output when nothing in the program is staged.
+"""
+function emit_clause_staged(clause::ANClause, level::Integer, lmax::Integer;
+                            priority::Integer = 0,
+                            funs::Set{Base.Symbol} = Set{Base.Symbol}())::Union{Vector{String},Nothing}
+    sub = _unify_subst(clause.goals)
+    sub === nothing && return nothing
+
+    env = _arith_env(clause.goals)
+    env === nothing && return nothing
+    isempty(env) || return nothing               # arithmetic body ⇒ `emit_clause`'s pure sink owns it
+
+    calls = GCall[]
+    for g in clause.goals
+        g isa GCall && push!(calls, g)
+    end
+    isempty(calls) && return nothing             # no call ⇒ the plain path already emits it
+    for g in calls
+        g.head in funs || return nothing         # a pure op publishes no `(=val …)`
+    end
+
+    redex_parts = String[String(clause.name)]
+    for a in clause.head_args
+        s = render(a); startswith(s, "<unrenderable") && return nothing
+        push!(redex_parts, _apply_subst(s, sub))
+    end
+    redex = "(" * join(redex_parts, " ") * ")"
+
+    srcs = String[redex]; demands = String[]
+    for g in clause.goals
+        g isa GUnify && continue
+        if g isa GCall
+            t = _call_term(g, sub); t === nothing && return nothing
+            o = _apply_subst(render(g.out), sub)
+            startswith(o, "<unrenderable") && return nothing
+            push!(demands, "(+ " * t * ")")
+            push!(srcs, "(=val " * t * " " * o * ")")
+        else
+            s = render_goal(g); s === nothing && return nothing
+            push!(srcs, _apply_subst(s, sub))
+        end
+    end
+    out = _apply_subst(render(clause.out), sub)
+    startswith(out, "<unrenderable") && return nothing
+
+    srcs = _plan_sources(srcs)
+    String[
+        "(exec $(priority + lmax - level) (, $redex) (O " * join(demands, " ") * "))",
+        "(exec $(priority + lmax + level) (, " * join(srcs, " ") *
+            ") (O (+ " * out * ") (+ (=val " * redex * " " * out * "))))",
+    ]
 end
 
 """
@@ -494,21 +689,54 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
     # artifact of how the measurement was driven, not a property of the compiler. Callers compiling
     # a multi-file program must pass every head in that program.
     funs = union(Set{Base.Symbol}(cl.name for cl in clauses), extra_funs)
+
+    # Call depth drives stage assignment. Cyclic heads get no depth and keep the plain path's decline.
+    graph  = _call_graph(clauses, funs)
+    cyclic = _cyclic_heads(graph)
+    levels = _call_levels(graph, cyclic)
+    lmax   = isempty(levels) ? 0 : maximum(values(levels))
+    # Heads someone actually calls. Only these publish `(=val …)`; publishing for every head would
+    # double the write volume of a 1000-clause program to produce keys nothing ever reads.
+    called = Set{Base.Symbol}()
+    for (_, cs) in graph, c in cs
+        push!(called, c)
+    end
+
     rules = String[]; declined = ANClause[]; redexes = String[]; seen = Set{String}()
+    nemit = 0; nstaged = 0
     for cl in clauses
-        r = emit_clause(cl; priority = priority, funs = funs)
-        if r === nothing
+        lv = get(levels, cl.name, 0)
+        # A call-free clause emits at its own level; `lmax + lv` is `priority` when nothing is staged.
+        one = emit_clause(cl; priority = priority + lmax + lv,
+                          publish = cl.name in called, funs = funs)
+        got = if one !== nothing
+            String[one]
+        elseif cl.name in cyclic
+            nothing                                  # recursion: no finite stage exists
+        else
+            emit_clause_staged(cl, lv, lmax; priority = priority, funs = funs)
+        end
+        if got === nothing
             push!(declined, cl); continue
         end
-        push!(rules, r)
+        one === nothing && (nstaged += 1)
+        nemit += 1                                   # EMITTED counts CLAUSES; a staged clause is 2 rules
+        append!(rules, got)
         rx = clause_redex(cl)
         if rx !== nothing && !(rx in seen)
             push!(seen, rx); push!(redexes, rx)
         end
     end
-    # Cleanup stage — one per distinct redex, AFTER every producer has fired.
-    deletions = String["(exec $(priority + 1) (, $rx) (O (- $rx)))" for rx in redexes]
-    (; rules = vcat(rules, deletions), emitted = length(rules),
+
+    # Cleanup — AFTER every producer has fired, at one stage past the deepest PRODUCE/CONSUME.
+    cstage = priority + 2 * lmax + 1
+    deletions = String["(exec $(cstage) (, $rx) (O (- $rx)))" for rx in redexes]
+    if nstaged > 0
+        # Intermediates only, never source atoms — the `grounding.mm2` discipline. One generic rule
+        # rather than one per key: `(=val …)` is our own vocabulary, so nothing else can match it.
+        push!(deletions, "(exec $(cstage) (, (=val \$__k \$__v)) (O (- (=val \$__k \$__v))))")
+    end
+    (; rules = vcat(rules, deletions), emitted = nemit, staged = nstaged,
        declined, deletions = length(deletions))
 end
 
@@ -561,6 +789,6 @@ function decline_histogram(clauses::Vector{ANClause})::Dict{Base.Symbol,Int}
     h
 end
 
-export render, render_goal, emit_clause, emit_program, decline_reason, decline_histogram
+export render, render_goal, emit_clause, emit_clause_staged, emit_program, decline_reason, decline_histogram
 
 end # module CompilerEmit
