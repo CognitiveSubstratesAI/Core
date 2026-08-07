@@ -37,17 +37,33 @@ const _RE = MeTTaCore.CompilerEmit
 const _RS = MeTTaCore.StandardMeTTa
 const _RI = MeTTaCore.Interpreter
 
-# ── THE FLOOR — raised 2026-08-07 by the STAGED CALL CONVENTION. ─────────────────────────────────
-# Every number below is MEASURED from the run that raised it, never apportioned by guess.
-#   275 -> 366 of 1000 (27.5% -> 36.6%), of which 91 clauses are staged.
-# `call_in_body` fell 180 -> 89, and the survivors are two DIFFERENT problems, measured not assumed:
-#   68  call a head that is not defined in the corpus (a MORK pure op, or genuinely missing)
-#   21  are recursive, across 13 distinct heads (Map.items, PLN.Derive, reverse, genList, ...)
-# Recursion is declined deliberately: a stage number comes from call DEPTH and a cycle has none.
+# ── THE FLOOR — 275 -> 366 (staging) -> 351 (control-flow expansion). ────────────────────────────
+# Every number is MEASURED from the run that set it, never apportioned by guess.
+#
+# ⚠️ THIS FLOOR WENT DOWN, DELIBERATELY, AND THE RATCHET IS WHAT CAUGHT IT. Control-flow expansion
+# turns `if`/`case`/`superpose` into one clause per execution path, and it must run BEFORE the call
+# graph is built — otherwise a call inside a branch arm is invisible to `_call_graph`, which walks
+# only the top-level goal list. Making those calls visible is the point, and it had a consequence:
+#
+#     call-graph edges   717 -> 960   (+243)
+#     cyclic heads        32 -> 219   (+187)
+#
+# 184 heads are newly RECOGNISED as recursive — `List.append`, `List.foldl`, `List.length`,
+# `List.member`, `Map.find` — because their recursive call sits inside a `case` arm. Before, the graph
+# could not see it, so `List.length` looked acyclic, was assigned a FINITE stage, and emitted rules
+# that fire once and stop. Those 15 clauses were never working; they were counted.
+#
+# Coverage went DOWN because correctness went UP — the same trade as 51.2% -> 27.5%. A silent lowering
+# would not be acceptable; this one is measured, attributed, and stated.
+#
+# WHAT THIS MEASURES FOR THE NEXT FRAGMENT: recursion is now the dominant blocker (219 cyclic heads),
+# not `:residual`. It has a verified upstream idiom — exec-chaining with a Peano counter
+# (`MM2_Structuring_Code/structuring_code_04_Control.md:157-202`, all primitives confirmed working on
+# our kernel 2026-08-07) — which needs no finite stage at all.
 const FLOOR_STDLIB  = 10     # of 61  clauses
 const FLOOR_STANDARD = 8     # of 51
-const FLOOR_LIB     = 348    # of 888
-const FLOOR_TOTAL   = 366    # of 1000
+const FLOOR_LIB     = 333    # of 888
+const FLOOR_TOTAL   = 351    # of 1000
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
@@ -117,6 +133,9 @@ end
     #     CODEMAP row said  call_in_body 237 · residual 209 · control_flow 177 · mixed_arithmetic 95
     #     re-measured       residual 301 · call_in_body 180 · control_flow 146 · mixed_arithmetic 91
     #     after staging     residual 301 · control_flow 146 · mixed_arithmetic 91 · call_in_body 89
+    #     after expansion   residual 300 · control_flow 144 · call_in_body 107 · mixed_arithmetic 91
+    # `call_in_body` ROSE 89 -> 107 because expansion exposes calls that were hidden inside branch
+    # arms; `decline_reason` is first-match, so those clauses simply moved bucket.
     #
     # `residual` overtook `call_in_body` as the largest bucket, which changes the priority order. A
     # number in prose is a measurement AT A TIME and does not announce when it expires; a number in a

@@ -283,7 +283,22 @@ function _branch_chain(c::ANCtx, brs::Vector{IRMatchBranch}, i::Int,
     gp, pv = translate_expr(c, b.pattern)
     gt, tv = translate_expr(c, b.body)
     push!(gt, GUnify(out, tv))                  # arm's value IS the form's value
-    cond = Goal[gp...]
+    # THE ARM TEST — the scrutinee must unify with THIS arm's pattern.
+    #
+    # ⚠️ This line was missing and the omission was silent. `scrutval` was threaded through the whole
+    # recursion and then DISCARDED: the `GBranch` recorded `condval = pv` (the arm's pattern) with no
+    # reference to the scrutinee anywhere in the goal. MEASURED 2026-08-07:
+    #
+    #   (= (col $c) (case $c ((red warm) (blue cool))))
+    #     ⟹ GBranch(condval = red, cond = 0 goals)      -- `$c` is ABSENT
+    #
+    # A branch whose test has one operand cannot be lowered at all, which is why `GBranch` had no
+    # `render_goal` and every clause carrying one was declined as `:control_flow`. Recording the test
+    # as a GUnify — rather than as a new struct field — is what PeTTa does (`Cv == true`), and it
+    # makes the arm directly emittable: `_unify_subst` discharges it into the substitution, so the
+    # arm's rule is the redex SPECIALIZED to that pattern, which is the upstream Selection idiom
+    # (`MM2_Structuring_Code/structuring_code_04_Control.md:106-119`, one exec per arm).
+    cond = Goal[GUnify(scrutval, pv), gp...]
     if i == length(brs)
         return GBranch(cond, pv, gt, Goal[], out)
     end
@@ -452,7 +467,121 @@ residuals(cl::ANClause)::Int = count(g -> g isa GResidual, all_goals(cl.goals))
 "Is this clause fully A-normalized (no residual goals)?"
 is_flat(cl::ANClause)::Bool = residuals(cl) == 0
 
-export Goal, GUnify, GCall, GBranch, GDisj, GFindall, GResidual,
+
+# ── CONTROL-FLOW EXPANSION ───────────────────────────────────────────────────────────────────────
+#
+# `GBranch`/`GDisj` have no `render_goal`, so every clause carrying one was declined `:control_flow`
+# (146 of 725 at 366/1000 coverage). Rather than teach the emitter a branching template, expand each
+# clause into one control-free clause PER EXECUTION PATH and let the existing — now staged — emitter
+# handle each unchanged. That is upstream's Selection idiom verbatim: one exec per arm
+# (`MM2_Structuring_Code/structuring_code_04_Control.md:106-119`, VERIFIED on our kernel 2026-08-07).
+#
+# WHY ONE-EXEC-PER-ARM IS SOUND HERE, AND WHEN IT IS NOT. Running every arm is equivalent to
+# first-match ONLY when the arms are mutually exclusive. MM2 has no negation — `(I (not X))` panics
+# upstream at `sources.rs:233` — so an `else` cannot be expressed as "the condition failed". We
+# therefore require every arm pattern to be a GROUND CONSTANT and decline otherwise. That covers `if`
+# (arms are exactly `True`/`False`) and a constant `case` (`red`/`blue`), and it declines a
+# variable-headed arm, which matches everything and would make the arms overlap.
+#
+# PARTIAL EXPANSION IS NEVER EMITTED. If any path of a clause fails to emit, the WHOLE clause is
+# declined. Emitting three of four arms silently drops an answer, and this compiler's standing rule is
+# that a rule which cannot fire is worse than an absent one.
+
+"A ground constant — the only arm pattern for which running all arms equals first-match."
+_ground_arm(a::IRAtom)::Bool = a isa IRSymbol || a isa IRGrounded
+
+"""
+    expand_control(clause; max_paths=32) -> Vector{ANClause} | nothing
+
+One control-free clause per execution path, or `nothing` if the clause falls outside the expandable
+fragment (a non-ground arm pattern, a `GFindall`, or a path count over `max_paths`).
+
+`max_paths` is a real bound, not a formality: nested branches multiply, and three 2-armed branches in
+one body is already 8 paths. Declining past the cap keeps a pathological clause from generating
+hundreds of exec rules that would each have to fire.
+"""
+function expand_control(clause::ANClause; max_paths::Int = 32)::Union{Vector{ANClause},Nothing}
+    paths = _expand_goals(clause.goals, max_paths)
+    paths === nothing && return nothing
+    ANClause[ANClause(clause.name, clause.head_args, gs, clause.out) for gs in paths]
+end
+
+"Cartesian product over the goal list — each goal contributes its own alternatives."
+function _expand_goals(gs::Vector{Goal}, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
+    acc = Vector{Goal}[Goal[]]
+    for g in gs
+        alts = _expand_goal(g, cap)
+        alts === nothing && return nothing
+        nxt = Vector{Goal}[]
+        for a in acc, b in alts
+            length(nxt) >= cap && return nothing
+            push!(nxt, Goal[a..., b...])
+        end
+        acc = nxt
+    end
+    acc
+end
+
+"""
+Static value of the arm test when both sides are ground: `:yes`, `:no`, or `:dynamic`.
+
+`(if True yes no)` lowers to an arm test `GUnify(True, True)` — GROUND ON BOTH SIDES. `_unify_subst`
+discharges only VARIABLE-headed unifications, so such a goal declined the whole clause even though its
+value is known at compile time. Deciding it here removes the dead arm entirely, which is both the
+correct lowering and the one place this compiler does any real specialisation.
+"""
+function _static_test(lhs::IRAtom, rhs::IRAtom)::Base.Symbol
+    (_ground_arm(lhs) && _ground_arm(rhs)) || return :dynamic
+    if lhs isa IRSymbol && rhs isa IRSymbol
+        return lhs.name === rhs.name ? :yes : :no
+    elseif lhs isa IRGrounded && rhs isa IRGrounded
+        return lhs.value == rhs.value ? :yes : :no
+    end
+    :no                                             # a symbol and a grounded literal never unify
+end
+
+function _expand_goal(g::GBranch, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
+    # The arm test is the GUnify `_branch_chain` puts first in `cond`.
+    test = isempty(g.cond) ? nothing : g.cond[1]
+    static = test isa GUnify ? _static_test(test.lhs, test.rhs) : :dynamic
+
+    # A DYNAMIC test needs a ground arm pattern, or the arms overlap and run-all ≠ first-match.
+    static === :dynamic && !_ground_arm(g.condval) && return nothing
+
+    out = Vector{Goal}[]
+    if static !== :no                               # :no ⇒ this arm is unreachable, drop it entirely
+        # A statically-true test carries no information; emitting it would decline on ground-vs-ground.
+        rest = static === :yes ? Goal[g.cond[2:end]..., g.then...] : Goal[g.cond..., g.then...]
+        thens = _expand_goals(rest, cap)
+        thens === nothing && return nothing
+        append!(out, thens)
+    end
+    # A statically-TRUE arm makes every later arm unreachable — that is what `else` means.
+    static === :yes && return out
+    if !isempty(g.els)                               # the else arm is the NEXT arm's GBranch
+        elses = _expand_goals(g.els, cap)
+        elses === nothing && return nothing
+        append!(out, elses)
+    end
+    length(out) > cap ? nothing : out
+end
+
+function _expand_goal(g::GDisj, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
+    out = Vector{Goal}[]
+    for b in g.branches
+        e = _expand_goals(b, cap)
+        e === nothing && return nothing
+        append!(out, e)
+    end
+    length(out) > cap ? nothing : out
+end
+
+# `collapse` gathers EVERY solution into one list value — saturation-then-collect, not a path split.
+# Expansion cannot express it, so it stays declined and stays counted.
+_expand_goal(::GFindall, ::Int)::Union{Vector{Vector{Goal}},Nothing} = nothing
+_expand_goal(g::Goal, ::Int)::Union{Vector{Vector{Goal}},Nothing} = Vector{Goal}[Goal[g]]
+
+export Goal, GUnify, GCall, GBranch, GDisj, GFindall, GResidual, expand_control,
        ANCtx, fresh_var, translate_expr, constrain_args, translate_clause, translate_program,
        ANClause, all_goals, residuals, is_flat
 

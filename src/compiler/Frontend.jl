@@ -230,7 +230,13 @@ function lower_special(c::Ctx, kind::SpecialKind, surface::Base.Symbol,
         m = lower_case(c, kind, args)
         m === nothing || return m
     elseif kind === SPECIAL_SUPERPOSE
-        return IRSuperpose(IRAtom[lower(c, x) for x in args], fresh(c), NO_SOURCE)
+        # `(superpose (a b c))` takes ONE tuple argument whose CHILDREN are the alternatives — it is
+        # not variadic. Taking `args` directly gave a single alternative holding the whole tuple, so
+        # the disjunction had one branch and `superpose` reduced to the tuple itself.
+        # ORACLE, 2026-08-07: `!(superpose (a b c))` → `[c, b, a]` — THREE answers, not one.
+        alts = (length(args) == 1 && args[1] isa Expression) ?
+               (args[1]::Expression).children : args
+        return IRSuperpose(IRAtom[lower(c, x) for x in alts], fresh(c), NO_SOURCE)
     end
     IRSpecial(kind, surface, IRAtom[lower(c, x) for x in args], fresh(c), NO_SOURCE)
 end

@@ -690,8 +690,19 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
     # a multi-file program must pass every head in that program.
     funs = union(Set{Base.Symbol}(cl.name for cl in clauses), extra_funs)
 
+    # CONTROL-FLOW EXPANSION RUNS FIRST, and the order is load-bearing. `_call_graph` walks only the
+    # TOP-LEVEL goal list, so a `GCall` nested inside a branch arm is invisible to it — build the graph
+    # before expanding and those calls get no stage and never compile. Expanding first is what makes
+    # `if`/`case`/`superpose` bodies stageable at all.
+    paths = Vector{Vector{ANClause}}()          # one entry per SOURCE clause, ≥1 path each
+    for cl in clauses
+        e = expand_control(cl)
+        push!(paths, e === nothing ? ANClause[cl] : e)   # unexpandable ⇒ carried, declines as before
+    end
+    flat = ANClause[p for ps in paths for p in ps]
+
     # Call depth drives stage assignment. Cyclic heads get no depth and keep the plain path's decline.
-    graph  = _call_graph(clauses, funs)
+    graph  = _call_graph(flat, funs)
     cyclic = _cyclic_heads(graph)
     levels = _call_levels(graph, cyclic)
     lmax   = isempty(levels) ? 0 : maximum(values(levels))
@@ -703,28 +714,39 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
     end
 
     rules = String[]; declined = ANClause[]; redexes = String[]; seen = Set{String}()
-    nemit = 0; nstaged = 0
-    for cl in clauses
-        lv = get(levels, cl.name, 0)
-        # A call-free clause emits at its own level; `lmax + lv` is `priority` when nothing is staged.
-        one = emit_clause(cl; priority = priority + lmax + lv,
-                          publish = cl.name in called, funs = funs)
-        got = if one !== nothing
-            String[one]
-        elseif cl.name in cyclic
-            nothing                                  # recursion: no finite stage exists
-        else
-            emit_clause_staged(cl, lv, lmax; priority = priority, funs = funs)
+    nemit = 0; nstaged = 0; nexpanded = 0
+    for (i, cl) in enumerate(clauses)
+        ps = paths[i]
+        got = String[]; rxs = String[]; ok = true; staged_here = false
+        for pc in ps
+            lv = get(levels, pc.name, 0)
+            # A call-free clause emits at its own level; `lmax + lv` is `priority` when nothing is staged.
+            one = emit_clause(pc; priority = priority + lmax + lv,
+                              publish = pc.name in called, funs = funs)
+            g = if one !== nothing
+                String[one]
+            elseif pc.name in cyclic
+                nothing                              # recursion: no finite stage exists
+            else
+                emit_clause_staged(pc, lv, lmax; priority = priority, funs = funs)
+            end
+            # PARTIAL EXPANSION IS NEVER EMITTED. Three arms of four is a silently dropped answer, and
+            # a rule that cannot fire is worse than an absent one — so one failing path fails the clause.
+            g === nothing && (ok = false; break)
+            one === nothing && (staged_here = true)
+            append!(got, g)
+            rx = clause_redex(pc)
+            rx === nothing || push!(rxs, rx)
         end
-        if got === nothing
+        if !ok
             push!(declined, cl); continue
         end
-        one === nothing && (nstaged += 1)
-        nemit += 1                                   # EMITTED counts CLAUSES; a staged clause is 2 rules
+        staged_here && (nstaged += 1)
+        length(ps) > 1 && (nexpanded += 1)
+        nemit += 1                                   # EMITTED counts SOURCE CLAUSES, not rules
         append!(rules, got)
-        rx = clause_redex(cl)
-        if rx !== nothing && !(rx in seen)
-            push!(seen, rx); push!(redexes, rx)
+        for rx in rxs                                # each arm specialises the redex differently
+            rx in seen || (push!(seen, rx); push!(redexes, rx))
         end
     end
 
@@ -736,7 +758,7 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
         # rather than one per key: `(=val …)` is our own vocabulary, so nothing else can match it.
         push!(deletions, "(exec $(cstage) (, (=val \$__k \$__v)) (O (- (=val \$__k \$__v))))")
     end
-    (; rules = vcat(rules, deletions), emitted = nemit, staged = nstaged,
+    (; rules = vcat(rules, deletions), emitted = nemit, staged = nstaged, expanded = nexpanded,
        declined, deletions = length(deletions))
 end
 
