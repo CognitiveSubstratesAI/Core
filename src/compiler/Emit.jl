@@ -595,6 +595,25 @@ function _call_levels(graph::Dict{Base.Symbol,Set{Base.Symbol}},
 end
 
 """
+Does `node` mention any variable in `names`? Used to reject the one staged shape that cannot work:
+arithmetic FEEDING a call.
+
+    (= (f \$x) (g (+ \$x 1)))        DEMAND would have to add `(g \$__t1)` before `\$__t1` is computed
+
+DEMAND fires on the redex alone, so a callee term containing a not-yet-computed value would be added
+with an unbound variable — matching everything, or nothing. Arithmetic AFTER a call is fine, because
+the CONSUME rule already has the result bound by its `(=val …)` source. Declining the feeding shape is
+honest; handling it needs a compute stage ahead of DEMAND.
+"""
+function _mentions_var(node::IRAtom, names::Set{Base.Symbol})::Bool
+    node isa IRVariable && return (node::IRVariable).name in names
+    for c in children(node)
+        _mentions_var(c, names) && return true
+    end
+    false
+end
+
+"""
     emit_clause_staged(clause, level, lmax; priority, funs) -> Vector{String} | nothing
 
 A clause whose body calls defined functions, as DEMAND + PRODUCE/CONSUME rules. `nothing` when it
@@ -620,15 +639,42 @@ function emit_clause_staged(clause::ANClause, level::Integer, lmax::Integer;
 
     env = _arith_env(clause.goals)
     env === nothing && return nothing
-    isempty(env) || return nothing               # arithmetic body ⇒ `emit_clause`'s pure sink owns it
 
+    # ── ARITHMETIC AND CALLS MAY NOW SHARE A BODY ────────────────────────────────────────────────
+    # Two guards used to forbid it independently: `n_arith == n_goals` in `emit_clause` and
+    # `g.head in funs` here, whose comment read "a pure op publishes no `(=val …)`". True — but a pure
+    # op does not NEED one. It is COMPUTED in the `pure` sink, exactly as the call-free arithmetic
+    # path already does; only a call to a DEFINED function needs a keyed result. The boundary was
+    # drawn before staging existed and nothing re-examined it after.
+    #
+    # MEASURED 2026-08-07 over the corpus: 65 declined clauses have no blocker but this, 121 once
+    # comparisons are included. The declines were reported as `mixed_arithmetic`, and a probe of mine
+    # mis-attributed them to "undefined head" by checking `MORK.PURE_OPS` (whose keys are `sum_i64`,
+    # not `+`) instead of `_ARITH_I64`.
     calls = GCall[]
     for g in clause.goals
         g isa GCall && push!(calls, g)
     end
     isempty(calls) && return nothing             # no call ⇒ the plain path already emits it
+
+    staged = GCall[]
     for g in calls
-        g.head in funs || return nothing         # a pure op publishes no `(=val …)`
+        if g.head in funs
+            push!(staged, g)                     # needs DEMAND + a `(=val …)` source
+        elseif is_arith(g.head)
+            continue                             # computed in the `pure` sink below
+        else
+            return nothing                       # genuinely unsupported head
+        end
+    end
+    isempty(staged) && return nothing            # all-arithmetic ⇒ `emit_clause`'s own path owns it
+
+    # Arithmetic FEEDING a call cannot be staged — see `_mentions_var`.
+    if !isempty(env)
+        avars = Set{Base.Symbol}(keys(env))
+        for g in staged, a in g.args
+            _mentions_var(a, avars) && return nothing
+        end
     end
 
     redex_parts = String[String(clause.name)]
@@ -642,24 +688,40 @@ function emit_clause_staged(clause::ANClause, level::Integer, lmax::Integer;
     for g in clause.goals
         g isa GUnify && continue
         if g isa GCall
-            t = _call_term(g, sub); t === nothing && return nothing
+            is_arith(g.head) && continue         # COMPUTED, not matched — no source, no demand
+            ct = _call_term(g, sub); ct === nothing && return nothing
             o = _apply_subst(render(g.out), sub)
             startswith(o, "<unrenderable") && return nothing
-            push!(demands, "(+ " * t * ")")
-            push!(srcs, "(=val " * t * " " * o * ")")
+            push!(demands, "(+ " * ct * ")")
+            push!(srcs, "(=val " * ct * " " * o * ")")
         else
             s = render_goal(g); s === nothing && return nothing
             push!(srcs, _apply_subst(s, sub))
         end
     end
-    out = _apply_subst(render(clause.out), sub)
-    startswith(out, "<unrenderable") && return nothing
+
+    # The reduct: matched directly, or COMPUTED when the body ends in arithmetic. `_arith_tree` renders
+    # a variable it does not own as "a real input variable", which is precisely what a `(=val …)`
+    # source binds — so a call result flows into the arithmetic with no extra machinery.
+    local tmpl::String
+    if isempty(env)
+        out = _apply_subst(render(clause.out), sub)
+        startswith(out, "<unrenderable") && return nothing
+        tmpl = "(+ " * out * ") (+ (=val " * redex * " " * out * "))"
+    else
+        float = _needs_f64(clause.out, env)
+        float && _has_mod(clause.out, env) && return nothing   # `%` is int-only; un-typeable
+        tree = _arith_tree(clause.out, env, float, sub)
+        tree === nothing && return nothing
+        cast = float ? "f64_to_string" : "i64_to_string"
+        tmpl = "(pure \$__r \$__r ($cast $tree)) " *
+               "(pure (=val $redex \$__r2) \$__r2 ($cast $tree))"
+    end
 
     srcs = _plan_sources(srcs)
     String[
         "(exec $(priority + lmax - level) (, $redex) (O " * join(demands, " ") * "))",
-        "(exec $(priority + lmax + level) (, " * join(srcs, " ") *
-            ") (O (+ " * out * ") (+ (=val " * redex * " " * out * "))))",
+        "(exec $(priority + lmax + level) (, " * join(srcs, " ") * ") (O " * tmpl * "))",
     ]
 end
 

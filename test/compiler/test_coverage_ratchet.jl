@@ -60,10 +60,16 @@ const _RI = MeTTaCore.Interpreter
 # not `:residual`. It has a verified upstream idiom — exec-chaining with a Peano counter
 # (`MM2_Structuring_Code/structuring_code_04_Control.md:157-202`, all primitives confirmed working on
 # our kernel 2026-08-07) — which needs no finite stage at all.
+# RAISED 2026-08-07 by allowing ARITHMETIC AND CALLS in one body: 351 -> 374 (+23, all in `lib`).
+# ⚠️ PREDICTED 65, GOT 23. The sizing probe inspected goal SHAPES without running the real emitters,
+# so it counted clauses that then hit other guards. Recorded because the estimate drove the choice of
+# this fragment over recursion, and a 2.8x over-estimate is worth distrusting next time.
+# Comparison ops are NOT yet wired — `is_arith` covers only `+ - * % /`, so `==` (385 call sites),
+# `<`/`>`/`<=`/`>=` remain declined even though MORK has `eq_i64`/`lt_i64`/`gt_i64`/`ne_i64`.
 const FLOOR_STDLIB  = 10     # of 61  clauses
 const FLOOR_STANDARD = 8     # of 51
-const FLOOR_LIB     = 333    # of 888
-const FLOOR_TOTAL   = 351    # of 1000
+const FLOOR_LIB     = 356    # of 888
+const FLOOR_TOTAL   = 374    # of 1000
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
