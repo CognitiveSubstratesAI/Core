@@ -173,9 +173,23 @@ function lower(c::Ctx, a::Expression)::IRAtom
     h = a.children[1]
     rest = @view a.children[2:end]
     # A SYMBOL head may be a special form; a compound head never is, and stays structural.
-    if h isa Sym
-        kind = get(SPECIAL_FORMS, h.name, nothing)
-        kind === nothing || return lower_special(c, kind, h.name, rest)
+    #
+    # ⚠️ A GROUNDED head must be checked TOO. `parse_from` substitutes bound tokens at parse time
+    # (Interpreter.jl:2525), so a registered name — `case`, `if`, `match` … — arrives as
+    # `Grounded{Operation}`/`Grounded{SpaceOp}`, NEVER as `Sym`. Checking only `Sym` meant those
+    # forms silently became ordinary applications and no `IRMatch` was ever built. MEASURED
+    # 2026-08-06: `specialize_matches` reported `clauses split: 0` on
+    # `(= (colour \$c) (case \$c ((red warm) (blue cool))))` for exactly this reason.
+    #
+    # This is the SECOND site with this bug — `definition_name` had it and was fixed; this one was
+    # not swept at the same time. Per the standing rule, a recurring defect gets the RULE applied to
+    # every candidate site, not a fix at the instance that happened to be noticed.
+    hname = h isa Sym                              ? (h::Sym).name :
+            h isa Grounded{Interpreter.Operation}  ? Base.Symbol(h.value.name) :
+            h isa Grounded{Interpreter.SpaceOp}    ? Base.Symbol(h.value.name) : nothing
+    if hname !== nothing
+        kind = get(SPECIAL_FORMS, hname, nothing)
+        kind === nothing || return lower_special(c, kind, hname, rest)
     end
     IRExpression(lower(c, h), IRAtom[lower(c, x) for x in rest], fresh(c), NO_SOURCE)
 end

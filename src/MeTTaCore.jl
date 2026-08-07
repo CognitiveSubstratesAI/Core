@@ -105,6 +105,13 @@ include("standard/Interpreter.jl")
 # a second one — SLG/WFS was already adopted there and is reused, not rebuilt.
 include("compiler/Frontend.jl")
 
+# Compiler stage 2b: IR→IR passes. `specialize_matches` splits a clause whose body is a `case`/`if`
+# on a HEAD VARIABLE into one clause per arm, substituting the arm pattern into the redex. That shape
+# is the only one that FIRES — verified against the upstream MORK binary — and it is upstream's own
+# (Control_04_Select_b_c.mm2). Must run BEFORE A-normalization, and cannot live in codegen, which
+# sees only the body and not the head it must substitute into.
+include("compiler/Passes.jl")
+
 # Compiler stage 3: A-normalization of rule bodies to GOAL LISTS — a direct port of PeTTa's
 # `translator.pl` (`translate_clause/3`, `translate_expr/3`), the Prolog lineage Core already took
 # SLG from. `let` becomes ONE unification goal, `let*` is nested `let`, `if`/`case` become branch
