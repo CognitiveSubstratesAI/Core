@@ -19,6 +19,7 @@ MORK = "0.1"
 MorkSupercompiler = "0.1"
 PathMap = "0.3"
 PrecompileTools = "1.3.4"
+Test = "1"          # declared in [extras]; Aqua requires a matching [compat] bound
 julia = "1.12"
 
 [extras]

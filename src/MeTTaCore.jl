@@ -73,6 +73,11 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
 # Hoisting it here — ABOVE the store, the parser, the primitives and the MORK bridge — is what lets
 # both of those be fixed. Pure move: same code, earlier position.
 include("standard/NumericSeam.jl")  # §3.4 boundary decisions — ONE owner for / % and int literals
+# NumericSeam is a MODULE, so `include` alone does not put its names in ours. Without this line the
+# `export SeamError, seam_div, seam_mod, seam_parse_integer` below exported four names MeTTaCore did
+# not have, and `using MeTTaCore; seam_div` threw `UndefVarError` — the whole point of that export
+# being "one entry over both execution lanes". Found by Aqua's undefined-exports check, 2026-08-07.
+using .NumericSeam: SeamError, seam_div, seam_mod, seam_parse_integer
 include("standard/Atoms.jl")
 
 # ── THE COMPILER ─────────────────────────────────────────────────────────────────────────────────
