@@ -89,7 +89,7 @@ end
     end
 
     # Pass 1 — every defined head in the whole corpus, so cross-file calls are visible.
-    programs = Dict{String, Any}()
+    programs = Dict{String, MeTTaCore.CompilerIR.IRProgram}()   # NO `Any`: standing project rule, tests included
     allfuns = Set{Symbol}()
     for f in files
         atoms = try _ratchet_parse(sp, read(f, String)) catch; continue end

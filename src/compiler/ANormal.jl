@@ -176,15 +176,20 @@ Flatten `node` into a goal list plus the value it produces.
 
 PeTTa's base case is `translate_expr(X, [], X) :- (var(X) ; atomic(X)), !.` — a variable or atom
 produces NO goals and is its own value. Everything else recurses and appends.
+
+RETURN TYPE IS ANNOTATED ON EVERY METHOD, and that is load-bearing rather than decorative.
+`translate_expr` recurses on the ABSTRACT `IRAtom`, so without an annotation Julia infers `Any` at
+each recursive call and the whole walk becomes runtime dispatch. JET `@report_opt` reported 14 such
+dispatches through `translate_expr`/`constrain_args` before these were added (2026-08-07).
 """
 function translate_expr end
 
 # base cases — a leaf is its own value, no goals (translator.pl:96)
-translate_expr(::ANCtx, a::IRVariable)      = (Goal[], a)
-translate_expr(::ANCtx, a::IRSymbol)        = (Goal[], a)
-translate_expr(::ANCtx, a::IRGrounded)      = (Goal[], a)
-translate_expr(::ANCtx, a::IRResolvedSymbol)= (Goal[], a)
-translate_expr(::ANCtx, a::IRPredefined)    = (Goal[], a)
+translate_expr(::ANCtx, a::IRVariable)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRSymbol)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRGrounded)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRResolvedSymbol)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRPredefined)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
 
 """
 An application. Arguments are flattened FIRST (their goals precede the call), then the call itself
@@ -195,7 +200,7 @@ than a wrong guess. PeTTa handles that case with `partial/2` closures at RUNTIME
 representation yet, and inventing one here would be exactly the kind of unreferenced improvisation
 this file avoids.
 """
-function translate_expr(c::ANCtx, a::IRExpression)
+function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
     goals = Goal[]
     args = IRAtom[]
     for x in a.args
@@ -243,7 +248,7 @@ end
 `let*` → `letstar_to_rec_let` then recurse. Sequential binding is nested `let`, so the scoping is
          handled by the nesting itself and never by this function.
 """
-function translate_expr(c::ANCtx, a::IRDestructiveBinding)
+function translate_expr(c::ANCtx, a::IRDestructiveBinding)::Tuple{Vector{Goal},IRAtom}
     goals = Goal[]
     # `let*` and `let` differ ONLY in nesting, and the frontend already recorded which this is.
     # Emitting the bindings in order gives `let*`; for plain `let` the values were lowered in the
@@ -268,7 +273,7 @@ An `IRMatch` with the frontend's True/False arms is an `if`; anything else is a 
 A `case` with more than two arms folds right into nested branches — PeTTa's `translate_case` builds
 the same if-then-else chain.
 """
-function translate_expr(c::ANCtx, a::IRMatch)
+function translate_expr(c::ANCtx, a::IRMatch)::Tuple{Vector{Goal},IRAtom}
     gs, scrutval = translate_expr(c, a.scrutinee)
     out = fresh_var(c)
     isempty(a.branches) && (push!(gs, GResidual(a, out)); return (gs, out))
@@ -306,7 +311,7 @@ function _branch_chain(c::ANCtx, brs::Vector{IRMatchBranch}, i::Int,
 end
 
 "`superpose` — PeTTa `build_superpose_branches` + `disj_list` (translator.pl:110)."
-function translate_expr(c::ANCtx, a::IRSuperpose)
+function translate_expr(c::ANCtx, a::IRSuperpose)::Tuple{Vector{Goal},IRAtom}
     out = fresh_var(c)
     branches = Vector{Goal}[]
     for alt in a.alternatives
@@ -321,7 +326,7 @@ end
 Remaining special forms. `collapse` is PeTTa's `findall` (translator.pl:114); anything without a
 reference lowering becomes a residual rather than a guess.
 """
-function translate_expr(c::ANCtx, a::IRSpecial)
+function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal},IRAtom}
     if a.kind === SPECIAL_COLLAPSE && length(a.args) == 1
         g, v = translate_expr(c, a.args[1])
         out = fresh_var(c)
@@ -339,7 +344,7 @@ end
 
 # catch-all so the function is TOTAL over IRAtom — an unmatched node becomes a counted residual, not
 # a MethodError at compile time and not a silent drop.
-function translate_expr(c::ANCtx, a::IRAtom)
+function translate_expr(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
     out = fresh_var(c)
     (Goal[GResidual(a, out)], out)
 end
@@ -374,7 +379,7 @@ This is what keeps the head matchable. It is also the piece that makes first-arg
 possible at all — the mechanism by which Prolog decides a call is deterministic, which is the same
 question §3c of the JeTTa spec says we have no answer to.
 """
-function constrain_args(c::ANCtx, a::IRAtom)
+function constrain_args(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
     (a isa IRVariable || a isa IRSymbol || a isa IRGrounded) && return (Goal[], a)
     if a isa IRExpression
         # A call in head position: hoist it.

@@ -142,13 +142,31 @@ function _unify_subst(goals::Vector{Goal})::Union{Dict{Base.Symbol,String},Nothi
     sub
 end
 
-"Apply a variable substitution to rendered text. Longest names first so `\$x1` is not clobbered by `\$x`."
+"""
+Apply a variable substitution to rendered text, matching WHOLE variable names only.
+
+⚠️ THE PREVIOUS IMPLEMENTATION CORRUPTED ANY VARIABLE THAT HAD A SUBSTITUTED NAME AS A PREFIX, and its
+docstring claimed a protection the body did not provide: *"longest names first so `\$x1` is not
+clobbered by `\$x`"*. Sorting by length only helps when `x1` is ITSELF a key. When the substitution is
+just `x → pinned`, a plain `replace` rewrites `\$x1` too. MEASURED 2026-08-07 end-to-end:
+
+    (= (bug \$x1) (let \$x pinned (pair \$x \$x1)))
+      before  (exec 0 (, (bug pinned1)) (O (+ (pair pinned pinned1))))
+      after   (exec 0 (, (bug \$x1))    (O (+ (pair pinned \$x1))))
+
+`\$x1` is a DIFFERENT variable and the head argument. Corrupting it to the literal `pinned1` turned a
+rule matching any `(bug …)` into one matching a single atom that never occurs. Silent, and invisible
+to coverage — the clause still counted as emitted. `\$xs` and `\$x_2` failed identically.
+
+ONE PASS over whole `\$name` tokens, each looked up independently: order-insensitive by construction,
+so a substitution can no longer partially rewrite a name it does not own. The real fix is to
+substitute on the typed IR by `NodeId` — variable IDENTITY, which the frontend already resolves —
+rather than on rendered text at all; this makes the text path correct in the meantime.
+"""
 function _apply_subst(txt::String, sub::Dict{Base.Symbol,String})::String
     isempty(sub) && return txt
-    for k in sort(collect(keys(sub)); by = s -> -length(String(s)))
-        txt = replace(txt, "\$" * String(k) => sub[k])
-    end
-    txt
+    replace(txt, r"\$[A-Za-z_][A-Za-z0-9_\-]*" =>
+                 m -> String(get(sub, Base.Symbol(SubString(m, 2)), m)))
 end
 
 # ── grounded arithmetic → the `pure` sink ────────────────────────────────────────────────────────
@@ -264,9 +282,17 @@ end
 
 # ── join ordering ────────────────────────────────────────────────────────────────────────────────
 
-"Variables mentioned in a rendered source term, as bare names (`\$x` → `\"x\"`)."
+"""
+Variables mentioned in a rendered source term, as bare names (`\$x` → `\"x\"`).
+
+NO CAPTURE GROUP, deliberately. `m.captures[1]` is typed `Union{Nothing,SubString}` because a group
+may not participate, so building a `Set{String}` from it makes `convert(String, nothing)` reachable —
+JET reported exactly that as a possible error (2026-08-07). The group here can never fail to
+participate, but the TYPE says otherwise, which is both a latent `MethodError` and a type
+instability. Matching the whole `\$name` and dropping the sigil is provably `String`.
+"""
 _term_vars(s::AbstractString)::Set{String} =
-    Set{String}(m.captures[1] for m in eachmatch(r"\$([A-Za-z_][A-Za-z0-9_\-]*)", s))
+    Set{String}(String(SubString(m.match, 2)) for m in eachmatch(r"\$[A-Za-z_][A-Za-z0-9_\-]*", s))
 
 """
     _plan_sources(srcs) -> Vector{String}

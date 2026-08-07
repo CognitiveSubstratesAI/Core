@@ -164,8 +164,12 @@ lower(c::Ctx, a::Grounded{Interpreter.Operation})::IRAtom =
 lower(c::Ctx, a::Grounded{Interpreter.SpaceOp})::IRAtom =
     IRPredefined(Base.Symbol(a.value.name), Int32(-1), nothing, fresh(c), NO_SOURCE)
 
-lower(c::Ctx, a::Grounded{T}) where {T} =
+# Long form: `f(x::Grounded{T})::IRAtom where {T} = …` does not parse — the return annotation binds
+# before `where`, so `T` is not yet in scope. This was the ONE unannotated `lower` method, and JET
+# traced `lower_program`'s runtime dispatch to it.
+function lower(c::Ctx, a::Grounded{T})::IRAtom where {T}
     IRGrounded(a.value, ground_type(a.value), fresh(c), NO_SOURCE)
+end
 
 function lower(c::Ctx, a::Expression)::IRAtom
     isempty(a.children) && return IRExpression(IRSymbol(:Nil, fresh(c), NO_SOURCE),

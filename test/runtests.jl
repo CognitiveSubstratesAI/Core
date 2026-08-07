@@ -51,6 +51,7 @@ module StandardMeTTaTests
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
     include("compiler/test_call_staging.jl")
+    include("compiler/test_emit_substitution.jl")
     include("compiler/test_coverage_ratchet.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
