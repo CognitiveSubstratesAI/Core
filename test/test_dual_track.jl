@@ -319,6 +319,33 @@ using MORK   # space dump for the supercompiler-opt-in test
         @test rH.results.zam_served == ["(h a)"]
         @test sort(only([a for (b, a) in rH.results.evaluated if b == "(h a)"])) == ["done_b", "done_c"]
 
+        # (d3) 🔴 MIXED-CHAINING MULTI-CLAUSE HEAD — gate (5). MEASURED WRONG ANSWER 2026-08-07.
+        #      A head with several clauses where SOME chain onward and some do not. Gates (3)/(4)
+        #      admit it (acyclic graph, nothing nested), the ZAM serves a NON-EMPTY answer so no
+        #      emptiness guard fires, and `DualTrack.jl:156` `vcat(zam.served, …)` returns it WITHOUT
+        #      consulting the interpreter. Before gate (5):
+        #          ZAM    ["(t 1)"]                 <- the a→m branch silently LOST
+        #          oracle ["(m 1)", "(t 1)"]
+        #      Mechanism: an exec is CONSUMED when SELECTED, matched or not
+        #      (MORK.wiki/Minimal-MeTTa-2-(MM2).md:19; upstream space.rs:1704 `btm.remove` precedes
+        #      :1707 `interpret`). Every branch needs the same number of passes — the non-chaining
+        #      clause finishes in pass 1, the redex is deleted at priority 1, and the chained clause
+        #      dies before completing. ALL-chain (d2 below) and NONE-chain (d) are both SAFE; only
+        #      MIXED loses answers, which is why gate (5) tests for disagreement among a head's
+        #      clauses rather than rejecting multi-clause chaining outright.
+        mix = raw"(= (z $x) (a $x))" * "\n" * raw"(= (z $x) (t $x))" * "\n" *
+              raw"(= (a $x) (m $x))" * "\n!(z 1)"
+        csM = MC.new_core_space(); rM = mc_run(csM, "", mix)
+        @test isempty(rM.results.zam_served)                 # gate (5) DEFERS — must not serve
+        @test sort(only([a for (b, a) in rM.results.evaluated if b == "(z 1)"])) == ["(m 1)", "(t 1)"]
+
+        #      ground-LHS variant of the same shape (the gate is about clause DISAGREEMENT, not vars)
+        mixg = raw"(= (y a) (n a))" * "\n" * raw"(= (y a) (s a))" * "\n" *
+               raw"(= (n a) (deep a))" * "\n!(y a)"
+        csMg = MC.new_core_space(); rMg = mc_run(csMg, "", mixg)
+        @test isempty(rMg.results.zam_served)
+        @test sort(only([a for (b, a) in rMg.results.evaluated if b == "(y a)"])) == ["(deep a)", "(s a)"]
+
         # (e) cyclic rule graph: gate rejects (needs the absent reduction re-fire loop) — test the
         #     router helper directly (no eval: the interpreter would not terminate on this either)
         z = MC.mm2_zam_answers(raw"(= (a $x) (b $x))" * "\n" * raw"(= (b $x) (a $x))", ["(a 1)"])

@@ -557,6 +557,54 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
     for h in heads
         (get(color, h, 0) == 0 && _cyc(h)) && return (; served, remaining)
     end
+
+    # ── gate (5): a MULTI-CLAUSE head may not also CHAIN. MEASURED WRONG ANSWER, 2026-08-07 ────────
+    # Gates (3)/(4) admit a head that has several clauses AND whose clauses chain onward, because the
+    # chain graph is acyclic and nothing is nested. The ZAM then serves a SILENTLY INCOMPLETE answer
+    # and, because it is non-empty, `DualTrack.jl:156` `vcat(zam.served, …)` returns it WITHOUT ever
+    # consulting the interpreter:
+    #
+    #     (= (z $x) (a $x))  (= (z $x) (t $x))  (= (a $x) (m $x))   !(z 1)
+    #        ZAM      ["(t 1)"]                 <- the a→m branch is LOST
+    #        oracle   ["(m 1)", "(t 1)"]
+    #
+    # MECHANISM, and it is documented upstream rather than incidental: an exec is CONSUMED when it is
+    # selected, whether or not it matched (`MORK.wiki/Minimal-MeTTa-2-(MM2).md:19`; upstream
+    # `kernel/src/space.rs:1704` `btm.remove` precedes `:1707` `interpret`, ported at our
+    # `MORK/src/kernel/Space.jl:2257`). The collect-all shape adds `(a 1)` and `(t 1)` at priority 0
+    # and deletes the redex at priority 1 — but the `a→m` exec was already selected-and-consumed in
+    # that same pass, before `(a 1)` existed for it to match. MeTTa `(=)` is persistent and
+    # re-entrant; an MM2 exec is neither.
+    #
+    # THE SHAPE IS PRECISE, so this gate is narrow rather than a blanket retreat. Verified by
+    # differential against the interpreter: single-clause chains are FINE (`f→g→h` ✅ — one clause, so
+    # the chain completes in the same pass), and multi-clause WITHOUT chaining is FINE (`c→{r1,r2}` ✅
+    # — collect-all, nothing downstream to lose). Only branch-AND-chain loses answers.
+    #
+    # Deferring costs the ZAM those programs; serving them costs a wrong answer with no diagnostic,
+    # which this file's own header (:49-53) already names as the fail-open hazard.
+    # MEASURED DISCRIMINATOR: a multi-clause head is safe iff its clauses AGREE — either ALL chain or
+    # NONE does. It is a MIXED head that loses answers, and the mechanism explains why: every branch
+    # needs the same number of passes. When all clauses chain, they advance together. When none does,
+    # collect-all already has the answer. When they are MIXED, the non-chaining branch completes in
+    # pass 1, the redex is deleted at priority 1, and the chained branch is killed before it finishes.
+    #
+    #   ALL chain    (= (h a)(p b)) (= (h a)(p c)) (= (p b) done_b) (= (p c) done_c)  -> done_b,done_c ✅
+    #   NONE chain   (= (c $x)(r1 $x)) (= (c $x)(r2 $x))                              -> r1,r2         ✅
+    #   MIXED        (= (z $x)(a $x)) (= (z $x)(t $x)) (= (a $x)(m $x))               -> (t 1) ONLY    ❌
+    #
+    # A first cut of this gate rejected EVERY multi-clause chaining head and broke the ALL-chain case
+    # the suite already locks (`test_dual_track.jl:315-320`). That regression is what produced the
+    # discriminator: the suite knew something the repro did not.
+    chains = Dict{String, Set{Bool}}()
+    for (h, _, rhs) in rules
+        c = startswith(strip(rhs), "(") && mm2_head(rhs) in heads
+        push!(get!(() -> Set{Bool}(), chains, h), c)
+    end
+    for (_, s) in chains
+        length(s) > 1 && return (; served, remaining)     # MIXED: some clauses chain, some do not
+    end
+
     # per-bang: ground redex with a lowered rule head and no nested rule-head → scratch ZAM eval
     empty!(remaining)
     for b0 in bangs
