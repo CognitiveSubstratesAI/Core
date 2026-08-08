@@ -61,7 +61,8 @@ struct GUnify <: Goal
 end
 
 """
-PeTTa `Goal =.. [F|CallArgs]` with `append(Args,[Out],CallArgs)` (translator.pl:33-34).
+PeTTa `Goal =.. [F|CallArgs]` with `append(Args,[Out],CallArgs)` (translator.pl:55-56, the runtime
+dispatcher — the previously cited :33-34 is `goals_list_to_conj`, a different `append`).
 
 RESULT-AS-LAST-ARGUMENT — the functional→relational lowering. A MeTTa function returns; a relation
 binds. `(f a b)` with result `R` becomes the goal `f(a, b, R)`. This is what lets a nested functional
@@ -101,7 +102,7 @@ struct GDisj <: Goal
 end
 
 """
-PeTTa `findall(EV, Conj, Out)` (translator.pl:114) — `collapse`.
+PeTTa `findall(EV, Conj, Out)` (translator.pl:116) — `collapse`.
 
 The inverse of `GDisj`: gather every solution of a nondeterministic body into one list value. On our
 substrate this is saturation-then-collect rather than SWI's `findall`, which is precisely why it stays
@@ -144,10 +145,19 @@ relation `(= (ancestor \$x \$y) (parent \$x \$y))` emitted
 whose 3-ary source can never match the 2-ary facts `(parent alice bob)`. Silently derives nothing.
 
 WHY STATIC, not a runtime check. PeTTa asks at runtime — `reduce/2` does `fun(F)` then
-`current_predicate(F/Arity)` (`translator.pl:48-56`). PeTTa PR #165 (merged 2026-07-24) had its
-`current_predicate/1` calls REMOVED at maintainer request as too expensive, refactored to multifile
-declarations. A compiler need not pay it at all: the defined heads are exactly
-`IRProgram.definitions`, known for the whole module before a single goal is emitted.
+`current_predicate(F/Arity)` (`translator.pl:48-56`, still present at HEAD `d9a437c`). A compiler
+need not pay that at all: the defined heads are exactly `IRProgram.definitions`, known for the whole
+module before a single goal is emitted. That is the whole argument, and it stands on its own.
+
+⚠️ CORRECTED 2026-08-08. This previously claimed "PeTTa PR #165 had its `current_predicate/1` calls
+REMOVED at maintainer request as too expensive, refactored to multifile declarations." EVERY CLAUSE
+WAS FALSE, and it was written without opening the PR. #165 is "Memoization Library"
+(`lib/lib_memo.pl`, 799 LOC, since removed from HEAD); it touches `current_predicate` zero times;
+`translator.pl:54` still calls it; PeTTa has no `multifile` declaration anywhere in `src/`. The
+grain of truth belonged to a LATER commit, `4a469c6`, which swapped `current_predicate` for
+`multifile` in **`lib_memo`'s own availability check** — a different subject entirely. A citation
+invented to corroborate a decision already made is worse than no citation: it survives review
+BECAUSE it is plausible and BECAUSE it flatters the choice. Verify upstream refs when writing them.
 """
 mutable struct ANCtx
     gen::UniqueAtomIdGenerator
@@ -323,7 +333,7 @@ function translate_expr(c::ANCtx, a::IRSuperpose)::Tuple{Vector{Goal},IRAtom}
 end
 
 """
-Remaining special forms. `collapse` is PeTTa's `findall` (translator.pl:114); anything without a
+Remaining special forms. `collapse` is PeTTa's `findall` (translator.pl:116); anything without a
 reference lowering becomes a residual rather than a guess.
 """
 function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal},IRAtom}
