@@ -5,7 +5,7 @@
 #   julia --project=. tools/profile_residual.jl
 using MeTTaCore, Profile
 using Profile.Allocs
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 
 sp = SM.Space(); SM.load_core_stdlib!(sp)
 SM.load_metta!(sp, "!(import! &self (library MOSES))")

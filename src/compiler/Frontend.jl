@@ -13,7 +13,7 @@
 #      an `IRExpression` — representable, not a `"\0compound-operator"` sentinel string.
 #
 # ─── SLG / TABLING IS REUSED, NOT REBUILT ────────────────────────────────────────────────────────
-# Core already adopted SWI-Prolog-style SLG variant tabling in the interpreter (`Interpreter.jl:929`,
+# Core already adopted SWI-Prolog-style SLG variant tabling in the interpreter (`Eval.jl:929`,
 # opt-in) together with the Van Gelder alternating-fixpoint WFS (`:952`). The registry is
 # `_TABLED_HEADS`, a set of HEAD NAME symbols, consulted by `is_tabled` (`:982`). The compiler reads
 # THAT SET. It does not declare a second tabling registry, does not re-derive which predicates are
@@ -39,7 +39,7 @@ using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded
 
 # The interpreter — imported for ONE reason: its existing SLG tabling registry. See
 # `tabled_definitions` at the bottom. Nothing else in this file touches the evaluator.
-import ..Interpreter
+import ..Eval
 
 # ── special-form table ───────────────────────────────────────────────────────────────────────────
 # ⚠️ THIS LINE USED TO CITE "CeTTa's surface⇄IR symbol pairing, mm2_lower.c" AS PRECEDENT. IT IS NOT.
@@ -161,7 +161,7 @@ lower(c::Ctx, a::Grounded{Bool})::IRAtom = IRGrounded(a.value, GROUNDED_BOOL, fr
 # the compiler could not flatten was in fact an ordinary primitive call it simply did not recognise.
 #
 # The cause is upstream of us: `parse_from` SUBSTITUTES BOUND TOKENS AT PARSE TIME
-# (`Interpreter.jl:2525`), so `match`, `+`, `car-atom` … never reach the compiler as `Sym`; they
+# (`Eval.jl:2525`), so `match`, `+`, `car-atom` … never reach the compiler as `Sym`; they
 # arrive already resolved to the interpreter's own callable struct. Treating that as an opaque
 # grounded VALUE is what forced the compiled lane to bail to the interpreter on any rule mentioning a
 # primitive — the same reason `MM2Router`'s gate 2 rejects every head found in `TOKEN_REGISTRY`.
@@ -170,9 +170,9 @@ lower(c::Ctx, a::Grounded{Bool})::IRAtom = IRGrounded(a.value, GROUNDED_BOOL, fr
 # it here is the concrete step of moving primitive attachment off the interpreter: the compiler now
 # holds the primitive's NAME and ARITY itself, instead of holding an interpreter closure it cannot
 # reason about.
-lower(c::Ctx, a::Grounded{Interpreter.Operation})::IRAtom =
+lower(c::Ctx, a::Grounded{Eval.Operation})::IRAtom =
     IRPredefined(Base.Symbol(a.value.name), Int32(-1), nothing, fresh(c), NO_SOURCE)
-lower(c::Ctx, a::Grounded{Interpreter.SpaceOp})::IRAtom =
+lower(c::Ctx, a::Grounded{Eval.SpaceOp})::IRAtom =
     IRPredefined(Base.Symbol(a.value.name), Int32(-1), nothing, fresh(c), NO_SOURCE)
 
 # Long form: `f(x::Grounded{T})::IRAtom where {T} = …` does not parse — the return annotation binds
@@ -190,7 +190,7 @@ function lower(c::Ctx, a::Expression)::IRAtom
     # A SYMBOL head may be a special form; a compound head never is, and stays structural.
     #
     # ⚠️ A GROUNDED head must be checked TOO. `parse_from` substitutes bound tokens at parse time
-    # (Interpreter.jl:2525), so a registered name — `case`, `if`, `match` … — arrives as
+    # (Eval.jl:2525), so a registered name — `case`, `if`, `match` … — arrives as
     # `Grounded{Operation}`/`Grounded{SpaceOp}`, NEVER as `Sym`. Checking only `Sym` meant those
     # forms silently became ordinary applications and no `IRMatch` was ever built. MEASURED
     # 2026-08-06: `specialize_matches` reported `clauses split: 0` on
@@ -200,8 +200,8 @@ function lower(c::Ctx, a::Expression)::IRAtom
     # not swept at the same time. Per the standing rule, a recurring defect gets the RULE applied to
     # every candidate site, not a fix at the instance that happened to be noticed.
     hname = h isa Sym                              ? (h::Sym).name :
-            h isa Grounded{Interpreter.Operation}  ? Base.Symbol(h.value.name) :
-            h isa Grounded{Interpreter.SpaceOp}    ? Base.Symbol(h.value.name) : nothing
+            h isa Grounded{Eval.Operation}  ? Base.Symbol(h.value.name) :
+            h isa Grounded{Eval.SpaceOp}    ? Base.Symbol(h.value.name) : nothing
     if hname !== nothing
         kind = get(SPECIAL_FORMS, hname, nothing)
         kind === nothing || return lower_special(c, kind, hname, rest)
@@ -341,7 +341,7 @@ is_definition(a::Atom)::Bool =
 Head name of a definition's LHS — `(= (f \$x) …)` → `:f`. Empty symbol if there is no name to take.
 
 MUST handle a GROUNDED head, not only `Sym`. `parse_from` substitutes bound tokens at parse time
-(`Interpreter.jl:2525`), so any head that is a registered op — `id`, `match`, `+` … — arrives as
+(`Eval.jl:2525`), so any head that is a registered op — `id`, `match`, `+` … — arrives as
 `Grounded{Operation}`/`Grounded{SpaceOp}`, never as `Sym`. MEASURED 2026-08-06: without this,
 `(= (id \$x) \$x)` compiled to `(exec 0 (, ( \$x)) …)` — an EMPTY head, a pattern that matches
 nothing, and a rule that silently never fires.
@@ -351,8 +351,8 @@ function definition_name(a::Expression)::Base.Symbol
     if lhs isa Expression && !isempty(lhs.children)
         h = lhs.children[1]
         h isa Sym && return (h::Sym).name
-        h isa Grounded{Interpreter.Operation} && return Base.Symbol(h.value.name)
-        h isa Grounded{Interpreter.SpaceOp}   && return Base.Symbol(h.value.name)
+        h isa Grounded{Eval.Operation} && return Base.Symbol(h.value.name)
+        h isa Grounded{Eval.SpaceOp}   && return Base.Symbol(h.value.name)
     end
     lhs isa Sym ? (lhs::Sym).name : Base.Symbol("")
 end
@@ -404,14 +404,14 @@ end
 
 Which of `program`'s definitions are TABLED, according to the interpreter's own SLG registry.
 
-Core already adopted SWI-style SLG variant tabling (`Interpreter.jl:929`) plus the Van Gelder
+Core already adopted SWI-style SLG variant tabling (`Eval.jl:929`) plus the Van Gelder
 alternating-fixpoint WFS (`:952`), controlled by `table!` / `auto_table!` / `untable_all!` over the
 `_TABLED_HEADS` set. This reads that set. There is deliberately NO compiler-side tabling registry:
 two registries for one concept is exactly how `TOKEN_REGISTRY` and MORK's `GROUNDED_REGISTRY` came to
 hold 44 shared names that measurably disagree on arity.
 """
 tabled_definitions(program::IRProgram)::Vector{Base.Symbol} =
-    Base.Symbol[d.name for d in program.definitions if d.name in Interpreter._TABLED_HEADS]
+    Base.Symbol[d.name for d in program.definitions if d.name in Eval._TABLED_HEADS]
 
 export Scope, Ctx, SPECIAL_FORMS, lower, lower_program, is_definition, definition_name,
        tabled_definitions, ground_type

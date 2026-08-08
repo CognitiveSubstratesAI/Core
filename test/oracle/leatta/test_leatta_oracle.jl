@@ -32,10 +32,10 @@
 # empty result set (fixed, commit 1ee0356, locked by test_interpreter.jl). Everything else was MISSING_OP
 # / LEATTA_SPECIFIC / import!-path (the last fixed here by seeding _MODULE_PATH with the corpus dir).
 # ============================================================================================
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 using Test
-const _LI = Interpreter
+const _LI = Eval
 
 const LEATTA_CORPUS = joinpath(@__DIR__, "corpus")
 
@@ -67,7 +67,7 @@ const LEATTA_LEDGER_BASELINE = Dict{String,Tuple{Int,Int}}(
     "g1_docs.metta"          => (0, 0), "test_stdlib.metta"      => (0, 0),
 )
 
-# ---- per-directive runner: mirrors load_metta!'s incremental parse-eval loop (Interpreter.jl:2190),
+# ---- per-directive runner: mirrors load_metta!'s incremental parse-eval loop (Eval.jl:2190),
 # but captures ONE result set per `!`-directive instead of flat-concatenating them. Non-directive atoms
 # are add_atom!'d exactly as load_metta! does, so state (defs / bind! tokens / add-atom) threads across
 # directives identically.

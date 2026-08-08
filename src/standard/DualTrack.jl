@@ -25,7 +25,7 @@ function _last_theory_name(program::AbstractString)
     name
 end
 
-# Evaluate `deferred` bangs on a SCRATCH Interpreter Space over the same program (stdlib + `data` +
+# Evaluate `deferred` bangs on a SCRATCH Eval Space over the same program (stdlib + `data` +
 # the program's non-bang forms verbatim — never reconstructed from the trie, PathMap normalizes
 # variables; the mm2_eq_bisim recipe). Returns [(bang, [answers…])…]. Never writes the MORK space.
 # Shared by the streaming (mm2_route!) and supercompiler (sc_execute!) direct-lane branches.
@@ -34,10 +34,10 @@ function _mc_fallback_eval(data::AbstractString, program::AbstractString,
                            fallback::Symbol = :interpreter, fallback_table::Bool = true)
     evaluated = Tuple{String, Vector{String}}[]
     (fallback === :interpreter && !isempty(deferred)) || return evaluated
-    isp = Interpreter.Space(); Interpreter.load_core_stdlib!(isp)
-    isempty(strip(data)) || Interpreter.load_metta!(isp, data)
+    isp = Eval.Space(); Eval.load_core_stdlib!(isp)
+    isempty(strip(data)) || Eval.load_metta!(isp, data)
     for (bang, f) in mm2_split_forms(program)
-        bang || Interpreter.load_metta!(isp, f)
+        bang || Eval.load_metta!(isp, f)
     end
     # Memoize PURE heads for the bang evals (auto_table! is purity-gated and result-preserving;
     # fib(17) 294×, commit 410d1a4). Tabling state (_TABLED_HEADS/_ANSWER_TABLE) is
@@ -45,19 +45,19 @@ function _mc_fallback_eval(data::AbstractString, program::AbstractString,
     # another Space's same-NAMED head may be impure, and memoizing an impure function is
     # unsound. The answer cache is cleared on restore (perf-only for other spaces; their
     # revision stamps evict stale entries anyway).
-    prev_tabled = fallback_table ? copy(Interpreter._TABLED_HEADS) : nothing
+    prev_tabled = fallback_table ? copy(Eval._TABLED_HEADS) : nothing
     try
-        fallback_table && Interpreter.auto_table!(isp)
+        fallback_table && Eval.auto_table!(isp)
         for b in deferred
-            res = Interpreter.load_metta!(isp, "!" * b)   # re-prefix exactly as mm2_eq_bisim does
+            res = Eval.load_metta!(isp, "!" * b)   # re-prefix exactly as mm2_eq_bisim does
             push!(evaluated,
                 (String(b), String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
         end
     finally
         if prev_tabled !== nothing
-            empty!(Interpreter._TABLED_HEADS)
-            union!(Interpreter._TABLED_HEADS, prev_tabled)
-            Interpreter._table_reset!()
+            empty!(Eval._TABLED_HEADS)
+            union!(Eval._TABLED_HEADS, prev_tabled)
+            Eval._table_reset!()
         end
     end
     evaluated
@@ -75,7 +75,7 @@ for multi-source-conjunction / Rule-of-64 / closure workloads (it MATERIALIZES, 
 so never use it as a general accelerator). Returns the chosen `lane` and its native `results`.
 
 Direct-lane **interpreter fallback** (`fallback=:interpreter`, default ON): bangs the ZAM/MM2 lane cannot
-serve (`route.deferred` — anything but `!(match …)`) are evaluated on the Interpreter over the SAME
+serve (`route.deferred` — anything but `!(match …)`) are evaluated on the Eval over the SAME
 program (fresh typed Space + stdlib + `data` + the program's non-bang forms; each deferred bang
 re-prefixed with `!` — the `mm2_eq_bisim` recipe, MM2Router.jl). This is the merge design's §5 R7 lane 3
 ("grounded/control stay in the interpreter lane") and MeTTa-spec §4 conformance (a `!`-atom must be

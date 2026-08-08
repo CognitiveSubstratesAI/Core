@@ -3,7 +3,7 @@
 #   cd ~/code/CognitiveSubstratesAI/Core && \
 #     printf 'include("benchmark/ecan_verify.jl"); exit()\n' | julia --project=. -i tools/repl.jl
 include(joinpath(@__DIR__, "..", "test", "ecan", "ecan_live_harness.jl"))
-const I = MeTTaCore.Interpreter
+const I = MeTTaCore.Eval
 
 # Is heartbeat!'s cost LINEAR in ticks (heavy-but-feasible → just needs a higher finite cap) or
 # QUADRATIC (a per-tick re-scan of growing state → a real perf bug the cap-raise only masks)?

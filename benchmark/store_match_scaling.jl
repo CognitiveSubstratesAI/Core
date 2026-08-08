@@ -1,7 +1,7 @@
 # store_match_scaling.jl — Phase 2 store benchmark
 # ─────────────────────────────────────────────────────────────────────────────
 # Q: is MORK-trie matching (CoreSpace) competitive with the interpreter's in-memory
-#    Julia Dict index (Interpreter.Space) on the hot path — rule lookup by ground goal?
+#    Julia Dict index (Eval.Space) on the hot path — rule lookup by ground goal?
 #
 # This is the "measure first" gate on making the MORK store (and the ZAM/reduction fast
 # lane over it) the PRIMARY evaluation path with the tree-walking interpreter as fallback.
@@ -24,7 +24,7 @@
 
 using MeTTaCore
 const _M = MeTTaCore
-const _I = MeTTaCore.Interpreter
+const _I = MeTTaCore.Eval
 
 _pint(s) = _I.parse_from(_I.tokenize(s), Ref(1))       # string → interpreter Atom
 

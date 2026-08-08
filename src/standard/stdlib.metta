@@ -30,7 +30,7 @@
 ;    yielding the exact `(Error (op $actual $expected) $msg)` shape the corpus asserts (test_stdlib:114-124).
 ;    A NON-ERRORING comparison is required: delegating to the grounded assertEqual would let its
 ;    `(Error … AssertionFailed)` propagate through ==/case and clobber the custom message (verified).
-;    subtraction-atom's element identity is α-equivalence (Interpreter.jl:1868), so these rule-composed
+;    subtraction-atom's element identity is α-equivalence (Eval.jl:1868), so these rule-composed
 ;    variants are α-tolerant; the exact grounded floor (assertEqual/assertEqualToResult) is unchanged.
 ;    That distinction is invisible to the (ground) corpus cases. `*ToResult*` do NOT collapse the expected
 ;    arg (it is already a literal result-set tuple); the others collapse both sides.

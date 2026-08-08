@@ -1,6 +1,6 @@
 # Validates the `metta` interpreter driver (metta.md §Interpretation, untyped Phase 1a) — full
 # reduction, applicative order, nondeterminism — distinct from one-step `eval`.
-using MeTTaCore.Interpreter                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Eval                  # precompiled submodule (was: include fresh → recompiled per file)
 using MeTTaCore.StandardMeTTa
 using Test
 
@@ -109,27 +109,27 @@ end
     G(x) = Grounded(x)
     # a pure linear reference over ALL atoms (== bucket+wildcard match set for a keyed pattern), trie-independent.
     # Compare the resolved output multiset (stable across fresh-renames) so a wrong-atom-but-right-count trie bug fails.
-    linref(s, p) = (acc = Bindings[]; for a in s.atoms; append!(acc, match_atoms(p, Interpreter.rename_fresh(a))); end; acc)
-    outs(bs, p) = sort(String[string(Interpreter.subst(p, b)) for b in bs])       # resolved match instances
+    linref(s, p) = (acc = Bindings[]; for a in s.atoms; append!(acc, match_atoms(p, Eval.rename_fresh(a))); end; acc)
+    outs(bs, p) = sort(String[string(Eval.subst(p, b)) for b in bs])       # resolved match instances
 
     s = Space()
-    for k in 1:30; Interpreter.add_atom!(s, E(S("rel"), S("a"), S("v$k"))); end   # 30 ground facts
-    Interpreter.add_atom!(s, E(S("rel"), S("a"), V("x")))                          # pos-3 wildcard rule
-    Interpreter.add_atom!(s, E(S("rel"), S("a"), E(S("g"), S("b"))))              # nested
-    Interpreter.add_atom!(s, E(S("rel"), S("a"), G(5)))                            # grounded
-    @test length(s.index[(:rel, :a)]) > Interpreter._TRIE_MIN_BUCKET              # trie actually fires
+    for k in 1:30; Eval.add_atom!(s, E(S("rel"), S("a"), S("v$k"))); end   # 30 ground facts
+    Eval.add_atom!(s, E(S("rel"), S("a"), V("x")))                          # pos-3 wildcard rule
+    Eval.add_atom!(s, E(S("rel"), S("a"), E(S("g"), S("b"))))              # nested
+    Eval.add_atom!(s, E(S("rel"), S("a"), G(5)))                            # grounded
+    @test length(s.index[(:rel, :a)]) > Eval._TRIE_MIN_BUCKET              # trie actually fires
 
     pats = [E(S("rel"), S("a"), S("v5")), E(S("rel"), S("a"), V("o")), E(S("rel"), S("a"), S("v99")),
             E(S("rel"), S("a"), E(S("g"), S("b"))), E(S("rel"), S("a"), E(S("g"), V("z"))),
             E(S("rel"), S("a"), G(5))]
     for p in pats
-        q = Interpreter.query(s, p); r = linref(s, p)
+        q = Eval.query(s, p); r = linref(s, p)
         @test length(q) == length(r)
         @test outs(q, p) == outs(r, p)            # resolved instances identical ⇒ no dropped/wrong/dup match
     end
     # invalidation: adding to the bucket rebuilds the trie ⇒ new atom is found
-    Interpreter.add_atom!(s, E(S("rel"), S("a"), S("vNEW")))
-    @test length(Interpreter.query(s, E(S("rel"), S("a"), S("vNEW")))) ==
+    Eval.add_atom!(s, E(S("rel"), S("a"), S("vNEW")))
+    @test length(Eval.query(s, E(S("rel"), S("a"), S("vNEW")))) ==
           length(linref(s, E(S("rel"), S("a"), S("vNEW"))))
 end
 
@@ -137,23 +137,23 @@ end
 # is stamped with the space (objectid, revision); a mutation bumps `revision` so the stale entry auto-evicts on the
 # next lookup and recomputes — closing the "table goes silently stale on space mutation" hole (§7.7).
 @testset "tabling: revision-stamped answer invalidation" begin
-    Interpreter.untable_all!()
-    Interpreter.table!(Symbol("mem"))
+    Eval.untable_all!()
+    Eval.table!(Symbol("mem"))
     try
         s = Space()
         for p in ["(= (mem) (collapse (match &self (item \$x) \$x)))", "(item a)", "(item b)"]
-            for (_, atom) in parse_program(p); Interpreter.add_atom!(s, atom); end
+            for (_, atom) in parse_program(p); Eval.add_atom!(s, atom); end
         end
         q = parse_program("(mem)")[1][2]
         r1 = string(metta_run(q, s))                          # cached at the current revision
         rev1 = s.revision
-        for (_, atom) in parse_program("(item c)"); Interpreter.add_atom!(s, atom); end
+        for (_, atom) in parse_program("(item c)"); Eval.add_atom!(s, atom); end
         @test s.revision > rev1                               # mutation bumped the revision
         r2 = string(metta_run(q, s))                          # stale entry must be evicted + recomputed
         @test !occursin("c", r1)                              # baseline: c not yet present
         @test occursin("c", r2)                               # fresh: recomputed answer includes the new fact
     finally
-        Interpreter.untable_all!()
+        Eval.untable_all!()
     end
 end
 
@@ -161,45 +161,45 @@ end
 # analyze &self, table PURE user function heads, skip impure ones (add-atom / state / match / …). Result-
 # preserving (tabling only memoises a pure answer set); the impure fn still runs, just untabled.
 @testset "auto-tabler: purity classification + result-identity + impure-skip + surface" begin
-    Interpreter.untable_all!()
+    Eval.untable_all!()
     try
         fib = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))"
         # classification: pure fib/dbl tabled; impure remember (add-atom) skipped
         s = Space(); load_core_stdlib!(s); load_metta!(s, fib)
         load_metta!(s, raw"(= (dbl $x) (* $x 2))")
         load_metta!(s, raw"(= (remember $x) (add-atom &self (seen $x)))")
-        r = Interpreter.auto_table!(s)
+        r = Eval.auto_table!(s)
         @test :fib in r.tabled && :dbl in r.tabled
         @test :remember in r.skipped && !(:remember in r.tabled)
-        @test Interpreter.is_tabled(parse_program("(fib 5)")[1][2])       # fib really registered
-        @test !Interpreter.is_tabled(parse_program("(remember z)")[1][2]) # impure not registered
+        @test Eval.is_tabled(parse_program("(fib 5)")[1][2])       # fib really registered
+        @test !Eval.is_tabled(parse_program("(remember z)")[1][2]) # impure not registered
 
         # result-identity: auto-tabled fib(10) == untabled fib(10) (order matters — tabling is global)
-        Interpreter.untable_all!()
+        Eval.untable_all!()
         u = Space(); load_core_stdlib!(u); load_metta!(u, fib)
         got_untabled = string(load_metta!(u, "!(fib 10)"))                # _TABLED_HEADS empty here
-        t = Space(); load_core_stdlib!(t); load_metta!(t, fib); Interpreter.auto_table!(t)
+        t = Space(); load_core_stdlib!(t); load_metta!(t, fib); Eval.auto_table!(t)
         got_tabled = string(load_metta!(t, "!(fib 10)"))                  # fib now tabled
         @test got_untabled == got_tabled && occursin("55", got_tabled)    # fib(10)=55, identical
 
         # impure fn still WORKS (mutates) despite being skipped
-        Interpreter.untable_all!()
+        Eval.untable_all!()
         s3 = Space(); load_core_stdlib!(s3)
         load_metta!(s3, raw"(= (remember $x) (add-atom &self (seen $x)))")
-        Interpreter.auto_table!(s3)
+        Eval.auto_table!(s3)
         load_metta!(s3, "!(remember foo)")
         @test occursin("foo", string(load_metta!(s3, raw"!(match &self (seen $x) $x)")))
 
         # surface: the !(auto-table!) directive tables + reports; the auto_table=true load flag tables
-        Interpreter.untable_all!()
+        Eval.untable_all!()
         s4 = Space(); load_core_stdlib!(s4); load_metta!(s4, fib)
         @test occursin("fib", string(load_metta!(s4, "!(auto-table!)")))
-        @test Interpreter.is_tabled(parse_program("(fib 1)")[1][2])
-        Interpreter.untable_all!()
+        @test Eval.is_tabled(parse_program("(fib 1)")[1][2])
+        Eval.untable_all!()
         s5 = Space(); load_core_stdlib!(s5); load_metta!(s5, fib; auto_table = true)
-        @test Interpreter.is_tabled(parse_program("(fib 1)")[1][2])
+        @test Eval.is_tabled(parse_program("(fib 1)")[1][2])
     finally
-        Interpreter.untable_all!()
+        Eval.untable_all!()
     end
 end
 
@@ -207,7 +207,7 @@ end
 # closed ⇒ ground result). Correctness gate: results must be BYTE-IDENTICAL to the rename path (alpha-
 # normalized for the fresh-var counter, which advances globally between the two runs). Default OFF.
 @testset "fast-match: byte-identical to rename path (flag-gated) + closed-rule predicate" begin
-    Interpreter.fast_match!(false)
+    Eval.fast_match!(false)
     try
         norm(rs) = sort([replace(string(x), r"#\d+" => "#N") for x in rs])   # alpha-normalize gensym ids
         run1(prog, q) = (s = Space(); load_core_stdlib!(s); load_metta!(s, prog); load_metta!(s, q))
@@ -217,24 +217,24 @@ end
                 (raw"(= (pick) (superpose (a b c)))", "!(pick)"),          # nondeterministic closed
                 (raw"(= (poly $x) (+ (* $x $x) (* 2 $x)))", "!(poly 5)"),  # nested pure
                 (raw"(= (idx (pair $a $b)) $a)", raw"!(idx (pair x y))")]  # var in goal → NOT ground → falls back
-            Interpreter.fast_match!(false); off = norm(run1(prog, q))
-            Interpreter.fast_match!(true);  on  = norm(run1(prog, q))
-            Interpreter.fast_match!(false)
+            Eval.fast_match!(false); off = norm(run1(prog, q))
+            Eval.fast_match!(true);  on  = norm(run1(prog, q))
+            Eval.fast_match!(false)
             @test off == on
         end
         # closed-rule predicate: vars(RHS) ⊆ vars(LHS)
-        @test Interpreter._is_closed_rule(parse_program(raw"(= (fib $n) (fib (- $n 1)))")[1][2])
-        @test !Interpreter._is_closed_rule(parse_program(raw"(= (g $x) (h $x $y))")[1][2])   # $y RHS-only
-        @test !Interpreter._is_closed_rule(parse_program("(foo bar)")[1][2])                 # not a (= …) rule
+        @test Eval._is_closed_rule(parse_program(raw"(= (fib $n) (fib (- $n 1)))")[1][2])
+        @test !Eval._is_closed_rule(parse_program(raw"(= (g $x) (h $x $y))")[1][2])   # $y RHS-only
+        @test !Eval._is_closed_rule(parse_program("(foo bar)")[1][2])                 # not a (= …) rule
     finally
-        Interpreter.fast_match!(false)
+        Eval.fast_match!(false)
     end
 end
 
 @testset "case: empty subject matches the `Empty` clause (hyperon; LeaTTa proved-oracle)" begin
     # LeaTTa (Lean-4 machine-proved MeTTa) differential, 2026-07-08: Core's `case` collapsed an
     # EMPTY result set to `()` and so missed the literal `Empty` clause — hyperon's rule
-    # (stdlib.metta §case) is: empty subject ⇒ the `Empty` pattern fires. Fixed in Interpreter.jl.
+    # (stdlib.metta §case) is: empty subject ⇒ the `Empty` pattern fires. Fixed in Eval.jl.
     s = Space(); load_core_stdlib!(s)
     # subject with NO results (unify miss) ⇒ the `Empty` clause, NOT the `()`/wildcard clause
     @test load_metta!(s, "!(case (unify (A B) (C D) ok Empty) ((ok yes) (Empty nok)))") == Atom[S("nok")]

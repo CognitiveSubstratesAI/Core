@@ -180,7 +180,7 @@ VARIABLE: a variable comes back as a Julia `Symbol` whose name happens to start 
 SYMBOL and VARIABLE are the SAME Julia type here. That collapse is why the MORK store needs
 `__var_` prefixed ground symbols to keep variables distinguishable across a round trip.
 The grammar-faithful type already exists — `Atoms.jl`'s `Sym | Var | Expression | Grounded` —
-but it is defined INSIDE `module Interpreter`, so the store cannot reach it without depending on
+but it is defined INSIDE `module Eval`, so the store cannot reach it without depending on
 the evaluator. Hoisting that type out is the fix; `SExprConvertible` types what is stored TODAY.
 """
 function parse_metta(source::AbstractString) :: Vector{SExprConvertible}

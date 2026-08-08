@@ -20,7 +20,7 @@ using Test
         il = raw"(~> (, (edge $x $y) (edge $y $z)) (trans $x $z))"
         R_il = metta_il_run!(cs, facts, il)
         @test R_il == ["(trans 0 2)", "(trans 1 3)"]
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
         res = SM.load_metta!(isp, raw"!(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))")
         R_interp = sort(unique(filter(s -> occursin("trans", s),

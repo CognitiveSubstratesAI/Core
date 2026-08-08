@@ -19,7 +19,7 @@ include("test_multiset_semantics.jl")  # MeTTa surface = MULTISET, MORK trie = S
 # PLN factor-graph suite (test/pln/) — demand-driven backward chaining on the lib/pln substrate:
 # STV engine (DAG + arity-complete, all 8 rules), Layer-2 DTV (core + sweep + all rules), Layer-3
 # (Fisher-weighted sensitivity + demand vectors, §5.4/§5.8), and §4.9 PLN↔ECAN coupling. Each file
-# is wrapped in its own (gensym) module to isolate `using MeTTaCore.Interpreter` and per-file
+# is wrapped in its own (gensym) module to isolate `using MeTTaCore.Eval` and per-file
 # helpers (_derrs / const _FG / …) from each other and from Main. Auto-discovers pln/*.jl.
 let _plndir = joinpath(@__DIR__, "pln")
     for _plnf in sort(readdir(_plndir))
@@ -118,7 +118,7 @@ include("test_supercompiler_core.jl")
 # between the table and the interpreter has never run in CI. Wired 2026-07-28.
 include("test_mork_native_rewrite.jl")   # native rewrite over trie-stored rules (byte paths, no MM2)
 include("test_primitives_guards.jl")   # guard-clause fail-open regressions (operator precedence)
-include("test_grounded_registry_differential.jl")  # MORK.GROUNDED_REGISTRY vs Interpreter.TOKEN_REGISTRY
+include("test_grounded_registry_differential.jl")  # MORK.GROUNDED_REGISTRY vs Eval.TOKEN_REGISTRY
 include("test_langdef_pack.jl")
 include("test_langdef_welding.jl")
 

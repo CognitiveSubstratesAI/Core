@@ -29,7 +29,7 @@
 # or a boundary case, never a hand-computed constant standing in for the library.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 const _LIBPLN = joinpath(@__DIR__, "..", "..", "lib", "pln")

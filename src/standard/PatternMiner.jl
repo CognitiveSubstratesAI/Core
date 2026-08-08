@@ -26,8 +26,8 @@
 "Support via the RAW-MeTTa interpreter dialect: `(size-atom (collapse (match &self P P)))` over `data`.
 `pattern` uses dollar-prefixed query variables; counts distinct matching atoms."
 function pattern_support_interp(data::AbstractString, pattern::AbstractString)::Int
-    sp = Interpreter.Space(); Interpreter.load_core_stdlib!(sp); Interpreter.load_metta!(sp, data)
-    r = Interpreter.load_metta!(sp, "!(size-atom (collapse (match &self $pattern $pattern)))")
+    sp = Eval.Space(); Eval.load_core_stdlib!(sp); Eval.load_metta!(sp, data)
+    r = Eval.load_metta!(sp, "!(size-atom (collapse (match &self $pattern $pattern)))")
     vs = [string(x) for rr in r for x in (rr isa AbstractVector ? rr : [rr])]
     isempty(vs) ? 0 : something(tryparse(Int, vs[1]), 0)
 end

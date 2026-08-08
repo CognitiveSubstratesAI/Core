@@ -12,7 +12,7 @@
 # premise or drops an arity, the cross-check fails.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 _aerrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)

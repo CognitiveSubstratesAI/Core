@@ -10,7 +10,7 @@
 # The rule table is adopted VERBATIM from CeTTa (it describes the shared HE small-step relation, not a
 # CeTTa-specific thing); PRIMUS's implementing locations are in comments. Claim levels cite the Lean
 # mettaHE theorems that justify each rule of the HE relation PRIMUS's interpreter is conformance-tested
-# (234/234) to implement. The disable-to-prove WELDING into `Interpreter.jl`'s dispatch is a separate
+# (234/234) to implement. The disable-to-prove WELDING into `Eval.jl`'s dispatch is a separate
 # follow-on (it touches the conformance-critical hot path); this slice is the data + reflection layer.
 
 @enum LangDefRuleId begin
@@ -41,7 +41,7 @@ end
 
 # The HE small-step rule table — adopted verbatim from CeTTa he_small_step_pack.c.
 # (PRIMUS impl: GroundedDispatch=is_executable/interpret grounded; EquationMatch=interpret_function rule
-#  match; Eval/Chain/Let/LetStar/Case/Switch=the special-form dispatch in standard/Interpreter.jl.)
+#  match; Eval/Chain/Let/LetStar/Case/Switch=the special-form dispatch in standard/Eval.jl.)
 const HE_SMALL_STEP_RULES = LangDefRule[
     LangDefRule("HES_GroundedDispatch",       HES_GROUNDED_DISPATCH,        "he he-extended", "M_Expression IE_FuncType IF_* MC_Grounded", "rule-sound", true),
     LangDefRule("HES_LeftmostExprCongruence", HES_LEFTMOST_EXPR_CONGRUENCE, "he he-extended", "IA_Start_* M_Expression IE_* IF_*", "rule-sound-on-fragment", true),
@@ -118,7 +118,7 @@ function he_small_step_pack(; env::AbstractString = get(ENV, "CORE_LANGDEF_DISAB
                 langdef_disabled_mask(HE_SMALL_STEP_RULES; env = env))
 end
 
-"""True iff the rule is live AND not disabled. (When welded into Interpreter.jl, covered branches must
+"""True iff the rule is live AND not disabled. (When welded into Eval.jl, covered branches must
 be reachable ONLY through this check so disabling cannot be compensated by a legacy path.)"""
 function langdef_rule_enabled(pack::LangDefPack, rule_id::LangDefRuleId)::Bool
     (pack.disabled_mask & (UInt32(1) << UInt32(Int(rule_id)))) != 0 && return false
@@ -143,10 +143,10 @@ end
 # ── weld the table into the interpreter ──────────────────────────────────────────────────────
 #
 # This table is the SINGLE SOURCE for which rule names exist and which are live. Before this,
-# `Interpreter.rule_enabled` reimplemented the predicate as `!(name in disabled)` and never read the
+# `Eval.rule_enabled` reimplemented the predicate as `!(name in disabled)` and never read the
 # table at all — so an unknown/mistyped name read as ENABLED and a `live = false` rule still ran.
 #
-# The injection runs HERE rather than the interpreter importing the table because Interpreter.jl is
+# The injection runs HERE rather than the interpreter importing the table because Eval.jl is
 # included first (MeTTaCore.jl:62 vs :69) and is deliberately self-contained: it declares the
 # injection point, this file fills it, and the dependency stays one-directional.
-Interpreter._langdef_register!((r.name, r.live) for r in HE_SMALL_STEP_RULES)
+Eval._langdef_register!((r.name, r.live) for r in HE_SMALL_STEP_RULES)

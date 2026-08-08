@@ -22,7 +22,7 @@
 # fallback would route those writes into the interpreter's own store instead of erroring.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 @testset "space ops fail CLOSED on a non-Space argument" begin

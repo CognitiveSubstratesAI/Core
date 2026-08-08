@@ -3,7 +3,7 @@
 # on the hot binding/reduce functions. Run with the Core project + global env stacked:
 #   JULIA_LOAD_PATH="@:@v#.#:@stdlib" julia --project=. tools/jet_alloc_probe.jl
 using MeTTaCore, JET, AllocCheck
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 const SA = MeTTaCore.StandardMeTTa
 using .SA: Atom, Sym, Var, Expression, Bindings
 

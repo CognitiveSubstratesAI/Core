@@ -121,7 +121,7 @@ True iff `(= LHS RHS)` is safe to auto-lower to the MORK exec lane: EVERY operat
 LHS/RHS is a plain relation symbol — NONE is a grounded op or a special form. Authority = the interpreter's
 `TOKEN_REGISTRY` (grounded ops: `+ - * / < == and match superpose collapse foldl-atom case …`) ∪
 `MINIMAL_OPS` (eval/chain/function/unify/cons-atom/decons-atom/…). Conservative: any grounded/special head
-⇒ `false` (stay in the Interpreter lane). The `,` conjunction marker is allowed (it is the exec source
+⇒ `false` (stay in the Eval lane). The `,` conjunction marker is allowed (it is the exec source
 list, not an operator).
 
 🔴 **THIS GUARD IS LOAD-BEARING — do not relax it.** It is the ONLY thing keeping the 44 op names that
@@ -138,8 +138,8 @@ it invited exactly that removal. It claimed `GROUNDED_REGISTRY` "holds only the 
 (`Core/src/primitives/Primitives.jl`) fills it. So the right conclusion was reached from a wrong premise.
 
 The authority is still the INTERPRETER registry, but for the REAL reason: `TOKEN_REGISTRY` is the
-TOKENIZER (its one read site is `parse_atom`, `Interpreter.jl:2456`) feeding hyperon's grounded-ATOM
-model, where dispatch is by atom kind (`is_executable`, `Interpreter.jl:392`). `GROUNDED_REGISTRY` is a
+TOKENIZER (its one read site is `parse_atom`, `Eval.jl:2456`) feeding hyperon's grounded-ATOM
+model, where dispatch is by atom kind (`is_executable`, `Eval.jl:392`). `GROUNDED_REGISTRY` is a
 name-keyed string-FFI shim inside MORK's join engine, reachable only from an `I`-pattern in an `exec`
 form. Deciding "is this head grounded?" for a MeTTa rule is a question about the ATOM MODEL, so the
 tokenizer is the correct authority — not because the other table is empty, but because it answers a
@@ -154,7 +154,7 @@ function mm2_is_relational(rule::AbstractString)::Bool
         h == "," && continue
         h == _MM2_COMPOUND_HEAD && return false      # compound in operator position — never a relation
         h in _MM2_SPECIAL_FORMS && return false      # structurally-dispatched form, in neither authority
-        (haskey(Interpreter.TOKEN_REGISTRY, h) || Symbol(h) in Interpreter.MINIMAL_OPS) && return false
+        (haskey(Eval.TOKEN_REGISTRY, h) || Symbol(h) in Eval.MINIMAL_OPS) && return false
     end
     true
 end
@@ -429,7 +429,7 @@ mm2_lower_eq(rule::AbstractString)::String =
 """
     mm2_eq_bisim(rule, query) -> (; reduct, interp, ok)
 
-Interpreter-oracle bisimulation harness for `(=)`→MM2 REDUCTION — the design-doc follow-up that makes
+Eval-oracle bisimulation harness for `(=)`→MM2 REDUCTION — the design-doc follow-up that makes
 every reduction/arith lowering systematically checkable (Phase-1 could only inspect by hand, because raw
 `(=)` is inert in MORK so `verify_bisim` can't be the `(=)`-oracle). Lowers `rule` via `mm2_lower_eq`,
 fires it against a fresh MORK space holding `query`, and compares the REDUCT (final atoms minus the
@@ -444,8 +444,8 @@ function mm2_eq_bisim(rule::AbstractString, query::AbstractString)
     space_metta_calculus!(cs.inner, 1_000_000)
     dump = [strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
     reduct = sort(String[String(x) for x in dump if x != strip(query)])   # atoms added, redex removed
-    isp = Interpreter.Space(); Interpreter.load_core_stdlib!(isp); Interpreter.load_metta!(isp, rule)
-    res = Interpreter.load_metta!(isp, "!" * query)
+    isp = Eval.Space(); Eval.load_core_stdlib!(isp); Eval.load_metta!(isp, rule)
+    res = Eval.load_metta!(isp, "!" * query)
     interp = sort(String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
     (; reduct = reduct, interp = interp, ok = Set(reduct) == Set(interp))
 end
@@ -702,8 +702,8 @@ end
 Convenience over `mm2_lane_from_atoms`: mirror a LIVE interpreter `Space`'s OWN atoms
 (`atoms[lib_count+1:end]` — excludes the imported stdlib) into a MORK lane. The whole-Space live-eval handoff.
 """
-mm2_lane_from_space(isp::Interpreter.Space)::CoreSpace =
-    mm2_lane_from_atoms(Interpreter.own_atoms(isp))
+mm2_lane_from_space(isp::Eval.Space)::CoreSpace =
+    mm2_lane_from_atoms(Eval.own_atoms(isp))
 
 """
     mm2_lane_saturate!(atoms; max_rounds=64) -> CoreSpace
@@ -832,24 +832,24 @@ forward-closure (metagraph-rewriting) semantics for the relational subset; the
 interpreter's `(=)` reduction semantics for everything else are untouched. So a MeTTa program can compute a
 transitive closure on the substrate, then query it with the interpreter (`!(match &self …)`).
 """
-function mc_closure!(isp::Interpreter.Space; rounds::Int = 64)::Int
-    own = collect(Interpreter.own_atoms(isp))
+function mc_closure!(isp::Eval.Space; rounds::Int = 64)::Int
+    own = collect(Eval.own_atoms(isp))
     cs = mm2_lane_saturate!(own; max_rounds = rounds)
     added = 0
     for line in split(space_dump_all_sexpr(cs.inner), '\n')
         s = strip(line); isempty(s) && continue
         mm2_head(s) == "exec" && continue                        # skip MM2 exec-rule artifacts
-        atom = Interpreter.parse_program(s)[1][2]
-        if !Interpreter.contains_atom(isp, atom)
-            Interpreter.add_atom!(isp, atom); added += 1
+        atom = Eval.parse_program(s)[1][2]
+        if !Eval.contains_atom(isp, atom)
+            Eval.add_atom!(isp, atom); added += 1
         end
     end
     added
 end
 
-# wire the `(mork-closure)` grounded op: its SpaceOp is defined in Interpreter (so it lives in TOKEN_REGISTRY),
+# wire the `(mork-closure)` grounded op: its SpaceOp is defined in Eval (so it lives in TOKEN_REGISTRY),
 # but its impl is `mc_closure!` here in the parent — populate the hook now that both are loaded.
-Interpreter._MORK_CLOSURE_HOOK[] = mc_closure!
+Eval._MORK_CLOSURE_HOOK[] = mc_closure!
 
 """
     mm2_match!(cs::CoreSpace, query; steps=1_000_000) -> Vector{String}

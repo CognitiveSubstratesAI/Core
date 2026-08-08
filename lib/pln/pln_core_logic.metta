@@ -100,7 +100,7 @@
 ;;   · seed-vs-derived: (StampDisjoint (s1) (msort (s1 s2))) => True although s1 is in BOTH —
 ;;     `s1` is nested inside the unreduced term, so superpose never sees it. The gate fails OPEN
 ;;     and licenses re-counting the same evidence ⇒ EVIDENCE FABRICATION (ωPLN Prop 7.1: D_dc>0).
-;; `sort-atom` is grounded (src/standard/Interpreter.jl:2229) and verified on stamp-shaped data:
+;; `sort-atom` is grounded (src/standard/Eval.jl:2229) and verified on stamp-shaped data:
 ;; (s3 s1 s2)->(s1 s2 s3), ()->(), (s1)->(s1), (s2 s1 s2)->(s1 s2 s2). Any total order suffices;
 ;; sorting is for canonicalisation, not dedup. Found by auditing our PLN against Goertzel's ωPLN
 ;; law catalogue (docs/specs/omegaclaw/omegapln_implementation_v3_spec.md §26.2/App C).

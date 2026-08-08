@@ -196,7 +196,7 @@ The distinction matters: a rewritten atom is invisible here, by design.
 """
 function lib_policy_names(lib::Symbol)::Vector{String}
     dir = nothing
-    for d in Interpreter._MODULE_PATH[]
+    for d in Eval._MODULE_PATH[]
         cand = joinpath(d, String(lib))
         isdir(cand) && (dir = cand; break)
     end

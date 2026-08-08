@@ -33,7 +33,7 @@ using Test
 const _SF = MeTTaCore.CompilerFrontend
 const _SA = MeTTaCore.CompilerANormal
 const _SE = MeTTaCore.CompilerEmit
-const _SI = MeTTaCore.Interpreter
+const _SI = MeTTaCore.Eval
 
 function _stage_parse(sp, text::AbstractString)
     toks = _SI.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]

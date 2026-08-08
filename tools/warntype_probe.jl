@@ -1,7 +1,7 @@
 # Type-stability probe (perf-tips §"type stability"): @code_warntype the hot binding/reduce
 # functions; flag instabilities (Any / Core.Box / wide Union) that force boxing + allocation.
 using MeTTaCore, InteractiveUtils
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 const SA = MeTTaCore.StandardMeTTa
 using .SA: Atom, Sym, Var, Expression, Bindings
 

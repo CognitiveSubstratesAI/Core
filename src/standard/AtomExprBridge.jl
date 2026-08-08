@@ -62,7 +62,7 @@ function _expr_to_atom!(e::MORK.Expr, pos::Base.RefValue{Int}, vars::Vector{_MM2
     tag = MORK.byte_item(e.buf[pos[]])
     if tag isa MORK.ExprSymbol
         n = Int(tag.size); b = @view e.buf[(pos[] + 1):(pos[] + n)]; pos[] += 1 + n
-        return Interpreter.parse_atom(String(b))
+        return Eval.parse_atom(String(b))
     elseif tag isa MORK.ExprArity
         k = Int(tag.arity); pos[] += 1
         return _MM2_ATOM.Expression(_MM2_ATOM.Atom[_expr_to_atom!(e, pos, vars) for _ in 1:k])

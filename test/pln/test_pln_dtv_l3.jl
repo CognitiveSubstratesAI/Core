@@ -8,7 +8,7 @@
 #   - eq48 demand vector splits into (mean-shift, concentration-tighten) components
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 _l3errs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)

@@ -1,6 +1,6 @@
 # Loads the real stdlib.metta subset (verbatim from hyperon-experimental) into the
 # StandardMeTTa evaluator and runs MeTTa programs that exercise if / let / let* / and.
-using MeTTaCore.Interpreter                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Eval                  # precompiled submodule (was: include fresh → recompiled per file)
 using MeTTaCore.StandardMeTTa
 using Test
 

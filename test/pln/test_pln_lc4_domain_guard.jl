@@ -19,7 +19,7 @@
 # so the oracle is the [0,1] invariant + the in-file doctest values as the regression baseline.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 @testset "PLN L-C4 — out-of-domain truth strengths rejected at origin (not clamped)" begin

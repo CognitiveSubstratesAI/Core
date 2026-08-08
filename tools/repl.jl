@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-# tools/repl.jl — warm dev REPL + interactive MeTTa shell for MeTTaCore, on the MeTTaCore.Interpreter
+# tools/repl.jl — warm dev REPL + interactive MeTTa shell for MeTTaCore, on the MeTTaCore.Eval
 # engine (the 234/234 hyperon-faithful evaluator + CoreExtensions). Replaces PRIMUS tools/metta_repl.jl.
 #
 # Architecture mirrors hyperon-experimental's repl/ crate (verified against upstream main.rs /
@@ -28,7 +28,7 @@ try; using Revise; catch; @warn "Revise unavailable — install into the global 
 using MeTTaCore
 using Test
 
-const SM = MeTTaCore.Interpreter                       # metta_run / load_metta! / Space / parse
+const SM = MeTTaCore.Eval                       # metta_run / load_metta! / Space / parse
 const SA = MeTTaCore.StandardMeTTa         # Sym / Var / Expression / Bindings / match_atoms
 
 const _ROOT   = dirname(@__DIR__)
@@ -131,7 +131,7 @@ function _prompt()
 end
 
 function metta()
-    println("MeTTa REPL (MeTTaCore.Interpreter). Ctrl-D to exit. Loading = !(import! …), help = !(help!).")
+    println("MeTTa REPL (MeTTaCore.Eval). Ctrl-D to exit. Loading = !(import! …), help = !(help!).")
     buf = IOBuffer()
     while true
         print(position(buf) == 0 ? _prompt() : "  ")

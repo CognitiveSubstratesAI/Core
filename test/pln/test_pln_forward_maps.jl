@@ -30,7 +30,7 @@
 # to pass as `assertEqual` before being committed here.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa          # Space, load_metta!, Expression, Sym, …
 
 @testset "PLN forward maps — book contract (lib/pln Truth_*)" begin

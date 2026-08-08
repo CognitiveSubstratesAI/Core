@@ -16,7 +16,7 @@
 #    these exact goldens fail under a missing/misplaced cap in the chain-rule composition.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 @testset "PLN rows-only — induction + abduction (5-premise chain-rule + singularities + sens_A=0) vs oracle" begin

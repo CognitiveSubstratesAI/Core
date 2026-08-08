@@ -3,7 +3,7 @@
 # in leaf helpers — concatT=0.2%, gatherJunctors=0.2%; it's ~83 ms/reduction × 2646 reductions
 # of mostly trivial structure (if 18%, data-constructors AND/A/B/NOT 35%, let/let* 23%).
 #
-# REQUIRES temporary instrumentation in src/standard/Interpreter.jl (removed after measuring — it
+# REQUIRES temporary instrumentation in src/standard/Eval.jl (removed after measuring — it
 # adds a Dict op to the hot reduction path). To re-run, re-add these 4 lines:
 #   after `is_minimal_op(...)`:
 #     const _RHEAD = Dict{String,Int}()
@@ -11,7 +11,7 @@
 #   and `_rcount!(<subject>)` immediately before each of the 3 `query(space, Expression(Sym("="), …, X))` sites.
 #   julia --project=. tools/profile_reduceto.jl
 using MeTTaCore
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 
 sp = SM.Space(); SM.load_core_stdlib!(sp)
 SM.load_metta!(sp, "!(import! &self (library MOSES))")   # proven loader (index_diag.jl)

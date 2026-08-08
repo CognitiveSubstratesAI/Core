@@ -23,7 +23,7 @@
 #
 # ⚠️ NOT MM2-SPECIFIC despite the prefix: `GSLT.jl` parses `(theory …)` and `MeTTaIL.jl` parses
 # `(~> LHS RHS)` with these. They are the tree's s-expression reader for TEXT forms — distinct from the
-# grammar's `Atom` parser (`Interpreter.parse_from`), which reads into typed atoms rather than strings.
+# grammar's `Atom` parser (`Eval.parse_from`), which reads into typed atoms rather than strings.
 
 # ── top-level form splitter: paren-depth aware, `!`-prefix aware, `;`-comment aware ──
 function mm2_split_forms(program::AbstractString)::Vector{Tuple{Bool, String}}

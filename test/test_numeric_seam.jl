@@ -26,7 +26,7 @@
 using Test
 using MeTTaCore
 
-const _NS = MeTTaCore.Interpreter
+const _NS = MeTTaCore.Eval
 const _NSP = (s = _NS.Space(); _NS.load_core_stdlib!(s); s)
 _nsval(a) = a isa _NS.Grounded ? a.value :
             a isa _NS.Sym ? Symbol(a.name) :
@@ -120,7 +120,7 @@ nsq(src) = (r = _NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
     end
 
     @testset "the two lowerings of + - * / % are not co-located and disagree" begin
-        # Interpreter.jl:403 `_num_binop` and Primitives.jl:32 `_register_arithmetic!` implement the
+        # Eval.jl:403 `_num_binop` and Primitives.jl:32 `_register_arithmetic!` implement the
         # same five operators in different files. They already differ on (% 7 0). Recorded here so the
         # count is visible; the fix is one module owning the seam, not a patch to either lane.
         # Agreement on the ordinary cases is real and worth keeping green while that is designed.

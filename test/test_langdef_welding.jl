@@ -1,9 +1,9 @@
-# LangDef disable-to-prove welding — the rule_enabled hook welded into Interpreter.jl dispatch.
+# LangDef disable-to-prove welding — the rule_enabled hook welded into Eval.jl dispatch.
 # Demonstrates that disabling a covered rule actually disables its evaluation path (no legacy
 # compensation), proving the rule is load-bearing. Conformance-at-default is gated separately by
 # test/standard/test_conformance.jl (stays 234/234 because the guard defaults to enabled).
 using MeTTaCore
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 using Test
 
 _eval(q) = (sp = SM.Space(); SM.load_core_stdlib!(sp);

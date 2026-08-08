@@ -117,13 +117,13 @@ const MC = MeTTaCore
         holds(x) = x isa AbstractVector ? any(holds, x) : x === probe
         @test any(holds, MC.core_atoms(cs))                       # present in the shared trie …
 
-        isp = MC.Interpreter.Space()                              # … and NOT in a fresh interpreter
-        MC.Interpreter.load_core_stdlib!(isp)                     #     space carrying only stdlib
-        before = MC.Interpreter.atom_count(isp)
+        isp = MC.Eval.Space()                              # … and NOT in a fresh interpreter
+        MC.Eval.load_core_stdlib!(isp)                     #     space carrying only stdlib
+        before = MC.Eval.atom_count(isp)
         @test before > 0                                          # stdlib really did load
-        @test isempty(MC.Interpreter.load_metta!(isp, "!(q-prob-times 0.5 0.5)")) ||
+        @test isempty(MC.Eval.load_metta!(isp, "!(q-prob-times 0.5 0.5)")) ||
               true                                                # (call shape is irrelevant …)
         # … the real assertion: loading a lib into the CoreSpace added NOTHING to the interpreter.
-        @test MC.Interpreter.atom_count(isp) == before
+        @test MC.Eval.atom_count(isp) == before
     end
 end

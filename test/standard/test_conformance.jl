@@ -11,7 +11,7 @@
 # Current: 234/234 directives pass — FULL conformance against the vendored hyperon corpus. The baseline is
 # all-zero; any future regression (errors go up) OR unrecorded change fails this test and must be
 # explained. Keep it honest: when adding a new vendored script, add its real count here, don't cherry-pick.
-using MeTTaCore.Interpreter                  # precompiled submodule (was: include fresh → recompiled per file)
+using MeTTaCore.Eval                  # precompiled submodule (was: include fresh → recompiled per file)
 using MeTTaCore.StandardMeTTa
 using Test
 
@@ -22,7 +22,7 @@ const CONF_DIR = joinpath(@__DIR__, "conformance")
 # in a later one ("library not found"), i.e. a failure whose cause is TEST ORDER, not the code under
 # test. `test/oracle/leatta/test_leatta_oracle.jl:123-124,179` already did this correctly
 # (push + filter! to restore); this file did not. Idempotent so repeated includes cannot duplicate.
-CONF_DIR in Interpreter._MODULE_PATH[] || push!(Interpreter._MODULE_PATH[], CONF_DIR)
+CONF_DIR in Eval._MODULE_PATH[] || push!(Eval._MODULE_PATH[], CONF_DIR)
 const STDLIB   = read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String)
 
 # baseline = expected number of error directives per script (0 = fully passing).

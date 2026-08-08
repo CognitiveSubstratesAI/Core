@@ -2,7 +2,7 @@
 # Issue B: Core interp of concatT allocates ~2.9 GiB at n=20 (84% GC) → super-linear.
 # ALLOCATION profiling (not CPU) to find WHAT allocates. Run: julia --project=. tools/profile_concatT.jl
 using MeTTaCore, Profile
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 const SA = MeTTaCore.StandardMeTTa
 
 sp = SM.Space(); SM.load_core_stdlib!(sp)
@@ -22,7 +22,7 @@ for a in res.allocs
     loc = "?"
     for fr in a.stacktrace
         s = string(fr.file)
-        if occursin("Interpreter.jl", s) || occursin("Atoms.jl", s)
+        if occursin("Eval.jl", s) || occursin("Atoms.jl", s)
             loc = "$(fr.func)  $(basename(s)):$(fr.line)"; break
         end
     end

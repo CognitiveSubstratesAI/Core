@@ -4,7 +4,7 @@
 # speedup is delivered THROUGH the evaluator (not just a standalone Julia call).
 # Run: julia --project=. tools/test_a2_wiring.jl
 using MeTTaCore
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 
 sp = SM.Space(); SM.load_core_stdlib!(sp)
 # concatT lives in lib/MOSES/utilities.metta (self-contained: car/cdr/cons/if/==).

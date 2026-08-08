@@ -22,7 +22,7 @@
 #
 # ── THE TWO STORES, AND WHY THE ANSWER DEPENDS ON WHICH ONE YOU ASK ─────────────────────────────
 #
-#   MeTTa surface   `Interpreter.Space`, whose `.atoms` is a VECTOR  -> MULTISET, duplicates kept
+#   MeTTa surface   `Eval.Space`, whose `.atoms` is a VECTOR  -> MULTISET, duplicates kept
 #   CoreSpace API   `core_add!` etc., backed by the MORK trie        -> SET, duplicates dropped
 #
 # Measured, same session, same process:
@@ -40,7 +40,7 @@
 using Test
 using MeTTaCore
 
-const _SM = MeTTaCore.Interpreter
+const _SM = MeTTaCore.Eval
 
 "Fresh interpreter space with the core stdlib — the shape MettaJam's stateless endpoint uses."
 _fresh_interp() = (s = _SM.Space(); _SM.load_core_stdlib!(s); s)

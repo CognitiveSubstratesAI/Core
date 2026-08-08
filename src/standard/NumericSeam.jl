@@ -15,7 +15,7 @@ each of those produced a defect here, independently:
                     saturation (the merge design's open R1).
 
 The cause is structural, not carelessness: **`+ - * / %` are implemented TWICE** —
-`Interpreter.jl` `_num_binop` and `Primitives.jl` `_register_arithmetic!` — in different files, and
+`Eval.jl` `_num_binop` and `Primitives.jl` `_register_arithmetic!` — in different files, and
 `MM2Router.jl`'s `_MM2_ARITH_I64`/`_MM2_ARITH_F64` decides a third time for the compiled lane. Three
 sites, one semantics, no owner. They agree today only because someone hand-tuned the compiled lane
 to bisimulate the interpreter (`MM2Router.jl:303`, "chosen to bisimulate the interpreter's own

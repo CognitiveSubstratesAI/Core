@@ -9,13 +9,13 @@
 #   docs/research/papers/Subrep/SubRep-Minecraft-AIRIS_v2_2.pdf §3.2 + §5.2 options;
 #   reference impl ~/PRIMUS/dev-zone/subrep/certification/cds_test.py.
 #
-# Runs on the Interpreter (same evaluator as quantale/PLN/ECAN). Tests are
+# Runs on the Eval (same evaluator as quantale/PLN/ECAN). Tests are
 # DISCRIMINATING — each flips a real admit↔reject decision, not just non-empty
 # output. Float-inexact quantities are asserted via the boolean admit (robust);
 # only float-exact values are asserted directly.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 include(joinpath(@__DIR__, "assert_guard.jl"))
 

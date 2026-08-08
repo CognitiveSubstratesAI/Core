@@ -15,7 +15,7 @@
 ##
 ## Standalone — does NOT touch eval_metta / eval_nd. Built on the typed StandardMeTTa atoms.
 
-module Interpreter
+module Eval
 
 # `StandardMeTTa` (the grammar's four ATOM kinds) is no longer INCLUDED here — it was hoisted to
 # `MeTTaCore.jl`, ABOVE the store/parser/primitives, on 2026-07-29. It is standalone and never
@@ -68,7 +68,7 @@ end
 # Direction matters. This submodule is deliberately SELF-CONTAINED, and it is included at
 # MeTTaCore.jl:62 while LangDefPack.jl is included at :69 — so it cannot reference the table, at load
 # time or otherwise, without inverting that dependency. Instead it declares an INJECTION POINT which
-# LangDefPack.jl fills at its own load time. Interpreter still reaches out to nothing.
+# LangDefPack.jl fills at its own load time. Eval still reaches out to nothing.
 const _LANGDEF_LIVE = Dict{String, Bool}()
 
 "Register the rule table (called by LangDefPack.jl at load). Idempotent; last registration wins."
@@ -93,7 +93,7 @@ disable-to-prove test surfaces immediately instead of quietly proving nothing.
     if live === nothing
         isempty(_LANGDEF_LIVE) && error(
             "rule_enabled(\"$name\"): the LangDef rule table was never registered. " *
-            "LangDefPack.jl must call Interpreter._langdef_register! at load; without it every " *
+            "LangDefPack.jl must call Eval._langdef_register! at load; without it every " *
             "gated branch would fall open.")
         error("rule_enabled(\"$name\"): not a rule in HE_SMALL_STEP_RULES. Known rules: " *
               join(sort(collect(keys(_LANGDEF_LIVE))), ", ") *
@@ -1568,7 +1568,7 @@ function metta_call_instr(f::Frame, b::Bindings, space)
         qres = space === nothing ? Bindings[] : query(space::Space, Expression(Sym("="), atom, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
-            is_present(mb, X) || continue                # resolve-filter (identical to Interpreter.jl :309)
+            is_present(mb, X) || continue                # resolve-filter (identical to Eval.jl :309)
             reduced = true
             append!(out, push_nested(_metta(subst(X, mb), typ), mb, anchor, f.depth + 1))
         end
@@ -1975,7 +1975,7 @@ function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector
         qres = query(space, Expression(Sym("="), a, X))
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
-            is_present(mb, X) || continue                # resolve-filter (identical to Interpreter.jl :309)
+            is_present(mb, X) || continue                # resolve-filter (identical to Eval.jl :309)
             reduced = true
             push!(out, (subst(X, mb), type, mb, false))                 # rewrite result → reduce again
         end
@@ -2302,7 +2302,7 @@ _GROUNDED_OP_TYPES[CHANGE_STATE] = "(-> (StateMonad \$t) \$t (StateMonad \$t))"
 # Grounded{Space}; `&self`/`&kb` resolve (parse-time tokens) to such a handle. add-atom/match take the
 # space as their first arg and operate on it (falling back to the context space when it isn't a handle).
 const NEW_SPACE = Grounded(Operation("new-space", (xs::Vector{Atom}) -> ExecOk(Atom[Grounded(Space())])))
-# fork-space (hyperon; LeaTTa Interpreter.lean:776): a fresh space seeded with a SNAPSHOT of the parent's
+# fork-space (hyperon; LeaTTa Eval.lean:776): a fresh space seeded with a SNAPSHOT of the parent's
 # atoms — an INDEPENDENT copy, so a later add/remove on the fork does NOT propagate to the parent (the
 # c2_spaces isolation contract: parent→(A), child→(A B), grandchild→(A)). `Space(atoms)` rebuilds the index;
 # lib_count is preserved so `get-atoms` on the fork still excludes flattened library atoms.

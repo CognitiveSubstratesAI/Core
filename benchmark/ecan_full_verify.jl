@@ -2,7 +2,7 @@
 # set-link-weight!, forget-atom!). Skips the slow Stability example (separate perf question).
 # Run via warm REPL:  printf 'include("benchmark/ecan_full_verify.jl"); exit()\n' | julia --project=. -i tools/repl.jl
 include(joinpath(@__DIR__, "..", "test", "ecan", "ecan_live_harness.jl"))
-const I = MeTTaCore.Interpreter
+const I = MeTTaCore.Eval
 const FAST = ["CoreAV", "Funds", "Wages", "Stimulate", "Rent", "AFState", "Spreading",
               "Fluid", "Forgetting", "Governance", "Adaptive", "BulkOps"]  # all but slow Stability
 

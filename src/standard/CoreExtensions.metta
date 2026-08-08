@@ -34,7 +34,7 @@
 (= (~=  $a $b) (not (== $a $b)))
 (= (=== $a $b) (== $a $b))
 
-;; tnot: SLG tabled negation (grounded SpaceOp in Interpreter.jl — negation of PROVABILITY, distinct from the
+;; tnot: SLG tabled negation (grounded SpaceOp in Eval.jl — negation of PROVABILITY, distinct from the
 ;; truth-functional grounded `not`). Like collapse/case, it must receive its goal UNEVALUATED so it can probe
 ;; the goal's table itself; the `(-> Atom …)` arg type suppresses reduction. Returns True (goal fails / no
 ;; answers), Empty (goal proven), or `undefined` (WFS bottom — recursion-through-negation). Fires only when the

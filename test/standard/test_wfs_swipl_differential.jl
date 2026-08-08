@@ -35,15 +35,15 @@
 # replacing the 9.0.4 apt packages. `library(wfs)` (`call_delays/2`, `delays_residual_program/2`),
 # which `A_win_game.pl` needs, is core — no package build required for THIS test.
 # See docs/specs/SWIPL_CAPABILITY_MAP_2026-08-06.md §0(a).
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 using Test
 
-const _U_DIFF = Interpreter.UNDEFINED
+const _U_DIFF = Eval.UNDEFINED
 
 "Run a MeTTa program then one query on a fresh space, tabling reset (tabling state is global)."
 function _wfs_diff(prog::AbstractString, query::AbstractString)::Vector{Atom}
-    Interpreter.untable_all!()
+    Eval.untable_all!()
     s = Space(); load_core_stdlib!(s)
     load_metta!(s, prog)
     load_metta!(s, query)

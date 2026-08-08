@@ -127,12 +127,12 @@ end
 """
     _cs_resolve_module(name) -> path or nothing
 
-Resolve an `import!` target against `Interpreter._MODULE_PATH` — the SAME search path the
+Resolve an `import!` target against `Eval._MODULE_PATH` — the SAME search path the
 old loader uses, so `(library metamo)`, `"config.metta"` and bare `metamo` resolve identically in
 both spaces. Deliberately reuses that Ref rather than duplicating the path list, so the two loaders
 cannot drift apart.
 
-⚠️ `Interpreter` is a SELF-CONTAINED submodule that deliberately "shares no types with the
+⚠️ `Eval` is a SELF-CONTAINED submodule that deliberately "shares no types with the
 MORK-backed engine". Reaching in for `_MODULE_PATH` respects that boundary — it is a
 `Vector{String}` of directories, not a type — and the alternative (a second module path here) is
 exactly the drift the boundary is meant to prevent.
@@ -140,7 +140,7 @@ exactly the drift the boundary is meant to prevent.
 function _cs_resolve_module(name::AbstractString)
     n = strip(String(name), ['"', '\''])
     cands = endswith(n, ".metta") ? [n] : [n * ".metta", joinpath(n, n * ".metta")]
-    for dir in Interpreter._MODULE_PATH[], c in cands
+    for dir in Eval._MODULE_PATH[], c in cands
         p = joinpath(dir, c)
         isfile(p) && return p
     end
@@ -224,17 +224,17 @@ function load_metta!(cs::CoreSpace, text::AbstractString;
             tgt = _cs_import_target(body)
             tgt === nothing && error("load_metta!(CoreSpace): cannot parse import target in `$form`")
             path = _cs_resolve_module(tgt)
-            path === nothing && error("load_metta!(CoreSpace): module `$tgt` not found on Interpreter._MODULE_PATH")
+            path === nothing && error("load_metta!(CoreSpace): module `$tgt` not found on Eval._MODULE_PATH")
             rp = realpath(path)
             if !(rp in imported)                  # cycle / re-import guard
                 push!(imported, rp)
                 d = dirname(rp)
-                pushed = !(d in Interpreter._MODULE_PATH[])
-                pushed && push!(Interpreter._MODULE_PATH[], d)
+                pushed = !(d in Eval._MODULE_PATH[])
+                pushed && push!(Eval._MODULE_PATH[], d)
                 try
                     load_metta!(cs, read(rp, String); as_library = true, imported = imported)
                 finally
-                    pushed && filter!(!=(d), Interpreter._MODULE_PATH[])
+                    pushed && filter!(!=(d), Eval._MODULE_PATH[])
                 end
             end
         elseif h == "remove-atom"
@@ -274,12 +274,12 @@ function load_core_lib!(cs::CoreSpace, name::Union{Symbol, AbstractString})
         [path]
     else
         dir = nothing
-        for d in Interpreter._MODULE_PATH[]
+        for d in Eval._MODULE_PATH[]
             cand = joinpath(d, n)
             isdir(cand) && (dir = cand; break)
         end
         dir === nothing && error("load_core_lib!: library `$n` is neither a module on " *
-                                 "Interpreter._MODULE_PATH nor a directory on it")
+                                 "Eval._MODULE_PATH nor a directory on it")
         sort(filter(f -> endswith(f, ".metta"), readdir(dir; join = true)))
     end
 
@@ -291,12 +291,12 @@ function load_core_lib!(cs::CoreSpace, name::Union{Symbol, AbstractString})
         # its relative imports (`!(import! &self "config.metta")`) resolve self-contained. Without
         # this every multi-file library fails on its first nested import.
         d = dirname(rp)
-        pushed = !(d in Interpreter._MODULE_PATH[])
-        pushed && push!(Interpreter._MODULE_PATH[], d)
+        pushed = !(d in Eval._MODULE_PATH[])
+        pushed && push!(Eval._MODULE_PATH[], d)
         try
             load_metta!(cs, read(rp, String); as_library = true, imported = imported)
         finally
-            pushed && filter!(!=(d), Interpreter._MODULE_PATH[])
+            pushed && filter!(!=(d), Eval._MODULE_PATH[])
         end
     end
     cs

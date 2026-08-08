@@ -24,7 +24,7 @@ using Test
 const _UF = MeTTaCore.CompilerFrontend
 const _UA = MeTTaCore.CompilerANormal
 const _UE = MeTTaCore.CompilerEmit
-const _UI = MeTTaCore.Interpreter
+const _UI = MeTTaCore.Eval
 
 function _sub_parse(sp, text::AbstractString)
     toks = _UI.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]

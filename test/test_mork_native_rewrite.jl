@@ -104,7 +104,7 @@ const MK = MeTTaCore.MORK
 
         # The interpreter — the source-ordered store — disagrees on BOTH counts: it returns ALL
         # matches, and their order follows the source. This is the gap a single store has to close.
-        IN = MC.Interpreter
+        IN = MC.Eval
         interp(src) = begin
             sp = IN.Space(); IN.load_metta!(sp, src)
             [string(a) for a in IN.metta_run(IN.parse_program("!(f 0)")[1][2], sp)]

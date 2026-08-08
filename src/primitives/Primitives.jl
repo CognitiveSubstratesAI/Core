@@ -154,7 +154,7 @@ _g2atom(s::AbstractString) = begin
     v = MORK.grounded_num(s); v !== nothing && return StandardMeTTa.Grounded(v)   # 2nd copy, gone
     # STRING is GROUNDED, not SYMBOL — `GROUNDED ::= STRING | WORD` (metta_grammar.ebnf). Without this
     # a quoted literal fell through to `Sym(Symbol("\"hello\""))`, i.e. a symbol whose NAME included
-    # the quotes, where the interpreter's own `parse_atom` (Interpreter.jl:2453) yields
+    # the quotes, where the interpreter's own `parse_atom` (Eval.jl:2453) yields
     # `Grounded("hello")`. Same unquoting rule as the parser: strip the leading quote.
     startswith(s, "\"") && return StandardMeTTa.Grounded(String(s[nextind(s, 1):(endswith(s, "\"") && length(s) >= 2 ? prevind(s, lastindex(s)) : lastindex(s))]))
     # VARIABLE is one of the grammar's FOUR atom kinds (metta_grammar.ebnf), so it must not fall
@@ -185,7 +185,7 @@ Run a MORK-lane grounded call through the INTERPRETER'S implementation of the sa
 its result as an s-expression string.
 
 ⚠️ WHY THIS DELEGATES INSTEAD OF COMPUTING (measured 2026-07-29). `CoreMathOps.jl` (included at
-`Interpreter.jl:2520`) already implements the `*-math` surface FAITHFULLY to hyperon-experimental's
+`Eval.jl:2520`) already implements the `*-math` surface FAITHFULLY to hyperon-experimental's
 `lib/src/metta/runner/stdlib/math.rs`, and documents its rules verbatim:
 
     sqrt/log/sin/asin/cos/acos/tan/atan  -> ALWAYS Float
@@ -209,7 +209,7 @@ A second implementation of a surface that already has a faithful one is not a se
 divergence generator. Delegating gives ONE source of truth and fixes all nine at once.
 
 Resolution is deferred to CALL time, which is what makes this legal: `Primitives.jl` is included at
-`MeTTaCore.jl:52`, before `module Interpreter` exists at :62 — but these closures only ever run once
+`MeTTaCore.jl:52`, before `module Eval` exists at :62 — but these closures only ever run once
 a grounded op is invoked, by which point it does.
 
 `ExecNoReduce`/`ExecRuntime` both return `nothing` (= "not applicable", the registry's own protocol),
@@ -217,12 +217,12 @@ so a host exception can never escape. Carrying `ExecRuntime`'s message through a
 atom needs the registry's return protocol to grow an error case — tracked, not done here.
 """
 function _delegate_grounded(name::String, args)
-    R = Interpreter.TOKEN_REGISTRY
+    R = Eval.TOKEN_REGISTRY
     haskey(R, name) || return nothing
     g = R[name]
-    (g isa StandardMeTTa.Grounded && g.value isa Interpreter.Operation) || return nothing
-    r = Interpreter.execute(g, StandardMeTTa.Atom[_g2atom(a) for a in args], nothing)
-    r isa Interpreter.ExecOk || return nothing
+    (g isa StandardMeTTa.Grounded && g.value isa Eval.Operation) || return nothing
+    r = Eval.execute(g, StandardMeTTa.Atom[_g2atom(a) for a in args], nothing)
+    r isa Eval.ExecOk || return nothing
     length(r.results) == 1 || return nothing
     string(r.results[1])
 end
@@ -351,7 +351,7 @@ then SILENTLY DROPS THE WHOLE JOIN ROW — no error, no warning. Leaving the nam
 here". Declining would have been quieter AND more wrong.
 
 The working implementation is the interpreter's, over a genuinely mutable `StateCell`
-(`Interpreter.jl:384`, a `mutable struct`) reached through the grounded-ATOM model — and
+(`Eval.jl:384`, a `mutable struct`) reached through the grounded-ATOM model — and
 `mm2_is_relational` already keeps these heads on that lane. Restoring them here needs the atom-based
 boundary (`expr_to_atom`), not another string transform.
 """
@@ -368,7 +368,7 @@ function _register_type_ops!()
     # `get-type` answers "what type is DECLARED for this atom", which means querying the SPACE for
     # `(: x T)` atoms. The interpreter's is a SpaceOp for exactly that reason:
     #     GET_TYPE = Grounded(SpaceOp("get-type", (xs, space) -> arg_actual_types(xs[1], space)))
-    #                                                     ^^^^^  Interpreter.jl:2181
+    #                                                     ^^^^^  Eval.jl:2181
     # This shim receives a decoded STRING and has no space, so the old implementation guessed from
     # the argument's TEXT instead — which is `get-metatype`'s question, not `get-type`'s. Measured
     # divergence against the interpreter (the lane gated by hyperon-234 + the 21/21 type-system
@@ -383,7 +383,7 @@ function _register_type_ops!()
     # `mm2_is_relational` already keeps this head on the interpreter lane.
 
     # `get-metatype` DOES belong here — it asks only "which of the four grammar kinds is this atom",
-    # needs no space, and the interpreter's is a pure `Operation` (Interpreter.jl:2043), so it can be
+    # needs no space, and the interpreter's is a pure `Operation` (Eval.jl:2043), so it can be
     # delegated. Doing so fixes `(get-metatype True)`: Core's `True` is a `Sym`, not a grounded Bool,
     # so the answer is Symbol — the old local copy said Grounded.
     MORK.register_grounded!("get-metatype", args -> _delegate_grounded("get-metatype", args))

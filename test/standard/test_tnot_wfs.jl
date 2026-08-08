@@ -2,18 +2,18 @@
 # Verified against the SWI-Prolog 9.0.4 differential oracle in test/oracle/wfs/*.pl (win/move game,
 # p:-tnot(p) paradox, a strictly-2-valued stratified control). The interpreter classifies a tabled goal's
 # COMPLETE answer set three ways: a real answer ⇒ ¬G false (Empty); only-`undefined` ⇒ ¬G undefined; no
-# answers ⇒ ¬G true. The WFS `undefined` value is an OUT-OF-BAND Grounded sentinel (Interpreter.UNDEFINED),
+# answers ⇒ ¬G true. The WFS `undefined` value is an OUT-OF-BAND Grounded sentinel (Eval.UNDEFINED),
 # NOT a `Sym("undefined")` — the last testset is the regression that a user datum named `undefined` no longer
 # collides with the truth value (the Hazard-A soundness bug).
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 using Test
 
-const U = Interpreter.UNDEFINED               # WFS bottom / third truth value (out-of-band sentinel)
+const U = Eval.UNDEFINED               # WFS bottom / third truth value (out-of-band sentinel)
 
 # load a program then run one query, on a fresh space with global tabling reset (tabling state is global).
 function _wfs(prog::AbstractString, query::AbstractString)::Vector{Atom}
-    Interpreter.untable_all!()
+    Eval.untable_all!()
     s = Space(); load_core_stdlib!(s)
     load_metta!(s, prog)
     load_metta!(s, query)
@@ -68,7 +68,7 @@ end
         (= (g2) (g2))
     """
     @test isempty(_wfs(prG, "!(g1)"))                       # g1 FALSE (was Atom[U] before Stage B inc-2)
-    Interpreter.untable_all!()
+    Eval.untable_all!()
     sG = Space(); load_core_stdlib!(sG); load_metta!(sG, prG)
     @test isempty(load_metta!(sG, "!(g1)"))                 # FALSE
     @test load_metta!(sG, "!(g2)") == Atom[Sym("True")]     # TRUE (cached member of the completed SCC)

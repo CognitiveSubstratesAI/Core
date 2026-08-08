@@ -3,7 +3,7 @@
 # and GROWING (quadratic) operation + any silent atom accumulation.
 # Run via warm REPL:  printf 'include("benchmark/ecan_perf_diag.jl"); exit()\n' | julia --project=. -i tools/repl.jl
 include(joinpath(@__DIR__, "..", "test", "ecan", "ecan_live_harness.jl"))
-const I = MeTTaCore.Interpreter
+const I = MeTTaCore.Eval
 const SM = I.StandardMeTTa
 I.interpret_max_steps!(0)
 

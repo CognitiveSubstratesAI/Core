@@ -16,7 +16,7 @@
 # threaded demands) so it does not rest on the hardcoded float alone.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 @testset "PLN demand sweep — DAG max-join (§4.4): dedup + max-over-paths" begin

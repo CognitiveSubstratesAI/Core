@@ -212,7 +212,7 @@ function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
     #
     # `IRPredefined` matters here disproportionately: MEASURED, 2192 of 2765 residuals were primitive
     # heads the compiler did not recognise, because `parse_from` resolves tokens at parse time
-    # (Interpreter.jl:2525) so `match`/`+`/`car-atom` never arrive as symbols. Handling them is what
+    # (Eval.jl:2525) so `match`/`+`/`car-atom` never arrive as symbols. Handling them is what
     # lets a rule that merely MENTIONS a primitive be compiled at all — `MM2Router`'s gate 2 rejects
     # exactly those rules, and that gate is a large part of its 65% miss rate.
     # CALL vs DATA — PeTTa's `fun/1`, resolved statically (see ANCtx). A defined function gets

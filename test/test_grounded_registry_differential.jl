@@ -5,7 +5,7 @@
 #       populated by `register_core_primitives!` (Core/src/primitives/Primitives.jl), consumed by
 #       `GroundedSource` in MORK's query engine — i.e. the COMPILER/substrate lane.
 #
-#   Interpreter.TOKEN_REGISTRY  (Core/src/standard/Interpreter.jl:2375)  Dict{String,Atom}
+#   Eval.TOKEN_REGISTRY  (Core/src/standard/Eval.jl:2375)  Dict{String,Atom}
 #       (xs::Vector{Atom}) -> ExecResult
 #       consumed by the interpreter's eval loop — i.e. the FALLBACK lane.
 #
@@ -19,7 +19,7 @@
 # conformance matrix and the LeaTTa proved oracle.
 using MeTTaCore, Test
 const MCg = MeTTaCore
-const INg = MeTTaCore.Interpreter
+const INg = MeTTaCore.Eval
 const MKg = MeTTaCore.MORK
 
 @testset "grounded registries agree" begin
@@ -85,7 +85,7 @@ const MKg = MeTTaCore.MORK
     end
 
     @testset "*-math delegates to the hyperon-faithful implementation" begin
-        # `CoreMathOps.jl` (Interpreter.jl:2520) implements this surface faithfully to
+        # `CoreMathOps.jl` (Eval.jl:2520) implements this surface faithfully to
         # hyperon-experimental's lib/src/metta/runner/stdlib/math.rs and states its rules. The MORK
         # registry used to RE-IMPLEMENT all sixteen and diverged on 9 of 14 probed cases; it now
         # delegates. These assert the RULES, not just agreement, so a future re-implementation that

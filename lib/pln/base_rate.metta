@@ -48,7 +48,7 @@
 ;; smallest-/largest-intersection-probability :148-154). It was originally written out again here, and
 ;; the two copies had ALREADY diverged: this one used max/min where canonical uses `clamp`, and — the
 ;; reason this is a bug and not a style note — its `(> $sA 0)` guard was INOPERATIVE. `and` is a
-;; grounded EAGER op (Interpreter.jl:1938, no short-circuit) and `/safe` returns `(empty)` on a
+;; grounded EAGER op (Eval.jl:1938, no short-circuit) and `/safe` returns `(empty)` on a
 ;; non-positive denominator (pln_core_logic.metta:43-46), so the empty annihilated the conjunction:
 ;; `(BaseRateAdmits 0.0 0.5 0.5)` evaluated to NOTHING AT ALL rather than to False — a decision
 ;; procedure that vanishes instead of answering, which is the fail-OPEN shape this project bans.

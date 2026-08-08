@@ -55,12 +55,12 @@ using PathMap: PathMap, UnitVal, UNIT_VAL,
 # ⚠️ The LGG capability is unaffected and stays MORK-native: `WILLIAM.lgg` is registered inline in
 # `primitives/Primitives.jl` over MORK's own `_au_merge!` (upstream `anti_unify`, expr/src/lib.rs:669).
 
-# ── THE GRAMMAR'S ATOM TYPE — hoisted out of `module Interpreter` (2026-07-29) ────────────────────
+# ── THE GRAMMAR'S ATOM TYPE — hoisted out of `module Eval` (2026-07-29) ────────────────────
 # `metta_grammar.ebnf`, our declared parser-of-record, says
 #     ATOM = SYMBOL | VARIABLE | GROUNDED | EXPRESSION
 # and `StandardMeTTa` implements exactly those four. It is STANDALONE — its own header says "this
 # module is standalone — it does NOT touch eval_metta / eval_nd" — but it used to be `include`d INSIDE
-# `module Interpreter` (Interpreter.jl:20), which made the grammar's type a private member of the
+# `module Eval` (Eval.jl:20), which made the grammar's type a private member of the
 # EVALUATOR.
 #
 # 🔴 WHY THAT MATTERED. Everything here was originally written interpreter-first, so the shared
@@ -96,17 +96,17 @@ include("primitives/Primitives.jl")
 include("primitives/AtomOps.jl")
 include("eval/MorkBridge.jl")   # E1.0: native MORK unify+apply bridge (foundation) — NOT legacy
 # (Eval_obsolete.jl — the legacy Vector{Any} tree-walker eval_metta/run_metta/run_file — was RETIRED
-#  2026-07-12. All tests migrated to the Interpreter harness or were dropped with their reworked algorithms.)
+#  2026-07-12. All tests migrated to the Eval harness or were dropped with their reworked algorithms.)
 
-# Standard-MeTTa Interpreter (faithful hyperon interpreter.rs port of the minimal-MeTTa instruction set).
+# Standard-MeTTa Eval (faithful hyperon interpreter.rs port of the minimal-MeTTa instruction set).
 # Fully SELF-CONTAINED — it does NOT touch eval_metta/eval_nd and shares no types with the MORK-backed
 # engine above; it lives here only so its ~28s one-time compile is BAKED INTO the precompile cache
-# (`MeTTaCore.Interpreter`) instead of being recompiled on every fresh `include`. Accessed as `MeTTaCore.Interpreter`.
-include("standard/Interpreter.jl")
+# (`MeTTaCore.Eval`) instead of being recompiled on every fresh `include`. Accessed as `MeTTaCore.Eval`.
+include("standard/Eval.jl")
 
 # Compiler stage 2: surface Atom → CompilerIR, with resolution (per-clause variable identity),
-# special forms as NODES, and structural heads. Included AFTER Interpreter because it consults the
-# interpreter's EXISTING SLG registry (`_TABLED_HEADS`, Interpreter.jl:979-982) rather than declaring
+# special forms as NODES, and structural heads. Included AFTER Eval because it consults the
+# interpreter's EXISTING SLG registry (`_TABLED_HEADS`, Eval.jl:979-982) rather than declaring
 # a second one — SLG/WFS was already adopted there and is reused, not rebuilt.
 include("compiler/Frontend.jl")
 
@@ -129,9 +129,9 @@ include("compiler/ANormal.jl")
 include("compiler/Emit.jl")
 
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
-# MORK-backed engine), NOT inside the self-contained `Interpreter` submodule above.
-include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Interpreter's
-                                     # _MODULE_PATH, so it must follow standard/Interpreter.jl)
+# MORK-backed engine), NOT inside the self-contained `Eval` submodule above.
+include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Eval's
+                                     # _MODULE_PATH, so it must follow standard/Eval.jl)
 include("standard/AtomExprBridge.jl")  # typed Atom ⇄ MORK.Expr — lane-neutral, live in CoreSpace/Primitives
 include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST precede every consumer
 include("standard/MM2Router.jl")
@@ -143,7 +143,7 @@ include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS via the
 include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
 # (The legacy `(library william)` registry entry — `_PACKAGE_REGISTRY["william"]` — was removed with
-#  Eval_obsolete.jl. The modern import! resolver uses `Interpreter._MODULE_PATH`; the WILLIAM rework will
+#  Eval_obsolete.jl. The modern import! resolver uses `Eval._MODULE_PATH`; the WILLIAM rework will
 #  register william there if/when it needs `(import! &self (library william))`.)
 
 # stdlib directory relative to this package root
@@ -181,7 +181,7 @@ function load_stdlib!(space::CoreSpace)
 end
 
 # register_all_primitives! / register_for_space! were REMOVED with the Eval_obsolete.jl tree-walker
-# (2026-07-12): they wired the legacy foldl/map/filter atom-ops to eval_metta. The modern Interpreter
+# (2026-07-12): they wired the legacy foldl/map/filter atom-ops to eval_metta. The modern Eval
 # path carries its own grounded ops; `register_core_primitives!` (Primitives.jl) remains for direct
 # GROUNDED_REGISTRY population, and `enable_sc!(space)` remains the supercompiler opt-in.
 

@@ -5,7 +5,7 @@
 # Occam cost). Substrate-native port from PRIMUS_Core, corrected per
 # docs/specs/Quantale/quantale_spec.md + docs/specs/Mork/MORK_MOSES_spec.md §9.
 #
-# All tests run on the Interpreter (the 234/234 hyperon-faithful engine) —
+# All tests run on the Eval (the 234/234 hyperon-faithful engine) —
 # same evaluator as PLN/ECAN, so the quantale lib genuinely co-works with them.
 #
 # Axioms checked (quantale_spec §8 checklist + §9 numeric cases):
@@ -18,7 +18,7 @@
 #   Axiom W1/W3 Bennett recovery: μ≡1 ⇒ w(H)=|H|   §2.8
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 include(joinpath(@__DIR__, "assert_guard.jl"))   # silent-test guard (shared convention)
 

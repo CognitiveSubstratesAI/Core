@@ -12,7 +12,7 @@
 # Plus §5.7 STV-recovery: embedding an STV into a Beta and growing nc → μ→s, need→0.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 _derrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)

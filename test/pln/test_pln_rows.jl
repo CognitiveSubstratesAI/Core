@@ -14,7 +14,7 @@
 # Ψ_B/Ψ_BA, so this exact-value assert fails without a correct cap.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 @testset "PLN rows-only — inversion (3-premise + singularity cap) + negation demand vs oracle" begin

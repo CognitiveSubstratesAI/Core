@@ -3,7 +3,7 @@
 # from the numpy CONVENTION (read from helpers.py), NEVER from this Julia layer's output (would be circular).
 # Tolerance: ops replicate upstream's rounding (std→2, vectorAdd→8) IN the op, so a tight atol suffices.
 using MeTTaCore, Test
-const SM = MeTTaCore.Interpreter
+const SM = MeTTaCore.Eval
 const _ST = read(joinpath(@__DIR__, "..", "src", "standard", "stdlib.metta"), String)
 const _SP = (s = SM.Space(); SM.load_core_stdlib!(s); s)
 _mval(a) = a isa SM.Grounded ? a.value : a isa SM.Sym ? Symbol(a.name) :

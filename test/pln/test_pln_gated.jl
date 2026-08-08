@@ -20,7 +20,7 @@
 #                 KEPT (Yn in). Mixes conjunction (2-premise) + negation (1-premise) ⇒ arity dispatch.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 const _GFG = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta")

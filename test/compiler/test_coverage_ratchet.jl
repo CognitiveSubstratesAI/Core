@@ -35,7 +35,7 @@ const _RF = MeTTaCore.CompilerFrontend
 const _RA = MeTTaCore.CompilerANormal
 const _RE = MeTTaCore.CompilerEmit
 const _RS = MeTTaCore.StandardMeTTa
-const _RI = MeTTaCore.Interpreter
+const _RI = MeTTaCore.Eval
 
 # ── THE FLOOR — 275 -> 366 (staging) -> 351 (control-flow expansion). ────────────────────────────
 # Every number is MEASURED from the run that set it, never apportioned by guess.

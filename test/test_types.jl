@@ -10,7 +10,7 @@
 # defines Nil → ()), so the canonical list uses MyNil/MyCons.
 using MeTTaCore, Test
 
-# Modern harness: MeTTaCore.Interpreter (Minimal-backed `q`) over an isolated fresh space.
+# Modern harness: MeTTaCore.Eval (Minimal-backed `q`) over an isolated fresh space.
 # (Formerly a legacy eval_metta/CoreSpace harness; migrated when Eval_obsolete.jl was retired.)
 @isdefined(q) || include(joinpath(@__DIR__, "..", "tools", "repl.jl"))
 reset!()
@@ -50,15 +50,15 @@ end
     end
 
     # The legacy `type-cast (gradual)` testset was removed with the Eval_obsolete.jl retirement: its
-    # assertions encoded the tree-walker's `(type-cast X T &self)` semantics, which the modern Interpreter
+    # assertions encoded the tree-walker's `(type-cast X T &self)` semantics, which the modern Eval
     # does not reproduce. The modern type system is validated by test_conformance's b5_types_prelim /
-    # d4_type_prop scripts; re-add a modern type-cast testset if/when that op is wired on the Interpreter.
+    # d4_type_prop scripts; re-add a modern type-cast testset if/when that op is wired on the Eval.
 
     @testset "parametric / polymorphic types" begin
         qt("(: MyList (-> Type Type))")
         qt(raw"(: MyNil (MyList $t))")
         qt(raw"(: MyCons (-> $t (MyList $t) (MyList $t)))")
-        # (get-type of a bare parametric `MyNil` differs on the modern Interpreter — removed with the
+        # (get-type of a bare parametric `MyNil` differs on the modern Eval — removed with the
         #  Eval_obsolete retirement; the applied-constructor cases below still hold.)
         @test ok("!(assertEqual (get-type (MyCons Z MyNil)) (MyList Nat))")          # $t resolved to Nat
         @test ok("!(assertEqual (get-type (MyCons (S Z) (MyCons Z MyNil))) (MyList Nat))")

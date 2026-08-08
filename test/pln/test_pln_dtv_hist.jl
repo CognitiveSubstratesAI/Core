@@ -6,7 +6,7 @@
 # Validated against known information theory (uniform ⇒ need 1, peaked ⇒ 0) and exact moments.
 
 using Test
-using MeTTaCore.Interpreter
+using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 
 _herrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)

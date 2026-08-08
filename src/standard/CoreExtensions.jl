@@ -1,6 +1,6 @@
 # ── Core grounded extensions ──────────────────────────────────────────────────
 # Grounded ops that Core's algorithm libraries (MetaMo, MOSES, …) need but that are NOT part of
-# hyperon's stdlib. Everything ABOVE in Interpreter.jl + stdlib.metta is the hyperon-FAITHFUL core;
+# hyperon's stdlib. Everything ABOVE in Eval.jl + stdlib.metta is the hyperon-FAITHFUL core;
 # 234/234 conformance is defined against it. This file augments `TOKEN_REGISTRY` ADDITIVELY — it
 # only registers NEW operator names, never modifies the faithful set.
 #
@@ -8,7 +8,7 @@
 # 26-script conformance matrix must stay 234/234 with this file loaded. The conformance scripts
 # never call these ops, so registering them is provably non-invasive — re-run the matrix to prove it.
 #
-# As further libraries migrate onto the Interpreter, their grounded ops (MetaMo.blend-vec,
+# As further libraries migrate onto the Eval, their grounded ops (MetaMo.blend-vec,
 # WILLIAM.lgg, the MOSES set, …) register HERE, keeping the faithful core uncontaminated.
 
 # Numeric leaf ops (bare names). Legacy Core exposes the unary ones as `<f>-math` in Primitives.jl

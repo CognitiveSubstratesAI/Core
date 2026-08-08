@@ -29,7 +29,7 @@ using Test
         cs = MC.new_core_space(); mm2_run!(cs, prog)
         R_mm2 = sort(unique([strip(l) for l in split(MC.space_dump_all_sexpr(cs.inner), '\n')
                              if occursin("trans", l)]))
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
         res = SM.load_metta!(isp, raw"!(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))")
         R_interp = sort(unique(filter(s -> occursin("trans", s),
@@ -56,7 +56,7 @@ using Test
         cs = MC.new_core_space(); MC.space_add_all_sexpr!(cs.inner, facts)
         R_mm2 = mm2_match!(cs, raw"(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))")
         @test R_mm2 == ["(trans 0 2)", "(trans 1 3)"]
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
         res = SM.load_metta!(isp, raw"!(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))")
         R_interp = sort(unique(filter(s -> occursin("trans", s),
@@ -83,7 +83,7 @@ using Test
                               if occursin("parent", l)]))
         @test R_mork == ["(parent a b)", "(parent b c)"]
 
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, afacts)
         res = SM.load_metta!(isp, raw"!(match &self (ancestor $x $y) (parent $x $y))")
         R_interp = sort(unique(filter(s -> occursin("parent", s),
@@ -133,7 +133,7 @@ using Test
 
     # ── piece 3c: (= (f …) ARITH) arith body → pure-sink reduction (Phase-2, R7 lane-1; int + float) ──
     @testset "arith (=) body → MM2 pure-sink (i64 + f64); bisimulates the interpreter" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         # classifier: + - * % (int) and / + float literals (float) are arith; reduction/relational/control aren't
         @test mm2_is_arith_body(raw"(= (f $x) (+ $x 3))")
         @test mm2_is_arith_body(raw"(= (f $x) (+ (* $x 2) 1))")          # nested tree
@@ -320,7 +320,7 @@ using Test
 
     # ── piece 5: typed Atom → MM2 sexpr (the live-eval handoff converter) ──
     @testset "typed_atom_to_expr round-trips to mm2_lower_equals" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         for s in [raw"(= (ancestor $x $y) (parent $x $y))",
                   raw"(= (, (p $x) (q $x)) (r $x))",
                   raw"(= (sym a) (sym b))",
@@ -342,7 +342,7 @@ using Test
 
     # ── piece 6: live-eval handoff — typed-Atom guard + MORK mirror lane (mirror, bisim-safe) ──
     @testset "mm2_is_relational(Atom) + mm2_lane_from_atoms bisimulates interpreter" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         @test mm2_is_relational(SM.parse_program(raw"(= (ancestor $x $y) (parent $x $y))")[1][2])
         @test !mm2_is_relational(SM.parse_program(raw"(= (fib $n) (+ $n 1))")[1][2])   # grounded
         @test !mm2_is_relational(SM.parse_program("(ancestor a b)")[1][2])             # a fact, not a rule
@@ -364,7 +364,7 @@ using Test
 
     # ── piece 7: P2 route gate — broad single-step bisimulation + the chain boundary + lane_from_space ──
     @testset "P2 route gate: broad bisimulation + forward-closure boundary" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         mork_derive(facts, rule, head) = begin
             atoms = [p[2] for p in SM.parse_program(facts * "\n" * rule)]
             cs = MC.mm2_lane_from_atoms(atoms); MC.space_metta_calculus!(cs.inner, 1_000_000)
@@ -400,7 +400,7 @@ using Test
 
     # ── piece 8: mm2_lane_saturate! — recursive Datalog fixpoint (transitive closure) ──
     @testset "mm2_lane_saturate! computes the full transitive closure (recursion driver)" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         prog = "(edge a b)\n(edge b c)\n(edge c d)\n" *
                raw"(= (edge $x $y) (reach $x $y))" * "\n" *
                raw"(= (, (edge $x $y) (reach $y $z)) (reach $x $z))"
@@ -418,7 +418,7 @@ using Test
 
     # ── piece 8b: mm2_lane_saturate_seminaive! — Zippy finite-difference fixpoint ≡ naive driver ──
     @testset "mm2_lane_saturate_seminaive! computes the SAME closure as the naive driver" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         prog = "(edge a b)\n(edge b c)\n(edge c d)\n" *
                raw"(= (edge $x $y) (reach $x $y))" * "\n" *
                raw"(= (, (edge $x $y) (reach $y $z)) (reach $x $z))"
@@ -446,7 +446,7 @@ using Test
 
     # ── piece 9: MORK byte-Expr limit guard (arity 63 / 64 vars — wiki Data-in-MORK) ──
     @testset "mm2_is_relational rejects rules exceeding MORK byte-Expr limits" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         @test mm2_is_relational(SM.parse_program(raw"(= (ancestor $x $y) (parent $x $y))")[1][2])  # within limits
         over_arity = "(= (big " * join(["a$i" for i in 1:70], " ") * ") (ok))"      # 71-child LHS > 63
         @test !mm2_is_relational(SM.parse_program(over_arity)[1][2])
@@ -456,7 +456,7 @@ using Test
 
     # ── piece 10: mc_closure! — opt-in substrate route, Datalog closure materialized into a live Space ──
     @testset "mc_closure! materializes the transitive closure for the interpreter to query" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         isp = SM.Space(); SM.load_core_stdlib!(isp)
         SM.load_metta!(isp, "(edge a b)\n(edge b c)\n(edge c d)\n" *
             raw"(= (edge $x $y) (reach $x $y))" * "\n" *
@@ -505,7 +505,7 @@ using Test
 
     # ── piece 12: (mork-closure) grounded op — invoke the substrate route from MeTTa SOURCE ──
     @testset "(mork-closure) grounded op runs the substrate route from MeTTa" begin
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         isp = SM.Space(); SM.load_core_stdlib!(isp)
         SM.load_metta!(isp, "(edge a b)\n(edge b c)\n(edge c d)\n" *
             raw"(= (edge $x $y) (reach $x $y))" * "\n" *

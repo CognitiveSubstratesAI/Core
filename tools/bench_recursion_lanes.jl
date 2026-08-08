@@ -4,8 +4,8 @@
 #   L1  ZAM reduction fast lane   MeTTaCore.mm2_zam_answers          (MM2Router.jl:428)
 #   L2  MeTTa-IL saturation       metta_il_run!(...; saturate=true)  (MeTTaIL.jl:51)
 #   L3  MeTTa-IL congruence       metta_il_normalize                 (MeTTaIL.jl:118)
-#   L4U Interpreter, untabled     load_metta!                        (Interpreter.jl:2443)
-#   L4T Interpreter + auto_table! auto_table!                        (Interpreter.jl:988)
+#   L4U Eval, untabled     load_metta!                        (Eval.jl:2443)
+#   L4T Eval + auto_table! auto_table!                        (Eval.jl:988)
 #
 # HARNESS CONTRACT (B0):
 #   * CORRECTNESS BEFORE TIMING. A cell whose answer fails its oracle is emitted with
@@ -33,7 +33,7 @@
 
 using MeTTaCore
 const MC = MeTTaCore
-const IN = MeTTaCore.Interpreter
+const IN = MeTTaCore.Eval
 
 const RUNID = get(ENV, "BENCH_RUNID", "noid")
 const PHASE = get(ENV, "BENCH_PHASE", "correctness")

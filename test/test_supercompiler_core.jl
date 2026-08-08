@@ -71,11 +71,11 @@ const MC = MeTTaCore
         @test trans(match_prog) == ["(trans 0 2)", "(trans 1 3)"]
     end
 
-    @testset "§9.2 bisimulation: supercompiler (match) ≡ live Interpreter (match)" begin
+    @testset "§9.2 bisimulation: supercompiler (match) ≡ live Eval (match)" begin
         # The REAL correctness gate (MeTTa-MM2-Supercompiler_v2 §9.2): the lowered+supercompiled match
-        # result must equal what the live tree-walking Interpreter returns for the SAME (match …) — not
+        # result must equal what the live tree-walking Eval returns for the SAME (match …) — not
         # just self-consistency with hand-written exec, but faithfulness to the actual evaluator.
-        SM = MeTTaCore.Interpreter
+        SM = MeTTaCore.Eval
         match_q = raw"(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))"
         # interpreter oracle: run (match …) on a tree-walker space with the same facts
         isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
@@ -86,14 +86,14 @@ const MC = MeTTaCore
         sp = new_core_space(); MC.space_add_all_sexpr!(sp.inner, facts); sc_execute!(sp, match_q)
         R_sc = sort(unique(filter(s -> occursin("trans", s),
                   [strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')])))
-        @test R_interp == ["(trans 0 2)", "(trans 1 3)"]   # the Interpreter actually produces this
-        @test R_sc == R_interp                              # supercompiler is faithful to the Interpreter
+        @test R_interp == ["(trans 0 2)", "(trans 1 3)"]   # the Eval actually produces this
+        @test R_sc == R_interp                              # supercompiler is faithful to the Eval
     end
 
     @testset "match-lowering robustness across shapes (oracle bisimulation)" begin
         # The lowering must be faithful for more than the one 2-source case: a single-source query and
-        # a 3-source join (where Rule-of-64 decomposition engages) must each equal the Interpreter.
-        SM = MeTTaCore.Interpreter
+        # a 3-source join (where Rule-of-64 decomposition engages) must each equal the Eval.
+        SM = MeTTaCore.Eval
         function ovs(facts_s, query, tag)
             isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts_s)
             res = SM.load_metta!(isp, "!" * query)
