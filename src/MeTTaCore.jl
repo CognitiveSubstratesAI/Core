@@ -217,6 +217,9 @@ export core_calculus!, core_calculus_at!
 # Removing the export is the DISCONNECT: nothing new can bind to them, nothing existing breaks.
 # NOT un-exported: `mm2_zam_answers` is genuinely live via `DualTrack.jl:155`.
 export mm2_run!, mm2_is_exec_rule, mm2_split_forms
+# Lane-NEUTRAL, and deliberately not `mm2_`-prefixed: the sequential-effects partition is a property
+# of MeTTa Invariant 1, not of any lane, and it must outlive the MM2 direct-lowering arrow.
+export ProgramRegion, split_program_regions, region_program
 export mm2_route!, mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args, mm2_is_relational
 export mm2_lower_equals_arith, mm2_is_arith_body, mm2_lower_eq, mm2_eq_bisim
 export typed_atom_to_expr, expr_to_atom, mc_closure!

@@ -95,3 +95,89 @@ function mm2_expr_args(form::AbstractString)::Vector{String}
     s = String(take!(buf)); isempty(s) || push!(args, s)
     args
 end
+
+# ── program regions: the sequential-effects partition (MeTTa Invariant 1) ────────────────────────
+# `metta_language_spec.md` §7 Invariant 1: a `!`-prefixed form EVALUATES and returns; a BARE form is
+# ADDED to the atomspace; and EFFECTS ARE SEQUENTIAL — form N observes form N−1's mutations. Every
+# lane in this tree violates that by construction, because each lane entry takes the program as ONE
+# string and processes it whole:
+#
+#   mc_run :direct    → mm2_route!(cs, program) · mm2_zam_answers(program, …) · _mc_fallback_eval(…, program, …)
+#   mc_run :direct/sc → sc_execute!(cs, join(keep, "\n"))
+#   mc_run :rewrite   → metta_il_lower(program)      — one lowering, one calculus generation
+#   mc_run :pipeline  → metta_il_run_pipeline!(cs, data, program)
+#
+# MEASURED 2026-08-08 on the compiled lane:
+#
+#     (= (f) a)  !(f)  (= (f) b)  !(f)
+#     oracle    →  ["a"]      then  ["a","b"]
+#     compiled  →  ["a","b"]  and   ["a","b"]      ← the FIRST query answered with a LATER rule
+#
+# The `:rewrite` lane does not exhibit it only because `_il_assert_all_rewrites` REFUSES any program
+# containing a bang (`MeTTaIL.jl:50`) — that is absent capability, not safety. It inherits the defect
+# the day the compiler's emitter feeds it bang-bearing programs. Which is why this partition is
+# LANE-NEUTRAL and lives HERE and not in `DualTrack.jl`, whose direct-lowering arrow is due for
+# deletion: the doomed lane is where the defect is visible today, the surviving lane is where it
+# lands tomorrow, and the invariant outlives both.
+#
+# ─── WHAT A REGION IS ────────────────────────────────────────────────────────────────────────────
+# A maximal span over which the atomspace does not change under its queries' feet. `defs` are the
+# definitional forms INTRODUCED by this region; `queries` are answered against the accumulated defs
+# of this region AND every prior one. Regions are INCREMENTAL, not self-contained — a driver applies
+# `defs`, answers `queries`, keeps the space, and moves on.
+#
+# PREFIX-EXACT means BOTH directions: on the program above, region 1 must answer `["a"]` and region 2
+# must answer `["a","b"]`. Returning `["a"]` for the second is as wrong as `["a","b"]` for the first.
+#
+# DEGENERACY: a program whose definitions all precede its queries yields exactly ONE region, so the
+# common case is byte-identical to the un-staged path and costs nothing.
+#
+# This file stays SEMANTICS-FREE (see the header): the may-mutate predicate is a PARAMETER, because
+# only the caller knows the rule set and the grounded registry.
+struct ProgramRegion
+    defs::Vector{String}      # definitional (non-`!`) forms introduced in this region, in order
+    queries::Vector{String}   # `!` bodies, bang stripped, answered against all defs up to and including this region
+end
+
+"""
+    split_program_regions(program, may_mutate) -> Vector{ProgramRegion}
+
+Partition `program` into churn-free regions so that each query is answered against the rule set which
+TEXTUALLY PRECEDES it, per MeTTa Invariant 1.
+
+`may_mutate(form::AbstractString)::Bool` is asked of every `!` body; `true` closes the region after
+that query so its mutation is visible downstream. It must be FAIL-SAFE — an unclassifiable head has
+to answer `true`. Over-reporting only costs regions; under-reporting silently restores the defect.
+
+Regions are INCREMENTAL: apply `defs`, answer `queries`, keep the space, move on.
+"""
+function split_program_regions(program::AbstractString, may_mutate::F)::Vector{ProgramRegion} where {F}
+    regions = ProgramRegion[]
+    defs    = String[]
+    queries = String[]
+    for (bang, form) in mm2_split_forms(program)
+        if !bang
+            if !isempty(queries)      # a definition AFTER queries ⇒ that prefix is closed
+                push!(regions, ProgramRegion(defs, queries))
+                defs = String[]; queries = String[]   # REBIND, never `empty!` — the pushed region aliases these
+            end
+            push!(defs, form)
+        else
+            push!(queries, form)
+            if may_mutate(form)       # the query itself changes the space ⇒ nothing after it shares this prefix
+                push!(regions, ProgramRegion(defs, queries))
+                defs = String[]; queries = String[]
+            end
+        end
+    end
+    (isempty(defs) && isempty(queries)) || push!(regions, ProgramRegion(defs, queries))
+    regions
+end
+
+"Render a region back to program text — `defs` in order, then each query re-prefixed with `!`."
+function region_program(r::ProgramRegion)::String
+    io = IOBuffer()
+    for d in r.defs;    println(io, d);      end
+    for q in r.queries; println(io, "!", q); end
+    String(take!(io))
+end

@@ -29,6 +29,40 @@ end
 # the program's non-bang forms verbatim — never reconstructed from the trie, PathMap normalizes
 # variables; the mm2_eq_bisim recipe). Returns [(bang, [answers…])…]. Never writes the MORK space.
 # Shared by the streaming (mm2_route!) and supercompiler (sc_execute!) direct-lane branches.
+# ── the may-mutate predicate for region staging ──────────────────────────────────────────────────
+# REUSES the existing impurity-propagation fixpoint instead of adding a second classifier, and that
+# is the whole point: `Eval._pure_heads` is a WHITELIST fixpoint — `Eval.jl:1040` classifies any op
+# that is neither a pure primitive nor a defined head as IMPURE, so an unrecognised name fails SAFE
+# (extra regions, never a missed barrier). A hand-written denylist of mutator names fails OPEN, which
+# is exactly how JeTTa's memo gate went unsound: 6 dead entries with both space mutators MISSPELLED
+# (`"add-atom!"` against a registered `add-atom`), silently memoising impure functions.
+#
+# It needs a stdlib-loaded analysis Space, so it is SKIPPED unless the program has two ADJACENT
+# bangs — the only shape in which a mutating query can reach a later query with no definition
+# between them. Definition boundaries are handled by the partition itself and need no purity
+# information at all.
+#
+# MEASURED 2026-08-08 (min of 3, noisy — totals spread 8.9–13.8 ms, so read this as order-of-
+# magnitude, not precision):
+#     defs + 3 adjacent bangs   1 region · predicate 1.3 ms of an 8.9 ms mc_run   ≈ 14%
+#     def/bang interleaved      3 regions · predicate 0.00 ms                     short-circuited
+#     single bang               1 region · predicate 0.00 ms                      short-circuited
+# So this is NOT free on the adjacent-bang shape: it is ~14% bought for soundness. The cheap
+# alternative — a denylist of mutator names — costs nothing and is UNSOUND (see above). Dropping
+# stdlib from the analysis Space would cut the cost but classify every stdlib call as impure,
+# trading one measured cost for an unmeasured one in extra regions. Revisit with a profile if the
+# adjacent-bang shape ever shows up hot; do not "optimize" it on intuition.
+function _mc_may_mutate(program::AbstractString)
+    forms = mm2_split_forms(program)
+    any(i -> forms[i][1] && forms[i + 1][1], 1:length(forms) - 1) || return (_::AbstractString) -> false
+    sp = Eval.Space(); Eval.load_core_stdlib!(sp)
+    for (bang, f) in forms
+        bang || Eval.load_metta!(sp, f)
+    end
+    pure = Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sp)))
+    (f::AbstractString) -> !(Base.Symbol(mm2_head(f)) in pure)
+end
+
 function _mc_fallback_eval(data::AbstractString, program::AbstractString,
                            deferred::AbstractVector{<:AbstractString};
                            fallback::Symbol = :interpreter, fallback_table::Bool = true)
@@ -144,19 +178,56 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                                           fallback = fallback, fallback_table = fallback_table)
             (; sc = scres, evaluated, deferred = sc_deferred, zam_served = String[])
         else
-            route = mm2_route!(cs, program; steps = steps, eq_mode = eq_mode)
-            # FASTLANE-FIRST, literal: deferred bangs in the reduction-servable SAFE SUBSET are
-            # answered ON the ZAM (mm2_zam_answers — scratch space, redex-delete readback); only
-            # the remainder goes to the interpreter FALLBACK (design §5 R7 lane 3; MeTTa-spec §4).
-            # Both evaluate in scratch spaces — the live MORK space is not written by either.
-            zam = fallback === :none ?
-                (; served = Tuple{String, Vector{String}}[],
-                   remaining = String[String(b) for b in route.deferred]) :
-                mm2_zam_answers(program, route.deferred; steps = steps)
-            evaluated = vcat(zam.served,
-                             _mc_fallback_eval(data, program, zam.remaining;
-                                               fallback = fallback, fallback_table = fallback_table))
-            (; route..., evaluated, zam_served = String[b for (b, _) in zam.served])
+            # ── PREFIX-EXACT REGION STAGING (MeTTa Invariant 1: effects are sequential) ──────────
+            # This branch used to hand the WHOLE program to all three consumers at once, so every
+            # bang saw every rule regardless of textual order. MEASURED 2026-08-08:
+            #     (= (f) a) !(f) (= (f) b) !(f)  →  ["a","b"] twice, where the oracle gives
+            #                                       ["a"] then ["a","b"]
+            # All three consumers flatten independently — `mm2_route!` lowers the whole program,
+            # `mm2_zam_answers` re-splits it (`MM2Router.jl:496`), and `_mc_fallback_eval` loads
+            # EVERY non-bang form before evaluating ANY bang (`DualTrack.jl:39-41`). One region loop
+            # fixes all three, because each now receives the program PREFIX up to its own queries.
+            #
+            # The partition itself is lane-neutral and lives in `SexprForms.jl` — it follows from
+            # Invariant 1, not from this lane, and it must outlive the direct-lowering arrow that
+            # this file exists to serve. The `:rewrite` (MeTTa-IL) lane cannot exhibit the defect
+            # TODAY only because `_il_assert_all_rewrites` refuses any program containing a bang
+            # (`MeTTaIL.jl:50`); it inherits the defect the day the compiler's emitter feeds it
+            # bang-bearing programs, and will call the same partition.
+            #
+            # `prog_r` is CUMULATIVE in definitions and LOCAL in queries: all rules seen so far plus
+            # only this region's bangs. Re-adding earlier rules to `cs` is a no-op (the MORK trie is
+            # a set) and their redexes are already consumed, so they do not re-fire.
+            regions = split_program_regions(program, _mc_may_mutate(program))
+            n_exec = 0; n_data = 0
+            matched    = Tuple{String, Vector{String}}[]
+            deferred   = String[]
+            evaluated  = Tuple{String, Vector{String}}[]
+            zam_served = String[]
+            cum        = String[]
+            for r in regions
+                append!(cum, r.defs)
+                prog_r = region_program(ProgramRegion(cum, r.queries))
+                route = mm2_route!(cs, prog_r; steps = steps, eq_mode = eq_mode)
+                # FASTLANE-FIRST, literal: deferred bangs in the reduction-servable SAFE SUBSET are
+                # answered ON the ZAM (mm2_zam_answers — scratch space, redex-delete readback); only
+                # the remainder goes to the interpreter FALLBACK (design §5 R7 lane 3; MeTTa-spec §4).
+                # Both evaluate in scratch spaces — the live MORK space is not written by either.
+                zam = fallback === :none ?
+                    (; served = Tuple{String, Vector{String}}[],
+                       remaining = String[String(b) for b in route.deferred]) :
+                    mm2_zam_answers(prog_r, route.deferred; steps = steps)
+                # n_exec/n_data are counts over `prog_r`, which is cumulative ⇒ the LAST region's
+                # figures are the program totals. Summing them would double-count earlier rules.
+                n_exec = route.n_exec; n_data = route.n_data
+                append!(matched,   route.matched)
+                append!(deferred,  route.deferred)
+                append!(evaluated, zam.served)
+                append!(evaluated, _mc_fallback_eval(data, prog_r, zam.remaining;
+                                                     fallback = fallback, fallback_table = fallback_table))
+                append!(zam_served, String[b for (b, _) in zam.served])
+            end
+            (; n_exec, n_data, matched, deferred, evaluated, zam_served)
         end
     else
         error("mc_run: unknown mode $mode (expected :auto/:direct/:rewrite/:pipeline/:theory)")

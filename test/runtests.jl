@@ -41,6 +41,9 @@ module StandardMeTTaTests
     using MeTTaCore, Test
     include("standard/test_atoms.jl")
     include("standard/test_minimal.jl")
+    # MeTTa Invariant 1 (sequential effects) at the FORM level — the lane-neutral partition that
+    # stops a query being answered with a rule added after it. Lives above every lane on purpose.
+    include("standard/test_program_regions.jl")
     include("standard/test_interpreter.jl")
     include("standard/test_tnot_wfs.jl")
     # The LIVE swipl differential. test_tnot_wfs.jl's header claims oracle verification but its
