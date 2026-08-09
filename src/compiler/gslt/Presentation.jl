@@ -59,7 +59,7 @@ module CompilerGSLTPresentation
 using ..StandardMeTTa: Atom
 
 export GSort, GBind, GArg, GCtor, GFresh, GEquation, GRewrite, GPresentation
-export binders_of, is_lambda_theory, ctor_arity, declared_sorts_used
+export binders_of, is_lambda_theory, ctor_arity, declared_sorts_used, ddl_rung
 
 # ── Σ: sorts and the arguments a constructor takes ───────────────────────────────────────────────
 
@@ -159,6 +159,25 @@ binders_of(p::GPresentation)::Vector{GCtor} =
 A presentation with no binding constructor is a first-order signature. That is legal — `Monoid` and
 `Rig` are — but it cannot present MeTTa, and it is what every theory currently in this tree is."""
 is_lambda_theory(p::GPresentation)::Bool = !isempty(binders_of(p))
+
+"""Which rung of the DDL ladder this presentation reaches (`gslt_mettail_summary_spec.md` §2).
+
+    1  terms only        "A multi-sorted signature. Terms up to nothing at all — sums of products."
+                         ⇒ ALGEBRAIC DATA TYPES
+    2  + equations       "Monoids, groups, rings, lattices, and the bag- and set-like structures."
+                         ⇒ FINITELY PRESENTABLE UNIVERSAL ALGEBRA
+    3  + rewrites        "Now the data can wiggle. Reduction and congruence rules, as data."
+                         ⇒ DOMAIN-SPECIFIC LANGUAGES
+
+Verbatim from the deck: *"A reader arriving at rung three from rung one has crossed from data to
+computation without changing tools."* Worth making checkable rather than implicit, because the rung
+determines what can be generated from the triple at all — and because it names the distance between
+what this tree has (rung 2 toy algebras) and what presenting MeTTa needs (rung 3, plus binders)."""
+function ddl_rung(p::GPresentation)::Int
+    isempty(p.rewrites) || return 3
+    isempty(p.equations) || return 2
+    1
+end
 
 """Every sort NAME mentioned by Σ's constructors, whether or not it was declared.
 

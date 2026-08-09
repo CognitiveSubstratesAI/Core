@@ -58,6 +58,7 @@ module StandardMeTTaTests
     include("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
     include("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
     include("compiler/test_gslt_presentation.jl")  # G = (Σ,E,R): binders · freshness · premised rewrites
+    include("compiler/test_gslt_parse.jl")         # the s-expr surface — presentations you can WRITE
     include("compiler/test_coverage_ratchet.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
