@@ -86,19 +86,23 @@ end
 # Returns `nothing` if any goal in the sequence cannot be lowered, so a clause is declined WHOLE
 # rather than emitted half-formed. A partially-lowered clause that still parses is the worst outcome:
 # it counts as coverage and computes the wrong answer.
-function _seq(gs::Vector{Goal}, i::Int, tail::String)::Union{String, Nothing}
+#
+# `fail` is the FAILURE continuation — where a non-matching `unify` goes. It is a parameter and not
+# the constant `(return Empty)` because a branch's condition must fall through to the NEXT ARM, not
+# out of the clause. Hardcoding it was a wrong-answer bug (see `_instr(::GBranch, …)`).
+function _seq(gs::Vector{Goal}, i::Int, tail::String, fail::String)::Union{String, Nothing}
     i > length(gs) && return tail
-    cont = _seq(gs, i + 1, tail)
+    cont = _seq(gs, i + 1, tail, fail)
     cont === nothing && return nothing
-    _instr(gs[i], cont)
+    _instr(gs[i], cont, fail)
 end
 
 _render_args(args::Vector{IRAtom})::String = join(String[render(a) for a in args], " ")
 
 "`(unify <atom> <pattern> <then> <else>)` — spec §3. A failed unification yields `Empty`, Core's own
 `EMPTY` sentinel (`Eval.jl:39`), so a non-matching clause contributes no result rather than erroring."
-_instr(g::GUnify, cont::String)::String =
-    "(unify " * render(g.lhs) * " " * render(g.rhs) * " " * cont * " (return Empty))"
+_instr(g::GUnify, cont::String, fail::String)::String =
+    "(unify " * render(g.lhs) * " " * render(g.rhs) * " " * cont * " " * fail * ")"
 
 """`(chain (eval (f a b)) \$out ⟨cont⟩)` — spec §3: interpret the atom, substitute `<var>` in the template.
 
@@ -107,38 +111,58 @@ NOTE the direction. `ANormal` performs the functional→relational lowering (res
 the result back where it belongs: `out` becomes the chain's binding variable, not an extra argument.
 A-normal form is still the right input — it named the intermediate, which is precisely what `chain`
 needs."""
-_instr(g::GCall, cont::String)::String =
+_instr(g::GCall, cont::String, ::String)::String =
     "(chain (eval (" * String(g.head) * (isempty(g.args) ? "" : " " * _render_args(g.args)) * ")) " *
     render(g.out) * " " * cont * ")"
 
-"""Branch — the condition's own goals run first, then a 4-ary `unify` against `True`.
+"""Branch — condition goals, then a 4-ary `unify` against `True`, JOINED before the continuation.
 
-`Emit.jl` declines this shape entirely: an MM2 exec atom has no then/else. Minimal MeTTa's `unify` IS
-4-ary, so the branch is native. Both arms continue into `cont`, which duplicates the continuation
-into each — correct, and the cost of not having a join point in a tree-shaped IL."""
-function _instr(g::GBranch, cont::String)::Union{String, Nothing}
-    thn = _seq(g.then, 1, cont); thn === nothing && return nothing
-    els = _seq(g.els,  1, cont); els === nothing && return nothing
-    _seq(g.cond, 1, "(unify " * render(g.condval) * " True " * thn * " " * els * ")")
+`Emit.jl` declines this shape entirely: an MM2 exec atom has no then/else. Minimal MeTTa's `unify` is
+4-ary, so the branch itself is native.
+
+⚠️ THE JOIN IS NOT COSMETIC. The first version of this function threaded `cont` into BOTH arms, with
+a comment calling that "the cost of not having a join point". Minimal MeTTa has a join point —
+`function`/`return` makes a value out of a sub-computation — and not using it made the emitted term
+DOUBLE per nesting level. MEASURED 2026-08-09 on the emitter itself: one `if` 271 chars, two nested
+576. That is exponential in branch depth, and it is what killed the conformance run: the process sat
+at 98% CPU inside `Eval.subst` (`Eval.jl:151`), recursing through a term that had blown up, until it
+was killed at 21 minutes with no output.
+
+So the arms are closed into a value and bound ONCE:
+
+    (chain (function (unify cv True ⟨then…(return out)⟩ ⟨else…(return out)⟩)) out ⟨cont⟩)
+
+`cont` now appears exactly once regardless of nesting, which is the whole point of a join."""
+function _instr(g::GBranch, cont::String, ::String)::Union{String, Nothing}
+    ret = "(return " * render(g.out) * ")"
+    thn = _seq(g.then, 1, ret, "(return Empty)"); thn === nothing && return nothing
+    # An EMPTY `els` means "no further arm" — failing there yields Empty, it does not fall out of the
+    # clause. A non-empty `els` is the NEXT ARM and is itself a GBranch.
+    els = isempty(g.els) ? "(return Empty)" : _seq(g.els, 1, ret, "(return Empty)")
+    els === nothing && return nothing
+    # `cond` carries the REAL test (a GUnify). Its success continuation is the then-arm and its
+    # FAILURE continuation is the else-arm — that threading is the whole fix.
+    body = _seq(g.cond, 1, thn, els); body === nothing && return nothing
+    "(chain (function " * body * ") " * render(g.out) * " " * cont * ")"
 end
 
 """`collapse` — `(chain (collapse-bind (function ⟨body … (return tmpl)⟩)) \$out ⟨cont⟩)`.
 
 Spec §3: `collapse-bind` interprets an atom and returns a tuple of ALL its results. The body is a goal
 sequence, so it is wrapped in `function`/`return` to become one interpretable atom."""
-function _instr(g::GFindall, cont::String)::Union{String, Nothing}
-    body = _seq(g.body, 1, "(return " * render(g.template) * ")")
+function _instr(g::GFindall, cont::String, ::String)::Union{String, Nothing}
+    body = _seq(g.body, 1, "(return " * render(g.template) * ")", "(return Empty)")
     body === nothing && return nothing
     "(chain (collapse-bind (function " * body * ")) " * render(g.out) * " " * cont * ")"
 end
 
 # GDisj never reaches here — `_expand_disj` removes it before the fold. If one survives, that is a bug
 # in the expansion, not a shape to improvise around, so decline loudly rather than guess.
-_instr(::GDisj, ::String)::Nothing = nothing
+_instr(::GDisj, ::String, ::String)::Nothing = nothing
 
 # GResidual is, by definition, a node A-normalization could not flatten. Declining is the honest
 # outcome; it is COUNTED, and the interpreter fallback still handles the clause.
-_instr(::GResidual, ::String)::Nothing = nothing
+_instr(::GResidual, ::String, ::String)::Nothing = nothing
 
 "Why a clause could not be lowered — a reason string, so declines are diagnosable rather than a tally."
 function _decline_reason(gs::Vector{Goal})::String
@@ -164,7 +188,7 @@ function emit_il_clause(c::ANClause)::Union{Vector{String}, Nothing}
     head = "(" * String(c.name) * (isempty(c.head_args) ? "" : " " * _render_args(c.head_args)) * ")"
     out = String[]
     for gs in variants
-        body = _seq(gs, 1, "(return " * render(c.out) * ")")
+        body = _seq(gs, 1, "(return " * render(c.out) * ")", "(return Empty)")
         body === nothing && return nothing            # decline the clause WHOLE, never half of it
         push!(out, "(= " * head * " (function " * body * "))")
     end

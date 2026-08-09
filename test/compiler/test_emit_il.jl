@@ -86,6 +86,34 @@ end
         @test !occursin("(O ", joined)
     end
 
+    @testset "ORACLE: BOTH arms of a branch — the else path must be reachable" begin
+        # REGRESSION, 2026-08-09. The first version emitted `(unify condval True then else)` — but
+        # `GBranch.condval` is the LITERAL `True`, not a variable to test (the real test lives in
+        # `cond` as `GUnify($__t1, True)`, and `els` holds a NESTED GBranch for the next arm). So the
+        # emitted form was `(unify True True A B)`, a constant that can never select B: the else arm
+        # was emitted into unreachable position and a failing condition fell to `(return Empty)`.
+        #
+        # `(k 1)` was RIGHT and `(k 2)` returned nothing. The earlier branch test only asserted
+        # `il.emitted >= mm2.emitted` — it counted the clause without ever evaluating it, which is
+        # precisely the "well-formed nonsense" this file's header warns about. Both arms now execute.
+        src = "(= (k \$x) (if (== \$x 1) one other))\n"
+        hit  = _agree(src, "(k 1)")
+        @test hit.interp == ["one"]
+        @test hit.il == hit.interp
+        miss = _agree(src, "(k 2)")
+        @test miss.interp == ["other"]        # the oracle takes the else arm
+        @test miss.il == miss.interp          # ← failed before the fix: the IL returned nothing
+    end
+
+    @testset "ORACLE: a nested if-chain reaches its last arm" begin
+        src = "(= (k \$x) (if (== \$x 1) one (if (== \$x 2) two three)))\n"
+        for (q, want) in (("(k 1)", ["one"]), ("(k 2)", ["two"]), ("(k 9)", ["three"]))
+            a = _agree(src, q)
+            @test a.interp == want
+            @test a.il == a.interp
+        end
+    end
+
     @testset "COVERAGE: shapes Emit.jl declines, the IL emits" begin
         # Emit.jl:30-31 emits only all-GCall/GUnify clauses. Each program below contains a goal type
         # it declines. Both emitters are run on the SAME clauses so the comparison is exact.
