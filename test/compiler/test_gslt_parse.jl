@@ -1,15 +1,14 @@
 # test_gslt_parse.jl — presentations must be WRITABLE, and malformed ones must be REJECTED.
 #
-# The positive cases are the two upstream presentations transcribed into our s-expr surface, so the
-# test doubles as the proof that the surface can carry them:
+# Positive cases are the two upstream presentations transcribed into our s-expr surface, so the tests
+# double as proof the surface carries them:
 #
 #   mettail-rust/languages/src/lambda.rs   — binders + congruence rules
-#   MeTTaIL/GSLT/src/test/module/Rholang   — freshness-guarded scope extrusion
+#   MeTTaIL/GSLT/src/test/module/Rholang   — (Bind x Name) / (x)Proc, freshness-guarded extrusion
 #
-# The negative cases exist because upstream ships `GSLT/src/test/module/bad/` and treats malformed
-# presentations as a case worth testing. It matters more here than for an ordinary parser: a
-# presentation is INPUT TO A GENERATOR, so silently accepting nonsense yields a type system for a
-# language that does not exist.
+# Negative cases exist because upstream ships `GSLT/src/test/module/bad/`. It matters more here than
+# for an ordinary parser: a presentation is INPUT TO A GENERATOR, so silently accepting nonsense
+# yields a type system for a language that does not exist.
 using MeTTaCore
 using Test
 
@@ -26,12 +25,12 @@ end
 
 @testset "GSLT presentation — s-expr surface" begin
 
-    @testset "LAMBDA transcribed from lambda.rs, binders and congruence intact" begin
+    @testset "LAMBDA from lambda.rs — binder, scope, and congruence survive the surface" begin
         p = _lang("""
         (language Lambda
           (types Term)
           (terms
-            (: Lam (-> (bind Term Term) Term))
+            (: Lam (-> (bind x Term) (scope x Term) Term))
             (: App (-> Term Term Term)))
           (equations)
           (rewrites
@@ -40,27 +39,26 @@ end
             (rewrite AppCongR ((~> N0 N1)) (~> (App M N0) (App M N1)))))
         """)
         @test p.name == :Lambda
-        @test p.sorts == Base.Symbol[:Term]
-        @test length(p.ctors) == 2
-        @test _PP.is_lambda_theory(p)                       # ← the binder survived the surface
-        @test [c.label for c in _PP.binders_of(p)] == Base.Symbol[:Lam]
-        @test length(p.rewrites) == 3
-        @test isempty(p.rewrites[1].premises)               # Beta is an AXIOM
-        @test length(p.rewrites[2].premises) == 1           # AppCongL is a CONGRUENCE rule
-        @test _PP.ddl_rung(p) == 3                          # terms + rewrites ⇒ a DSL
+        @test length(p.exports) == 1 && _PP.cat_name(p.exports[1]) === :Term
+        @test length(p.terms) == 2
+        @test _PP.is_lambda_theory(p)
+        @test [(r.label::_PP.LabelId).name for r in _PP.binders_of(p)] == Base.Symbol[:Lam]
+        @test _PP.rule_arity(p.terms[1]) == 2                     # (bind x Term) and (scope x Term)
+        @test isempty(_PP.premises_of(p.rewrites[1].rw))          # Beta is an AXIOM
+        @test length(_PP.premises_of(p.rewrites[2].rw)) == 1      # AppCongL is a CONGRUENCE rule
+        @test _PP.premises_of(p.rewrites[2].rw)[1] == _PP.GHyp(:M0, :M1)
+        @test _PP.ddl_rung(p) == 3
     end
 
-    @testset "RHOLANG's freshness-guarded scope extrusion" begin
+    @testset "RHOLANG — (Bind x Name) / (x)Proc plus freshness-guarded extrusion" begin
         p = _lang("""
         (language Rho
           (types Proc Name)
           (terms
             (: PZero (-> Proc))
             (: PPar  (-> Proc Proc Proc))
-            (: PNew  (-> (bind Name Proc) Proc)))
+            (: PNew  (-> (bind x Name) (scope x Proc) Proc)))
           (equations
-            ; no inner `==` marker: MeTTa resolves == to a GROUNDED op, never a Sym, so it
-            ; cannot be a keyword here. Conditions lead; the last two args are the two sides.
             (equation ScopeExtrusion (fresh x Q)
               (PPar (PNew x P) Q) (PNew x (PPar P Q)))
             (equation NewSwap
@@ -68,80 +66,96 @@ end
           (rewrites))
         """)
         @test length(p.equations) == 2
-        @test length(p.equations[1].conditions) == 1        # guarded
-        @test p.equations[1].conditions[1].var == :x
-        @test isempty(p.equations[2].conditions)            # unguarded — alpha-swap needs no condition
-        @test _PP.is_lambda_theory(p)                       # PNew binds
-        @test _PP.ddl_rung(p) == 2                          # terms + equations, no rewrites
+        @test length(p.equations[1].conditions) == 1 && p.equations[1].conditions[1].var == :x
+        @test isempty(p.equations[2].conditions)
+        @test _PP.is_lambda_theory(p)
+        @test _PP.ddl_rung(p) == 2
+        @test _PP.declared_cats_used(p) == Set(Base.Symbol[:Proc, :Name])
     end
 
-    @testset "a FIRST-ORDER theory written for GSLT.jl parses UNCHANGED" begin
-        # The whole point of reusing `(: Label (-> …))`: nothing existing has to move.
+    @testset "COMPOUND categories — the arity language the port restored" begin
+        # `[Proc]` and exponentials were unwritable before the port; a bare symbol is only CatId.
+        p = _lang("(language L (types Proc) (terms (: Bundle (-> (list Proc) Proc)) (: K (-> (arrow Proc Proc) Proc))))")
+        @test (p.terms[1].items[1]::_PP.ItemNonTerminal).cat isa _PP.CatList
+        @test (p.terms[2].items[1]::_PP.ItemNonTerminal).cat isa _PP.CatArrow
+        @test _PP.declared_cats_used(p) == Set(Base.Symbol[:Proc])   # reached THROUGH the compounds
+    end
+
+    @testset "a FIRST-ORDER theory parses unchanged" begin
         p = _lang("(language Monoid (types Elem) (terms (: Mult (-> Elem Elem Elem)) (: One (-> Elem))))")
         @test !_PP.is_lambda_theory(p)
-        @test _PP.ddl_rung(p) == 1                          # terms only ⇒ algebraic data types
-        @test _PP.ctor_arity(p.ctors[1]) == 2 && _PP.ctor_arity(p.ctors[2]) == 0
+        @test _PP.ddl_rung(p) == 1
+        @test _PP.rule_arity(p.terms[1]) == 2 && _PP.rule_arity(p.terms[2]) == 0
     end
 
-    @testset "MALFORMED presentations are REJECTED, not partially accepted" begin
-        # upstream bad/RepeatLabel.module
-        @test_throws ErrorException _lang(
-            "(language X (types T) (terms (: A (-> T)) (: A (-> T T))))")
-        # a sort `types` never declared — would become a phantom sort downstream
-        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> Bogus T))))")
-        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> T Bogus))))")
-        # binder arity
-        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> (bind T) T))))")
-        # a premise that is not a rewrite
-        @test_throws ErrorException _lang(
-            "(language X (types T) (terms (: A (-> T))) (rewrites (rewrite R (oops) (~> a b))))")
-        # duplicate rewrite label
-        @test_throws ErrorException _lang(
-            "(language X (types T) (terms (: A (-> T))) (rewrites (rewrite R () (~> a b)) (rewrite R () (~> c d))))")
-        # not a language at all
-        @test_throws ErrorException _lang("(monoid X)")
-    end
-
-    @testset "LITERALS — grounded sorts, the sixth upstream section" begin
-        # MeTTa has grounded atoms, so its presentation cannot be a pure term algebra. The carrier
-        # vocabulary is Core's real `GroundedType` enum (compiler/IR.jl:129), not free-form text.
+    @testset "LITERALS — grounded sorts, validated against the real enum" begin
         p = _lang("""
         (language Arith
           (types Int Expr)
           (literals (literal Int GROUNDED_INT))
-          (terms (: Plus (-> Expr Expr Expr))
-                 (: Lit  (-> Int Expr))))
+          (terms (: Plus (-> Expr Expr Expr)) (: Lit (-> Int Expr))))
         """)
-        @test length(p.literals) == 1
-        @test p.literals[1].sort == :Int
         @test _PP.grounded_sorts(p) == Set(Base.Symbol[:Int])
-        @test :Expr ∉ _PP.grounded_sorts(p)          # Expr is CONSTRUCTED, not grounded
-
-        # an unknown carrier is an error, NOT a silent fall back to GROUNDED_OPAQUE
-        @test_throws ErrorException _lang(
-            "(language X (types T) (literals (literal T GROUNDED_WIDGET)))")
-        # a literal sort must be declared in (types …)
-        @test_throws ErrorException _lang(
-            "(language X (types T) (literals (literal Undeclared GROUNDED_INT)))")
-        # …and must not ALSO be constructed — two incompatible sets of formation rules
+        @test :Expr ∉ _PP.grounded_sorts(p)
+        @test_throws ErrorException _lang("(language X (types T) (literals (literal T GROUNDED_WIDGET)))")
+        @test_throws ErrorException _lang("(language X (types T) (literals (literal Undeclared GROUNDED_INT)))")
         @test_throws ErrorException _lang(
             "(language X (types T) (literals (literal T GROUNDED_INT)) (terms (: A (-> T))))")
-        # duplicates
         @test_throws ErrorException _lang(
             "(language X (types T) (literals (literal T GROUNDED_INT) (literal T GROUNDED_STRING)))")
     end
 
+    @testset "MALFORMED presentations are REJECTED" begin
+        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> T)) (: A (-> T T))))")
+        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> Bogus T))))")
+        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> (list Bogus) T))))")   # via a compound
+        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> (bind x Bogus) T))))") # via a binder
+        @test_throws ErrorException _lang("(language X (types T) (terms (: A (-> (bind x) T))))")       # binder arity
+        @test_throws ErrorException _lang(
+            "(language X (types T) (terms (: A (-> T))) (rewrites (rewrite R (oops) (~> a b))))")
+        @test_throws ErrorException _lang(
+            "(language X (types T) (terms (: A (-> T))) (rewrites (rewrite R () (~> a b)) (rewrite R () (~> c d))))")
+        @test_throws ErrorException _lang("(monoid X)")
+    end
+
+    @testset "KEYWORD COLLISION GUARD — every reserved word must arrive as a `Sym`" begin
+        # THE RULE, DERIVED FROM THREE INSTANCES. A keyword only works if MeTTa's reader hands it back
+        # as a `Sym`; if the name is a registered grounded op it arrives as `Grounded{Operation}` and
+        # the head test is SILENTLY ALWAYS FALSE. That bit twice — `==` in the equation form, then
+        # `abs` for the scope marker — each time surfacing as "well-formed input rejected", which
+        # reads like a parser bug rather than a name collision.
+        #
+        # So the whole reserved set is audited here instead of collisions being found one at a time.
+        # A future keyword that collides fails THIS test with its own name, at the point of choosing.
+        for kw in ("language", "types", "literals", "terms", "equations", "rewrites",
+                   "bind", "scope", "list", "arrow", "prod", "fresh", "equation", "rewrite",
+                   "literal", "~>", "->", ":")
+            sp = _PV.Space(); toks = _PV.tokenize("($kw a b)"); i = Ref(1)
+            a = _PV.parse_from(toks, i, sp.tokens)
+            head = a.children[1]
+            @test head isa MeTTaCore.StandardMeTTa.Sym    # fails NAMING the offending keyword
+        end
+        # And the two known-bad names stay bad — a regression here would mean the registry changed
+        # and the surface could be simplified back.
+        for bad in ("==", "abs")
+            sp = _PV.Space(); toks = _PV.tokenize("($bad a b)"); i = Ref(1)
+            a = _PV.parse_from(toks, i, sp.tokens)
+            @test !(a.children[1] isa MeTTaCore.StandardMeTTa.Sym)
+        end
+    end
+
     @testset "absent sections are empty, not an error" begin
         p = _lang("(language Bare (types T))")
-        @test isempty(p.ctors) && isempty(p.equations) && isempty(p.rewrites) && isempty(p.literals)
+        @test isempty(p.terms) && isempty(p.equations) && isempty(p.rewrites) && isempty(p.literals)
         @test _PP.ddl_rung(p) == 1
     end
 
     @testset "types are concrete — no Any" begin
-        p = _lang("(language Lambda (types Term) (terms (: Lam (-> (bind Term Term) Term))))")
+        p = _lang("(language Lambda (types Term) (terms (: Lam (-> (bind x Term) (scope x Term) Term))))")
         @test p isa _PP.GPresentation
-        @test p.ctors isa Vector{_PP.GCtor}
-        @test p.ctors[1].args isa Vector{_PP.GArg}
-        @test p.ctors[1].args[1] isa _PP.GBind
+        @test p.terms isa Vector{_PP.GRule}
+        @test p.terms[1].items isa Vector{_PP.GItem}
+        @test p.terms[1].items[1] isa _PP.ItemBind
+        @test p.terms[1].items[2] isa _PP.ItemAbs
     end
 end
