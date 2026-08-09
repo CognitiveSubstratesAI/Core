@@ -71,6 +71,20 @@ const FLOOR_STANDARD = 8     # of 51
 const FLOOR_LIB     = 356    # of 888
 const FLOOR_TOTAL   = 374    # of 1000
 
+# ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
+# MEASURED, not predicted: 687 of 1000, against MM2's 374. The design doc argued minimal MeTTa should
+# cover more because `unify` is 4-ary (branches are native), `collapse-bind` is findall, and
+# disjunction is just several `(=)` clauses — where an MM2 exec atom has none of those. Emit.jl:30-31
+# emits only all-GCall/GUnify clauses; the IL handles 5 of 6 goal types. Predicted direction, and this
+# time the magnitude was measured BEFORE being written down: 1.84x.
+#
+#     stdlib        10 -> 57    src/standard   8 -> 28    lib   356 -> 602
+#
+# Remaining declines account exactly: 687 emitted + 163 GResidual + 149 nested-goal + 1 zero-branch
+# GDisj = 1000. The zero-branch case was found BY this measurement — it reported "expanded = -1",
+# which is impossible, and turned out to be a clause counted as emitted while producing no clauses.
+const FLOOR_IL_TOTAL = 687   # of 1000
+
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
     toks = _RI.tokenize(text); i = Ref(1); out = _RS.Atom[]
@@ -130,6 +144,26 @@ end
     end
     @info "compiler coverage TOTAL" emitted=total_em total=total_tot floor=FLOOR_TOTAL
     @test total_em >= FLOOR_TOTAL
+
+    # ── THE MeTTa-IL STAGE, same corpus, same pass ─────────────────────────────────────────────
+    # Ratcheted separately from MM2 because they are different targets with different reach, and a
+    # single number would hide a regression in one behind a gain in the other. Accounting is checked
+    # too, not just the floor: emitted + declined must equal the clause count. That identity is what
+    # caught the zero-branch GDisj bug — a clause was counted emitted while producing nothing, and
+    # only the totals disagreeing revealed it.
+    il_em = 0; il_tot = 0; il_out = 0; il_decl = 0
+    for f in files
+        haskey(programs, f) || continue
+        cls = try _RA.translate_program(programs[f]) catch; continue end
+        r = MeTTaCore.CompilerEmitIL.emit_il_program(cls)
+        il_em += r.emitted; il_tot += length(cls)
+        il_out += length(r.clauses); il_decl += length(r.declined)
+    end
+    @info "MeTTa-IL coverage TOTAL" emitted=il_em total=il_tot floor=FLOOR_IL_TOTAL clauses_out=il_out
+    @test il_em >= FLOOR_IL_TOTAL
+    @test il_em + il_decl == il_tot          # every clause is emitted OR declined — never dropped
+    @test il_out >= il_em                    # emission never produces FEWER clauses than it counts
+    @test il_em > total_em                   # the IL is the better target; if this flips, find out why
 
     # ── THE DECLINE HISTOGRAM IS A MEASUREMENT, SO IT RUNS ─────────────────────────────────────
     # These figures drive every "what to build next" decision. They were previously narrated in a

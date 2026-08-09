@@ -128,12 +128,25 @@ include("compiler/ANormal.jl")
 # priority — so it cannot drift the way N hand-written call sites did.
 include("compiler/Emit.jl")
 
+# Compiler stage 4a: A-normalized clauses → MINIMAL MeTTa (the MeTTa-IL). THE arrow Figure 2 has —
+# MeTTa → MeTTa-IL — which the pipeline previously skipped by going straight from A-normal form to
+# MM2 exec atoms. SPECMAP C6: `Emit.jl` was "the right component in the wrong POSITION"; this stage
+# is the position. Its output is executable on arrival, because `Eval.jl` already implements every
+# instruction it emits (MINIMAL_OPS). Follows Emit.jl because it reuses `render`.
+# Design + diagrams: docs/architecture/COMPILER_IL_STAGE.md
+include("compiler/EmitIL.jl")
+
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Eval` submodule above.
 include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Eval's
                                      # _MODULE_PATH, so it must follow standard/Eval.jl)
 include("standard/AtomExprBridge.jl")  # typed Atom ⇄ MORK.Expr — lane-neutral, live in CoreSpace/Primitives
 include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST precede every consumer
+# COMPILER-PRIMARY lane: MeTTa → MeTTa-IL → evaluate the IL. The live consumer of compiler/EmitIL.jl,
+# without which that stage is measured coverage of nothing. Placed HERE — after SexprForms (it drives
+# split_program_regions) and BEFORE DualTrack (which now consumes its may-mutate predicate instead of
+# keeping a second copy), so the dependency points from the deprecated lane to the surviving one.
+include("standard/CompileLane.jl")
 include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK

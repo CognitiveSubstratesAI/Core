@@ -55,6 +55,8 @@ module StandardMeTTaTests
     # that incompleteness cost something: the emitted count may not decrease.
     include("compiler/test_call_staging.jl")
     include("compiler/test_emit_substitution.jl")
+    include("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
+    include("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
     include("compiler/test_coverage_ratchet.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
