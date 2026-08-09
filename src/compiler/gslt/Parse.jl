@@ -42,8 +42,10 @@
 module CompilerGSLTParse
 
 using ..StandardMeTTa: Atom, Sym, Var, Expression
-using ..CompilerGSLTPresentation: GSort, GBind, GArg, GCtor, GFresh, GEquation, GRewrite,
-                                  GPresentation
+using ..CompilerIR: GroundedType, GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL,
+                    GROUNDED_STRING, GROUNDED_OPAQUE
+using ..CompilerGSLTPresentation: GSort, GBind, GArg, GCtor, GLiteral, GFresh, GEquation,
+                                  GRewrite, GPresentation
 
 export parse_presentation
 
@@ -103,6 +105,31 @@ function _parse_ctor(f::Atom)::GCtor
     isempty(parts) && error("GSLT parse: signature of `$label` needs at least a result sort")
     GCtor(label, GArg[_parse_arg(p) for p in parts[1:end - 1]],
           _symname(parts[end], "result sort of `$label`"))
+end
+
+"""`(literal Sort CARRIER)` — declare a sort whose inhabitants come from the lexer.
+
+CARRIER must be one of Core's real grounded types (`GroundedType`, `compiler/IR.jl:129`); an
+unrecognised name is an ERROR, not an opaque fallback. Falling back to `GROUNDED_OPAQUE` on a typo
+would silently produce a sort the type system treats as unanalysable — the quiet-wrong-answer shape
+this parser exists to refuse."""
+const _CARRIERS = Dict{Base.Symbol, GroundedType}(
+    :GROUNDED_INT    => GROUNDED_INT,
+    :GROUNDED_FLOAT  => GROUNDED_FLOAT,
+    :GROUNDED_BOOL   => GROUNDED_BOOL,
+    :GROUNDED_STRING => GROUNDED_STRING,
+    :GROUNDED_OPAQUE => GROUNDED_OPAQUE)
+
+function _parse_literal(f::Atom)::GLiteral
+    _head(f) === :literal || error("GSLT parse: expected (literal Sort CARRIER), got $(f)")
+    xs = _args(f::Expression)
+    length(xs) == 2 || error("GSLT parse: (literal Sort CARRIER) takes exactly 2 names")
+    sort = _symname(xs[1], "literal sort")
+    cname = _symname(xs[2], "carrier of `$sort`")
+    haskey(_CARRIERS, cname) ||
+        error("GSLT parse: `$sort` names unknown carrier `$cname`; expected one of " *
+              join(sort!(String[String(k) for k in keys(_CARRIERS)]), ", "))
+    GLiteral(sort, _CARRIERS[cname])
 end
 
 # ── E ────────────────────────────────────────────────────────────────────────────────────────────
@@ -186,6 +213,7 @@ function parse_presentation(a::Atom)::GPresentation
     rest = body[2:end]
 
     sorts = Base.Symbol[_symname(s, "a declared sort") for s in _section(rest, :types)]
+    lits  = GLiteral[_parse_literal(f) for f in _section(rest, :literals)]
     ctors = GCtor[_parse_ctor(f) for f in _section(rest, :terms)]
     eqs   = GEquation[_parse_equation(f) for f in _section(rest, :equations)]
     rews  = GRewrite[_parse_rewrite(f) for f in _section(rest, :rewrites)]
@@ -218,7 +246,20 @@ function parse_presentation(a::Atom)::GPresentation
         end
     end
 
-    GPresentation(name, sorts, ctors, eqs, rews)
+    # A GROUNDED sort must be declared, and must NOT also be constructed. Both halves matter: an
+    # undeclared literal sort is a typo, and a sort that is both opaque and built from constructors
+    # has two incompatible sets of formation rules — the generated type system would have to pick one.
+    lseen = Set{Base.Symbol}()
+    built = Set{Base.Symbol}(c.result for c in ctors)
+    for l in lits
+        l.sort in declared || error("GSLT parse: literal sort `$(l.sort)` is not in (types …)")
+        l.sort in lseen && error("GSLT parse: duplicate literal declaration for `$(l.sort)`")
+        l.sort in built &&
+            error("GSLT parse: `$(l.sort)` is declared grounded but also has constructors")
+        push!(lseen, l.sort)
+    end
+
+    GPresentation(name, sorts, lits, ctors, eqs, rews)
 end
 
 end # module CompilerGSLTParse

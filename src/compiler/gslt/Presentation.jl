@@ -57,9 +57,10 @@
 module CompilerGSLTPresentation
 
 using ..StandardMeTTa: Atom
+using ..CompilerIR: GroundedType
 
-export GSort, GBind, GArg, GCtor, GFresh, GEquation, GRewrite, GPresentation
-export binders_of, is_lambda_theory, ctor_arity, declared_sorts_used, ddl_rung
+export GSort, GBind, GArg, GCtor, GLiteral, GFresh, GEquation, GRewrite, GPresentation
+export binders_of, is_lambda_theory, ctor_arity, declared_sorts_used, ddl_rung, grounded_sorts
 
 # ── Σ: sorts and the arguments a constructor takes ───────────────────────────────────────────────
 
@@ -93,6 +94,26 @@ struct GCtor
 end
 
 ctor_arity(c::GCtor)::Int = length(c.args)
+
+"""A GROUNDED sort: its inhabitants come from the lexer, not from constructors.
+
+Upstream's sixth section (`mettail-rust/macros/src/ast/language.rs:455`), where it looks like
+
+    types    { ![i64] as Int   ![Vec<Proc>] as List ["[", "]", ","] }
+    literals { Int { pattern: r"…"; eval: ![ { parse_int_lit(text, …) } ] } }
+
+We keep the DECLARATION and drop the `pattern`/`eval`, for the same reason concrete syntax was
+dropped from `GCtor`: upstream GENERATES a parser and therefore needs a regex and a decoder, whereas
+MeTTa's own reader (`Eval.tokenize` / `parse_from`) already lexes literals. A pattern here would be a
+second source of truth for lexing.
+
+What survives is the part the hypercube actually needs: WHICH SORTS ARE OPAQUE. A grounded sort has
+no formation rules of its own, so its typing rules differ from a constructed sort's — and a sort
+cannot be both, which `parse_presentation` enforces."""
+struct GLiteral
+    sort::Base.Symbol
+    carrier::GroundedType
+end
 
 # ── E: equations, with the freshness side conditions alpha-laws need ─────────────────────────────
 
@@ -132,23 +153,33 @@ end
 
 """A GSLT presentation: G = (Σ, E, R), where Σ is `sorts` + `ctors`.
 
-⚠️ KNOWN GAP — `literals`. The upstream macro parses SIX sections, not five
+IMPLEMENTED 2026-08-09 (was a recorded gap) — `literals`. The upstream macro parses SIX sections, not five
 (`mettail-rust/macros/src/ast/language.rs:421-491`): `name · types · literals · terms · equations ·
 rewrites`. `literals` declares GROUNDED carrier types with their lexical syntax —
 `![i64] as Int`, `![Vec<Proc>] as List ["[", "]", ","]` — each with a regex `pattern` and an `eval`
 block. There is no slot for them here.
 
 That is fine for `Lambda` and `Monoid`, which are pure term algebras. It is NOT fine for MeTTa,
-whose presentation must account for grounded atoms (`GROUNDED_INT`/`FLOAT`/`STRING`/`BOOL` in
-`Eval.jl`) — so this has to exist before `MeTTa.module` can be written, and it is recorded here
+whose presentation must account for grounded atoms (the `GroundedType` enum,
+`compiler/IR.jl:129`) — so this has to exist before `MeTTa.module` can be written, and it is recorded here
 rather than discovered again later. Deliberately not stubbed: an empty field would read as "handled"."""
 struct GPresentation
     name::Base.Symbol
     sorts::Vector{Base.Symbol}
+    literals::Vector{GLiteral}
     ctors::Vector{GCtor}
     equations::Vector{GEquation}
     rewrites::Vector{GRewrite}
 end
+
+"Convenience for a presentation with no grounded sorts — pure term algebras (Monoid, Lambda)."
+GPresentation(name::Base.Symbol, sorts::Vector{Base.Symbol}, ctors::Vector{GCtor},
+              equations::Vector{GEquation}, rewrites::Vector{GRewrite}) =
+    GPresentation(name, sorts, GLiteral[], ctors, equations, rewrites)
+
+"The sorts that are grounded carriers rather than constructed — opaque to the term algebra."
+grounded_sorts(p::GPresentation)::Set{Base.Symbol} =
+    Set{Base.Symbol}(l.sort for l in p.literals)
 
 "Every constructor that binds — i.e. the part of Σ that makes it a lambda theory."
 binders_of(p::GPresentation)::Vector{GCtor} =

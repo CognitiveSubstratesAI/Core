@@ -102,9 +102,38 @@ end
         @test_throws ErrorException _lang("(monoid X)")
     end
 
+    @testset "LITERALS — grounded sorts, the sixth upstream section" begin
+        # MeTTa has grounded atoms, so its presentation cannot be a pure term algebra. The carrier
+        # vocabulary is Core's real `GroundedType` enum (compiler/IR.jl:129), not free-form text.
+        p = _lang("""
+        (language Arith
+          (types Int Expr)
+          (literals (literal Int GROUNDED_INT))
+          (terms (: Plus (-> Expr Expr Expr))
+                 (: Lit  (-> Int Expr))))
+        """)
+        @test length(p.literals) == 1
+        @test p.literals[1].sort == :Int
+        @test _PP.grounded_sorts(p) == Set(Base.Symbol[:Int])
+        @test :Expr ∉ _PP.grounded_sorts(p)          # Expr is CONSTRUCTED, not grounded
+
+        # an unknown carrier is an error, NOT a silent fall back to GROUNDED_OPAQUE
+        @test_throws ErrorException _lang(
+            "(language X (types T) (literals (literal T GROUNDED_WIDGET)))")
+        # a literal sort must be declared in (types …)
+        @test_throws ErrorException _lang(
+            "(language X (types T) (literals (literal Undeclared GROUNDED_INT)))")
+        # …and must not ALSO be constructed — two incompatible sets of formation rules
+        @test_throws ErrorException _lang(
+            "(language X (types T) (literals (literal T GROUNDED_INT)) (terms (: A (-> T))))")
+        # duplicates
+        @test_throws ErrorException _lang(
+            "(language X (types T) (literals (literal T GROUNDED_INT) (literal T GROUNDED_STRING)))")
+    end
+
     @testset "absent sections are empty, not an error" begin
         p = _lang("(language Bare (types T))")
-        @test isempty(p.ctors) && isempty(p.equations) && isempty(p.rewrites)
+        @test isempty(p.ctors) && isempty(p.equations) && isempty(p.rewrites) && isempty(p.literals)
         @test _PP.ddl_rung(p) == 1
     end
 
