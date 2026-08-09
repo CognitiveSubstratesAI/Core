@@ -136,6 +136,16 @@ include("compiler/Emit.jl")
 # Design + diagrams: docs/architecture/COMPILER_IL_STAGE.md
 include("compiler/EmitIL.jl")
 
+# GSLT presentations — G = (Σ, E, R), Definition 2.1. Its own subdirectory because this is a
+# component (data model, and later parsing / the hypercube construction), not another linear stage in
+# the IR→A-normal→emit pipeline the flat files above form.
+#
+# WHY IT MATTERS HERE: whitepaper §3.4.1 says MeTTa-IL is "derived from a GSLT description", and the
+# type system / cost / history / logic are all GENERATED from the triple. `standard/GSLT.jl` has the
+# theory ALGEBRA but cannot express binders, freshness or premised rewrites — so MeTTa itself cannot
+# be presented, and with no presentation there is nothing to generate from. This is that gap.
+include("compiler/gslt/Presentation.jl")
+
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Eval` submodule above.
 include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Eval's
