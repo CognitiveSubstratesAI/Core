@@ -52,16 +52,12 @@ end
 # stdlib from the analysis Space would cut the cost but classify every stdlib call as impure,
 # trading one measured cost for an unmeasured one in extra regions. Revisit with a profile if the
 # adjacent-bang shape ever shows up hot; do not "optimize" it on intuition.
-function _mc_may_mutate(program::AbstractString)
-    forms = mm2_split_forms(program)
-    any(i -> forms[i][1] && forms[i + 1][1], 1:length(forms) - 1) || return (_::AbstractString) -> false
-    sp = Eval.Space(); Eval.load_core_stdlib!(sp)
-    for (bang, f) in forms
-        bang || Eval.load_metta!(sp, f)
-    end
-    pure = Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sp)))
-    (f::AbstractString) -> !(Base.Symbol(mm2_head(f)) in pure)
-end
+# MOVED 2026-08-09 to `CompileLane.jl` as `purity_may_mutate`, and called from there rather than
+# duplicated. The predicate is lane-neutral — it follows from Invariant 1, not from this lane — and
+# this file's direct surface-(=)→MM2 arrow is due for deletion. Two copies of a FAIL-SAFE predicate
+# drifting apart is the denylist failure mode one level up: the copy that stops being maintained is
+# the one that silently stops being safe.
+_mc_may_mutate(program::AbstractString) = purity_may_mutate(program)
 
 function _mc_fallback_eval(data::AbstractString, program::AbstractString,
                            deferred::AbstractVector{<:AbstractString};
