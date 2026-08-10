@@ -34,9 +34,13 @@ end
             (: App (-> Term Term Term)))
           (equations)
           (rewrites
-            (rewrite Beta     ()           (~> (App (Lam fun) arg) (eval fun arg)))
-            (rewrite AppCongL ((~> M0 M1)) (~> (App M0 N) (App M1 N)))
-            (rewrite AppCongR ((~> N0 N1)) (~> (App M N0) (App M N1)))))
+            ; Upstream writes `Beta . |- (App (Lam fun) arg) ~> (eval fun arg)`, where `eval` is the
+            ; Rust surface's built-in application. The model we PORTED is LeaTTa's, whose built-in is
+            ; the `Subst` AST node (`Reduce.lean:63`), so Beta is written with that — and with `Lam`'s
+            ; binder in the pattern, which its arity-2 signature above already provides for.
+            (rewrite Beta     ()             (~> (App (Lam \$x \$body) \$arg) (Subst \$body \$arg \$x)))
+            (rewrite AppCongL ((~> \$M0 \$M1)) (~> (App \$M0 \$N) (App \$M1 \$N)))
+            (rewrite AppCongR ((~> \$N0 \$N1)) (~> (App \$M \$N0) (App \$M \$N1)))))
         """)
         @test p.name == :Lambda
         @test length(p.exports) == 1 && _PP.cat_name(p.exports[1]) === :Term
@@ -59,10 +63,10 @@ end
             (: PPar  (-> Proc Proc Proc))
             (: PNew  (-> (bind x Name) (scope x Proc) Proc)))
           (equations
-            (equation ScopeExtrusion (fresh x Q)
-              (PPar (PNew x P) Q) (PNew x (PPar P Q)))
+            (equation ScopeExtrusion (fresh \$x \$Q)
+              (PPar (PNew \$x \$P) \$Q) (PNew \$x (PPar \$P \$Q)))
             (equation NewSwap
-              (PNew x (PNew y P)) (PNew y (PNew x P))))
+              (PNew \$x (PNew \$y \$P)) (PNew \$y (PNew \$x \$P))))
           (rewrites))
         """)
         @test length(p.equations) == 2
@@ -115,6 +119,16 @@ end
             "(language X (types T) (terms (: A (-> T))) (rewrites (rewrite R (oops) (~> a b))))")
         @test_throws ErrorException _lang(
             "(language X (types T) (terms (: A (-> T))) (rewrites (rewrite R () (~> a b)) (rewrite R () (~> c d))))")
+        # UNSIGILED PATTERN VARIABLES. `X` here is a `Sym`, so the rule is GROUND: it rewrites the
+        # one literal term `(f X)` and nothing else — well-formed, parsed, inert. Every rewrite in the
+        # first version of `presentations/mettail.metta` had this shape. Rejected on both sides, and
+        # in equations, so the surface cannot express a schema that silently is not one.
+        @test_throws ErrorException _lang(
+            "(language X (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f Y) Y))))")
+        @test_throws ErrorException _lang(
+            "(language X (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f \$Y) Z))))")
+        @test_throws ErrorException _lang(
+            "(language X (types T) (terms (: f (-> T T))) (equations (equation E (f P) P)))")
         @test_throws ErrorException _lang("(monoid X)")
     end
 

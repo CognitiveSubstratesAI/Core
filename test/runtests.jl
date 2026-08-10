@@ -59,6 +59,8 @@ module StandardMeTTaTests
     include("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
     include("compiler/test_gslt_presentation.jl")  # G = (Σ,E,R): binders · freshness · premised rewrites
     include("compiler/test_gslt_parse.jl")         # the s-expr surface — presentations you can WRITE
+    include("compiler/test_mettail_presentation.jl")  # MeTTa's own assembly language, presented as a GSLT
+    include("compiler/test_gslt_reduce.jl")        # the ENGINE — a presentation that RUNS, so its R can be wrong out loud
     include("compiler/test_coverage_ratchet.jl")
     include("standard/test_stdlib.jl")
     include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)

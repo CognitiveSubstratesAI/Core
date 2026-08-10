@@ -30,6 +30,22 @@
 # Compound categories use the arity language the port restored: `(list C)`, `(arrow A B)`,
 # `(prod A B …)`. A bare symbol is `CatId`, which is all the first draft could express.
 #
+# ─── PATTERN VARIABLES CARRY MeTTa'S SIGIL ───────────────────────────────────────────────────────
+# In E and R a name is either a CONSTRUCTOR or a PATTERN VARIABLE, and the two surfaces above tell
+# them apart by consulting Σ: `M0` is a variable in `(App M0 N)` only because `M0` is not a declared
+# label. We do not: upstream's OWN s-expr surface sigils them, and says why —
+#
+#     Runtime/Sexpr.lean:9   "for a pattern variable (matching MeTTa's variable sigil). This gives
+#                             every dialect a uniform surface."
+#     Runtime/Sexpr.lean:40  `else if tok.startsWith "$" then some (AST.var (.base …))`
+#
+# so `(rewrite AppCongL ((~> $M0 $M1)) (~> (App $M0 $N) (App $M1 $N)))`. This is not cosmetic. A bare
+# `M0` reads back as a `Sym`, `Reduce.jl`'s matcher treats a `Sym` as a constant, and the rule becomes
+# a GROUND rewrite that fires on one literal term and nothing else — silently, since a ground rewrite
+# is well-formed. MEASURED: every rewrite in the first draft of `presentations/mettail.metta` was
+# ground. The `_check_schematic` pass below is what stops that recurring: a name in E or R must be a
+# declared constructor or wear the sigil.
+#
 # ─── MALFORMED PRESENTATIONS MUST BE REJECTED ────────────────────────────────────────────────────
 # Upstream ships `GSLT/src/test/module/bad/` — `RepeatLabel.module`, `ReplacementShadows.module` — so
 # it treats malformed presentations as a case worth testing. It matters more here than for an
@@ -37,7 +53,7 @@
 # type system for a language that does not exist. Every check below raises, naming the offender.
 module CompilerGSLTParse
 
-using ..StandardMeTTa: Atom, Sym, Var, Expression
+using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded
 using ..CompilerIR: GroundedType, GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL,
                     GROUNDED_STRING, GROUNDED_OPAQUE
 using ..CompilerGSLTPresentation: GCat, CatId, CatList, CatArrow, CatProd,
@@ -66,9 +82,51 @@ function _section(body::Vector{Atom}, name::Base.Symbol)::Vector{Atom}
     Atom[]
 end
 
-_symname(a::Atom, what::AbstractString)::Base.Symbol =
-    a isa Sym ? (a::Sym).name :
-    error("GSLT parse: expected a symbol for $what, got $(typeof(a))")
+"""A NAME — of a constructor, a sort, a variable, a rewrite.
+
+⚠️ ACCEPTS A `Grounded` TOO, and that is not a loophole. A presentation of MeTTa necessarily NAMES
+MeTTa's own operators, so its labels collide with the live registry BY CONSTRUCTION: `context-space`
+reads back as `Grounded{Eval.SpaceOp}`, not `Sym`, and `(: context-space (-> Space))` was rejected on
+its own label. Renaming it was never an option — a presentation that renames what it presents is
+worthless.
+
+The rule that resolves it: a label's job is to BE A NAME. Whether the reader also knows that name as
+a live operator says nothing about its role here. `Operation` and `SpaceOp` both carry `name::String`
+(`Eval.jl:378-383`), so the name is recoverable either way.
+
+This is distinct from the parser's own DISPATCH keywords (`language`, `terms`, `bind`, `~>`, …),
+which must still arrive as `Sym` because they are matched by `_head` — those are guarded by the
+keyword-collision test, and `abs`/`==` are the two that failed it."""
+function _symname(a::Atom, what::AbstractString)::Base.Symbol
+    a isa Sym && return (a::Sym).name
+    if a isa Grounded
+        v = (a::Grounded).value
+        hasfield(typeof(v), :name) && return Base.Symbol(getfield(v, :name))
+    end
+    error("GSLT parse: expected a name for $what, got $(typeof(a))")
+end
+
+"""The name of a NAME-VALUED position that denotes a pattern variable — a premise endpoint, a
+freshness condition.
+
+`GHyp` and `GFresh` store `Base.Symbol`s, matching upstream's `Hyp {src tgt : DottedPath}`
+(Syntax.lean:121). But the things they name are pattern variables, which the surface sigils, so
+`(~> \$M0 \$M1)` must be accepted and stored as `:M0`/`:M1`. A bare `Sym` still parses — it names the
+same variable — so nothing that already worked breaks."""
+function _pvarname(a::Atom, what::AbstractString)::Base.Symbol
+    a isa Var && return Base.Symbol((a::Var).name)
+    _symname(a, what)
+end
+
+"The name a term-position atom denotes, or `nothing` if it denotes no name (a literal, a variable)."
+function _opt_name(a::Atom)::Union{Base.Symbol, Nothing}
+    a isa Sym && return (a::Sym).name
+    if a isa Grounded
+        v = (a::Grounded).value
+        hasfield(typeof(v), :name) && return Base.Symbol(getfield(v, :name))
+    end
+    nothing
+end
 
 # ── Σ: the arity language ───────────────────────────────────────────────────────────────────────
 
@@ -165,7 +223,7 @@ function _parse_fresh(f::Atom)::GFresh
     _head(f) === :fresh || error("GSLT parse: expected (fresh x Term), got $(f)")
     xs = _args(f::Expression)
     length(xs) == 2 || error("GSLT parse: (fresh x Term) takes exactly 2 names")
-    GFresh(_symname(xs[1], "fresh variable"), _symname(xs[2], "fresh-in term"))
+    GFresh(_pvarname(xs[1], "fresh variable"), _pvarname(xs[2], "fresh-in term"))
 end
 
 """`(equation Label (fresh …)… LHS RHS)` — leading conditions, then the two sides.
@@ -198,7 +256,7 @@ function _parse_hyp(a::Atom, ctx::AbstractString)::GHyp
     _head(a) === Base.Symbol("~>") || error("GSLT parse: $ctx must be (~> Src Tgt), got $(a)")
     xs = _args(a::Expression)
     length(xs) == 2 || error("GSLT parse: (~> Src Tgt) takes exactly 2 variables in $ctx")
-    GHyp(_symname(xs[1], "premise source"), _symname(xs[2], "premise target"))
+    GHyp(_pvarname(xs[1], "premise source"), _pvarname(xs[2], "premise target"))
 end
 
 function _parse_conclusion(a::Atom, ctx::AbstractString)::Tuple{Atom, Atom}
@@ -250,6 +308,42 @@ function _cats_of_rule(r::GRule)::Set{Base.Symbol}
     walk(r.cat)
     for i in r.items; witem(i); end
     out
+end
+
+"""Heads that belong to the ported AST itself rather than to any presentation's Σ.
+
+`Subst` is LeaTTa's `.subst body repl var` node (Syntax.lean's `AST`, resolved by `AST.inst`,
+Reduce.lean:63). It is how a rule SAYS "substitute", so it can appear in any presentation's R while
+being declared by none — including presentations, like Lambda, whose only rewrite needs it."""
+const RESERVED_HEADS = Set{Base.Symbol}((:Subst,))
+
+"""Every name appearing in an E/R term must be a declared constructor — anything else is either a
+pattern variable (and must carry the sigil) or a phantom constant.
+
+WHY THIS EXISTS. Upstream resolves the constructor/variable ambiguity against Σ at parse time, so a
+name that is not a label simply BECOMES a variable. Our surface sigils instead, which means an
+unsigiled non-label stays a `Sym` and silently degrades a rule schema into a ground rewrite. That is
+not a hypothetical: it is what `presentations/mettail.metta` shipped with. This check turns the
+silent degradation into a rejection that names the offender.
+
+The `Grounded` case matters as much as `Sym`: a presentation of MeTTa names MeTTa's own operators, so
+`chain` in a rewrite arrives as `Grounded{Operation}`, not `Sym`. Names are extracted the same way
+`_symname` extracts them, so a label and its use in R agree however the reader typed them. Atoms that
+denote no name at all — an integer, a string — are literals of a grounded sort and are skipped."""
+function _check_schematic(term::Atom, labels::Set{Base.Symbol}, ctx::AbstractString)
+    if term isa Expression
+        for c in (term::Expression).children
+            _check_schematic(c, labels, ctx)
+        end
+        return nothing
+    end
+    term isa Var && return nothing
+    n = _opt_name(term)
+    n === nothing && return nothing                     # a literal of a grounded sort
+    n in RESERVED_HEADS && return nothing
+    n in labels || error("GSLT parse: `$n` in $ctx is neither a declared constructor nor a " *
+                         "pattern variable — write `\$$n` if it is a variable")
+    nothing
 end
 
 """
@@ -312,6 +406,19 @@ function parse_presentation(a::Atom)::GPresentation
         l.sort in lseen && error("GSLT parse: duplicate literal declaration for `$(l.sort)`")
         l.sort in built && error("GSLT parse: `$(l.sort)` is declared grounded but also has constructors")
         push!(lseen, l.sort)
+    end
+
+    # E and R must be SCHEMATIC — see `_check_schematic`. Runs last so a presentation whose Σ is
+    # already malformed fails on Σ, where the real error is.
+    for (i, e) in enumerate(eqs)         # `GEquation` keeps no label, so equations are named by position
+        _check_schematic(e.lhs, seen, "the left side of equation #$i")
+        _check_schematic(e.rhs, seen, "the right side of equation #$i")
+    end
+    for r in rews
+        rb = r.rw
+        while rb isa RewCtx; rb = (rb::RewCtx).rest; end
+        _check_schematic((rb::RewBase).lhs, seen, "the left side of rewrite `$(r.name)`")
+        _check_schematic((rb::RewBase).rhs, seen, "the right side of rewrite `$(r.name)`")
     end
 
     GPresentation(name, exports, lits, terms, eqs, rews, Tuple{String, GPresentation}[])

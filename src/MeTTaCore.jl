@@ -146,6 +146,7 @@ include("compiler/EmitIL.jl")
 # be presented, and with no presentation there is nothing to generate from. This is that gap.
 include("compiler/gslt/Presentation.jl")
 include("compiler/gslt/Parse.jl")        # s-expr surface → GPresentation (presentations you can WRITE)
+include("compiler/gslt/Reduce.jl")       # the presentation ENGINE — makes a presentation EXECUTABLE
 
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Eval` submodule above.
