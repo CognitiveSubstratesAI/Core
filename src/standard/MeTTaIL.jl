@@ -47,6 +47,7 @@ we have ([[feedback_port_defect_taxonomy]] silent-narrowing), so the drop is now
 §3.4 compilation bridge rather than a `~>`-only side lane — is an open architectural question. This
 guard only guarantees we find out by an error instead of by a missing answer.
 """
+
 function _il_assert_all_rewrites(program::AbstractString, who::AbstractString)
     bad = String[]
     bangs = String[]
@@ -68,6 +69,40 @@ function _il_assert_all_rewrites(program::AbstractString, who::AbstractString)
            "  → `(=)` rules are not lowered by this lane; run them on the :direct lane (mc_run " *
            "mode=:direct) or express them as `(~> LHS RHS)`."
     error(msg)
+end
+
+"""
+    _il_assert_only(program, who, head, shape, hint)
+
+Raise unless every form in `program` has head `head` — the general shape of the guard above.
+
+⚠️ WHY THIS IS A SHARED HELPER AND NOT A SECOND COPY. The `~>` guard was written for ONE lane and the
+other two `mc_run` lanes shipped without it. MEASURED 2026-08-10: `:pipeline` and `:theory` ACCEPT a
+program containing a `!` directive and return the lane's own output as if nothing were wrong — the
+bang is filtered out by `metta_il_lower_pipeline` / `load_theories` and never mentioned. The `:rewrite`
+lane refuses the identical program with a diagnostic. Same defect class, same lane family, guard in
+one of three. That is the recurring shape: derive the rule and sweep the candidates, rather than fix
+the instance that happened to be looked at.
+"""
+function _il_assert_only(program::AbstractString, who::AbstractString, head::AbstractString,
+                         shape::AbstractString, hint::AbstractString)
+    bad = String[]
+    bangs = String[]
+    for (bang, f) in mm2_split_forms(program)
+        if bang
+            push!(bangs, strip(f))
+        elseif mm2_head(f) != head
+            push!(bad, strip(f))
+        end
+    end
+    (isempty(bad) && isempty(bangs)) && return nothing
+    msg = "$who: this lane lowers ONLY $shape, but the program contains " *
+          "forms it would silently discard.\n"
+    isempty(bad) || (msg *= "  unsupported forms ($(length(bad))): " *
+                            join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n")
+    isempty(bangs) || (msg *= "  `!` directives ($(length(bangs))): " *
+                              join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n")
+    error(msg * hint)
 end
 
 "Lower a MeTTa-IL program (its `(~> LHS RHS)` rewrites) to MM2 exec rules.
@@ -238,6 +273,10 @@ rule (§9.2), step the calculus, return the emitted atoms (by every stage's emit
 """
 function metta_il_run_pipeline!(cs::CoreSpace, data::AbstractString, program::AbstractString;
                                 steps::Int = 1_000_000)
+    # SWEPT 2026-08-10 — the `~>` lane refused a mixed program and this one accepted it in silence.
+    _il_assert_only(program, "metta_il_run_pipeline!", "def", "`(def NAME (args…) BODY)` stages",
+        "  → ground FACTS belong in the `data` argument, not the program.\n" *
+        "  → a `!` query is not run by this lane; the pipeline's output is its `(emit …)` heads.")
     isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
     exec = metta_il_lower_pipeline(program)
     isempty(exec) && return String[]

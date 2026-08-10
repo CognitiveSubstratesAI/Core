@@ -363,4 +363,53 @@ using MORK   # space dump for the supercompiler-opt-in test
         @test ("(inc 41)", ["42"]) in rG.results.evaluated
         @test rG.results.zam_served == ["(inc 41)"]
     end
+
+    @testset "SILENT DISCARD IS SWEPT — every lane refuses what it will not run" begin
+        # THE DEFECT, MEASURED 2026-08-10. `mc_run` picks a lane on the mere PRESENCE of a head, so it
+        # WILL be handed programs that mix forms. The `:rewrite` lane refused such a program with a
+        # diagnostic; `:pipeline` and `:theory` ACCEPTED it and returned their own output as if
+        # nothing were wrong — the extra form was filtered out by `metta_il_lower_pipeline` /
+        # `load_theories` and never mentioned. Same defect class, same lane family, guard in one of
+        # three. A lane that is on its way out still runs today, and one that silently drops input is
+        # worse than one that errors.
+        facts2 = "(edge 0 1)"
+
+        # `:pipeline` — a `!` query it cannot serve, and a ground fact that belongs in `data`.
+        @test_throws ErrorException mc_run(MC.new_core_space(), facts2, raw"""
+        (def s () (match (edge $x $y) (emit (reach $x $y))))
+        !(match &self (reach $x $y) (r $x $y))
+        """)
+        @test_throws ErrorException mc_run(MC.new_core_space(), facts2, raw"""
+        (def s () (match (edge $x $y) (emit (reach $x $y))))
+        (edge 1 2)
+        """)
+
+        # `:theory` — same two shapes.
+        @test_throws ErrorException mc_run(MC.new_core_space(), facts2, raw"""
+        (theory G () (rewrites (~> (edge $x $y) (path $x $y))))
+        !(match &self (path $x $y) (p $x $y))
+        """)
+        @test_throws ErrorException mc_run(MC.new_core_space(), facts2, raw"""
+        (theory G () (rewrites (~> (edge $x $y) (path $x $y))))
+        (= (q A) B)
+        """)
+
+        # …and `:rewrite`, which already had the guard — kept here so all three read together and a
+        # future change that removes one is visibly inconsistent with the other two.
+        @test_throws ErrorException mc_run(MC.new_core_space(), facts2, raw"""
+        (~> (edge $x $y) (path $x $y))
+        !(match &self (path $x $y) (p $x $y))
+        """)
+
+        # THE POSITIVE CONTROL, without which the four above pass for a program that never worked:
+        # each lane's OWN clean program still runs.
+        @test "(reach 0 1)" in
+              mc_run(MC.new_core_space(), facts2,
+                     raw"(def s () (match (edge $x $y) (emit (reach $x $y))))").results
+        @test "(path 0 1)" in
+              mc_run(MC.new_core_space(), facts2,
+                     raw"(theory G () (rewrites (~> (edge $x $y) (path $x $y))))").results
+        @test "(path 0 1)" in
+              mc_run(MC.new_core_space(), facts2, raw"(~> (edge $x $y) (path $x $y))").results
+    end
 end

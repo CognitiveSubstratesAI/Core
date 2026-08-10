@@ -204,6 +204,12 @@ runs the rewrites to fixpoint (recursive closure) via KBSaturation; default does
 function theory_run!(cs::CoreSpace, data::AbstractString, program::AbstractString, name::AbstractString;
                      steps::Int = 1_000_000, saturate::Bool = false,
                      use_magic_sets::Bool = false, magic_query::AbstractString = "", magic_bound::Int = 0)
+    # SWEPT 2026-08-10 — same silent-discard hole as the pipeline lane had. `load_theories` filters to
+    # `(theory …)` forms, so anything else in the program (a ground fact, a `(=)` rule, a `!` query)
+    # vanished without a word while the lane returned its own output as if the program were clean.
+    _il_assert_only(program, "theory_run!", "theory", "`(theory NAME (extends…) …)` declarations",
+        "  → ground FACTS belong in the `data` argument, not the program.\n" *
+        "  → a `!` query is not run by this lane; the theory's rewrites produce its results.")
     env = load_theories(program)
     metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps = steps, saturate = saturate,
         use_magic_sets = use_magic_sets, magic_query = magic_query, magic_bound = magic_bound)
