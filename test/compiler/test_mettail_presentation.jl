@@ -84,18 +84,43 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # Only what §3 states outright. §5 is an abstract machine, not a rewrite system, so the rest
         # is unwritten ON PURPOSE. Raising this count means someone derived more rules — which should
         # be a deliberate change to this assertion, not a silent drift.
-        @test length(p.rewrites) == 2
-        @test Set(r.name for r in p.rewrites) == Set(Base.Symbol[:FunctionReturn, :ChainStep])
+        @test length(p.rewrites) == 4
+        @test Set(r.name for r in p.rewrites) ==
+              Set(Base.Symbol[:FunctionReturn, :ChainStep, :ChainSubst, :FunctionStep])
         @test _MP.ddl_rung(p) == 3          # terms + rewrites ⇒ a DSL, even with R incomplete
+
+        # NINE of the thirteen instructions have NO rule, and the file says why per instruction. This
+        # is the assertion that keeps that honest: R covers `function`/`return`/`chain` and nothing
+        # else, so a claim that the presentation "describes MeTTa" can be checked against it.
+        covered = Set(Base.Symbol[])
+        for r in p.rewrites
+            lhs, _ = _MP.conclusion_of(r.rw)
+            lhs isa _MS.Expression || continue
+            h = (lhs::_MS.Expression).children[1]
+            push!(covered, h isa _MS.Sym ? (h::_MS.Sym).name :
+                           Base.Symbol(getfield((h::_MS.Grounded).value, :name)))
+        end
+        @test covered == Set(Base.Symbol[:function, :chain])
+        @test length(setdiff(Set(keys(_SPEC_ARITY)), covered)) == 11
     end
 
-    @testset "the two rewrites have the shapes their justification requires" begin
+    @testset "each rewrite has the shape its justification requires" begin
         p = _load_mettail()
-        fr = only(r for r in p.rewrites if r.name === :FunctionReturn)
-        @test isempty(_MP.premises_of(fr.rw))                 # QUOTED from the table — an axiom
-        cs = only(r for r in p.rewrites if r.name === :ChainStep)
-        @test length(_MP.premises_of(cs.rw)) == 1             # INFERRED — a congruence rule
-        @test _MP.premises_of(cs.rw)[1] == _MP.GHyp(:A, :A2)
+        # QUOTED from the table ⇒ AXIOMS. A premise on either would be an invention.
+        for name in (:FunctionReturn, :ChainSubst)
+            @test isempty(_MP.premises_of(only(r for r in p.rewrites if r.name === name).rw))
+        end
+        # READ OFF A VERB ("interpret <atom>", "evaluate <body>") ⇒ CONGRUENCE rules, one premise each.
+        for (name, hyp) in ((:ChainStep, _MP.GHyp(:A, :A2)), (:FunctionStep, _MP.GHyp(:B, :B2)))
+            prems = _MP.premises_of(only(r for r in p.rewrites if r.name === name).rw)
+            @test length(prems) == 1
+            @test prems[1] == hyp
+        end
+        # ORDER IS LOAD-BEARING TO THE READING, not to correctness: ChainStep precedes ChainSubst so
+        # the strategy interprets before substituting, which is the order the table's sentence reads
+        # in. Measured: both orders reach the same normal form on the corpus below.
+        names = [r.name for r in p.rewrites]
+        @test findfirst(==(:ChainStep), names) < findfirst(==(:ChainSubst), names)
     end
 
     @testset "R vs the INTERPRETER — the differential that makes a rule falsifiable" begin
@@ -136,45 +161,64 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         @test _MR.apply_base_rewrite(cs, _p("(chain (function (return a)) \$v \$T)")) === nothing
     end
 
-    @testset "ChainStep FIRES — the gap this differential recorded, now closed" begin
-        # UNTIL 2026-08-10 THIS TESTSET WAS ITS OWN OPPOSITE: it asserted that the presentation took
-        # NO step on a `chain` term while the interpreter reduced it, so that porting the closure
-        # would turn the test red and force the claim to be re-made. `Context.jl` + `Relation.jl`
-        # landed; this is the re-made claim.
+    @testset "R NORMALIZES to what the interpreter computes — the full-R differential" begin
+        # THE CONDITION ON R'S GROWTH, EXECUTED. Every rule in the presentation was probed against
+        # `Eval.jl` BEFORE being written into the file; this is that probe, kept.
         #
-        # WHAT HAD TO EXIST FOR IT. `ChainStep`'s premise `$A ~> $A2` says the first argument
-        # reduces; discharging it needs `Relation.jl`'s executable reading of `PremisesHold`, which is
-        # an ADDITION above upstream's executable layer (Lean leaves conditional rewriting a Prop).
-        # An addition inherits no proof, so THIS is its oracle.
+        # WHAT CHANGED, TWICE, AND WHY THE HISTORY IS HERE. This testset first asserted that the
+        # presentation took NO step on a `chain` term while the interpreter reduced it — a recorded
+        # DISAGREEMENT, so that closing the gap would turn the test red and force the claim to be
+        # re-made. `Context.jl`+`Relation.jl` made `ChainStep` fire, and it was re-made as one step.
+        # Then `ChainSubst`/`FunctionStep` landed and it became what it is now: full normalization,
+        # required to equal the interpreter's answer. Each version was red before it was green.
         p = _load_mettail()
         _p(src) = (sp = _MV.Space(); toks = _MV.tokenize(src); i = Ref(1);
                    _MV.parse_from(toks, i, sp.tokens))
 
-        # ONE step: the interpreter reduces `chain`'s first argument, and so does the presentation.
-        # `(function (return a))` ⇝ `a` by FunctionReturn, discharging the premise.
-        @test _ML.cond_step(p, _p("(chain (function (return a)) \$v \$T)")) ==
-              _p("(chain a \$v \$T)")
-        @test !_ML.reducts_exhausted()
+        # `cond_normalize` drives the whole rule set; `bare_eval` drives the interpreter. Same term,
+        # same answer — including through NESTED chains, and through a template that USES the bound
+        # variable (which is what makes `Subst` load-bearing rather than decorative).
+        for src in ("(function (return a))",
+                    "(function (return 42))",
+                    "(chain (function (return a)) \$v \$v)",
+                    "(chain (function (return a)) \$v (foo \$v))",
+                    "(chain (function (return 42)) \$v \$v)",
+                    "(chain (chain (function (return a)) \$w \$w) \$v \$v)",
+                    "(function (chain (function (return a)) \$v (return \$v)))",
+                    # ALREADY-NORMAL first argument: nothing to interpret, so `chain` is pure
+                    # substitution. This is the case `ChainSubst` alone has to get right, and the one
+                    # where an over-eager `ChainStep` would loop instead of stopping.
+                    "(chain a \$v \$v)",
+                    "(chain (foo bar) \$v (bar \$v))")
+            term = _p(src)
+            got, left = _ML.cond_normalize(p, term; fuel = 64)
+            want = _MV.bare_eval(term, _MV.Space())
+            @test length(want) == 1
+            @test got == want[1]
+            @test left > 0                       # reached a normal form, not the fuel bound
+            @test !_ML.reducts_exhausted()
+        end
 
-        # The premise must actually be CHECKED, not assumed: a first argument that does not reduce
-        # blocks the rule. Without this, `ChainStep` would be an unconditional rule with extra syntax.
-        @test isempty(_ML.reducts(p, _p("(chain stuck \$v \$T)")))
+        # A PREMISE IS GENUINELY CHECKED. `ChainStep` requires its first argument to reduce; where it
+        # does not, that RULE must not fire. (`ChainSubst` still applies to the same redex — R is a
+        # relation and both are rules about `chain` — so the check is per-rule, not on the term.)
+        cs = only(r for r in p.rewrites if r.name === :ChainStep)
+        @test isempty(_ML.apply_rewrite(p, cs, _p("(chain stuck \$v \$T)"), 8))
+        @test !isempty(_ML.apply_rewrite(p, cs, _p("(chain (function (return a)) \$v \$T)"), 8))
 
-        # AND THE DIFFERENTIAL. `chain` substitutes its reduced first argument into the template, so
-        # with the template being the bound variable itself the whole term reduces to that argument's
-        # value. The presentation reaches `(chain a $v $v)` and stops — R has no substitution rule,
-        # which is a REAL remaining gap and is stated as one rather than papered over.
-        for inner in ("(function (return a))", "(function (return 42))")
-            term = _p("(chain $inner \$v \$v)")
-            stepped = _ML.cond_step(p, term)
-            @test stepped !== nothing
-            # what the presentation got to, and what the interpreter says the whole thing is
-            reduced_arg = _MV.bare_eval(_p(inner), _MV.Space())
-            @test length(reduced_arg) == 1
-            @test (stepped::_MS.Expression).children[2] == reduced_arg[1]   # the ARGUMENT reduced
-            # the interpreter finishes the job; the presentation cannot yet, and says so
-            @test _MV.bare_eval(term, _MV.Space()) == reduced_arg
-            @test _ML.cond_normalize(p, term)[1] != reduced_arg[1]
+        # R IS A RELATION, AND BOTH `chain` RULES APPLY AT ONCE. `reducts` returns both; only the
+        # leftmost-outermost STRATEGY picks one. Asserted so that a future change collapsing R to a
+        # function has to face this deliberately.
+        rs = _ML.reducts(p, _p("(chain (function (return a)) \$v \$v)"))
+        @test length(rs) == 2
+        @test _p("(chain a \$v \$v)") in rs            # ChainStep: interpret the argument
+        @test _p("(function (return a))") in rs        # ChainSubst: substitute it unreduced
+
+        # AND THE NEGATIVE HALF — an instruction R deliberately does NOT cover must produce no step,
+        # rather than a plausible-looking wrong one. These are the nine the file lists.
+        for src in ("(cons-atom a (b c))", "(decons-atom (a b c))", "(unify a a then else)",
+                    "(collapse-bind (foo))", "(context-space)")
+            @test _ML.cond_step(p, _p(src)) === nothing
         end
     end
 

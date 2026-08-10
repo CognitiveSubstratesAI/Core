@@ -19,18 +19,18 @@
 ;   E  EMPTY, DELIBERATELY — the spec states no structural congruence for minimal MeTTa. Upstream
 ;      does the same where none exists: `mettail-rust/languages/src/lambda.rs` ships
 ;      `equations { // extensionality? }`. Writing none is honest; inventing some is not.
-;   R  TWO RULES ONLY, and the gap is the point. §5's evaluation algorithm is an ABSTRACT MACHINE —
+;   R  FOUR RULES, and the ceiling is the point. §5's evaluation algorithm is an ABSTRACT MACHINE —
 ;      metatype dispatch, error filtering, a mutable "mark $a as evaluated" step (§5.1) — not a
-;      rewrite system. Turning it into premised inference rules is real work with real judgement in
-;      it, so only what the table states outright is written below.
+;      rewrite system. Four of the thirteen instructions ARE a rewrite system and are written below;
+;      the other nine are not, and the closing section of this file says which and why, per
+;      instruction. Every rule here agrees with `Eval.jl` on the differential corpus.
 ;
-; ─── R IS NOW CHECKED, NOT ASSERTED ─────────────────────────────────────────────────────────────
-; `gslt/Reduce.jl` executes this file, and `test_mettail_presentation.jl` runs FunctionReturn against
-; `Eval.jl` on the same terms and requires agreement. That is the condition on growth: a rule goes in
-; when the differential can justify it, not when it reads plausibly. ChainStep predates the engine and
-; is premised; `Relation.jl` discharges premises, so it DOES fire now, and the differential asserts the
-; agreement instead of the gap. What remains open is stated there too: R has no SUBSTITUTION rule, so
-; the presentation reaches `(chain a $v $v)` and stops where the interpreter reaches `a`.
+; ─── R IS CHECKED, NOT ASSERTED — AND THAT IS THE CONDITION ON ITS GROWTH ───────────────────────
+; `gslt/{Reduce,Context,Relation}.jl` execute this file, and `test_mettail_presentation.jl` runs every
+; rule below against `Eval.jl` on the same terms and requires agreement. A rule goes in when the
+; differential can justify it, not when it reads plausibly — ChainSubst and FunctionStep were both
+; probed against the interpreter BEFORE being written here, and `unify` was probed and REJECTED (see
+; the closing section). Premised rules fire via `Relation.jl`, so ChainStep is no longer inert.
 ;
 ; ─── WHY THIS IS A LAMBDA THEORY, NOT A FIRST-ORDER SIGNATURE ───────────────────────────────────
 ; `(chain <atom> <var> <template>)` — "substitute `<var>` in `<template>` with the result". The var
@@ -101,14 +101,14 @@
   (equations)
 
   ; ── R ─────────────────────────────────────────────────────────────────────────────────────────
-  ; ⚠️ INCOMPLETE, AND THE INCOMPLETENESS IS DELIBERATE. Only rules the §3 table states outright are
-  ; here. Everything else — unify's success/failure dispatch, chain's substitution step, eval's
-  ; atomspace search, collapse/superpose — is defined by §5's ALGORITHM, which is an abstract machine
-  ; with metatype dispatch and a mutable evaluated-marker. Deriving inference rules from it is a
-  ; separate piece of work; guessing them here would put invented semantics into the one artifact
-  ; whose whole purpose is to be the faithful source.
+  ; ⚠️ INCOMPLETE, AND THE INCOMPLETENESS IS DELIBERATE. Every rule here is either QUOTED from the §3
+  ; table or read off a VERB in it, and each is labelled as one or the other. Nothing is derived from
+  ; §5's ALGORITHM — an abstract machine with metatype dispatch and a mutable evaluated-marker —
+  ; because deriving inference rules from a machine is real work with real judgement in it, and
+  ; guessing would put invented semantics into the one artifact whose purpose is to be the faithful
+  ; source. Which instructions that leaves out, and why each is out, is the closing section.
   ;
-  ; ⚠️ PATTERN VARIABLES WEAR MeTTa'S `$` SIGIL — `$X`, not `X`. Both rules below were written WITHOUT
+  ; ⚠️ PATTERN VARIABLES WEAR MeTTa'S `$` SIGIL — `$X`, not `X`. The rules below were written WITHOUT
   ; it in the first version of this file, which made them GROUND: `(function (return X))` matched the
   ; literal three-atom term containing the symbol `X` and nothing else. It was well-formed, it parsed,
   ; and it was inert. Upstream's own s-expr surface sigils for exactly this reason
@@ -123,4 +123,46 @@
     ; <atom>, substitute …". Interpreting the first argument means it reduces there, which is a
     ; congruence rule. Marked because it is read off the word "interpret" rather than written down,
     ; and because a congruence rule is exactly the kind of thing that is easy to assume and wrong.
-    (rewrite ChainStep ((~> $A $A2)) (~> (chain $A $v $T) (chain $A2 $v $T)))))
+    (rewrite ChainStep ((~> $A $A2)) (~> (chain $A $v $T) (chain $A2 $v $T)))
+
+    ; QUOTED, and the other half of the same table entry: "(chain <atom> <var> <template>) — interpret
+    ; <atom>, SUBSTITUTE <var> IN <template> with the result". `Subst` is the ported AST's own node,
+    ; so this is that sentence and nothing more.
+    ;
+    ; ⚠️ IT COMPETES WITH ChainStep, ON PURPOSE. Both apply to the same redex, so `reducts` returns
+    ; two — R is a RELATION, and the leftmost-outermost strategy in `Context.jl`, not the rule set,
+    ; picks one. Written after ChainStep so the strategy interprets before substituting, which is the
+    ; order the table's sentence reads in. MEASURED: on the differential corpus BOTH orders reach the
+    ; same normal form, so the ordering is a reading of the table here, not a correctness fix — and
+    ; that observation is NOT a confluence claim, which nothing in this tree proves.
+    (rewrite ChainSubst () (~> (chain $A $v $T) (Subst $T $A $v)))
+
+    ; INFERRED from the verb, exactly as ChainStep is. Table: "(function <body>) — EVALUATE <body>
+    ; until (return <atom>) is hit". A body that evaluates is a body that reduces, which is a
+    ; congruence rule; FunctionReturn is what stops it.
+    (rewrite FunctionStep ((~> $B $B2)) (~> (function $B) (function $B2)))))
+
+; ─── WHAT IS STILL ABSENT FROM R, AND WHY — read this before adding to it ────────────────────────
+; R is now four rules, each one either quoted from the §3 table or read off a verb in it, and each
+; one AGREEING with `Eval.jl` on the differential corpus in `test_mettail_presentation.jl`. The
+; remaining nine instructions are absent for reasons, not for lack of trying:
+;
+;   unify              Needs "these two terms unify" as a SIDE CONDITION, which R has no way to
+;                      state. ⚠️ The tempting near-miss: `(unify $X $X $Then $Else) ~> $Then` DOES
+;                      fire, because `match_pat` enforces consistency for a recurring variable — but
+;                      it fires only on SYNTACTIC EQUALITY, so `(unify (a $b) ($a b) ($a $b) fail)`
+;                      — the spec's own worked example — would not reduce. A rule that is right
+;                      wherever it fires and silent everywhere else reads as coverage it does not
+;                      have. Left out deliberately.
+;   cons-atom          Builds an expression from a head and a tail of ARBITRARY length. R's terms are
+;   decons-atom        fixed-arity, so neither direction is expressible without a list sort in Σ.
+;   eval / evalc       Search the atomspace. The space is not in the term, so no term rewrite can
+;   metta              express it — this is precisely where §5's abstract machine is not a rewrite
+;   context-space      system, and where a presentation of MeTTa stops being able to say more.
+;   collapse-bind      Need the machine's continuation ("resume where collapse-bind stopped").
+;   superpose-bind
+;   call-native        Calls out of the calculus entirely.
+;
+; So the ceiling here is not effort — it is that R describes a rewrite system and four of MeTTa's
+; thirteen instructions are one. Anything further belongs to the coarse-grained presentation or to a
+; machine model, not to this file.

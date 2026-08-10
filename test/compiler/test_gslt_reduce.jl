@@ -142,12 +142,16 @@ const _MPATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "present
         @test _RR.apply_base_rewrite(fr, _t("(function (bar baz))")) === nothing
         @test _RR.base_reducts(p, _t("(function (return a))")) == [_t("a")]
 
-        # ChainStep is INERT — premised. Asserted, not hidden: R's second rule does nothing yet, and a
-        # reader who assumed otherwise would be wrong about what this presentation computes.
-        cs = only(r for r in p.rewrites if r.name === :ChainStep)
-        @test !isempty(_RP.premises_of(cs.rw))
-        @test _RR.apply_base_rewrite(cs, _t("(chain (function (return a)) \$v \$T)")) === nothing
-        @test isempty(_RR.base_reducts(p, _t("(chain (function (return a)) \$v \$T)")))
+        # EVERY PREMISED RULE OF THE SHIPPED PRESENTATION IS INERT AT THIS LAYER. Asserted per-rule
+        # rather than per-term, and that distinction is the lesson: this used to assert that a `chain`
+        # term had no `base_reducts` at all, which stopped being true the moment `ChainSubst` — a BASE
+        # rule about the same redex — was added. The claim worth keeping is about premises, not terms.
+        for r in p.rewrites
+            isempty(_RP.premises_of(r.rw)) && continue
+            @test _RR.apply_base_rewrite(r, _t("(chain (function (return a)) \$v \$T)")) === nothing
+            @test _RR.apply_base_rewrite(r, _t("(function (return a))")) === nothing
+        end
+        @test length([r for r in p.rewrites if !isempty(_RP.premises_of(r.rw))]) == 2
     end
 
     @testset "an UNSIGILED pattern variable is REJECTED, not silently made ground" begin
