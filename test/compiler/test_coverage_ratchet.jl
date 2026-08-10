@@ -140,6 +140,71 @@ const FLOOR_TOTAL   = 377    # of 1000
 # Narrowed: MM2 377, IL 847. One IL clause is the price of not regressing the other lane.
 const FLOOR_IL_TOTAL = 847   # of 1000
 
+"Parens balance, ignoring anything inside a MeTTa string literal."
+function _rt_balanced(s::AbstractString)::Bool
+    depth = 0; instr = false; esc = false
+    for c in s
+        if esc
+            esc = false
+        elseif instr
+            c == '\\' ? (esc = true) : (c == '"' && (instr = false))
+        elseif c == '"'
+            instr = true
+        elseif c == '('
+            depth += 1
+        elseif c == ')'
+            depth -= 1
+            depth < 0 && return false
+        end
+    end
+    depth == 0 && !instr
+end
+
+"""Is this emitted IL a well-formed clause at all?
+
+🔴 THE RATCHET COUNTED GARBAGE AND SCORED IT IDENTICALLY. MEASURED 2026-08-10: the `match` lowering
+shipped without an `IRSpecial` renderer, so every one of 106 clauses embedded the marker string AS A
+SYMBOL —
+
+    (= (f) (function (chain (eval <unrenderable:IRSpecial>) \$t (return \$t))))
+
+— which PARSES, RUNS, and answers `(function (chain (eval <unrenderable:IRSpecial>) NotReducible
+(return NotReducible)))`. The count was 832 before the fix and 832 after. A number that cannot
+distinguish working output from garbage is not a gate, and this file's whole purpose is to be one.
+
+⚠️ THIS IS A CHEAP STRUCTURAL CHECK, NOT AN EXECUTION ORACLE, and the difference is the point of
+keeping both. It catches output that is not a clause; `test_compile_lane_corpus.jl` catches a clause
+that computes the WRONG ANSWER. Neither subsumes the other — the 832 defect was invisible to the
+corpus differential too, because `emit_il_program` is not what that runs.
+
+Four properties, each the cheapest form of its class:
+  * no `<unrenderable` marker — the exact failure above
+  * PARENS BALANCE — see below; parsing does NOT imply this
+  * parses as a SINGLE atom — trailing junk means two clauses ran together
+  * is a `(= lhs rhs)` — the only shape this stage is allowed to produce
+
+⚠️ THE BALANCE CHECK IS SEPARATE BECAUSE "IT PARSES" DOES NOT MEAN "IT IS BALANCED". Found by this
+gate's own self-test on its first run: `_rt_wellformed("(= (f) (chain")` returned TRUE. `parse_from`
+SILENTLY CLOSES unterminated input at EOF, so a truncated emission comes back as the well-formed atom
+`(= (f) (chain))` and every parser-based property passes. A test of the checker is why that is known;
+without it the gate would have shipped believing it caught truncation.
+"""
+function _rt_wellformed(clause::AbstractString)::Bool
+    occursin("<unrenderable", clause) && return false
+    _rt_balanced(clause) || return false
+    a = try
+        toks = _RI.tokenize(clause); i = Ref(1)
+        v = _RI.parse_from(toks, i, _RI.Space().tokens)
+        i[] > length(toks) || return false          # trailing junk ⇒ not ONE atom
+        v
+    catch
+        return false
+    end
+    a isa _RS.Expression || return false
+    ch = (a::_RS.Expression).children
+    length(ch) == 3 && ch[1] isa _RS.Sym && (ch[1]::_RS.Sym).name === :(=)
+end
+
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
     toks = _RI.tokenize(text); i = Ref(1); out = _RS.Atom[]
@@ -207,13 +272,29 @@ end
     # caught the zero-branch GDisj bug — a clause was counted emitted while producing nothing, and
     # only the totals disagreeing revealed it.
     il_em = 0; il_tot = 0; il_out = 0; il_decl = 0
+    malformed = String[]
     for f in files
         haskey(programs, f) || continue
         cls = try _RA.translate_program(programs[f]) catch; continue end
         r = MeTTaCore.CompilerEmitIL.emit_il_program(cls)
         il_em += r.emitted; il_tot += length(cls)
         il_out += length(r.clauses); il_decl += length(r.declined)
+        for c in r.clauses
+            _rt_wellformed(c) || (length(malformed) < 8 && push!(malformed, first(c, 110)))
+        end
     end
+    # 🔴 A COUNT MUST NOT BE ABLE TO COUNT GARBAGE — see `_rt_wellformed`.
+    for m in malformed; @info "MALFORMED emitted IL" clause=m; end
+    @test isempty(malformed)
+
+    # ⚠️ AND THE GATE ITSELF IS EXERCISED, because a check that has never rejected anything is not
+    # known to work — the same reason every differential here carries a positive control. The first
+    # string is verbatim what the emitter produced for 106 clauses while the ratchet scored 832.
+    @test !_rt_wellformed("(= (f) (function (chain (eval <unrenderable:IRSpecial>) \$t (return \$t))))")
+    @test !_rt_wellformed("(= (f) (chain")                       # unbalanced ⇒ not one atom
+    @test !_rt_wellformed("(= (f) a) (= (g) b)")                 # two atoms ⇒ not one clause
+    @test !_rt_wellformed("(foo bar)")                           # not a `(=)` clause
+    @test  _rt_wellformed("(= (f \$x) (function (return \$x)))")  # …and a real one passes
     @info "MeTTa-IL coverage TOTAL" emitted=il_em total=il_tot floor=FLOOR_IL_TOTAL clauses_out=il_out
     @test il_em >= FLOOR_IL_TOTAL
     @test il_em + il_decl == il_tot          # every clause is emitted OR declined — never dropped
