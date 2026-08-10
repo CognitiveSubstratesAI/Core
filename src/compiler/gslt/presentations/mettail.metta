@@ -28,8 +28,9 @@
 ; `gslt/Reduce.jl` executes this file, and `test_mettail_presentation.jl` runs FunctionReturn against
 ; `Eval.jl` on the same terms and requires agreement. That is the condition on growth: a rule goes in
 ; when the differential can justify it, not when it reads plausibly. ChainStep predates the engine and
-; is premised, so it does not fire — the disagreement with the interpreter is ASSERTED in that test
-; rather than left as a footnote, and closing it means porting `Semantics/Context.lean`.
+; is premised; `Relation.jl` discharges premises, so it DOES fire now, and the differential asserts the
+; agreement instead of the gap. What remains open is stated there too: R has no SUBSTITUTION rule, so
+; the presentation reaches `(chain a $v $v)` and stops where the interpreter reaches `a`.
 ;
 ; ─── WHY THIS IS A LAMBDA THEORY, NOT A FIRST-ORDER SIGNATURE ───────────────────────────────────
 ; `(chain <atom> <var> <template>)` — "substitute `<var>` in `<template>` with the result". The var

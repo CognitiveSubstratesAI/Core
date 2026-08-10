@@ -20,6 +20,8 @@ const _MP = MeTTaCore.CompilerGSLTPresentation
 const _MA = MeTTaCore.CompilerGSLTParse
 const _MV = MeTTaCore.Eval
 const _MR = MeTTaCore.CompilerGSLTReduce
+const _ML = MeTTaCore.CompilerGSLTRelation
+const _MS = MeTTaCore.StandardMeTTa
 
 const _MODULE_PATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "presentations",
                               "mettail.metta")
@@ -127,14 +129,52 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
             @test isempty(_MR.base_reducts(p, _p(src)))
         end
 
-        # ⚠️ KNOWN GAP, RECORDED RATHER THAN SKIPPED. `chain` IS reducible by the interpreter, and the
-        # presentation has a rule for it — but `ChainStep` is premised, and `apply_base_rewrite`
-        # returns nothing for a premised rule (upstream's scope; congruence closure is
-        # `Semantics/Context.lean`). So the two DISAGREE here, and the disagreement is asserted so that
-        # porting the closure turns this test red and forces the claim to be re-made.
-        let term = _p("(chain (function (return a)) \$v \$v)")
-            @test isempty(_MR.base_reducts(p, term))                 # presentation: no step
-            @test _MV.bare_eval(term, _MV.Space()) == [_p("a")]      # interpreter: reduces
+        # `ChainStep` IS PREMISED, so `base_reducts` still cannot fire it — that is `Reduce.jl`'s
+        # documented scope and the assertion below pins it.
+        cs = only(r for r in p.rewrites if r.name === :ChainStep)
+        @test !isempty(_MP.premises_of(cs.rw))
+        @test _MR.apply_base_rewrite(cs, _p("(chain (function (return a)) \$v \$T)")) === nothing
+    end
+
+    @testset "ChainStep FIRES — the gap this differential recorded, now closed" begin
+        # UNTIL 2026-08-10 THIS TESTSET WAS ITS OWN OPPOSITE: it asserted that the presentation took
+        # NO step on a `chain` term while the interpreter reduced it, so that porting the closure
+        # would turn the test red and force the claim to be re-made. `Context.jl` + `Relation.jl`
+        # landed; this is the re-made claim.
+        #
+        # WHAT HAD TO EXIST FOR IT. `ChainStep`'s premise `$A ~> $A2` says the first argument
+        # reduces; discharging it needs `Relation.jl`'s executable reading of `PremisesHold`, which is
+        # an ADDITION above upstream's executable layer (Lean leaves conditional rewriting a Prop).
+        # An addition inherits no proof, so THIS is its oracle.
+        p = _load_mettail()
+        _p(src) = (sp = _MV.Space(); toks = _MV.tokenize(src); i = Ref(1);
+                   _MV.parse_from(toks, i, sp.tokens))
+
+        # ONE step: the interpreter reduces `chain`'s first argument, and so does the presentation.
+        # `(function (return a))` ⇝ `a` by FunctionReturn, discharging the premise.
+        @test _ML.cond_step(p, _p("(chain (function (return a)) \$v \$T)")) ==
+              _p("(chain a \$v \$T)")
+        @test !_ML.reducts_exhausted()
+
+        # The premise must actually be CHECKED, not assumed: a first argument that does not reduce
+        # blocks the rule. Without this, `ChainStep` would be an unconditional rule with extra syntax.
+        @test isempty(_ML.reducts(p, _p("(chain stuck \$v \$T)")))
+
+        # AND THE DIFFERENTIAL. `chain` substitutes its reduced first argument into the template, so
+        # with the template being the bound variable itself the whole term reduces to that argument's
+        # value. The presentation reaches `(chain a $v $v)` and stops — R has no substitution rule,
+        # which is a REAL remaining gap and is stated as one rather than papered over.
+        for inner in ("(function (return a))", "(function (return 42))")
+            term = _p("(chain $inner \$v \$v)")
+            stepped = _ML.cond_step(p, term)
+            @test stepped !== nothing
+            # what the presentation got to, and what the interpreter says the whole thing is
+            reduced_arg = _MV.bare_eval(_p(inner), _MV.Space())
+            @test length(reduced_arg) == 1
+            @test (stepped::_MS.Expression).children[2] == reduced_arg[1]   # the ARGUMENT reduced
+            # the interpreter finishes the job; the presentation cannot yet, and says so
+            @test _MV.bare_eval(term, _MV.Space()) == reduced_arg
+            @test _ML.cond_normalize(p, term)[1] != reduced_arg[1]
         end
     end
 

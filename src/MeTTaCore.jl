@@ -147,6 +147,8 @@ include("compiler/EmitIL.jl")
 include("compiler/gslt/Presentation.jl")
 include("compiler/gslt/Parse.jl")        # s-expr surface → GPresentation (presentations you can WRITE)
 include("compiler/gslt/Reduce.jl")       # the presentation ENGINE — makes a presentation EXECUTABLE
+include("compiler/gslt/Context.jl")      # reduction CLOSED UNDER CONTEXT + the fuel-bounded normalizer
+include("compiler/gslt/Relation.jl")     # PREMISED rewrites fire — an ADDITION above upstream, own oracle
 
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Eval` submodule above.

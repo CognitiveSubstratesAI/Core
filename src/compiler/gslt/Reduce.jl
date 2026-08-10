@@ -22,13 +22,19 @@
 # value is that it is not somebody's opinion. This file is the other half instead: not MeTTa's R, but
 # the engine that CONSUMES any presentation's R.
 #
-# ─── TWO LIMITATIONS, UPSTREAM'S AND NOT OURS ────────────────────────────────────────────────────
+# ─── TWO LIMITATIONS OF *THIS FILE*, BOTH NOW ANSWERED ABOVE IT ──────────────────────────────────
+# They are still true OF THIS FILE, and the tests pin them — but neither is a limitation of the
+# engine any more, so do not cite them as one:
 #   1. BASE REWRITES ONLY. `applyBaseRewrite` returns nothing for a `RewCtx`; premised congruence
-#      rules do not fire. `presentations/mettail.metta`'s own `ChainStep` is therefore INERT here —
-#      pinned by test rather than hidden, because a silently-inert rule reads as a working one.
+#      rules do not fire here. `presentations/mettail.metta`'s `ChainStep` is inert AT THIS LAYER.
+#      → `Relation.jl` discharges premises. That is an ADDITION above upstream's executable layer
+#        (Lean leaves conditional rewriting a Prop), not a port, and carries its own oracle.
 #   2. TOP LEVEL ONLY. `baseReducts` matches at the root; there is no congruence closure into
-#      subterms. `Semantics/Context.lean` builds that above it (`RewStep`, `oneStep`,
-#      `reduces_of_mem_baseReducts`) and is a separate port.
+#      subterms.
+#      → `Context.jl` ports `Semantics/Context.lean` (`oneStep`, leftmost-outermost) plus
+#        `Normal.lean` and `Eval.lean`. Machine-checked upstream.
+# So `base_reducts` remains the ROOT-LEVEL, BASE-ONLY reducer by design: it is the thing those two
+# layers are built out of, and widening it here would give them nothing to be.
 #
 # ─── BINDERS LIVE IN THE GRAMMAR, NOT THE TERM TREE ──────────────────────────────────────────────
 # Upstream, verbatim: "The `Subst` node's own variable is not a binder in the term tree (binders live
@@ -172,7 +178,8 @@ Every result of applying a premise-free rewrite of `p` whose left side matches `
 (`baseReducts`, Reduce.lean:94). Order follows the presentation's rewrite order.
 
 No congruence closure: a redex inside a subterm is not found. That is upstream's scope for this
-function; `Semantics/Context.lean` adds `RewStep`/`oneStep` above it.
+function — `Context.one_step` is the ported closure above it, and `Relation.reducts` the
+premise-aware root reducer. Call one of those unless you specifically want root-level base rewrites.
 """
 function base_reducts(p::GPresentation, t::Atom)::Vector{Atom}
     out = Atom[]
