@@ -99,6 +99,28 @@ end
 
 _render_args(args::Vector{IRAtom})::String = join(String[render(a) for a in args], " ")
 
+"""Render a node for THIS target, falling back to the shared renderer.
+
+⚠️ WHY NOT ADD AN `IRSpecial` METHOD TO `CompilerEmit.render` — which is where it naturally belongs
+and where the first version of this put it. `render` is SHARED with the MM2 emitter, and that
+emitter's decline test is literally `startswith(render(a), "<unrenderable")`. Teaching the shared
+function to render a special form therefore does not just help this stage — it silently WIDENS MM2,
+which has no `match` instruction and cannot execute one. MEASURED 2026-08-10: the shared-method
+version raised MM2 coverage 376 -> 378, two clauses that now emit a form their target cannot run.
+Neither the suite nor the ratchet could tell those two apart from a real gain.
+
+So the special-form rendering lives HERE, in the target that has an instruction for it, and the MM2
+emitter keeps rejecting exactly what it rejected before."""
+_render_il(a::IRAtom)::String =
+    a isa IRSpecial ?
+        (isempty((a::IRSpecial).args) ? "(" * String((a::IRSpecial).surface) * ")" :
+         "(" * String((a::IRSpecial).surface) * " " *
+         join(String[_render_il(x) for x in (a::IRSpecial).args], " ") * ")") :
+    a isa IRExpression ?
+        "(" * join(String[_render_il(x) for x in
+                          IRAtom[(a::IRExpression).head; (a::IRExpression).args]], " ") * ")" :
+    render(a)
+
 "`(unify <atom> <pattern> <then> <else>)` — spec §3. A failed unification yields `Empty`, Core's own
 `EMPTY` sentinel (`Eval.jl:39`), so a non-matching clause contributes no result rather than erroring."
 _instr(g::GUnify, cont::String, fail::String)::String =
@@ -160,9 +182,42 @@ end
 # in the expansion, not a shape to improvise around, so decline loudly rather than guess.
 _instr(::GDisj, ::String, ::String)::Nothing = nothing
 
-# GResidual is, by definition, a node A-normalization could not flatten. Declining is the honest
-# outcome; it is COUNTED, and the interpreter fallback still handles the clause.
-_instr(::GResidual, ::String, ::String)::Nothing = nothing
+"""A residual is, by definition, a node A-normalization could not flatten — so declining is the
+default and the honest outcome. It is COUNTED, and the interpreter fallback still handles the clause.
+
+ONE EXCEPTION, AND IT IS TARGET-SPECIFIC ON PURPOSE: `match`. A-normalization has no lowering for it
+and never will — `match` searches a SPACE, and a space is not in the term. But THIS target does have
+one, because minimal MeTTa's `eval` is precisely the instruction that reaches into the atomspace, and
+a `match` under it is no less minimal than the `(eval (f args))` every `GCall` already emits.
+MEASURED on our engine: `(chain (eval (match &self (likes \$x \$y) (\$x \$y))) \$o \$o)` returns the
+same two answers as `match` called directly. That is why this lives here and not in `ANormal.jl` —
+MM2 has no `eval`, so widening the shared stage would emit a form its target cannot run.
+
+⚠️ THE GUARD IS THE WHOLE DESIGN, not a safety net. A COMPILED program's `&self` does NOT hold the
+source rules — it holds the EMITTED IL clauses in their place. So a `match` whose pattern can bind a
+RULE reads a space the source never had, and would silently answer differently. Measured over the
+corpus: 180 of 182 `match` patterns are DATA-shaped (`(ChemRule \$p \$r \$w)`, `(Concentration
+Tension \$v)`) and 2 are rule-shaped. Only a pattern with a SYMBOL head other than `=`/`:` is
+lowered; a bare variable or a variable head is declined, because either can bind a rule."""
+function _instr(g::GResidual, cont::String, ::String)::Union{String, Nothing}
+    n = g.node
+    _lowerable_match(n) || return nothing
+    "(chain (eval " * _render_il(n) * ") " * render(g.out) * " " * cont * ")"
+end
+
+"Whether this residual is a `match` whose pattern provably cannot bind a `(=)` rule or a `(:)` type."
+function _lowerable_match(n::IRAtom)::Bool
+    n isa IRSpecial || return false
+    (n::IRSpecial).kind === SPECIAL_MATCH || return false
+    args = (n::IRSpecial).args
+    length(args) == 3 || return false
+    pat = args[2]
+    pat isa IRExpression || return false               # a bare variable matches ANYTHING, rules too
+    h = (pat::IRExpression).head
+    h isa IRSymbol || return false                     # a variable head can become `=` at runtime
+    nm = (h::IRSymbol).name
+    nm !== :(=) && nm !== :(:)
+end
 
 "Why a clause could not be lowered — a reason string, so declines are diagnosable rather than a tally."
 function _decline_reason(gs::Vector{Goal})::String
@@ -192,6 +247,23 @@ function emit_il_clause(c::ANClause)::Union{Vector{String}, Nothing}
         body === nothing && return nothing            # decline the clause WHOLE, never half of it
         push!(out, "(= " * head * " (function " * body * "))")
     end
+    # 🔴 THE UNRENDERABLE SWEEP — ONE CHECK, AT THE END, COVERING EVERY PATH.
+    #
+    # `render` returns the STRING `"<unrenderable:Foo>"` for a node it has no method for. `Emit.jl`
+    # guards that at TWELVE separate call sites (`startswith(s, "<unrenderable")` … `return nothing`);
+    # this file guarded it at NONE, and every `_instr` above interpolates `render` directly. It was
+    # latent only because the goal types reached here carry node kinds `render` happens to know.
+    #
+    # It stopped being latent the moment `_instr(::GResidual, …)` began lowering `match` verbatim:
+    # the emitted text became `(chain (eval <unrenderable:IRSpecial>) …)`, which PARSES — the sentinel
+    # reads as a symbol — and answered `(function (chain (eval <unrenderable:IRSpecial>) NotReducible
+    # (return NotReducible)))` instead of `alice`. The coverage ratchet counted all 106 such clauses
+    # as emitted. Caught by the compile-lane differential, not by any structural check.
+    #
+    # Guarding the ONE place every clause passes through is deliberate: twelve per-site guards is a
+    # rule a future `_instr` can forget, and this one it cannot. Cheap — a substring scan of text we
+    # just built.
+    any(s -> occursin("<unrenderable", s), out) && return nothing
     # A GDisj with ZERO branches expands to zero variants, so the loop above runs no iterations and
     # `out` is empty. Without this guard the clause counted as EMITTED while producing nothing —
     # measured on the corpus as "expanded = -1", which is how the bug surfaced at all. Emitting

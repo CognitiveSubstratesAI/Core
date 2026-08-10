@@ -26,6 +26,18 @@ function _cl_interp(program::AbstractString)::Vector{Tuple{String, Vector{String
     out
 end
 
+"Parse program text to surface atoms without evaluating — for emitter-level assertions."
+function _cl_parse(text::AbstractString)
+    sp = _CL_V.Space(); _CL_V.load_core_stdlib!(sp)
+    toks = _CL_V.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]
+    while i[] <= length(toks)
+        toks[i[]] == "!" && (i[] += 1)
+        i[] > length(toks) && break
+        push!(out, _CL_V.parse_from(toks, i, sp.tokens))
+    end
+    out
+end
+
 _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
 
 @testset "compile lane — compiler primary, interpreter as the IL's evaluator" begin
@@ -92,5 +104,65 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         r = MeTTaCore.compile_run("(= (f) a)\n!(f)\n")
         @test r.answers isa Vector{Tuple{String, Vector{String}}}
         @test r.compiled isa Int && r.fell_back isa Int
+    end
+
+    @testset "MATCH over the atomspace — compiled, and the GUARD that keeps it sound" begin
+        # `match` is the largest fragment the IL unlocked (109 declined clauses -> 3, emitted
+        # 726 -> 832), and it is also the one with a real wrong-answer hazard, so it is tested HERE —
+        # through `compile_run`, the whole-program lane — rather than through the emitter harness.
+        # THE REASON IS THE HAZARD ITSELF: a compiled program's `&self` holds the EMITTED IL clauses
+        # in place of the source rules. The emitter harness loads only `r.clauses`, so a `match` test
+        # there would query a space with no facts in it and pass for the wrong reason.
+
+        # DATA-SHAPED PATTERN ⇒ lowered, and it must answer what the interpreter answers.
+        src = "(likes alice bob)\n(likes carol dave)\n" *
+              "(= (who \$y) (match &self (likes \$x \$y) \$x))\n!(who bob)\n!(who dave)\n"
+        r = MeTTaCore.compile_run(src)
+        # ⚠️ `fell_back` IS NOT ZERO HERE, and expecting it to be was a wrong assertion about the
+        # LANE, not a compiler defect. `compile_run` counts every non-compilable DEF FORM as a
+        # fallback, and a bare fact `(likes alice bob)` is a def form with no `(=)` to compile — it is
+        # data, loaded as-is. So the meaningful claim is that the RULE compiled:
+        @test r.compiled == 1                           # `who` went through the compiler
+        @test r.fell_back == 2                          # …and exactly the two FACTS did not
+        @test _cl_sorted(r.answers) == _cl_interp(src)
+
+        # …and with a multi-answer query, where a duplicated goal would show up as a duplicated answer.
+        # That is the failure mode of hoisting `match`'s arguments before lowering the node verbatim,
+        # which is why `ANormal` leaves them untouched.
+        src2 = "(edge a b)\n(edge a c)\n(edge b d)\n" *
+               "(= (succ \$x) (match &self (edge \$x \$y) \$y))\n!(succ a)\n!(succ b)\n!(succ z)\n"
+        r2 = MeTTaCore.compile_run(src2)
+        @test r2.compiled == 1                          # `succ` compiled; the 3 edges are facts
+        @test r2.fell_back == 3
+        @test _cl_sorted(r2.answers) == _cl_interp(src2)
+        @test ("(succ a)", ["b", "c"]) in _cl_sorted(r2.answers)   # the oracle is not vacuous
+        @test ("(succ z)", String[]) in _cl_sorted(r2.answers)     # no match ⇒ no answer, not an error
+
+        # RULE-SHAPED PATTERN ⇒ DECLINED, and this is what keeps the guard honest. A compiled `&self`
+        # does not hold `(= (f …) …)` in the source's shape — it holds the emitted IL clauses — so
+        # matching a rule would read a space the source never had.
+        #
+        # ⚠️ ASSERTED AT THE EMITTER, NOT BY EXECUTING IT, and the reason is measured: running
+        # `(match &self (= $h $b) $h)` or `(match &self $a $a)` against a Space with the stdlib loaded
+        # returns every rule / every atom in it. The first version of this test did exactly that and
+        # the suite was OOM-KILLED (exit 137) after ~10 minutes. The claim here is "the guard declines
+        # this clause"; executing a space-wide match tests the interpreter's appetite, not the guard.
+        for src_guarded in ("(= (rules) (match &self (= \$h \$b) \$h))\n",       # rule-shaped
+                            "(= (types) (match &self (: \$s \$ty) \$s))\n",      # type-shaped
+                            "(= (all) (match &self \$a \$a))\n",                 # bare variable
+                            "(= (dyn \$p) (match &self (\$p x) \$p))\n")         # variable head
+            cls = MeTTaCore.CompilerANormal.translate_program(
+                      MeTTaCore.CompilerFrontend.lower_program(_cl_parse(src_guarded)))
+            r = MeTTaCore.CompilerEmitIL.emit_il_program(cls)
+            @test r.emitted == 0
+            @test !isempty(r.declined)
+        end
+
+        # …and the positive control for the same harness: a data-shaped pattern DOES emit, so the
+        # four declines above are the guard firing and not the harness failing to compile anything.
+        cls_ok = MeTTaCore.CompilerANormal.translate_program(
+                     MeTTaCore.CompilerFrontend.lower_program(
+                         _cl_parse("(= (who \$y) (match &self (likes \$x \$y) \$x))\n")))
+        @test MeTTaCore.CompilerEmitIL.emit_il_program(cls_ok).emitted == 1
     end
 end

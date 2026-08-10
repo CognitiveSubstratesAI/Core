@@ -367,6 +367,18 @@ function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal},IRAtom}
         out = fresh_var(c)
         return (Goal[GFindall(v, g, out)], out)
     end
+    # `match` — RESIDUAL WITH ITS ARGUMENTS UNTOUCHED, which is the point of the special case.
+    #
+    # `(match <space> <pattern> <template>)` takes a space reference, a PATTERN and a TEMPLATE. None
+    # of the three is a computation this stage should name: the pattern is matched structurally (the
+    # same reason `translate_pattern` exists), and the template is evaluated by `match` itself AFTER
+    # binding, not before. Running `translate_expr` over them — which the generic path below does —
+    # hoists goals that a target then DOUBLE-EVALUATES if it lowers the node verbatim, and
+    # `EmitIL.jl` does exactly that. Keeping the node whole is what makes verbatim lowering sound.
+    if a.kind === SPECIAL_MATCH
+        out = fresh_var(c)
+        return (Goal[GResidual(a, out)], out)
+    end
     goals = Goal[]
     for x in a.args
         g, _ = translate_expr(c, x)

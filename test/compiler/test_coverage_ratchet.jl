@@ -96,7 +96,29 @@ const FLOOR_TOTAL   = 376    # of 1000
 # Remaining declines account exactly: 687 emitted + 163 GResidual + 149 nested-goal + 1 zero-branch
 # GDisj = 1000. The zero-branch case was found BY this measurement — it reported "expanded = -1",
 # which is impossible, and turned out to be a clause counted as emitted while producing no clauses.
-const FLOOR_IL_TOTAL = 726   # of 1000
+# RAISED AGAIN 2026-08-10 by lowering `match`: 726 -> 830 (+104), the largest single fragment so far.
+# `match` searches a SPACE, so A-normalization has no lowering for it and never will — but THIS target
+# does: minimal MeTTa's `eval` is the instruction that reaches into the atomspace, and `(eval (match
+# …))` is no less minimal than the `(eval (f args))` every GCall already emits. Verified on our engine
+# before being written, then by differential through `compile_run`.
+# ⚠️ IT IS GUARDED, AND THE GUARD IS THE DESIGN. A COMPILED program's `&self` holds the emitted IL
+# clauses in place of the source rules, so a `match` that can bind a RULE reads a space the source
+# never had. Measured: 180 of 182 patterns are data-shaped. Only a SYMBOL head other than `=`/`:` is
+# lowered — a bare variable or a variable head is declined, because either can bind a rule.
+# ⚠️ THE FIRST VERSION OF THIS CHANGE EMITTED `<unrenderable:IRSpecial>` AS A SYMBOL and still counted
+# 832. It parsed, it ran, and it answered
+#   `(function (chain (eval <unrenderable:IRSpecial>) NotReducible (return NotReducible)))`.
+# `CompilerEmit.render` had no `IRSpecial` method. The coverage number was IDENTICAL before and after
+# the fix — so THIS RATCHET CANNOT SEE THE DIFFERENCE between 106 clauses that work and 106 that emit
+# garbage. Only `test_compile_lane.jl`'s differential caught it. Raise a floor on the strength of an
+# execution differential, never on this count alone.
+# ⚠️ AND 832 WAS GIVEN BACK TO 830, DELIBERATELY. Fixing it by adding the method to the SHARED
+# `CompilerEmit.render` also widened MM2 (376 -> 378), whose decline test is literally
+# `startswith(render(a), "<unrenderable")` and which has no `match` instruction to run. Two clauses
+# emitting a form their target cannot execute is the same defect in a different lane, and neither the
+# suite nor this ratchet could distinguish it from a gain. The renderer now lives in `EmitIL.jl`, MM2
+# is back to 376, and the 2 IL clauses that only emitted via the shared widening are declined again.
+const FLOOR_IL_TOTAL = 830   # of 1000
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
