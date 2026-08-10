@@ -66,10 +66,23 @@ const _RI = MeTTaCore.Eval
 # this fragment over recursion, and a 2.8x over-estimate is worth distrusting next time.
 # Comparison ops are NOT yet wired — `is_arith` covers only `+ - * % /`, so `==` (385 call sites),
 # `<`/`>`/`<=`/`>=` remain declined even though MORK has `eq_i64`/`lt_i64`/`gt_i64`/`ne_i64`.
+# RAISED 2026-08-10 by lowering PATTERNS AS DATA (`translate_pattern`): MM2 374 -> 376 (+2, lib),
+# MeTTa-IL 687 -> 726 (+39). Both pattern sites — `let` bindings and `case`/`if` arms — ran the
+# EXPRESSION translator over a pattern, so an all-variable tuple like `($h $t)` fell to the catch-all
+# and became a `GResidual`, declining the whole clause. A pattern computes nothing; it lowers to
+# itself and emits no goals.
+# ⚠️ PREDICTED 111, GOT 39 — the SECOND 2.8x over-estimate from a shape-counting probe, and this time
+# the reason is identifiable rather than mysterious: the probe counted clauses whose only residual was
+# a variable-headed expression, but only those in PATTERN position are fixed by this. 74 clauses still
+# carry one in VALUE position (`(let $_ ($func $head) …)` in `for-each-in-atom`) — a DYNAMIC CALL, and
+# emitting it as data would be a wrong answer. Position decides, not node type.
+# ⚠️ NEXT FRAGMENT IS `match` — 104 clauses, the single largest remaining, and 109 contain one. Note
+# for whoever takes it: `match` searches a SPACE, and `presentations/mettail.metta` records that the
+# atomspace is exactly what a term rewrite CANNOT express. Check that before assuming it lowers.
 const FLOOR_STDLIB  = 10     # of 61  clauses
 const FLOOR_STANDARD = 8     # of 51
-const FLOOR_LIB     = 356    # of 888
-const FLOOR_TOTAL   = 374    # of 1000
+const FLOOR_LIB     = 358    # of 888
+const FLOOR_TOTAL   = 376    # of 1000
 
 # ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
 # MEASURED, not predicted: 687 of 1000, against MM2's 374. The design doc argued minimal MeTTa should
@@ -83,7 +96,7 @@ const FLOOR_TOTAL   = 374    # of 1000
 # Remaining declines account exactly: 687 emitted + 163 GResidual + 149 nested-goal + 1 zero-branch
 # GDisj = 1000. The zero-branch case was found BY this measurement — it reported "expanded = -1",
 # which is impossible, and turned out to be a clause counted as emitted while producing no clauses.
-const FLOOR_IL_TOTAL = 687   # of 1000
+const FLOOR_IL_TOTAL = 726   # of 1000
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}

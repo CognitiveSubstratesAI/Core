@@ -251,6 +251,32 @@ function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
 end
 
 """
+    translate_pattern(a) -> IRAtom
+
+A PATTERN is DATA. It is matched against a value; nothing in it is called, so it lowers to ITSELF and
+emits NO goals.
+
+🔴 WHY THIS FUNCTION EXISTS — MEASURED 2026-08-10. Both pattern sites used `translate_expr`, the
+EXPRESSION translator, whose whole job is to name intermediate computations. Run over a pattern it
+does the wrong thing twice over: an all-variable tuple like `(\$h \$t)` has no symbol head and no
+predefined head, so it falls to the catch-all and becomes a `GResidual` — and a residual declines the
+CLAUSE. That is the single largest blocker in the MeTTa-IL stage: 111 of 313 declined clauses have a
+variable-headed expression as their ONLY residual, and they are `let`-destructuring patterns —
+`(let (\$h \$t) (decons-atom \$type) …)` in `stdlib.metta`'s own `car-atom`, `is-function`,
+`get-doc-params`.
+
+⚠️ AND IT IS NOT "TREAT VARIABLE-HEADED EXPRESSIONS AS DATA", which was the tempting one-line fix and
+is WRONG. `for-each-in-atom` contains `(let \$_ (\$func \$head) …)` — the same shape, in VALUE position,
+and it IS a dynamic call. POSITION decides, not node type. Keeping the split at the call site means
+patterns lower as data and values keep going through `translate_expr`, where a variable head stays a
+counted residual because we cannot resolve the callee. Neither reading is guessed at.
+
+This is PeTTa's own distinction — `translator.pl:184-189` threads "the pattern's goals, the value's
+goals, ONE unification", and a pattern's goals are empty because a pattern computes nothing.
+"""
+translate_pattern(a::IRAtom)::IRAtom = a
+
+"""
 `let` / `let*` — PeTTa translator.pl:184-189.
 
 `let`  → `append([GsH,[(Pv=V)],Gp,Gv,Gi], Goals)`: the pattern's goals, the value's goals, ONE
@@ -265,9 +291,8 @@ function translate_expr(c::ANCtx, a::IRDestructiveBinding)::Tuple{Vector{Goal},I
     # outer scope by the frontend, so order is immaterial and the same walk is correct for both.
     for b in a.bindings
         gv, v = translate_expr(c, b.value)
-        gp, p = translate_expr(c, b.pattern)
-        append!(goals, gv); append!(goals, gp)
-        push!(goals, GUnify(p, v))              # ← `let` IS this goal
+        append!(goals, gv)
+        push!(goals, GUnify(translate_pattern(b.pattern), v))   # ← `let` IS this goal
     end
     gb, out = translate_expr(c, a.body)
     append!(goals, gb)
@@ -295,7 +320,7 @@ end
 function _branch_chain(c::ANCtx, brs::Vector{IRMatchBranch}, i::Int,
                        scrutval::IRAtom, out::IRAtom)::Goal
     b = brs[i]
-    gp, pv = translate_expr(c, b.pattern)
+    pv = translate_pattern(b.pattern)
     gt, tv = translate_expr(c, b.body)
     push!(gt, GUnify(out, tv))                  # arm's value IS the form's value
     # THE ARM TEST — the scrutinee must unify with THIS arm's pattern.
@@ -313,7 +338,7 @@ function _branch_chain(c::ANCtx, brs::Vector{IRMatchBranch}, i::Int,
     # makes the arm directly emittable: `_unify_subst` discharges it into the substitution, so the
     # arm's rule is the redex SPECIALIZED to that pattern, which is the upstream Selection idiom
     # (`MM2_Structuring_Code/structuring_code_04_Control.md:106-119`, one exec per arm).
-    cond = Goal[GUnify(scrutval, pv), gp...]
+    cond = Goal[GUnify(scrutval, pv)]
     if i == length(brs)
         return GBranch(cond, pv, gt, Goal[], out)
     end

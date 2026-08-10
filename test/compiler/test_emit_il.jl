@@ -157,3 +157,35 @@ end
         @test isconcretetype(fieldtype(_IL.ILResult, :emitted))
     end
 end
+
+@testset "PATTERNS ARE DATA — and values are still values" begin
+    # THE DISTINCTION IS POSITION, NOT NODE TYPE, and getting it backwards is a wrong answer in one
+    # direction and 39 declined clauses in the other. Both directions are asserted here.
+    #
+    # `translate_pattern` was added because both pattern sites ran the EXPRESSION translator, which
+    # turns an all-variable tuple `($h $t)` into a `GResidual` — no symbol head, no predefined head,
+    # so it falls to the catch-all — and one residual declines the whole clause. That shape is
+    # `stdlib.metta`'s own `car-atom` / `is-function` / `get-doc-params`.
+
+    # (1) PATTERN POSITION ⇒ DATA. A `let`-destructuring pattern must lower to ONE unification with
+    #     no residual, and the clause must emit.
+    r, cls = _to_il("(= (fst \$p) (let (\$h \$t) \$p \$h))")
+    @test isempty(r.declined)
+    @test r.emitted == 1
+    @test !any(g -> g isa _IA.GResidual, _IA.all_goals(only(cls).goals))
+
+    # …and it must COMPUTE, not merely emit. The oracle is execution, as everywhere in this file.
+    @test _answers(["(= (fst \$p) (let (\$h \$t) \$p \$h))"], "(fst (a b))") == ["a"]
+
+    # (2) A `case`/`if` ARM PATTERN is the other site, same rule.
+    r2, cls2 = _to_il("(= (tag \$x) (case \$x (((p \$a) (got \$a)) (\$other none))))")
+    @test isempty(r2.declined)
+
+    # (3) VALUE POSITION ⇒ STILL A RESIDUAL. `(let \$_ (\$func \$head) …)` — the shape in
+    #     `for-each-in-atom` — is a DYNAMIC CALL whose callee is unknown until runtime. Lowering it as
+    #     data would silently return the unevaluated pair, so it must stay declined, not be swept up
+    #     by the pattern fix.
+    r3, cls3 = _to_il("(= (app \$f \$x) (let \$r (\$f \$x) \$r))")
+    @test !isempty(r3.declined)
+    @test any(g -> g isa _IA.GResidual, _IA.all_goals(only(cls3).goals))
+end
