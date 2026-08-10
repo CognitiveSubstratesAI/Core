@@ -79,10 +79,14 @@ const _RI = MeTTaCore.Eval
 # ⚠️ NEXT FRAGMENT IS `match` — 104 clauses, the single largest remaining, and 109 contain one. Note
 # for whoever takes it: `match` searches a SPACE, and `presentations/mettail.metta` records that the
 # atomspace is exactly what a term rewrite CANNOT express. Check that before assuming it lowers.
+# MM2 ALSO ROSE, 376 -> 377 (src/standard 8 -> 9), from the same narrowing: `chain`'s arguments are
+# no longer hoisted, and one clause that the hoisted goals had been blocking now emits. Small, but
+# raised in the same commit because a floor left below the measurement is a floor that cannot catch
+# the next regression.
 const FLOOR_STDLIB  = 10     # of 61  clauses
-const FLOOR_STANDARD = 8     # of 51
+const FLOOR_STANDARD = 9     # of 51
 const FLOOR_LIB     = 358    # of 888
-const FLOOR_TOTAL   = 376    # of 1000
+const FLOOR_TOTAL   = 377    # of 1000
 
 # ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
 # MEASURED, not predicted: 687 of 1000, against MM2's 374. The design doc argued minimal MeTTa should
@@ -118,7 +122,23 @@ const FLOOR_TOTAL   = 376    # of 1000
 # emitting a form their target cannot execute is the same defect in a different lane, and neither the
 # suite nor this ratchet could distinguish it from a gain. The renderer now lives in `EmitIL.jl`, MM2
 # is back to 376, and the 2 IL clauses that only emitted via the shared widening are declined again.
-const FLOOR_IL_TOTAL = 830   # of 1000
+# RAISED 2026-08-10 by MINIMAL-MeTTa INSTRUCTION PASS-THROUGH: 830 -> 847 (+17). `chain`/`eval`/
+# `function`/`return` written directly in source (`stdlib.metta`'s `car-atom` is
+# `(chain (decons-atom $atom) $ht (unify ($head $_) $ht …))`) are not forms to lower — they ARE the
+# target language, 4 of the 13 instructions in the §3 table, and the lowering is the identity. No
+# `eval` wrapper, unlike `match`: `chain` interprets its first argument by definition. A-normalization
+# keeps these nodes WHOLE for the same reason it keeps `match` whole — `chain`'s third argument is a
+# TEMPLATE with a variable bound in it, and hoisting a computation out of a binder's scope is a wrong
+# answer, not an optimisation.
+# 🛡️ A RENDER GUARD NOW COVERS EVERY VERBATIM LOWERING, not just the one that needed it. Any residual
+# lowered whole is rejected if its rendering contains `<unrenderable` — the exact failure that scored
+# 832 while emitting garbage. New verbatim lowerings inherit the check by construction.
+# ⚠️ 848 WAS AVAILABLE AND WAS NOT TAKEN. Keeping all four instructions whole in the SHARED
+# `ANormal._KEEP_WHOLE` cost MM2 four `lib` clauses (358 -> 354, total 376 -> 373) — THIS RATCHET
+# caught it and the rest of the suite did not. `eval`/`function`/`return` have no binder, so
+# A-normalizing their arguments is sound and MM2 uses the goals; only `chain` must be kept whole.
+# Narrowed: MM2 377, IL 847. One IL clause is the price of not regressing the other lane.
+const FLOOR_IL_TOTAL = 847   # of 1000
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}

@@ -357,6 +357,9 @@ function translate_expr(c::ANCtx, a::IRSuperpose)::Tuple{Vector{Goal},IRAtom}
     (Goal[GDisj(branches, out)], out)
 end
 
+"Special forms kept WHOLE because a BINDER makes it mandatory — see the note in `translate_expr`."
+const _KEEP_WHOLE = (SPECIAL_CHAIN,)
+
 """
 Remaining special forms. `collapse` is PeTTa's `findall` (translator.pl:116); anything without a
 reference lowering becomes a residual rather than a guess.
@@ -375,7 +378,34 @@ function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal},IRAtom}
     # binding, not before. Running `translate_expr` over them — which the generic path below does —
     # hoists goals that a target then DOUBLE-EVALUATES if it lowers the node verbatim, and
     # `EmitIL.jl` does exactly that. Keeping the node whole is what makes verbatim lowering sound.
-    if a.kind === SPECIAL_MATCH
+    #
+    # `chain` JOINS IT, AND ONLY `chain` — `_KEEP_WHOLE` is a one-element tuple for a measured reason.
+    # `Core/lib` and `stdlib.metta` contain hand-written minimal MeTTa (`car-atom` is
+    # `(chain (decons-atom $atom) $ht (unify ($head $_) $ht …))`), and `EmitIL.jl` emits all four of
+    # `chain`/`eval`/`function`/`return` VERBATIM because they ARE its target language. But only
+    # `chain` must be kept whole HERE: its third argument is a TEMPLATE with a variable BOUND in it,
+    # so hoisting a computation out of the binder's scope changes what the template means. That is a
+    # wrong answer, not an inefficiency.
+    #
+    # ⚠️ WIDENING THIS SET TO ALL FOUR COST MM2 FOUR CLAUSES — 358 → 354 in `lib`, caught by the
+    # coverage ratchet, not by the suite. This stage is SHARED, and `eval`/`function`/`return` have no
+    # binder, so A-normalizing their arguments is sound and MM2 makes use of the resulting goals.
+    # Narrowing back: MM2 377 (≥ the 376 floor), IL 847 instead of 848. One IL clause is the whole
+    # price of not regressing the other lane.
+    #
+    # ⚠️ THE RESIDUAL COST, STATED RATHER THAN HIDDEN: for the other three, the argument is BOTH
+    # hoisted into goals AND re-rendered inside the verbatim node, so it is evaluated more than once.
+    # MEASURED — `(= (w) (function (return (nd))))` emits
+    #   `(chain (eval (nd)) $t1 (chain (return (nd)) $t2 (chain (function (return (nd))) $t3 …)))`
+    # — three evaluations of `(nd)`. It is WASTE, not a wrong answer: verified against the interpreter
+    # with a NONDETERMINISTIC `(nd)` (two clauses), where duplicated branches would have shown up as
+    # duplicated answers, and both lanes returned exactly `["a","b"]`. Removing the waste means
+    # teaching `EmitIL` which goals were hoisted for a node it renders whole — a real change, not a
+    # tidy-up, and out of scope here.
+    #
+    # This stays a `GResidual` rather than becoming a new goal type because MM2 has none of these
+    # instructions and must keep declining them. The node is preserved; the target decides.
+    if a.kind === SPECIAL_MATCH || a.kind in _KEEP_WHOLE
         out = fresh_var(c)
         return (Goal[GResidual(a, out)], out)
     end

@@ -165,4 +165,61 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
                          _cl_parse("(= (who \$y) (match &self (likes \$x \$y) \$x))\n")))
         @test MeTTaCore.CompilerEmitIL.emit_il_program(cls_ok).emitted == 1
     end
+
+    @testset "MINIMAL-MeTTa INSTRUCTIONS in the source compile to THEMSELVES" begin
+        # `Core/lib` and `stdlib.metta` contain hand-written minimal MeTTa — `car-atom` is literally
+        # `(chain (decons-atom $atom) $ht (unify ($head $_) $ht $head (Error …)))`. A-normalization
+        # makes those residuals because it has no RELATIONAL reading of them, which is right for MM2
+        # and wrong here: `chain`/`eval`/`function`/`return` ARE this target's language. The lowering
+        # is the identity, with no `eval` wrapper — `chain` interprets its first argument by
+        # definition.
+
+        # The `car-atom` shape, through the compiler, answering what the interpreter answers.
+        src = "(= (hd \$p) (chain (decons-atom \$p) \$ht (unify (\$h \$t) \$ht \$h nope)))\n" *
+              "!(hd (a b c))\n!(hd (x))\n"
+        r = MeTTaCore.compile_run(src)
+        @test r.compiled == 1
+        @test r.fell_back == 0
+        @test _cl_sorted(r.answers) == _cl_interp(src)
+        @test ("(hd (a b c))", ["a"]) in _cl_sorted(r.answers)     # the oracle is not vacuous
+
+        # `function`/`return` — the join point, which has no Prolog goal and so was always a residual.
+        src2 = "(= (idf \$x) (function (return \$x)))\n!(idf 7)\n!(idf (p q))\n"
+        r2 = MeTTaCore.compile_run(src2)
+        @test r2.compiled == 1 && r2.fell_back == 0
+        @test _cl_sorted(r2.answers) == _cl_interp(src2)
+
+        # NESTED, and mixed with an ordinary call — the instruction must compose with the chain the
+        # emitter builds around it rather than only working as a whole body.
+        src3 = "(= (dbl \$x) (+ \$x \$x))\n" *
+               "(= (both \$p) (chain (decons-atom \$p) \$ht (unify (\$h \$t) \$ht (dbl \$h) nope)))\n" *
+               "!(both (4 z))\n"
+        r3 = MeTTaCore.compile_run(src3)
+        @test r3.compiled == 2 && r3.fell_back == 0
+        @test _cl_sorted(r3.answers) == _cl_interp(src3)
+        @test ("(both (4 z))", ["8"]) in _cl_sorted(r3.answers)
+
+        # …and `fallback=false`, which turns a decline into an error rather than a silent rescue. This
+        # is the assertion that proves the COMPILED path produced these answers.
+        @test MeTTaCore.compile_run(src; fallback = false).fell_back == 0
+        @test MeTTaCore.compile_run(src2; fallback = false).fell_back == 0
+
+        # ⚠️ NONDETERMINISM IS THE CASE THAT WOULD EXPOSE DOUBLE-EVALUATION. Only `chain` is kept
+        # whole by `ANormal`; the other three have their argument BOTH hoisted into a goal AND
+        # re-rendered inside the verbatim node, so it is evaluated more than once — measured, e.g.
+        # `(= (w) (function (return (nd))))` emits three evaluations of `(nd)`. With a
+        # nondeterministic `(nd)` that would surface as DUPLICATED ANSWERS if it were a real branch
+        # duplication rather than repeated work. It does not, and this is what says so.
+        for (defs, q) in (("(= (nd) a)\n(= (nd) b)\n(= (w) (function (return (nd))))\n", "(w)"),
+                          ("(= (nd) a)\n(= (nd) b)\n(= (w2) (eval (nd)))\n",             "(w2)"),
+                          ("(= (nd) a)\n(= (nd) b)\n(= (w3) (chain (nd) \$v \$v))\n",    "(w3)"))
+            whole = defs * "!" * q * "\n"
+            rn = MeTTaCore.compile_run(whole)
+            @test rn.fell_back == 0
+            @test _cl_sorted(rn.answers) == _cl_interp(whole)
+            # `answers` is UNSORTED (only `_cl_sorted` sorts); the pinned claim is the COUNT — two,
+            # not four, which is what a duplicated branch would have produced.
+            @test sort(rn.answers[1][2]) == ["a", "b"]
+        end
+    end
 end

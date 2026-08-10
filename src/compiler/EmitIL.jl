@@ -201,9 +201,45 @@ Tension \$v)`) and 2 are rule-shaped. Only a pattern with a SYMBOL head other th
 lowered; a bare variable or a variable head is declined, because either can bind a rule."""
 function _instr(g::GResidual, cont::String, ::String)::Union{String, Nothing}
     n = g.node
-    _lowerable_match(n) || return nothing
-    "(chain (eval " * _render_il(n) * ") " * render(g.out) * " " * cont * ")"
+    inner = _lowerable_match(n)         ? "(eval " * _render_il(n) * ")" :
+            _is_minimal_instruction(n)  ? _render_il(n) :
+                                          nothing
+    inner === nothing && return nothing
+    # THE RENDER GUARD, and it closes a CLASS rather than the instance that produced it. Lowering a
+    # node VERBATIM is only sound if it renders; `_render_il` is total and marks what it cannot render
+    # instead of throwing. MEASURED 2026-08-10: the first `match` lowering had no `IRSpecial` renderer,
+    # emitted the marker AS A SYMBOL, and produced
+    #   `(function (chain (eval <unrenderable:IRSpecial>) NotReducible (return NotReducible)))`
+    # — well-formed, executable, and wrong. The coverage ratchet scored it identically to the working
+    # version. Any future verbatim lowering gets this check for free by going through here.
+    occursin("<unrenderable", inner) && return nothing
+    o = render(g.out); occursin("<unrenderable", o) && return nothing
+    "(chain " * inner * " " * o * " " * cont * ")"
 end
+
+const _MINIMAL_KINDS = (SPECIAL_CHAIN, SPECIAL_EVAL, SPECIAL_FUNCTION, SPECIAL_RETURN)
+
+"""Whether this residual is a MINIMAL-MeTTa INSTRUCTION written directly in the source.
+
+`chain` / `eval` / `function` / `return` are not forms this stage has to lower — they ARE the target
+language, four of the thirteen instructions in `metta_language_spec.md` §3. A-normalization makes them
+residuals because it has no relational reading of them (`chain` BINDS a variable in its template, and
+`function`/`return` are a join point, neither of which is a Prolog goal), and that is correct for the
+MM2 target, which has none of them. Here the right lowering is the identity.
+
+⚠️ NO `eval` WRAPPER, unlike `match`. `chain`'s first argument is INTERPRETED by definition, so
+`(chain (function (return a)) \$o \$o)` runs the inner instruction directly. `match` needs the wrapper
+because it is an atomspace operation rather than an instruction; these do not.
+
+⚠️ ONLY `chain`'s ARGUMENTS ARE LEFT ALONE upstream — `ANormal._KEEP_WHOLE` is `(SPECIAL_CHAIN,)`,
+because `chain`'s third argument is a TEMPLATE with a bound variable and hoisting out of a binder's
+scope is a wrong answer. The other three DO get A-normalized there and are then re-rendered whole
+here, so their argument is evaluated more than once. That is measured WASTE and not a wrong answer
+(verified against the interpreter with a nondeterministic argument, where duplicated branches would
+have surfaced as duplicated answers); the alternative — widening `_KEEP_WHOLE` — cost MM2 four
+clauses, which the coverage ratchet caught and the suite did not."""
+_is_minimal_instruction(n::IRAtom)::Bool =
+    n isa IRSpecial && (n::IRSpecial).kind in _MINIMAL_KINDS
 
 "Whether this residual is a `match` whose pattern provably cannot bind a `(=)` rule or a `(:)` type."
 function _lowerable_match(n::IRAtom)::Bool
