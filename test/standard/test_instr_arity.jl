@@ -25,6 +25,26 @@
 #
 # So a guard table derived from the specification would have missed every real case and added seven
 # wrong ones. Hence: measure, and keep measuring.
+#
+# ─── AND STATIC ANALYSIS DOES NOT SUBSTITUTE FOR IT. MEASURED, SO NOBODY REPEATS THE EXPERIMENT ──
+# JET was installed and run against this exact crashing shape. RESULT: it reports the BoundsError
+# ZERO times — a runtime index on a runtime-length vector is not a type error — and its three actual
+# reports were ALL FALSE POSITIVES, each checked by execution:
+#
+#   Atoms.jl:150   `prev == val` :: Union{Missing,Bool} in a boolean context.  FALSE — Atoms.jl:69 is
+#                  `(a.value == b.value) === true`, and its comment documents THIS hazard as already
+#                  fixed, citing hyperon `eq_gnd → bool` and CeTTa `atom_eq → bool`. JET sees the
+#                  union inside `==` and does not carry the `=== true` through.
+#   Eval.jl:737    `setproperty!` on `Nothing` in `_trie_insert!`.             FALSE — guarded by
+#                  `node.star === nothing && (node.star = _TNode())`; Julia does not narrow a MUTABLE
+#                  FIELD through a guard, so inference keeps the union.
+#   Eval.jl:763-4  `_trie_collect!` with a `Nothing` node.                     FALSE — same shape,
+#                  guarded by `node.star !== nothing &&`. 200 atoms × 4 trie-driven match shapes: no
+#                  throw, 230 results.
+#
+# Score on this codebase: 3 reports, 0 defects, and the real one missed. The trie sites do leave a
+# genuine (small) type-stability wart — `node.star` read twice through a `Union` — but touching the
+# eval core without a MEASURED need is against standing guidance, and no measurement says it matters.
 using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 using Test
