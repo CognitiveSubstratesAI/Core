@@ -57,6 +57,7 @@ module StandardMeTTaTests
     include("compiler/test_emit_substitution.jl")
     include("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
     include("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
+    include("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
     include("compiler/test_gslt_presentation.jl")  # G = (Σ,E,R): binders · freshness · premised rewrites
     include("compiler/test_gslt_parse.jl")         # the s-expr surface — presentations you can WRITE
     include("compiler/test_mettail_presentation.jl")  # MeTTa's own assembly language, presented as a GSLT
