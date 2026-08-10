@@ -222,4 +222,63 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
             @test sort(rn.answers[1][2]) == ["a", "b"]
         end
     end
+
+    @testset "A PROGRAM THAT READS ITS OWN RULES compiles nothing" begin
+        # 🔴 THE WRONG ANSWER THIS PREVENTS, from the real corpus (`b3_direct.metta`):
+        #
+        #     source    (= (croaks Fritz) T)
+        #     compiled  (= (croaks Fritz) (function (return T)))
+        #     directive !(assertEqualToResult (match &self (= ($p Fritz) T) $p) (croaks eat_flies))
+        #
+        # The directive asks the space for rules whose right-hand side is `T`. Against source rules it
+        # finds two; against emitted IL it finds none, because the right-hand side is now
+        # `(function (return T))`. The compiled lane answered AssertionFailed where the interpreter
+        # answered `()` — with all six definitions compiled and nothing fallen back.
+        #
+        # ⚠️ `EmitIL._lowerable_match` DOES NOT COVER THIS. That guard refuses to LOWER a `match` whose
+        # pattern could bind a rule — it protects matches inside a DEFINITION. A `!` directive is never
+        # compiled, so no per-clause guard can see it. The question is not "may this match be
+        # compiled" but "may this program's definitions be compiled at all".
+        introspecting = ("(= (f) T)\n!(match &self (= (\$p) T) \$p)\n",          # rule-shaped
+                         "(= (g) T)\n!(match &self (: \$s \$ty) \$s)\n",         # type-shaped
+                         "(= (h) T)\n!(match &self \$a \$a)\n",                  # bare variable
+                         "(= (i) T)\n!(match &self (\$p x) \$p)\n")              # variable head
+        for src in introspecting
+            r = MeTTaCore.compile_run(src)
+            @test r.introspects
+            @test r.compiled == 0                       # NOTHING compiled, not just the named rule
+        end
+
+        # ANSWER AGREEMENT on ALL FOUR shapes — including the bare-variable and variable-headed ones.
+        # ⚠️ THOSE TWO USED TO CRASH THE INTERPRETER, and the crash was a real defect this test flushed
+        # out: `!(match &self $a $a)` returns every atom in the space, stdlib's own type declaration
+        # `(: return-on-error (-> Atom Atom %Undefined%))` among them, and evaluating it dispatched
+        # `return-on-error` on a 2-child atom → BoundsError. Fixed by the arity guard in
+        # `Eval._INSTR_MIN_CHILDREN`; asserted here rather than worked around.
+        # ⚠️ COMPARED MODULO ALPHA-RENAMING. A bare-variable `match` returns atoms containing FRESH
+        # variables, and the gensym counter is process-global — so the interpreter run and the
+        # compiled run number them differently (`$t#22944480` vs `$t#22979031`) while computing the
+        # same 133 answers. That is not a difference between the lanes; comparing the raw strings
+        # would fail on renaming alone, which is the oracle being wrong rather than the code.
+        _alpha(v) = [replace(s, r"#\d+" => "") for s in v]
+        for src in introspecting
+            r = MeTTaCore.compile_run(src)
+            got  = [(q, _alpha(a)) for (q, a) in _cl_sorted(r.answers)]
+            want = [(q, _alpha(a)) for (q, a) in _cl_interp(src)]
+            @test got == want
+        end
+
+        # …AND THE NEGATIVE CONTROL, without which the four above pass for a lane that never compiles.
+        # A data-shaped match does not read rules, so compilation proceeds exactly as before.
+        plain = "(likes a b)\n(= (who \$y) (match &self (likes \$x \$y) \$x))\n!(who b)\n"
+        rp = MeTTaCore.compile_run(plain)
+        @test !rp.introspects
+        @test rp.compiled == 1
+        @test _cl_sorted(rp.answers) == _cl_interp(plain)
+
+        # THE NESTED CASE, which the first version of the guard missed: `match` is almost never the
+        # top-level form. Reading the outer form's arguments finds `(match …)` and never its pattern.
+        nested = "(= (f) T)\n!(assertEqualToResult (match &self (= (\$p) T) \$p) (f))\n"
+        @test MeTTaCore.compile_run(nested).introspects
+    end
 end

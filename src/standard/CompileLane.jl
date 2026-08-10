@@ -123,15 +123,90 @@ function compile_run(program::AbstractString; fallback::Bool = true,
     end
 end
 
+"""Whether the program INSPECTS ITS OWN RULES — in which case nothing may be compiled.
+
+🔴 COMPILING A DEFINITION CHANGES WHAT `&self` CONTAINS, and a program that looks at `&self` can see
+that. MEASURED 2026-08-10 on the conformance corpus, `b3_direct.metta`:
+
+    source    (= (croaks Fritz) T)
+    compiled  (= (croaks Fritz) (function (return T)))
+    directive !(assertEqualToResult (match &self (= (\$p Fritz) T) \$p) (croaks eat_flies))
+
+The directive asks the space for rules whose right-hand side is `T`. Against source rules it finds
+`croaks` and `eat_flies`; against emitted IL it finds NOTHING, because the right-hand side is now
+`(function (return T))`. The compiled lane answered `AssertionFailed` where the interpreter answered
+`()` — a WRONG ANSWER, from a lane that had compiled all six definitions and fallen back on none.
+
+⚠️ `EmitIL._lowerable_match` DOES NOT COVER THIS, and the distinction is the point. That guard refuses
+to LOWER a `match` whose pattern could bind a rule — it protects matches inside a DEFINITION. This is
+a `!` DIRECTIVE, which is never compiled at all, so no per-clause guard can ever see it. The hazard is
+at PROGRAM level: the question is not "may this match be compiled" but "may this program's
+definitions be compiled AT ALL, given something in it reads the rules".
+
+The answer is no, and it cannot be narrowed to the definitions the query happens to name: a pattern
+like `(= (\$p Fritz) T)` binds its head, so which rules it can see is not decidable from the pattern.
+Compile nothing, and say so in `introspects`.
+
+Scope: rule-shaped (`=`) and type-shaped (`:`) patterns, plus a bare-variable pattern which matches
+everything including rules — the same three shapes `_lowerable_match` rejects, applied to the whole
+program instead of one goal."""
+function _program_introspects_rules(program::AbstractString)::Bool
+    # PARSED, NOT STRING-SCANNED. A `match` is almost never the top-level form — in the corpus it is
+    # wrapped, e.g. `!(assertEqualToResult (match &self (= ($p Fritz) T) $p) …)`. Reading the outer
+    # form's arguments finds `(match …)` and never reaches its pattern, so the first version of this
+    # guard missed the very case it was written for.
+    sp = Eval.Space()
+    for (bang, f) in mm2_split_forms(program)
+        bang || continue
+        a = try
+            toks = Eval.tokenize(String(f)); i = Ref(1)
+            Eval.parse_from(toks, i, sp.tokens)
+        catch
+            continue
+        end
+        _reads_rules(a) && return true
+    end
+    false
+end
+
+"Walk an atom for a `(match <space> <pattern> …)` whose pattern can bind a rule or a type."
+function _reads_rules(a)::Bool
+    a isa StandardMeTTa.Expression || return false
+    ch = (a::StandardMeTTa.Expression).children
+    if length(ch) >= 3
+        h = ch[1]
+        hname = h isa StandardMeTTa.Sym ? String((h::StandardMeTTa.Sym).name) :
+                h isa StandardMeTTa.Grounded && hasfield(typeof((h::StandardMeTTa.Grounded).value), :name) ?
+                    String(getfield((h::StandardMeTTa.Grounded).value, :name)) : ""
+        if hname == "match"
+            pat = ch[3]
+            # a bare VARIABLE pattern matches everything, rules included
+            pat isa StandardMeTTa.Var && return true
+            if pat isa StandardMeTTa.Expression && !isempty((pat::StandardMeTTa.Expression).children)
+                ph = (pat::StandardMeTTa.Expression).children[1]
+                if ph isa StandardMeTTa.Sym
+                    n = (ph::StandardMeTTa.Sym).name
+                    (n === :(=) || n === :(:)) && return true
+                end
+                # a VARIABLE head can become `=` at runtime
+                ph isa StandardMeTTa.Var && return true
+            end
+        end
+    end
+    any(_reads_rules, ch)
+end
+
 function _compile_run_inner(program::AbstractString, fallback::Bool)
     sp = Eval.Space(); Eval.load_core_stdlib!(sp)
+    # A program that reads its own rules must run on SOURCE rules — see `_program_introspects_rules`.
+    introspects = _program_introspects_rules(program)
     answers = Tuple{String, Vector{String}}[]
     exhausted = String[]
     ncompiled = 0
     nfallback = 0
     for r in split_program_regions(program, purity_may_mutate(program))
         for d in r.defs
-            il = compile_definition(sp, d)
+            il = introspects ? nothing : compile_definition(sp, d)
             if il === nothing
                 fallback || error("compile_run: declined and fallback=false — $(first(d, 80))")
                 Eval.load_metta!(sp, d)
@@ -161,5 +236,5 @@ function _compile_run_inner(program::AbstractString, fallback::Bool)
                   String[string(x) for y in res for x in (y isa AbstractVector ? y : [y])]))
         end
     end
-    (; answers, compiled = ncompiled, fell_back = nfallback, exhausted, space = sp)
+    (; answers, compiled = ncompiled, fell_back = nfallback, exhausted, introspects, space = sp)
 end

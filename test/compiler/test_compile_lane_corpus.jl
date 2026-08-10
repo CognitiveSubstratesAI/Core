@@ -93,8 +93,9 @@ THIS BUDGET and changing the budget invalidates them.
 
 MEASURED 2026-08-10 over all 26 scripts: 10 deviate — 6 with wrong answers, 4 exhausting budget."""
 const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
-    "b3_direct.metta"     => (1, 0),
-    "b4_nondeterm.metta"  => (1, 0),
+    # b3_direct and b4_nondeterm were HERE and are FIXED — both introspect their own rules, and
+    # `CompileLane._program_introspects_rules` now compiles nothing for such a program. Removed rather
+    # than left as passing entries, so the ratchet keeps working in the improving direction too.
     "c3_pln_stv.metta"    => (1, 2),
     "d2_higherfunc.metta" => (3, 2),
     "e1_kb_write.metta"   => (2, 0),
@@ -140,9 +141,12 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # ⚠️ THE ANTI-VACUITY ASSERTION. Without this the testset passes when EVERY definition falls back,
     # which proves the interpreter equals itself. A number rather than `> 0` so a collapse from
     # hundreds to a handful is a failure and not a shrug; raise it when the compiler covers more.
-    # MEASURED 89 of 266 definitions across the corpus. Pinned exactly, not `> 0`: a collapse to a
+    # MEASURED 56 of 266 definitions across the corpus — down from 89 because every script that
+    # INTROSPECTS its own rules now compiles nothing, which is the correct answer for those programs.
+    # (Estimated 64 by subtracting only the two scripts with wrong answers; the guard correctly fires
+    # on more than those, which is why this number is measured and not computed.) Pinned exactly, not `> 0`: a collapse to a
     # handful must FAIL rather than pass quietly, and a rise must be recorded deliberately.
-    @test total_compiled >= 89
+    @test total_compiled >= 56
     @test total_compiled + total_fell_back > 0
 end
 
@@ -169,8 +173,6 @@ in each. Measured: the LeaTTa half reproduces 7 of the conformance half's deviat
 `test_stdlib.metta`, which is clean. The second run is therefore NOT extra coverage; its value is the
 BASELINE, which here is machine-proved rather than self-referential."""
 const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
-    "b3_direct.metta"     => (1, 0),
-    "b4_nondeterm.metta"  => (1, 0),
     "c3_pln_stv.metta"    => (1, 2),
     "d2_higherfunc.metta" => (3, 2),
     "e1_kb_write.metta"   => (2, 0),

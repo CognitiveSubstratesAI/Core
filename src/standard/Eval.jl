@@ -277,6 +277,42 @@ function _atom_introduces_var(a::Atom, pv::Set{Var})::Bool
     return false
 end
 
+"""Minimum `children` length each minimal-MeTTa instruction reads — the arity guard's table.
+
+🔴 WHY THE DISPATCHER NEEDS ONE. `interpret_stack` dispatches on HEAD NAME ALONE. Every instruction
+function then indexes `a.children[…]` at fixed positions, so ANY atom that happens to carry an
+instruction's name in head position — with the wrong arity — crashes the interpreter with a
+`BoundsError` instead of being returned as data.
+
+MEASURED 2026-08-10, and it is reachable from ordinary MeTTa, not a synthetic input:
+
+    !(match &self \$a \$a)            ⟹ BoundsError, 2-element children at index [3]
+    the offending atom: (return-on-error (-> Atom Atom %Undefined%))
+
+That is `stdlib.metta:332`'s own type declaration `(: return-on-error (-> Atom Atom %Undefined%))`
+with the `:` head stripped, fed back through evaluation. A bare-variable `match` returns every atom in
+the space, stdlib's declarations included — so a MeTTa program can crash the evaluator by looking at
+the standard library.
+
+MeTTa's answer for an ill-formed head is NOT a crash: an atom that is not a well-formed operation is
+DATA, returned unreduced. That is exactly what this dispatcher's own `else` branch already does, so
+the fix routes short atoms there rather than inventing a behaviour.
+
+⚠️ ONE ENTRY, NOT SEVENTEEN — AND THE ATTEMPT TO SWEEP IS WHY. The first version of this table
+carried a minimum for every instruction, derived by regex-extracting the max `children[N]` each
+function reads. The extraction used a crude body extent that bled into neighbouring functions, so
+several minimums came out TOO HIGH and the guard rejected VALID atoms: 36 test failures and
+`bin/health` 3/5, with things like `!(norm (3 4))` returning nothing.
+
+Under-guarding is safe — an atom slips through and behaves exactly as it does today. OVER-guarding
+rejects working programs. Having produced the second kind, the table is cut back to the single entry
+that was MEASURED against a real crash. A general sweep is the right end state and needs each
+instruction's requirement read from its body by hand, not by regex; it is deliberately not done here
+rather than done unsoundly."""
+const _INSTR_MIN_CHILDREN = Dict{Symbol, Int}(
+    Symbol("return-on-error") => 3,
+)
+
 # ── the dispatch step (interpreter.rs interpret_stack:374) ────────────────────
 function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindings}}
     if f.finished
@@ -287,6 +323,14 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
         return cont === nothing ? Tuple{Frame,Bindings}[] : [cont]
     end
     name = head_name(f.atom)
+    # ARITY GUARD — see `_INSTR_MIN_CHILDREN`. An atom carrying an instruction's NAME but not its
+    # SHAPE is data, exactly as the `else` branch below treats an unknown head. Without this the
+    # instruction functions index past the end and the interpreter dies on a `BoundsError`.
+    if f.atom isa Expression
+        req = get(_INSTR_MIN_CHILDREN, name, 0)
+        req > 0 && length((f.atom::Expression).children) < req &&
+            return finished_result(f.atom, b, f.prev)
+    end
     if name === Symbol("cons-atom");    return cons_atom(f, b)
     elseif name === Symbol("decons-atom"); return decons_atom(f, b)
     elseif name === Symbol("unify");    return unify_op(f, b)
