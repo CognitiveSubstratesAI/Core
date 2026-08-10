@@ -41,6 +41,8 @@ module StandardMeTTaTests
     using MeTTaCore, Test
     include("standard/test_atoms.jl")
     include("standard/test_minimal.jl")
+    # No instruction, at any arity, may crash the interpreter — the whole dispatch surface.
+    include("standard/test_instr_arity.jl")
     # MeTTa Invariant 1 (sequential effects) at the FORM level — the lane-neutral partition that
     # stops a query being answered with a rule added after it. Lives above every lane on purpose.
     include("standard/test_program_regions.jl")

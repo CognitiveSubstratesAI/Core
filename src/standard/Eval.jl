@@ -298,19 +298,35 @@ MeTTa's answer for an ill-formed head is NOT a crash: an atom that is not a well
 DATA, returned unreduced. That is exactly what this dispatcher's own `else` branch already does, so
 the fix routes short atoms there rather than inventing a behaviour.
 
-⚠️ ONE ENTRY, NOT SEVENTEEN — AND THE ATTEMPT TO SWEEP IS WHY. The first version of this table
-carried a minimum for every instruction, derived by regex-extracting the max `children[N]` each
-function reads. The extraction used a crude body extent that bled into neighbouring functions, so
-several minimums came out TOO HIGH and the guard rejected VALID atoms: 36 test failures and
-`bin/health` 3/5, with things like `!(norm (3 4))` returning nothing.
+⚠️ SEVEN ENTRIES, EVERY ONE MEASURED — AND THE FIRST TWO ATTEMPTS ARE WHY IT SAYS SO. Attempt one
+guessed all seventeen by regex-extracting the max `children[N]` each function reads; the extraction
+used a crude body extent that bled into neighbours, several minimums came out TOO HIGH, and the guard
+rejected VALID atoms — 36 test failures, `bin/health` 3/5, `!(norm (3 4))` returning nothing. Attempt
+two cut back to the single entry a real crash had demonstrated.
 
-Under-guarding is safe — an atom slips through and behaves exactly as it does today. OVER-guarding
-rejects working programs. Having produced the second kind, the table is cut back to the single entry
-that was MEASURED against a real crash. A general sweep is the right end state and needs each
-instruction's requirement read from its body by hand, not by regex; it is deliberately not done here
-rather than done unsoundly."""
+This table is attempt three, and it is not read off the code at all. It is MEASURED: every
+instruction the dispatcher knows, evaluated at every arity 0..6, recording which shapes throw
+(`scratchpad/probe_arity_sweep.jl`, and the property test in `test/standard/test_instr_arity.jl` that
+keeps it true). The result was worth having:
+
+    the 10 PUBLIC instructions (eval, chain, unify, cons-atom, …)   crash at NO arity — already
+                                                                    defensive, and correctly get no
+                                                                    entry here
+    6 INTERNAL ones (interpret-tuple/function/args, metta-call,     crash at 13 shapes between them
+     args-cont, metta-noreduce)
+
+So the over-guarding that broke 36 tests came entirely from entries for instructions that never
+needed one. Under-guarding is safe — an atom behaves as it does today; over-guarding rejects working
+programs. Measurement is what tells the two apart, and reading the bodies would not have: the crashes
+are in the INTERNAL continuations, which no arity table in the §3 spec covers."""
 const _INSTR_MIN_CHILDREN = Dict{Symbol, Int}(
-    Symbol("return-on-error") => 3,
+    Symbol("return-on-error")    => 3,
+    Symbol("interpret-tuple")    => 2,
+    Symbol("interpret-function") => 3,
+    Symbol("interpret-args")     => 3,
+    Symbol("metta-call")         => 3,
+    Symbol("args-cont")          => 4,
+    Symbol("metta-noreduce")     => 4,
 )
 
 # ── the dispatch step (interpreter.rs interpret_stack:374) ────────────────────
