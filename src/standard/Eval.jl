@@ -992,10 +992,35 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 # already a CPS stack machine, so this rides the existing nested-`interpret` pattern (cf. collapse_bind_op).
 #   DEFAULT-OFF GUARANTEE: with no head registered the hook in metta_instr is always false ⇒ the 234
 #   conformance reduction path is byte-identical by construction (the disable-to-prove pattern).
-#   SCOPE: memoisation only. A left-recursive goal that re-enters an IN-PROGRESS variant falls through to
-#   normal reduction (no suspend-on-variant yet — that needs the worklist/dynamic-SCC completion machinery;
-#   §7.2). Handles the fib/ackermann class. Variant key = the substituted goal (ground ⇒ identity; non-ground
-#   canonicalization is TODO). Table is global+session-scoped and cleared by table!/untable_all!; entries are now
+#   ⚠️ SCOPE — CORRECTED 2026-08-11. This said "memoisation only … no suspend-on-variant yet (that needs
+#   the worklist/dynamic-SCC completion machinery; §7.2)". BOTH HALVES ARE NOW FALSE, and a reader who
+#   trusted them would either rebuild suspension or avoid tabling that already works:
+#     * SUSPEND-ON-VARIANT IS IMPLEMENTED (`tabled_eval`, the CONSUMER branch): a variant re-entry does
+#       NOT fall through to normal reduction — it answers from `_PARTIAL` and stays suspended, and the
+#       generator/consumer split is right there (`push!(_TABLE_INPROG, key); push!(_GEN_STACK, key)`).
+#     * THE DYNAMIC-SCC COMPLETION MACHINERY LANDED TOO (`b540296`), cross-referenced in the comment
+#       above `tabled_eval` to SWI's own `boot/tabling.pl` `completion` → `$tbl_table_complete_all(SCC)`.
+#   PROVENANCE, since it is easy to blur — THREE sources, and this file cites each at its own site:
+#     * the SLG MECHANISM (variant tabling, generator/consumer, SCC completion) — SWI-Prolog §7.1 and
+#       `boot/tabling.pl` (`:989`, and the comment above `tabled_eval`).
+#     * REVISION-STAMPED INVALIDATION — CeTTa `table_store.c:153` (`:1007`), landed 2026-07-01
+#       (`2435f42`).
+#     * WHICH heads to table (policy, not mechanism) — MeTTa-TS (`:1084`), opt-in and default OFF.
+#   ⚠️ NOT PeTTa. Its memo library (PR #165, `lib/lib_memo.pl`, generation-based invalidation) merged
+#   2026-07-24 — THREE WEEKS AFTER our revision stamping — is absent at PeTTa HEAD, and is referenced
+#   nowhere in this tree except at `ANormal.jl:193`, where a FABRICATED claim about it was corrected.
+#   It is recorded as adoptABLE, not adopted. From PeTTa we took the A-normal translator, not this.
+#   On these two axes we now follow SWI. What remains genuinely open is
+#   listed at `tabled_eval` (naive rather than semi-naive; no answer subsumption §7.3; ground/enumerable
+#   answers) — that list is the accurate one. Handles the fib/ackermann class. Variant key = the substituted goal (ground ⇒ identity; non-ground
+#   canonicalization ⚠️ IS NOT TODO — third stale claim in this header, corrected 2026-08-11:
+#   `_variant_rename` (`:1192`) renames vars by first occurrence, which its own comment identifies as
+#   "SWI's variant canonicalization", and `_canonical_goal` uses it. Non-ground goals ARE variant-keyed.)
+#   ⚠️ THE TABLE IS UNBOUNDED — no eviction, no size limit. Removal happens only on staleness (a
+#   revision mismatch) or a manual `table!`/`untable_all!`. A long session with many distinct tabled
+#   goals grows the table without bound; that is the one genuine gap PeTTa's memo library (PR #165,
+#   LRU/WTinyLFU + `unique-limit`/`size-limit`/`answer-limit`) would close, and it is a MEMORY-SAFETY
+#   argument rather than a speed one. Table is global+session-scoped and cleared by table!/untable_all!; entries are now
 #   REVISION-STAMPED per space (CeTTa table_store.c:153) so a mutation to the space auto-evicts its stale answers on
 #   the next lookup (closes the silent-staleness half of §7.7; fine-grained IDG dependency tracking still TODO).
 # 🔴 SCOPE — PROCESS-GLOBAL, NAME-ONLY, AND THE REFERENCE IS NEITHER. Cross-checked 2026-08-11
@@ -1315,7 +1340,13 @@ end
 # The component ROOT drives a joint naive fixpoint over ALL members and completes them together; a non-root
 # member is a FOLLOWER that returns its partials and stays in-progress for the root to finish. A lone,
 # non-self-recursive goal (fib) is a singleton root ⇒ ONE pass (no regression). SCOPE caveats unchanged:
-# naive (not semi-naive), no WFS tnot (§7.6), no answer subsumption (§7.3), ground/enumerable answer atoms.
+# naive (not semi-naive), no answer subsumption (§7.3), ground/enumerable answer atoms.
+# ⚠️ "no WFS tnot (§7.6)" WAS LISTED HERE AND IS FALSE — corrected 2026-08-11. Well-founded negation is
+# implemented (`_wfs_complete!` below, the `TNOT` SpaceOp, `_WFS_BOUND`/`_WFS_ACTIVE`/`_SCC_NEG`, and the
+# alternating-fixpoint phase machinery), registered as `tnot` in `TOKEN_REGISTRY`, and gated by
+# `test/standard/test_tnot_wfs.jl` (41 assertions) plus `test_wfs_swipl_differential.jl`, which runs a
+# LIVE swipl oracle and skips loudly if swipl is absent. Two stale scope claims in one header is why
+# `[[feedback_capability_claims_expire_retest_the_premise]]` exists.
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     red = _reduced_goal(atom, space, b); key = _variant_rename(red)             # red keeps the caller's vars;
     if haskey(_ANSWER_TABLE, key)                                                # complete entry — but only replay if
