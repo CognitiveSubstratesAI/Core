@@ -181,7 +181,14 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # — where `$C` binds a data constructor, not a function. `_var_headed_call` cannot tell those from
     # a dynamic call, and "POSITION decides" (CODEMAP row 221) does not separate them because BOTH are
     # in value position. A predicate that does would be the thing to find first.
-    "d2_higherfunc.metta" => (3, 0),
+    # 🟢 d2_higherfunc's ENTRY IS REMOVED — 3 extra errors → 0 (2026-08-11). Root: a NESTED head
+    # cannot be rebuilt from `ANClause`'s `name` + `head_args`, because the outer application's
+    # arguments are not in the clause at all. `(= ((lambda $var $body) $arg) (let $var $arg $body))`
+    # was emitting `(= (lambda $arg) (function (unify $var $arg (return $body) …)))` — matching
+    # `(lambda ANYTHING)` with `$var`/`$body` UNBOUND. `curry`/`curry-a` escaped only because their
+    # variable-headed BODY declined, i.e. the wrong head was masked by an unrelated decline.
+    # `ANClause.nested_head` now declines them. Ratchet coverage UNCHANGED at 864 — those clauses were
+    # never in the ratchet corpus (0 nested heads there), so this cost no real coverage at all.
     #
     # e1_kb_write's root was NARROWED 2026-08-11 and is NOT what its error text suggests. The text
     # reads `(add-atom &self …)` for source that says `&kb`, but that is only `Grounded{Space}`'s
@@ -305,7 +312,7 @@ const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
     # every extra error gone, two scripts now wanting more than 4 000 steps.
     "c1_grounded_basic.metta" => (0, 1),
     "c3_pln_stv.metta"    => (0, 3),
-    "d2_higherfunc.metta" => (3, 0),   # exhausted 2 → 0, compound-head fix; see the other dict
+    # d2_higherfunc REMOVED here too — 3 → 0 under the nested-head decline.
     # e1_kb_write REMOVED — 2 → 0 errors.
     # e2_states was (3, 0) here too and is FIXED against the PROVED baseline as well — the same
     # `_unroundtrippable` decline. Worth stating separately from the conformance half: that half's

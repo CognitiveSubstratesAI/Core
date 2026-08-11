@@ -306,6 +306,10 @@ contains a `GDisj` (one per branch), or `nothing` if it cannot be lowered at all
 function emit_il_clause(c::ANClause)::Union{Vector{String}, Nothing}
     variants = _expand_disj(c.goals)
     variants === nothing && return nothing
+    # A NESTED head cannot be rebuilt from `name` + `head_args` — the outer application's arguments
+    # are not in the clause at all, so `(name head_args…)` silently drops them and the body's
+    # references to them go unbound. Decline; see `ANClause.nested_head` for the measured case.
+    c.nested_head && return nothing
     head = "(" * String(c.name) * (isempty(c.head_args) ? "" : " " * _render_args(c.head_args)) * ")"
     out = String[]
     for gs in variants

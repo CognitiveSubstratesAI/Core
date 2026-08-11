@@ -502,7 +502,27 @@ struct ANClause
     head_args::Vector{IRAtom}
     goals::Vector{Goal}
     out::IRAtom
+    # 🔴 THE CLAUSE'S HEAD WAS NESTED and this shape CANNOT be reconstructed from `name` + `head_args`.
+    # `(= (((curry $f) $x) $y) …)` has `lhs.args == [$y]`; `((curry $f) $x)` is the HEAD, not an
+    # argument, so `$f` and `$x` are nowhere in this struct. `EmitIL` builds its head as
+    # `(name head_args…)`, which for that clause is `(curry $y)` — matching `(curry ANYTHING)` with a
+    # body referencing UNBOUND `$f`/`$x`.
+    #
+    # MEASURED 2026-08-11, and it is LIVE, not hypothetical:
+    #     (= ((lambda $var $body) $arg) (let $var $arg $body))
+    #   emits
+    #     (= (lambda $arg) (function (unify $var $arg (return $body) (return Empty))))
+    #   with `$var`/`$body` unbound. `curry`/`curry-a` escape only because their variable-headed BODY
+    #   is declined — the wrong head is masked by an unrelated decline, not prevented.
+    #
+    # Emission DECLINES on this flag rather than guessing. The real fix is to carry the original
+    # pattern through to emission (minimal MeTTa's `(= <pattern> <body>)` accepts a nested pattern
+    # perfectly well, so the target is not the obstacle — this struct is), and that is a larger change
+    # than removing a wrong answer, which is what this does.
+    nested_head::Bool
 end
+ANClause(n::Base.Symbol, ha::Vector{IRAtom}, gs::Vector{Goal}, o::IRAtom) =
+    ANClause(n, ha, gs, o, false)
 
 """
     constrain_args(ctx, arg) -> (Vector{Goal}, IRAtom)
@@ -561,7 +581,9 @@ function translate_clause(c::ANCtx, name::Base.Symbol, clause::IRBoundAtom)::ANC
         end
     end
     body, out = translate_expr(c, clause.value)
-    ANClause(name, head_args, vcat(prefix, body), out)
+    # A head whose own head is another EXPRESSION is nested — see `ANClause.nested_head`.
+    nested = lhs isa IRExpression && (lhs::IRExpression).head isa IRExpression
+    ANClause(name, head_args, vcat(prefix, body), out, nested)
 end
 
 """Every `(head, arity)` this program DEFINES — keyed per CLAUSE, not per definition.
