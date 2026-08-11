@@ -1018,9 +1018,14 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 #   "SWI's variant canonicalization", and `_canonical_goal` uses it. Non-ground goals ARE variant-keyed.)
 #   ⚠️ THE TABLE IS UNBOUNDED — no eviction, no size limit. Removal happens only on staleness (a
 #   revision mismatch) or a manual `table!`/`untable_all!`. A long session with many distinct tabled
-#   goals grows the table without bound; that is the one genuine gap PeTTa's memo library (PR #165,
-#   LRU/WTinyLFU + `unique-limit`/`size-limit`/`answer-limit`) would close, and it is a MEMORY-SAFETY
-#   argument rather than a speed one. Table is global+session-scoped and cleared by table!/untable_all!; entries are now
+#   goals grows the table without bound — but MEASURED 2026-08-11, that is NOT reachable on the
+#   default path: the one place tabling is on by default (`DualTrack` `fallback_table=true`) calls
+#   `_table_reset!()` in its `finally`, clearing this table after every fallback. Residual exposure is
+#   a user calling `!(auto-table!)` in a long-lived space, which is opt-in. So PeTTa PR #165's
+#   LRU/WTinyLFU + `unique-limit`/`size-limit`/`answer-limit` would close a REAL gap that currently
+#   has NO measured need — recorded as available, not as owed. (That library is LIVE at PeTTa's
+#   upstream HEAD `43705f5`; an earlier note here and in memory called it "removed", which was a
+#   four-day-stale local clone misread as an upstream deletion.) Table is global+session-scoped and cleared by table!/untable_all!; entries are now
 #   REVISION-STAMPED per space (CeTTa table_store.c:153) so a mutation to the space auto-evicts its stale answers on
 #   the next lookup (closes the silent-staleness half of §7.7; fine-grained IDG dependency tracking still TODO).
 # 🔴 SCOPE — PROCESS-GLOBAL, NAME-ONLY, AND THE REFERENCE IS NEITHER. Cross-checked 2026-08-11
