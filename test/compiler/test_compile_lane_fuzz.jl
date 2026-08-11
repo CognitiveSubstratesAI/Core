@@ -147,8 +147,28 @@ function _fz_interp(program::AbstractString)
     end
 end
 
+"""How many seeds to run. DEFAULT 40 — the committed coverage, unchanged.
+
+⚠️ THIS IS A TIME KNOB, NOT A COVERAGE DECISION, and the distinction is why it defaults to the full
+range instead of a smaller one. MEASURED 2026-08-11: this file is the suite's single largest cost at
+~255 s, and the cause is neither the harness nor a hang — `load_core_stdlib!` is 2.0 ms and accounts
+for 0.2 s across all 80 calls, while ONE small generated program costs 1.59 s interpreted and 6.09 s
+through `compile_run`. 40 × ~6.4 s IS the number. For a small program the COMPILATION dominates,
+because lowering / A-normal / emission run per form with no reuse across the program.
+
+Lower it ONLY to time-box a run you are going to repeat at full range before committing:
+
+    CORE_FUZZ_SEEDS=28 tools/run_tests.sh            # 28 keeps all three _FZ_KNOWN seeds (1, 6, 26)
+
+Any value below 26 silently drops a known divergence from the comparison, so the assertion below
+holds it at 26 rather than trusting the caller."""
+const _FZ_SEEDS = let n = tryparse(Int, get(ENV, "CORE_FUZZ_SEEDS", "40"))
+    n === nothing ? 40 : max(26, n)
+end
+
 @testset "compile lane — GENERATED programs (the corpus is only 26 scripts)" begin
-    seeds = 1:40   # widened only after the harness proved it terminates; see the budget note
+    seeds = 1:_FZ_SEEDS
+    _FZ_SEEDS == 40 || @warn "fuzz range REDUCED — not a full-coverage run" seeds=_FZ_SEEDS default=40
     diverged = Tuple{Int, String}[]
     ran = 0; compiled_total = 0
 
@@ -181,6 +201,11 @@ end
     # ANTI-VACUITY, twice over. A generator that produces unrunnable programs, or programs with
     # nothing to compile, would pass the comparison above while testing nothing at all.
     @info "fuzz" programs_compared=ran definitions_compiled=compiled_total
-    @test ran >= 25                       # most seeds must actually run on BOTH lanes
-    @test compiled_total >= 25            # …and the compiler must actually have compiled something
+    # SCALED WITH THE SEED COUNT, and calibrated so the FULL range is unchanged: at the default 40
+    # both floors are 25, exactly as before the knob existed. A reduced run must still prove the same
+    # PROPORTION ran and compiled — otherwise lowering the range would quietly disarm the anti-vacuity
+    # checks along with the runtime, which is the failure the knob is supposed not to introduce.
+    floor_n = div(_FZ_SEEDS * 25, 40)     # 40 → 25 · 28 → 17 · 26 → 16
+    @test ran >= floor_n                  # most seeds must actually run on BOTH lanes
+    @test compiled_total >= floor_n       # …and the compiler must actually have compiled something
 end

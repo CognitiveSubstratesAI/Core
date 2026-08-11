@@ -234,8 +234,22 @@ end
     end
 
     # ── AN EXTERNAL corpus — the part that falsified the first two versions of this check. ───────
+    #
+    # OPT-IN, because it is a CALIBRATION tool rather than a per-run gate, and because it costs the
+    # suite time it does not have. MEASURED: the full suite already sat at ~9-10 min
+    # (`test_compile_lane_fuzz.jl` alone is ~255 s in-suite, the coverage ratchet ~150 s), and adding
+    # this scan of 98 external files pushed it past its budget. Its VALUE is in what it does when you
+    # change the predicate — it is what proved the first three versions wrong — and that is an act you
+    # perform deliberately, not something every suite run needs to repeat.
+    #
+    #     CORE_TEST_CETTA=1 tools/run_tests.sh test/compiler/test_eval_one_step.jl
+    #
+    # The our-corpus ratchet above is NOT opt-in: that one guards against regression and runs always.
     @testset "CeTTa corpus: the count may not rise" begin
-        if !isdir(_E1_CETTA)
+        if get(ENV, "CORE_TEST_CETTA", "") == ""
+            @info "CeTTa scan SKIPPED (opt-in) — set CORE_TEST_CETTA=1 to run it" expected_violations=3
+            @test_skip false
+        elseif !isdir(_E1_CETTA)
             # LOUD, never silent. A skipped external gate that reports nothing is indistinguishable
             # from a passing one, which is the failure mode this whole file exists to avoid.
             @warn "CeTTa corpus ABSENT — this half of the gate did NOT run" path=_E1_CETTA

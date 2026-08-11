@@ -71,6 +71,9 @@ function compile_definition(sp, form::AbstractString)::Union{Vector{String}, Not
     catch
         return nothing
     end
+    # RESTORE THE NAME FIRST, then check. A named space is round-trippable once it carries its word
+    # again, so this must run BEFORE the guard or the guard declines clauses that are now fine.
+    atoms = _name_spaces(atoms, sp)
     # A value that cannot survive the IL TEXT round-trip makes the emitted clause quietly mean
     # something else — see `_unroundtrippable`. Checked on the PARSED atoms, before any lowering,
     # because the corruption is in serialization and every later stage inherits it.
@@ -125,6 +128,65 @@ function compile_run(program::AbstractString; fallback::Bool = true,
     finally
         Eval._INTERPRET_MAX[] = prev_max
     end
+end
+
+"""Rewrite each `Grounded{Space}` back to the TOKEN that named it — the wire format carries the name.
+
+🔴 THE NAME IS LOST AT PARSE TIME, NOT AT RENDER TIME, and that is why the fix belongs here.
+`parse_from` resolves `&kb` through `sp.tokens` into a `Grounded{Space}` (`Eval.jl:2525`), and from
+that point the token is gone — a Space knows its contents, never what it was called. `render` then
+has nothing to print but `Base.show`, which prints EVERY space as `&self` (`Eval.jl:549`).
+
+The grammar decides the shape of the fix. `metta_language_spec.md:36` gives `GROUNDED ::= STRING |
+WORD`: a grounded atom's textual form is a WORD. A named space HAS a word — `&kb` — and it re-parses
+correctly, because the clause is loaded back into the same space whose token table defined it.
+MEASURED: `!(bind! &kb (new-space))` then `!(add-atom &kb …)` then `!(match &kb …)` round-trips at
+top level today; only the DEFINITION path lost it, because only that path goes through `render`.
+
+So this restores the word before lowering, and everything downstream is unchanged: the `Sym` renders
+as `&kb`, re-parsing turns it back into the same `Grounded{Space}`, and the emitted clause means what
+its source meant. A PRE-PASS rather than a render-time lookup because `render` has no access to a
+space's token table and threading one through every emitter signature would be a large change to
+carry a name that the parser already knew.
+
+⚠️ AN ANONYMOUS SPACE IS STILL UNNAMEABLE — `(new-space)` used inline, never bound to a token, has no
+word to emit. Those still fall to `_unroundtrippable` and are declined, which is correct: a value with
+no textual form cannot be in a DISTRIBUTED artifact, and the IL is the distributed artifact."""
+function _name_spaces(atoms::Vector{StandardMeTTa.Atom}, sp)::Vector{StandardMeTTa.Atom}
+    # token → space, reversed once per form.
+    #
+    # ⚠️ `sp` ITSELF IS EXCLUDED, for two reasons, and the first version of this did neither.
+    #   CORRECTNESS: `&self` is ALWAYS bound (`Eval.jl:2579`), and rewriting it to `Sym("&self")`
+    #   changes what every LATER stage sees — `Frontend.lower` tests `h isa Grounded{Eval.SpaceOp}`
+    #   and `EmitIL._lowerable_match` inspects head kinds. Turning the common case from a Grounded
+    #   into a Sym silently re-decides those guards. `&self` also needs no help: it round-trips by
+    #   construction.
+    #   COST: because `&self` is always present, `names` was never empty, so EVERY form deep-copied
+    #   its whole atom tree. MEASURED — `test_compile_lane_fuzz.jl` (40 generated programs through
+    #   `compile_run`) went to 288 s wall and pushed the suite past its 10-minute budget.
+    # With `sp` excluded, a program that names no other space hits the early return below and pays
+    # nothing at all, which is almost every program.
+    names = IdDict{Any, String}()
+    for (tok, a) in sp.tokens
+        a isa StandardMeTTa.Grounded || continue
+        v = (a::StandardMeTTa.Grounded).value
+        (v isa Eval.Space && v !== sp) || continue
+        get!(names, v, tok)                      # first token wins; deterministic per table order
+    end
+    isempty(names) && return atoms
+
+    rewrite(a::StandardMeTTa.Atom)::StandardMeTTa.Atom = begin
+        if a isa StandardMeTTa.Expression
+            StandardMeTTa.Expression(StandardMeTTa.Atom[rewrite(c)
+                                                        for c in (a::StandardMeTTa.Expression).children])
+        elseif a isa StandardMeTTa.Grounded && (a::StandardMeTTa.Grounded).value isa Eval.Space
+            nm = get(names, (a::StandardMeTTa.Grounded).value, nothing)
+            nm === nothing ? a : StandardMeTTa.Sym(nm)
+        else
+            a
+        end
+    end
+    StandardMeTTa.Atom[rewrite(a) for a in atoms]
 end
 
 """The Grounded values that DO NOT SURVIVE the IL text round-trip, and why each one dies.

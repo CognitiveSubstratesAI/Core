@@ -72,9 +72,17 @@ end
         @test string(kb) == "&self"                             # …that prints as the current one
     end
 
-    @testset "a definition carrying such a value is DECLINED, and answers correctly" begin
-        # The witness is four lines and the compiler used to produce it (`compiled=1 fell_back=0`):
-        # the write went to the space the re-parsed `&self` named, so the later match found nothing.
+    @testset "a NAMED space now COMPILES and is correct — the name is restored, not declined" begin
+        # 🔴 THIS TESTSET ASSERTED THE STOPGAP AND HAD TO BE CORRECTED. It originally required
+        # `r.fell_back >= 1` — that the clause be DECLINED — because declining was how the bug was
+        # first closed. When `CompileLane._name_spaces` restored the token instead, the clause began
+        # COMPILING and answering correctly, and this test FAILED on the improvement. A test that
+        # pins a fix's MECHANISM rather than its REQUIREMENT blocks the better fix; the requirement
+        # is "the write and the read reach the same space", not "the compiler gives up".
+        #
+        # The witness is four lines and the compiler used to produce the wrong answer with
+        # `compiled=1 fell_back=0`: the write went to whatever space the re-parsed `&self` named, so
+        # the later match found nothing.
         prog = "!(bind! &kb (new-space))\n" *
                "(= (put \$x) (add-atom &kb (Green \$x)))\n" *
                "!(put Fritz)\n" *
@@ -83,9 +91,12 @@ end
         got = sort(vcat([a for (_, a) in r.answers]...))
         @test got == _rt_interp(prog)          # agrees with the interpreter…
         @test "Fritz" in got                   # …and specifically FINDS the atom it wrote
-        @test r.fell_back >= 1                 # by DECLINING, which is the guard's whole mechanism
+        @test r.compiled >= 1                  # …having actually COMPILED it, not fallen back
 
-        # The corpus case, reduced: a definition whose entire body is a bound state cell.
+        # The corpus case, reduced: a definition whose entire body is a bound state cell. This one is
+        # STILL declined, and the asymmetry is the point — a space has a WORD that re-parses to the
+        # same space, a state cell has no textual form at all (`(State (A B))` re-parses as an
+        # Expression, and the cell is MUTABLE IDENTITY besides). Naming cannot save it.
         prog2 = "!(bind! &tok (new-state (A B)))\n" *
                 "(= (get-token) &tok)\n" *
                 "!(get-state (get-token))\n"
@@ -93,6 +104,7 @@ end
         got2 = sort(vcat([a for (_, a) in r2.answers]...))
         @test got2 == _rt_interp(prog2)
         @test "(A B)" in got2
+        @test r2.fell_back >= 1                # correct by DECLINING — there is no word to emit
     end
 
     @testset "`&self` is NOT declined — the guard must not over-reach" begin
