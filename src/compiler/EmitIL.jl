@@ -233,6 +233,7 @@ function _instr(g::GResidual, cont::String, ::String)::Union{String, Nothing}
     n = g.node
     inner = _lowerable_match(n)         ? "(eval " * _render_il(n) * ")" :
             _is_minimal_instruction(n)  ? _render_il(n) :
+            _var_headed_call(n)         ? "(metta " * _render_il(n) * " %Undefined% &self)" :
                                           nothing
     inner === nothing && return nothing
     # THE RENDER GUARD, and it closes a CLASS rather than the instance that produced it. Lowering a
@@ -246,6 +247,40 @@ function _instr(g::GResidual, cont::String, ::String)::Union{String, Nothing}
     o = render(g.out); occursin("<unrenderable", o) && return nothing
     "(chain " * inner * " " * o * " " * cont * ")"
 end
+
+"""A VARIABLE-HEADED application in value position — `(\$f \$x \$y)` — which `metta` can dispatch.
+
+This is the largest single decline class: CODEMAP records **97 of 153 residuals** as variable-headed
+expressions in value position, and every higher-order shape in `d2_higherfunc.metta` is one —
+`(= (((curry \$f) \$x) \$y) (\$f \$x \$y))`, `(= ((curry-a \$f \$a) \$b) (\$f \$a \$b))`.
+
+`ANormal` cannot build a `GCall` from it: there is no static head. `ANormal.jl:208` says so and names
+the reference answer — "PeTTa handles that case with `partial/2` closures at RUNTIME; we have no
+closure representation yet, and inventing one here would be exactly the kind of unreferenced
+improvisation this file avoids." That was right. The point is that we no longer have to invent one:
+`metta` IS runtime dispatch, and it is one of the thirteen instructions, so nothing is invented.
+
+MEASURED 2026-08-11, all four against the source as oracle — including the control, because the risk
+here is OVER-reduction, not under:
+
+    (= (apply2 \$f \$x \$y) (\$f \$x \$y))   !(apply2 + 1 2)              source 3     · metta IL 3
+                                          !(apply2 is Socrates Human)  source True  · metta IL True
+    (= ((curry-a \$f \$a) \$b) (\$f \$a \$b))  !((curry-a is Socrates) Human)  source True  · metta IL True
+    CONTROL — a PARTIAL application must stay UNREDUCED:
+                                          !(curry-a is Socrates)
+                                          source `(curry-a is Socrates)` · metta IL the same
+
+That control is why `metta` is the right instruction and `eval` is not: `metta` returns a term
+unchanged when nothing reduces (`metta.txt:352` `interpret_args` relies on exactly this), so a partial
+application stays a partial application instead of collapsing to `NotReducible`.
+
+⚠️ POSITION, NOT SHAPE, licenses this — CODEMAP row 221 states the rule: "The tempting one-line fix —
+'variable-headed expressions are data' — is WRONG: `for-each-in-atom` has `(let \$_ (\$func \$head) …)`,
+the same shape in VALUE position, and it IS a dynamic call. POSITION decides." A `GResidual` reaching
+here came from `translate_expr`, i.e. VALUE position, which is the position where it is a call. Head
+patterns never arrive here — `constrain_args` handles those."""
+_var_headed_call(n::IRAtom)::Bool =
+    n isa IRExpression && (n::IRExpression).head isa IRVariable
 
 const _MINIMAL_KINDS = (SPECIAL_CHAIN, SPECIAL_EVAL, SPECIAL_FUNCTION, SPECIAL_RETURN)
 

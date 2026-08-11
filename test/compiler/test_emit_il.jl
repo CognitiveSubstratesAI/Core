@@ -187,11 +187,23 @@ end
     r2, cls2 = _to_il("(= (tag \$x) (case \$x (((p \$a) (got \$a)) (\$other none))))")
     @test isempty(r2.declined)
 
-    # (3) VALUE POSITION ⇒ STILL A RESIDUAL. `(let \$_ (\$func \$head) …)` — the shape in
-    #     `for-each-in-atom` — is a DYNAMIC CALL whose callee is unknown until runtime. Lowering it as
-    #     data would silently return the unevaluated pair, so it must stay declined, not be swept up
-    #     by the pattern fix.
+    # (3) VALUE POSITION IS A DYNAMIC CALL — and it is now LOWERED, not declined.
+    #
+    # 🔴 THIS ASSERTED `!isempty(r3.declined)` UNTIL 2026-08-11 — the third test this day found to be
+    # pinning a LIMITATION rather than a REQUIREMENT. Its stated reason was "lowering it as DATA would
+    # silently return the unevaluated pair", which is right about DATA and does not apply to what the
+    # emitter now does: `($f $x)` lowers to `(chain (metta ($f $x) %Undefined% &self) …)`, i.e.
+    # RUNTIME DISPATCH — PeTTa's `reduce/2` expressed in one of the thirteen instructions.
+    #
+    # Asserted by EXECUTION, this file's own standard, in both directions:
     r3, cls3 = _to_il("(= (app \$f \$x) (let \$r (\$f \$x) \$r))")
-    @test !isempty(r3.declined)
-    @test any(g -> g isa _IA.GResidual, _IA.all_goals(only(cls3).goals))
+    @test isempty(r3.declined)
+    @test r3.emitted == 1
+    #   …it COMPUTES when the callee resolves,
+    @test _answers(["(= (double \$x) (+ \$x \$x))", "(= (app \$f \$x) (let \$r (\$f \$x) \$r))"],
+                   "(app double 4)") == ["8"]
+    #   …and — THE CONTROL THE OLD ASSERTION EXISTED TO PROTECT — an UNRESOLVED callee is NOT faked:
+    #   the term comes back unevaluated, exactly as the interpreter returns it. That is the property
+    #   that made `metta` the right instruction and `eval` the wrong one (`eval` yields NotReducible).
+    @test _answers(["(= (app \$f \$x) (let \$r (\$f \$x) \$r))"], "(app nosuch 4)") == ["(nosuch 4)"]
 end

@@ -146,7 +146,20 @@ const FLOOR_TOTAL   = 379    # of 1000  (377 -> 379, arity-aware `is_fun`, 2026-
 # SIDE EFFECT of a correctness fix — the direction this ratchet is supposed to reward.
 # The counterexample that forced it: `b1_equal_chain.metta` defines `S` at arity 3 (SKI) and uses it
 # at arity 1 (Peano), so name-keying hoisted `(S $y)` out of a rule head and broke the clause.
-const FLOOR_IL_TOTAL = 864   # of 1000
+# RAISED 2026-08-11 by LOWERING VARIABLE-HEADED BODIES: 864 -> 930 (+66), MM2 unchanged at 379.
+# `(= (apply2 $f $x $y) ($f $x $y))` — the largest single decline class (CODEMAP: 97 of 153 residuals,
+# and every higher-order shape in `d2_higherfunc`) — now emits
+# `(chain (metta ($f $x $y) %Undefined% &self) $out …)`. `metta` IS runtime dispatch, so nothing is
+# invented: it is PeTTa's `reduce/2` expressed in one of the thirteen instructions, which is exactly
+# the objection `ANormal.jl:208` raised against inventing a closure representation.
+#
+# ⚠️ THIS EXACT CHANGE WAS TRIED AND REVERTED EARLIER THE SAME DAY (`d052bcb`), when it took
+# d2_higherfunc from 3 extra errors to 13. It was never the defect: diagnosing those 13 showed #1 was
+# `((curry +) 2)`, a PARTIAL APPLICATION that must stay unreduced — which a body lowering cannot
+# affect. The cause was the NESTED HEAD being rebuilt lossily as `(name head_args…)` (`896cdc3`).
+# With that declined, this lands clean: both corpora green, fuzz green, and the eval-one-step gate
+# still 0 violations over all 930 clauses. Reverting it was right; so was going back for it.
+const FLOOR_IL_TOTAL = 930   # of 1000
 
 "Parens balance, ignoring anything inside a MeTTa string literal."
 function _rt_balanced(s::AbstractString)::Bool
