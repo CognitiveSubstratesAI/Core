@@ -126,16 +126,46 @@ _render_il(a::IRAtom)::String =
 _instr(g::GUnify, cont::String, fail::String)::String =
     "(unify " * render(g.lhs) * " " * render(g.rhs) * " " * cont * " " * fail * ")"
 
-"""`(chain (eval (f a b)) \$out ⟨cont⟩)` — spec §3: interpret the atom, substitute `<var>` in the template.
+"""`(chain (metta (f a b) %Undefined% &self) \$out ⟨cont⟩)` — spec §3: interpret the atom, substitute
+`<var>` in the template.
 
 NOTE the direction. `ANormal` performs the functional→relational lowering (result-as-last-argument,
 `f(a,b,Out)`) because Prolog and MM2 need a relation. Minimal MeTTa is FUNCTIONAL, so this stage puts
 the result back where it belongs: `out` becomes the chain's binding variable, not an extra argument.
 A-normal form is still the right input — it named the intermediate, which is precisely what `chain`
-needs."""
+needs.
+
+⚠️ THIS EMITTED `eval` UNTIL 2026-08-11, and **`metta`, NOT `eval`**, is the correction.
+
+🔴 `eval` MAKES ONE STEP; A CHAIN TEMPLATE NEEDS THE VALUE. `metta.txt:96` defines them apart:
+`(eval <atom>)` "makes one step of the evaluation", `(metta <atom> <type> <space>)` "evaluate <atom>
+in MeTTa interpreter using <space> as a context". A `GCall` wants the callee's RESULT; one step gives
+the callee's BODY.
+
+MEASURED 2026-08-11 on `c3_pln_stv`'s own definitions — and note how it hides:
+
+    (chain (eval (TV X)) \$t \$t)                 ⟶ (stv 0.5 0.8)      looks CORRECT
+    (chain (eval (TV X)) \$t (eval (s-tv \$t)))   ⟶ the whole chain UNREDUCED, with \$t bound to
+                                                  `(match &self (.tv …))` — TV's BODY, not its value
+    (chain (metta (TV X) %Undefined% &self) \$t
+           (metta (s-tv \$t) %Undefined% &self))  ⟶ 0.5, matching `(s-tv (TV X))`
+
+With a TRIVIAL template the driver keeps interpreting and the answer looks right; it only breaks when
+the template does further work, which is every non-trivial clause. That is why this survived a
+coverage ratchet, a corpus differential and a fuzz differential: the shape is right, the values are
+wrong only in composition.
+
+This is the single root behind `c3_pln_stv` (`(stv NotReducible NotReducible)`) and
+`e1_kb_write`'s conjunction — `NotReducible` was a downstream symptom of binding the body, not the
+disease.
+
+⚠️ `%Undefined%` IS THE RIGHT TYPE ARGUMENT and not a placeholder: the emitter has no type
+information at a call site, and `%Undefined%` is exactly MeTTa's "no expectation" meta-type
+(`metta_language_spec.md` §2.4). `&self` is the context space, which re-parses to whatever space the
+clause is loaded into — correct by construction, and the same property `_name_spaces` relies on."""
 _instr(g::GCall, cont::String, ::String)::String =
-    "(chain (eval (" * String(g.head) * (isempty(g.args) ? "" : " " * _render_args(g.args)) * ")) " *
-    render(g.out) * " " * cont * ")"
+    "(chain (metta (" * String(g.head) * (isempty(g.args) ? "" : " " * _render_args(g.args)) *
+    ") %Undefined% &self) " * render(g.out) * " " * cont * ")"
 
 """Branch — condition goals, then a 4-ary `unify` against `True`, JOINED before the continuation.
 

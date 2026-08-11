@@ -81,7 +81,13 @@ end
         joined = join(r.clauses, "\n")
         @test occursin("(function ", joined)        # clause body is a function/return
         @test occursin("(return ", joined)
-        @test occursin("(chain (eval ", joined)     # calls are chain+eval
+        # CALLS ARE `chain` + `metta`, NOT `chain` + `eval`. This asserted `eval` until 2026-08-11 and
+        # was pinning a defect: `eval` makes ONE STEP (`metta.txt:96`), so the chain variable bound the
+        # callee's BODY rather than its value, and every downstream goal computed on an unreduced term.
+        # Switching the emitter to `metta` removed every extra error in both corpora (e1_kb_write 2→0,
+        # c3_pln_stv 1→0). Asserted positively AND negatively so the old shape cannot come back.
+        @test occursin("(chain (metta ", joined)
+        @test !occursin("(chain (eval ", joined)
         @test !occursin("(exec ", joined)           # and emphatically NOT MM2 exec atoms
         @test !occursin("(O ", joined)
     end

@@ -93,6 +93,21 @@ THIS BUDGET and changing the budget invalidates them.
 
 MEASURED 2026-08-10 over all 26 scripts: 10 deviate — 6 with wrong answers, 4 exhausting budget."""
 const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
+    # 🔴 2026-08-11 — EMITTING `metta` INSTEAD OF `eval` AT CALL SITES REMOVED EVERY EXTRA ERROR IN
+    # THIS CORPUS. `EmitIL._instr(::GCall, …)` emitted `(chain (eval (f a)) $out …)`; `eval` makes ONE
+    # STEP (`metta.txt:96`), so `$out` was bound to the callee's BODY, not its value, and everything
+    # downstream computed on an unreduced term. `metta` interprets. Measured effect here:
+    #
+    #     e1_kb_write   2 errors → 0      (entry REMOVED — it now agrees)
+    #     c3_pln_stv    1 error  → 0      exhausted 2 → 3
+    #     c1_grounded_basic 0    → 0      exhausted 0 → 1   (NEW entry)
+    #
+    # THE EXHAUSTIONS ARE BUDGET, NOT DEFECTS, and that is measured rather than assumed: at 40 000
+    # steps ALL THREE are 0 errors / 0 exhausted — and FASTER in wall time (c1 8.06 s → 0.22 s),
+    # because burning the 4 000 budget and throwing costs more than finishing. `metta` fully
+    # interprets each call where `eval` did one step, so a clause needs more steps; `_CC_MAX_STEPS`
+    # stays at 4 000 for the reason its own docstring gives (d2_higherfunc), so the cost shows up here.
+    # A wrong answer traded for "needs more room" is the right direction.
     # b3_direct and b4_nondeterm were HERE and are FIXED — both introspect their own rules, and
     # `CompileLane._program_introspects_rules` now compiles nothing for such a program. Removed rather
     # than left as passing entries, so the ratchet keeps working in the improving direction too.
@@ -134,7 +149,8 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # ⚠️ NOT the `is_fun` root, which was the obvious guess and is wrong here: `TV` IS hoisted (it is
     # the head being compiled, so it is in `funs`), and the un-hoisted `min`/`s-tv` are USER-DEFINED
     # heads, which are safe under one `eval` (measured: `(eval (member2 $x (cdr-atom $l)))` → True).
-    "c3_pln_stv.metta"    => (1, 2),
+    "c1_grounded_basic.metta" => (0, 1),   # NEW: needs >4 000 steps under `metta`; clean at 40 000
+    "c3_pln_stv.metta"    => (0, 3),       # error GONE; 3 queries now want more than 4 000 steps
     #
     # d2_higherfunc's shapes are NESTED-HEAD definitions — `(= (((curry $f) $x) $y) ($f $x $y))`,
     # `(= ((lambda $v $b) $arg) …)`. Both halves are declined: a variable-headed BODY is
@@ -188,7 +204,8 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # TRIED earlier in this arc and REVERTED because it exposed ANSWER DOUBLING. So the two-pass
     # change must come with an explanation of that doubling first, or it trades a wrong answer for a
     # different wrong answer.
-    "e1_kb_write.metta"   => (2, 0),
+    # e1_kb_write's entry is REMOVED — 2 extra errors → 0 under `metta`. Its diagnosis above is kept
+    # because it is the clearest statement of the class this change closed.
     "f1_imports.metta"    => (0, 1),
     "g1_docs.metta"       => (0, 1),
 )
@@ -269,9 +286,12 @@ in each. Measured: the LeaTTa half reproduces 7 of the conformance half's deviat
 `test_stdlib.metta`, which is clean. The second run is therefore NOT extra coverage; its value is the
 BASELINE, which here is machine-proved rather than self-referential."""
 const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
-    "c3_pln_stv.metta"    => (1, 2),
-    "d2_higherfunc.metta" => (3, 0),   # exhausted 2 → 0, same compound-head fix; see the other dict
-    "e1_kb_write.metta"   => (2, 0),
+    # Same `metta`-at-call-sites effect as the other dict, measured against the PROVED baseline:
+    # every extra error gone, two scripts now wanting more than 4 000 steps.
+    "c1_grounded_basic.metta" => (0, 1),
+    "c3_pln_stv.metta"    => (0, 3),
+    "d2_higherfunc.metta" => (3, 0),   # exhausted 2 → 0, compound-head fix; see the other dict
+    # e1_kb_write REMOVED — 2 → 0 errors.
     # e2_states was (3, 0) here too and is FIXED against the PROVED baseline as well — the same
     # `_unroundtrippable` decline. Worth stating separately from the conformance half: that half's
     # baseline is our own interpreter, so "agrees" there could in principle mean two lanes wrong
