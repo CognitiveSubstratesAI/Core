@@ -224,12 +224,21 @@ end
             @info "eval-one-step violation (ours)" file=f form=first(b, 100)
         end
         println("     ours: files=$(r.files) clauses=$(r.clauses) violations=$(length(r.hits))")
-        # MEASURED 2026-08-11: 21, nearly all `(eval (== (car-atom $x) SYM))` — the exact shape the
-        # first testset proves returns a silently wrong `False`. They pass the health gate only
-        # because it runs the INTERPRETER, and pass the coverage ratchet only because the ratchet
-        # COUNTS emitted clauses and never executes them. Neither gate could have seen this.
-        # A DROP MUST BE RECORDED DELIBERATELY, same discipline as the corpus differential.
-        @test length(r.hits) <= 21
+        # 🟢 ZERO — and it was 21 when this gate was written, hours earlier the same day.
+        #
+        # The 21 were nearly all `(eval (== (car-atom $x) SYM))`, the exact shape the first testset
+        # proves returns a silently wrong `False`. They passed `bin/health` (it runs the INTERPRETER)
+        # and passed the coverage ratchet (it COUNTS emitted clauses, never executes them) — this file
+        # was the only thing that could see them.
+        #
+        # They are gone because `EmitIL._instr(::GCall, …)` now emits `metta` instead of `eval`
+        # (`866d723`). `eval` makes ONE STEP, so a call site handed a primitive its arguments
+        # unreduced; `metta` interprets. The gate did its job twice: it measured the class, and then it
+        # measured the class going to zero.
+        #
+        # PINNED AT 0, NOT AT 21. A ratchet left slack after the defect is fixed is a ratchet that lets
+        # it come back — and the shape is one emitter edit away at all times.
+        @test length(r.hits) == 0
         @test r.clauses > 500                     # anti-vacuity: the scan actually emitted
     end
 
@@ -247,7 +256,7 @@ end
     # The our-corpus ratchet above is NOT opt-in: that one guards against regression and runs always.
     @testset "CeTTa corpus: the count may not rise" begin
         if get(ENV, "CORE_TEST_CETTA", "") == ""
-            @info "CeTTa scan SKIPPED (opt-in) — set CORE_TEST_CETTA=1 to run it" expected_violations=3
+            @info "CeTTa scan SKIPPED (opt-in) — set CORE_TEST_CETTA=1 to run it" expected_violations=0
             @test_skip false
         elseif !isdir(_E1_CETTA)
             # LOUD, never silent. A skipped external gate that reports nothing is indistinguishable
@@ -260,10 +269,10 @@ end
                 @info "eval-one-step violation (CeTTa)" file=f form=first(b, 100)
             end
             println("     CeTTa: files=$(r.files) clauses=$(r.clauses) violations=$(length(r.hits))")
-            # MEASURED 2026-08-11 over CeTTa lib+examples: 3. Lower than ours not because CeTTa is
-            # cleaner but because per-file scoping misses its heavier cross-file structure — the
-            # under-reporting is stated above and is the intended direction.
-            @test length(r.hits) <= 3
+            # 🟢 ZERO, from 3 — same cause as the our-corpus drop above (`866d723`). Worth keeping the
+            # external half even at zero: it is what falsified three versions of this predicate, and a
+            # future emitter change is exactly when that matters again.
+            @test length(r.hits) == 0
             @test r.clauses > 800                 # anti-vacuity
         end
     end
