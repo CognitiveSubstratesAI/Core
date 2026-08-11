@@ -149,6 +149,47 @@ WHY STATIC, not a runtime check. PeTTa asks at runtime — `reduce/2` does `fun(
 need not pay that at all: the defined heads are exactly `IRProgram.definitions`, known for the whole
 module before a single goal is emitted. That is the whole argument, and it stands on its own.
 
+🔴 …AND ITS PREMISE IS VIOLATED BY THE ONLY PRODUCTION CALLER. `CompileLane.compile_definition`
+compiles ONE FORM AT A TIME (deliberately — Invariant 6: a definition contributes its IL form or its
+source form, never both). So `IRProgram.definitions` holds exactly ONE head, every callee looks like
+data, and its call is never hoisted out of argument position. MEASURED 2026-08-11: that is why
+`(= (frog \$x) (and (croaks \$x) (eat_flies \$x)))` emits
+`(chain (eval (and (croaks \$x) (eat_flies \$x))) …)` and returns UNREDUCED, while the same source
+compiled WITH its callees visible emits the hoisted chain and answers `["True","True"]`.
+
+⚠️ AND THE OBVIOUS FIX MAKES IT WORSE — MEASURED, REVERTED, THIRD ATTEMPT. Passing the Space's
+defined heads through as `extra_funs` (`keys(Eval._rules_of(Eval.all_atoms(sp)))`) was tried on
+2026-08-11 and the corpus differential rejected it:
+
+    b1_equal_chain.metta      0 → 4 extra errors
+    b2_backchain.metta        0 → 1 extra error
+    c1_grounded_basic.metta   0 → 1 exhausted
+    e1_kb_write.metta         2 → 2   (UNCHANGED — it does not even fix its target)
+
+Three clean scripts regressed and the intended beneficiary did not move. An earlier attempt at the
+same idea was reverted for ANSWER DOUBLING. So "give `is_fun` the whole program" is NOT sufficient and
+is actively harmful on its own: more heads known ⇒ more expressions become `GCall` ⇒ more clauses are
+emitted, and those clauses are wrong in a different way.
+
+WHAT PeTTa ACTUALLY HAS, and we have only half of. It runs BOTH mechanisms: a global `fun/1`
+(`assertz`, `metta.pl:326`) AND the runtime dispatcher `reduce/2`, which keeps the term when `fun(F)`
+fails (`Out = partial(F,Args)`). We took the static half and have no deferral, so an unresolved head
+is frozen as data forever instead of being decided at run time.
+
+THE MeTTa-NATIVE DEFERRAL IS `metta`, NOT `eval` — measured, because the obvious choice is wrong:
+
+    (chain (eval  (Cons 1 Nil)) \$t \$t)                     ⟶ NotReducible        ✗ data destroyed
+    (chain (metta (Cons 1 Nil) %Undefined% &self) \$t \$t)   ⟶ (Cons 1 Nil)        ✓ term kept
+    (chain (metta (f a) %Undefined% &self) \$t \$t)          ⟶ reduced             ✓ call made
+
+`metta.txt:79` defines `NotReducible` as "returns the unchanged function call instead", and
+`interpret_args` (`metta.txt:352`) evaluates each argument with `metta` — guarding on `\$h != \$atom` —
+precisely because `metta` returns the atom unchanged when nothing reduces. Lowering the conjunction
+above with `metta`-deferred arguments answers `["True","True"]`, matching the source.
+
+So the shape of a real fix is BOTH halves together — Space-wide `is_fun` for what is statically known,
+plus a `metta` chain for what is not. Neither alone is safe. Do not retry the static half by itself.
+
 ⚠️ CORRECTED 2026-08-08. This previously claimed "PeTTa PR #165 had its `current_predicate/1` calls
 REMOVED at maintainer request as too expensive, refactored to multifile declarations." EVERY CLAUSE
 WAS FALSE, and it was written without opening the PR. #165 is "Memoization Library"
