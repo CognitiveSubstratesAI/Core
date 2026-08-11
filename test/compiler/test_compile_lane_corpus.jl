@@ -136,9 +136,29 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     #   interpreter  ["True", "True"]
     #   compiled     ["(function (chain (eval (and (croaks $x) (eat_flies $x))) NotReducible (return NotReducible)))"]
     # An unbound argument is NOT the problem — `!(croaks $x)` and the same call through a definition
-    # both AGREE at 2 answers. The CONJUNCTION is: `(and A B)` lowers to a single opaque `eval`, so
-    # the two conjuncts cannot share a binding for `$x`, and the clause returns unreduced with raw IL
-    # leaking into the answer. Same family as PLeaTTa's ROOT 3 (bindings not flowing between goals).
+    # both AGREE at 2 answers. Nor is it `and`: the SAME failure occurs for `+`.
+    #
+    # ROOT CAUSE, found 2026-08-11 by printing every lowering stage, and it is NOT specific to any
+    # operator. A-normal DOES flatten arguments (`ANormal.jl:216-219`) — but only for a head that
+    # `is_fun` recognises, and `is_fun` is resolved from the definitions visible in THIS
+    # `lower_program` call. `compile_definition` compiles ONE FORM AT A TIME. So while `frog` is
+    # compiled, `croaks` is not a known function, its call is classified as DATA, and it is never
+    # hoisted out of argument position. Same source, more knowledge, different IL:
+    #
+    #   frog ALONE          (chain (eval (and (croaks $x) (eat_flies $x))) $__t1 (return $__t1))
+    #   frog WITH callees   (chain (eval (croaks $x)) $__t1 (chain (eval (eat_flies $x)) $__t2
+    #                         (chain (eval (and $__t1 $__t2)) $__t3 (return $__t3))))
+    #
+    # Run by hand, the first returns the clause UNREDUCED and the second returns ["True","True"],
+    # matching the interpreter. The `+` control behaves identically, so the corpus passes only
+    # because its grounded calls take ATOMIC arguments (`(+ $x $x)`, `(+ 1 2)`).
+    #
+    # THE FIX IS A TWO-PASS COMPILE LANE: collect every defined head, then compile each form with
+    # that set — exactly what `test_coverage_ratchet.jl` already does (Pass 1 `allfuns` → Pass 2
+    # `extra_funs`). ⚠️ NOT DONE HERE, and not merely for lack of time: passing `extra_funs` was
+    # TRIED earlier in this arc and REVERTED because it exposed ANSWER DOUBLING. So the two-pass
+    # change must come with an explanation of that doubling first, or it trades a wrong answer for a
+    # different wrong answer.
     "e1_kb_write.metta"   => (2, 0),
     "f1_imports.metta"    => (0, 1),
     "g1_docs.metta"       => (0, 1),
