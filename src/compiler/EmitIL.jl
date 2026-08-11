@@ -282,6 +282,28 @@ patterns never arrive here — `constrain_args` handles those."""
 _var_headed_call(n::IRAtom)::Bool =
     n isa IRExpression && (n::IRExpression).head isa IRVariable
 
+# 🛑 DO NOT WIDEN THIS TO AN EXPRESSION HEAD. Tried 2026-08-11, MEASURED, REVERTED.
+#
+# The reasoning looked airtight: `((curry f) x)` in value position is a runtime dispatch exactly as
+# `($f x)` is, `metta` resolves both, and it is the second-largest IL decline class (25 of 70). It
+# raised coverage and broke the LeaTTa PROVED corpus — `test_stdlib.metta` 0 → 1 extra error:
+#
+#     (= (overlap-857 $l1 $l2) (foldl-atom $l1 (() () $l2) $accum $elem …))
+#
+# `(() () $l2)` is `foldl-atom`'s INITIAL ACCUMULATOR — a DATA TUPLE. Its head is the empty
+# expression `()`, so "head isa IRExpression" catches it and wraps data in a call.
+#
+# THE ASYMMETRY IS THE POINT: a VARIABLE head is unambiguously a dynamic call — nothing else can sit
+# there. An EXPRESSION head is ambiguous: a curried application AND a data tuple have the same shape,
+# and value position does not separate them (CODEMAP row 221's "POSITION decides" settles pattern-vs-
+# value, not this). Widening needs a predicate that tells a curried application from a tuple; there
+# is none yet, and coverage is not a reason to guess.
+#
+# ⚠️ IT ALSO SURFACED A LATENT RENDERING DEFECT, currently masked by these clauses being declined:
+# the empty expression `()` lowers to `IRExpression(IRSymbol(:Nil), [])` and RENDERS AS `(Nil)`, which
+# does not round-trip — `(Nil)` re-parses as a one-element expression containing the symbol `Nil`, not
+# as `()`. Any future work here must fix that first.
+
 const _MINIMAL_KINDS = (SPECIAL_CHAIN, SPECIAL_EVAL, SPECIAL_FUNCTION, SPECIAL_RETURN)
 
 """Whether this residual is a MINIMAL-MeTTa INSTRUCTION written directly in the source.
