@@ -341,11 +341,28 @@ contains a `GDisj` (one per branch), or `nothing` if it cannot be lowered at all
 function emit_il_clause(c::ANClause)::Union{Vector{String}, Nothing}
     variants = _expand_disj(c.goals)
     variants === nothing && return nothing
-    # A NESTED head cannot be rebuilt from `name` + `head_args` — the outer application's arguments
-    # are not in the clause at all, so `(name head_args…)` silently drops them and the body's
-    # references to them go unbound. Decline; see `ANClause.nested_head` for the measured case.
-    c.nested_head && return nothing
+    # A NESTED head is rendered from the CONSTRAINED PATTERN the clause carries, not rebuilt from
+    # `name` + `head_args` — that reconstruction drops the outer application's arguments entirely and
+    # leaves the body's references to them unbound (`ANClause.nested_head` records the measured case:
+    # `(= ((lambda $var $body) $arg) …)` emitting `(= (lambda $arg) …)`).
+    #
+    # Minimal MeTTa's `(= <pattern> <body>)` takes an arbitrary pattern, so the TARGET was never the
+    # obstacle — the clause struct was. Declining was the safe stopgap; this is the fix.
+    if c.nested_head
+        c.head_pattern === nothing && return nothing        # nested but no pattern carried ⇒ decline
+        hp = _render_il(c.head_pattern)
+        occursin("<unrenderable", hp) && return nothing
+        return _emit_with_head(c, hp)
+    end
     head = "(" * String(c.name) * (isempty(c.head_args) ? "" : " " * _render_args(c.head_args)) * ")"
+    _emit_with_head(c, head, variants)
+end
+
+"""Emit one clause given an already-rendered HEAD — shared by the plain and nested-head paths so the
+unrenderable sweep and the all-or-nothing decline apply identically to both."""
+function _emit_with_head(c::ANClause, head::String,
+                         variants = _expand_disj(c.goals))::Union{Vector{String}, Nothing}
+    variants === nothing && return nothing
     out = String[]
     for gs in variants
         body = _seq(gs, 1, "(return " * render(c.out) * ")", "(return Empty)")

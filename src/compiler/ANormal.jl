@@ -520,9 +520,20 @@ struct ANClause
     # perfectly well, so the target is not the obstacle — this struct is), and that is a larger change
     # than removing a wrong answer, which is what this does.
     nested_head::Bool
+    # The clause's HEAD PATTERN with every argument position replaced by its CONSTRAINED value —
+    # `nothing` for a plain `(f a b)` head, where `name` + `head_args` already say everything.
+    #
+    # This is what makes a NESTED head emittable rather than merely declinable. It cannot be the RAW
+    # source pattern: `constrain_args` HOISTS a call out of an argument position and substitutes a
+    # fresh variable (`(= (f (g $x)) …)` ⇒ head `(f $__t1)` plus a prefix goal), so the raw pattern
+    # would re-introduce the very call the goals already compute. `constrain_head` below rebuilds the
+    # nesting around the constrained arguments at EVERY level.
+    head_pattern::Union{IRAtom, Nothing}
 end
 ANClause(n::Base.Symbol, ha::Vector{IRAtom}, gs::Vector{Goal}, o::IRAtom) =
-    ANClause(n, ha, gs, o, false)
+    ANClause(n, ha, gs, o, false, nothing)
+ANClause(n::Base.Symbol, ha::Vector{IRAtom}, gs::Vector{Goal}, o::IRAtom, nested::Bool) =
+    ANClause(n, ha, gs, o, nested, nothing)
 
 """
     constrain_args(ctx, arg) -> (Vector{Goal}, IRAtom)
@@ -559,6 +570,31 @@ function constrain_args(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
     (Goal[], a)
 end
 
+"""Constrain a HEAD pattern at every nesting level, returning the prefix goals and the rebuilt head.
+
+`constrain_args` handles ONE argument. This handles the whole head, and the difference only shows on
+a nested one: `(((curry \$f) \$x) \$y)` has `args == [\$y]` and `head == ((curry \$f) \$x)`, so an
+arg-only walk never sees `\$f` or `\$x`. Recursing into `.head` is what keeps them.
+
+Order matters: the inner head's goals come FIRST, because its constrained variables may appear in the
+outer arguments.
+"""
+function constrain_head(c::ANCtx, lhs::IRAtom)::Tuple{Vector{Goal}, IRAtom}
+    lhs isa IRExpression || return (Goal[], lhs)
+    goals = Goal[]
+    h = (lhs::IRExpression).head
+    if h isa IRExpression                       # nested: constrain the inner head too
+        g, h = constrain_head(c, h)
+        append!(goals, g)
+    end
+    args = IRAtom[]
+    for x in (lhs::IRExpression).args
+        g, v = constrain_args(c, x)
+        append!(goals, g); push!(args, v)
+    end
+    (goals, IRExpression(h, args, (lhs::IRExpression).id, (lhs::IRExpression).src))
+end
+
 """
     translate_clause(ctx, name, clause) -> ANClause
 
@@ -581,9 +617,15 @@ function translate_clause(c::ANCtx, name::Base.Symbol, clause::IRBoundAtom)::ANC
         end
     end
     body, out = translate_expr(c, clause.value)
-    # A head whose own head is another EXPRESSION is nested — see `ANClause.nested_head`.
+    # A head whose own head is another EXPRESSION is nested — see `ANClause.nested_head`. For those,
+    # rebuild the WHOLE head around its constrained arguments (`constrain_head`) and carry it, so the
+    # emitter has something faithful to render instead of the lossy `(name head_args…)`.
     nested = lhs isa IRExpression && (lhs::IRExpression).head isa IRExpression
-    ANClause(name, head_args, vcat(prefix, body), out, nested)
+    if nested
+        hgoals, hpat = constrain_head(c, lhs)
+        return ANClause(name, head_args, vcat(hgoals, body), out, nested, hpat)
+    end
+    ANClause(name, head_args, vcat(prefix, body), out, nested, nothing)
 end
 
 """Every `(head, arity)` this program DEFINES — keyed per CLAUSE, not per definition.
@@ -686,7 +728,12 @@ hundreds of exec rules that would each have to fire.
 function expand_control(clause::ANClause; max_paths::Int = 32)::Union{Vector{ANClause},Nothing}
     paths = _expand_goals(clause.goals, max_paths)
     paths === nothing && return nothing
-    ANClause[ANClause(clause.name, clause.head_args, gs, clause.out) for gs in paths]
+    # PROPAGATE `nested_head` — a reconstruction that drops it silently re-enables the flattened-head
+    # emission the flag exists to prevent. The 4-arg convenience constructor defaults it to `false`,
+    # which is exactly the wrong default on a path that COPIES an existing clause; caught by reading
+    # the consumers of the field the same day it was added, not by a test.
+    ANClause[ANClause(clause.name, clause.head_args, gs, clause.out, clause.nested_head)
+             for gs in paths]
 end
 
 "Cartesian product over the goal list — each goal contributes its own alternatives."
