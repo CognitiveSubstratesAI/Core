@@ -141,7 +141,23 @@ structural emission has to be provably behaviour-preserving FIRST (`test_emit_il
 and it will be visible as an intentional divergence rather than hidden inside a refactor.
 
 Returns `nothing` for a node `render` cannot handle, mirroring its `<unrenderable:…>` marker — the
-caller declines exactly as it does today."""
+caller declines exactly as it does today.
+
+🔴 TRAP FOR THE SWITCH-OVER, FOUND BEFORE MAKING IT: THERE ARE **TWO** RENDERERS AND THEY DIFFER.
+`_instr(::GResidual, …)` renders through `_render_il`, which HANDLES `IRSpecial`; every other
+`_instr` renders through the shared `render`, which does NOT and yields `<unrenderable:IRSpecial>`.
+This function mirrors `_render_il`. So converting every site to it in one sweep would make an
+`IRSpecial` renderable in `GCall`/`GUnify`/`GBranch` argument positions where the emitter declines
+today — A COVERAGE INCREASE HIDDEN INSIDE A REFACTOR, which is the one thing the text-equivalence
+rule above exists to prevent, and which the ratchet would report as a WIN.
+
+The asymmetry is deliberate and load-bearing: `render` is SHARED with the MM2 emitter, whose decline
+test is `startswith(render(a), "<unrenderable")`, so teaching it `IRSpecial` silently widens MM2 into
+emitting a `match` its target cannot run — measured 2026-08-10 at MM2 376 → 378, and given back.
+
+⇒ The switch needs the SAME two-renderer split on the atom side: a `render`-equivalent builder for the
+`GCall`/`GUnify`/`GBranch`/`GFindall` sites and this one for `GResidual`. Doing it with a single
+builder is the easy mistake, and the ratchet will applaud it."""
 function _il_atom(a::IRAtom)::Union{Atom, Nothing}
     if a isa IRSpecial
         kids = Atom[Sym(String((a::IRSpecial).surface))]
