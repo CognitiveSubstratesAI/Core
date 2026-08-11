@@ -207,3 +207,71 @@ end
     #   that made `metta` the right instruction and `eval` the wrong one (`eval` yields NotReducible).
     @test _answers(["(= (app \$f \$x) (let \$r (\$f \$x) \$r))"], "(app nosuch 4)") == ["(nosuch 4)"]
 end
+
+@testset "STRUCTURAL emission agrees with the TEXT path — the prerequisite for switching" begin
+    # The compile lane currently launders IL through text: `emit_il_clause` builds a String and
+    # `CompileLane` re-parses it with `load_metta!`. That round-trip is what corrupted
+    # `Grounded{Space}` and `Grounded{StateCell}` (see `test_il_roundtrip.jl`), and two guards exist
+    # only to survive it. `_il_atom` is the structural counterpart of `_render_il`, so the lane can
+    # eventually pass ATOMS and keep `render` for the wire — struct in memory, bytes on the wire.
+    #
+    # 🔴 THIS TEST IS THE SAFETY PROPERTY FOR THAT SWITCH, and it is why the converter is deliberately
+    # text-EQUIVALENT rather than text-IMPROVED: `string(_il_atom(a))` must equal `_render_il(a)` on
+    # every node the corpus produces. Any divergence introduced later is then a DELIBERATE, visible
+    # change rather than something hidden inside a refactor.
+    _IL = MeTTaCore.CompilerEmitIL
+    _IR = MeTTaCore.CompilerIR
+
+    # walk every IR node the real corpus lowers, not a handful I thought of
+    function _walk(a, f)
+        f(a)
+        if a isa _IR.IRExpression
+            _walk(a.head, f); for x in a.args; _walk(x, f); end
+        elseif a isa _IR.IRSpecial
+            for x in a.args; _walk(x, f); end
+        end
+    end
+
+    checked = 0; mismatches = Tuple{String,String}[]
+    for src in ("(= (f \$x) (g \$x))",
+                "(= (h \$x) (if (== \$x 1) \"one\" other))",
+                "(= (k \$x) (let (\$a \$b) \$x (pair \$b \$a)))",
+                "(= (m \$x) (match &self (p \$x \$y) \$y))",
+                "(= (n) (superpose (1 2 3)))",
+                "(= (q \$f \$x) (\$f \$x))")
+        _, cls = _to_il(src)
+        for cl in cls
+            # EVERY IRAtom reachable from EVERY goal — not just residuals. The first version walked
+            # only `GResidual.node` + head args and visited 16 nodes; the anti-vacuity floor below
+            # caught it. A converter proven on 16 nodes is not proven.
+            goal_atoms(g) = g isa _IA.GUnify    ? _IR.IRAtom[g.lhs, g.rhs] :
+                            g isa _IA.GCall     ? _IR.IRAtom[g.args...; g.out] :
+                            g isa _IA.GBranch   ? _IR.IRAtom[g.condval, g.out] :
+                            g isa _IA.GDisj     ? _IR.IRAtom[g.out] :
+                            g isa _IA.GFindall  ? _IR.IRAtom[g.template, g.out] :
+                            g isa _IA.GResidual ? _IR.IRAtom[g.node, g.out] : _IR.IRAtom[]
+            for g in _IA.all_goals(cl.goals), nd in goal_atoms(g)
+                _walk(nd, a -> begin
+                    txt = _IL._render_il(a); at = _IL._il_atom(a)
+                    checked += 1
+                    if at === nothing
+                        occursin("<unrenderable", txt) ||
+                            push!(mismatches, (txt, "nothing"))
+                    elseif string(at) != txt
+                        push!(mismatches, (txt, string(at)))
+                    end
+                end)
+            end
+            for a in cl.head_args
+                txt = _IL._render_il(a); at = _IL._il_atom(a); checked += 1
+                at === nothing ? (occursin("<unrenderable", txt) || push!(mismatches, (txt, "nothing"))) :
+                    (string(at) == txt || push!(mismatches, (txt, string(at))))
+            end
+        end
+    end
+    for (txt, got) in first(mismatches, 5)
+        @info "STRUCTURAL/TEXT MISMATCH" text=txt structural=got
+    end
+    @test isempty(mismatches)
+    @test checked > 20        # anti-vacuity: the walk actually visited nodes
+end

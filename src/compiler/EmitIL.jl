@@ -44,8 +44,10 @@ module CompilerEmitIL
 using ..CompilerIR
 using ..CompilerANormal
 using ..CompilerEmit: render          # reuse the renderer — a second one would drift from the first
+using ..StandardMeTTa: Atom, Sym, Var, Expression   # typed atom model — same idiom as Frontend.jl:38
 
 export emit_il_clause, emit_il_program, ILResult
+
 
 "Result of lowering a program to minimal MeTTa. `declined` carries a REASON per clause, never a bare count."
 struct ILResult
@@ -120,6 +122,53 @@ _render_il(a::IRAtom)::String =
         "(" * join(String[_render_il(x) for x in
                           IRAtom[(a::IRExpression).head; (a::IRExpression).args]], " ") * ")" :
     render(a)
+
+"""IR node → a typed `StandardMeTTa.Atom`, the STRUCTURAL counterpart of `_render_il`.
+
+🔴 WHY THIS EXISTS: THE COMPILE LANE CURRENTLY LAUNDERS IL THROUGH TEXT. `emit_il_clause` builds a
+`String`, and `CompileLane` re-parses it with `load_metta!` — so a value survives only if
+`parse(show(v)) ≡ v`. MEASURED 2026-08-11: `Grounded{Space}` prints as `&self` for EVERY space and
+`Grounded{StateCell}` prints as `(State v)` and re-parses as a plain Expression. Two guards
+(`_unroundtrippable`, `_name_spaces`) exist solely to survive a round-trip the internal lane should
+not be doing. `render` stays — the IL IS the distributed artifact and must serialize — but
+serialization should be the WIRE, not the transport (struct in memory, bytes on the wire).
+
+⚠️ THIS IS DELIBERATELY TEXT-EQUIVALENT, NOT TEXT-IMPROVED. Every case mirrors `_render_il`/`render`
+exactly, including the lossy ones: an `IRPredefined` becomes `Sym(name)` rather than the grounded
+operation it names, and an `IRGrounded` string keeps its quotes. That is the point — the switch to
+structural emission has to be provably behaviour-preserving FIRST (`test_emit_il.jl` asserts
+`string(_il_atom(a)) == _render_il(a)` over the corpus). Fixing the lossy cases is the NEXT change,
+and it will be visible as an intentional divergence rather than hidden inside a refactor.
+
+Returns `nothing` for a node `render` cannot handle, mirroring its `<unrenderable:…>` marker — the
+caller declines exactly as it does today."""
+function _il_atom(a::IRAtom)::Union{Atom, Nothing}
+    if a isa IRSpecial
+        kids = Atom[Sym(String((a::IRSpecial).surface))]
+        for x in (a::IRSpecial).args
+            c = _il_atom(x); c === nothing && return nothing; push!(kids, c)
+        end
+        return Expression(kids)
+    elseif a isa IRExpression
+        kids = Atom[]
+        for x in IRAtom[(a::IRExpression).head; (a::IRExpression).args]
+            c = _il_atom(x); c === nothing && return nothing; push!(kids, c)
+        end
+        return Expression(kids)
+    elseif a isa IRSymbol       ; return Sym(String((a::IRSymbol).name))
+    elseif a isa IRPredefined   ; return Sym(String((a::IRPredefined).name))
+    elseif a isa IRResolvedSymbol; return Sym(String((a::IRResolvedSymbol).name))
+    elseif a isa IRVariable     ; return Var(String((a::IRVariable).name))
+    elseif a isa IRGrounded
+        # mirror `render(::IRGrounded)`: a STRING keeps its quotes in the text form, so the
+        # text-equivalent atom is the quoted SYMBOL, not a Grounded string. Improving this is the
+        # next change, not this one.
+        return (a::IRGrounded).ty === GROUNDED_STRING ?
+               Sym("\"" * string((a::IRGrounded).value) * "\"") :
+               Sym(string((a::IRGrounded).value))
+    end
+    nothing                                   # ⇒ `<unrenderable:…>` in the text path
+end
 
 "`(unify <atom> <pattern> <then> <else>)` — spec §3. A failed unification yields `Empty`, Core's own
 `EMPTY` sentinel (`Eval.jl:39`), so a non-matching clause contributes no result rather than erroring."
