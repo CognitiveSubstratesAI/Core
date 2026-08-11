@@ -71,6 +71,10 @@ function compile_definition(sp, form::AbstractString)::Union{Vector{String}, Not
     catch
         return nothing
     end
+    # A value that cannot survive the IL TEXT round-trip makes the emitted clause quietly mean
+    # something else — see `_unroundtrippable`. Checked on the PARSED atoms, before any lowering,
+    # because the corruption is in serialization and every later stage inherits it.
+    _unroundtrippable(atoms, sp) === nothing || return nothing
     prog = try CompilerFrontend.lower_program(atoms) catch; return nothing end
     isempty(prog.definitions) && return nothing        # a fact, not a definition — not a decline
     cls = try CompilerANormal.translate_program(prog) catch; return nothing end
@@ -121,6 +125,69 @@ function compile_run(program::AbstractString; fallback::Bool = true,
     finally
         Eval._INTERPRET_MAX[] = prev_max
     end
+end
+
+"""The Grounded values that DO NOT SURVIVE the IL text round-trip, and why each one dies.
+
+🔴 THE COMPILE LANE ROUND-TRIPS IL THROUGH TEXT. `compile_definition` returns `Vector{String}`, and
+`_compile_run_inner` re-loads each with `Eval.load_metta!`. So a clause is only faithful if every
+value in it satisfies `parse(show(v)) ≡ v`. Several do not, and their `show` methods are correct as
+DISPLAY — the defect is that display became a serialization format.
+
+MEASURED 2026-08-11, by execution, over every `Grounded`-carried type:
+
+  `Space`     `Eval.jl:549` prints EVERY space as `&self`, whatever its identity. On re-parse,
+              `&self` resolves through `space.tokens["&self"]` (`Eval.jl:2579`) to the space being
+              compiled INTO. So a definition that writes to a named space silently redirects.
+              WITNESSED — four lines, and the compiler produced it (`compiled=1 fell_back=0`):
+                  !(bind! &kb (new-space))
+                  (= (put \$x) (add-atom &kb (Green \$x)))
+                  !(put Fritz)
+                  !(match &kb (Green \$y) \$y)
+              interpreter `Fritz`, compiled lane NOTHING. This is `e1_kb_write.metta`'s 2 divergent
+              queries; its error text reads `(add-atom &self …)` for source that says `&kb`.
+
+  `StateCell` prints as `(State (A B))` and re-parses as a plain `Expression` — TYPE LOST, measured.
+              Worse than `Space` in kind: a state cell is MUTABLE IDENTITY, so no textual form could
+              be faithful. Nothing to fix in its `show`; such a clause must not be compiled.
+
+  `Bindings`  has NO `show` method at all, so it falls to `Grounded`'s `print(io, a.value)` and out
+              comes Julia struct syntax, which is not MeTTa and does not re-parse.
+
+  `WFSBottom` prints `undefined`, which re-parses as the SYMBOL `undefined`.
+
+⚠️ `&self` ITSELF IS FINE AND MUST STAY COMPILABLE. It round-trips by construction: the text `&self`
+re-parses to the space being loaded into, which is exactly what the source meant. That is why this
+guard takes `sp` and compares IDENTITY rather than rejecting `Grounded{Space}` wholesale — rejecting
+the type would give back working coverage to close a bug that only non-`&self` spaces have.
+
+This DECLINES rather than repairs. A declined definition falls back to the interpreter and answers
+correctly, so the guard is sound in the direction that matters. The real fix is to stop serializing
+IL through text — emit `Atom`s and load them directly — and that is a larger change than this file.
+Recorded so the decline is a known position rather than a mystery."""
+function _unroundtrippable(atoms::Vector{StandardMeTTa.Atom}, sp)::Union{Nothing, String}
+    why = nothing
+    walk(a::StandardMeTTa.Atom) = begin
+        why === nothing || return nothing
+        if a isa StandardMeTTa.Expression
+            for c in (a::StandardMeTTa.Expression).children; walk(c); end
+        elseif a isa StandardMeTTa.Grounded
+            v = (a::StandardMeTTa.Grounded).value
+            if v isa Eval.Space
+                v === sp || (why = "a named space other than &self (prints as `&self`, re-parses to &self)")
+            elseif v isa Eval.StateCell
+                why = "a state cell (prints as `(State …)`, re-parses as an Expression — type lost)"
+            elseif v isa Eval.WFSBottom
+                why = "WFSBottom (prints as `undefined`, re-parses as the symbol `undefined`)"
+            elseif !(v isa Eval.Operation || v isa Eval.SpaceOp ||
+                     v isa Number || v isa AbstractString || v isa Bool)
+                why = "a grounded $(typeof(v)) with no faithful textual form"
+            end
+        end
+        nothing
+    end
+    for a in atoms; walk(a); end
+    why
 end
 
 """Whether the program INSPECTS ITS OWN RULES — in which case nothing may be compiled.

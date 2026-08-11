@@ -96,10 +96,44 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # b3_direct and b4_nondeterm were HERE and are FIXED — both introspect their own rules, and
     # `CompileLane._program_introspects_rules` now compiles nothing for such a program. Removed rather
     # than left as passing entries, so the ratchet keeps working in the improving direction too.
+    #
+    # e2_states was HERE at (3, 0) and is FIXED, 2026-08-11. Root: the compile lane serializes IL to
+    # TEXT and re-parses it, and `Grounded{StateCell}` prints as `(State (A B))`, which re-parses as
+    # an ordinary Expression — the cell's IDENTITY is gone, so `get-state` and every later
+    # `change-state!` see a different thing. `e2_states.metta:17` is literally
+    # `(= (get-token) &state-token)`, a definition whose whole body is a parse-time-bound state cell.
+    # `CompileLane._unroundtrippable` now declines such a definition; it falls back and answers
+    # correctly. That guard fired EXACTLY ONCE across all 26 scripts (`total_compiled` 56 → 55), which
+    # is why the floor below moved by exactly one.
     "c3_pln_stv.metta"    => (1, 2),
+    #
+    # d2_higherfunc's shapes are NESTED-HEAD definitions — `(= (((curry $f) $x) $y) ($f $x $y))`,
+    # `(= ((lambda $v $b) $arg) …)`. Both halves are declined: a variable-headed BODY is
+    # "GResidual (unflattened node: IRExpression)", and `Frontend.definition_name` (`:349`) has no
+    # case for a head whose first child is an Expression, so it returns `Symbol("")`. Since
+    # `lower_program` groups clauses BY NAME, N such definitions in one call MERGE into one group —
+    # measured: 3 distinct functions → 1 IRFunctionDefinition with 3 clauses. Latent in this lane
+    # (`compile_definition` runs per form) and absent from the ratchet corpus (0 nested heads there),
+    # so no number moves today; recorded because the ratchet DOES lower whole files.
     "d2_higherfunc.metta" => (3, 2),
+    #
+    # e1_kb_write's root was NARROWED 2026-08-11 and is NOT what its error text suggests. The text
+    # reads `(add-atom &self …)` for source that says `&kb`, but that is only `Grounded{Space}`'s
+    # printing (see `test_il_roundtrip.jl`) — and `&kb` never appears inside a DEFINITION in that
+    # script, only in `!` directives, so the round-trip guard correctly does not fire.
+    # Witnessed instead, smaller than the script and with nothing declined (`compiled=6 fell_back=0`):
+    #     (= (croaks Fritz) True)     (= (croaks Sam) True)
+    #     (= (eat_flies Fritz) True)  (= (eat_flies Sam) True)
+    #     (= (frog $x) (and (croaks $x) (eat_flies $x)))
+    #     (= (green $x) (frog $x))
+    #     !(green $x)
+    #   interpreter  ["True", "True"]
+    #   compiled     ["(function (chain (eval (and (croaks $x) (eat_flies $x))) NotReducible (return NotReducible)))"]
+    # An unbound argument is NOT the problem — `!(croaks $x)` and the same call through a definition
+    # both AGREE at 2 answers. The CONJUNCTION is: `(and A B)` lowers to a single opaque `eval`, so
+    # the two conjuncts cannot share a binding for `$x`, and the clause returns unreduced with raw IL
+    # leaking into the answer. Same family as PLeaTTa's ROOT 3 (bindings not flowing between goals).
     "e1_kb_write.metta"   => (2, 0),
-    "e2_states.metta"     => (3, 0),
     "f1_imports.metta"    => (0, 1),
     "g1_docs.metta"       => (0, 1),
 )
@@ -146,7 +180,14 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # (Estimated 64 by subtracting only the two scripts with wrong answers; the guard correctly fires
     # on more than those, which is why this number is measured and not computed.) Pinned exactly, not `> 0`: a collapse to a
     # handful must FAIL rather than pass quietly, and a rise must be recorded deliberately.
-    @test total_compiled >= 56
+    #
+    # 56 → 55 on 2026-08-11, and the ONE definition given up is named: `e2_states.metta:17`
+    # `(= (get-token) &state-token)`, whose body is a `Grounded{StateCell}` that cannot survive the
+    # IL text round-trip (`CompileLane._unroundtrippable`). Compiling it produced 3 wrong answers;
+    # declining it produces 0. That is coverage traded for correctness, deliberately, and the trade is
+    # visible here rather than buried — the guard fired exactly once corpus-wide, so this floor moved
+    # by exactly one and any wider effect would have shown up as a bigger drop.
+    @test total_compiled >= 55
     @test total_compiled + total_fell_back > 0
 end
 
@@ -176,7 +217,11 @@ const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
     "c3_pln_stv.metta"    => (1, 2),
     "d2_higherfunc.metta" => (3, 2),
     "e1_kb_write.metta"   => (2, 0),
-    "e2_states.metta"     => (3, 0),
+    # e2_states was (3, 0) here too and is FIXED against the PROVED baseline as well — the same
+    # `_unroundtrippable` decline. Worth stating separately from the conformance half: that half's
+    # baseline is our own interpreter, so "agrees" there could in principle mean two lanes wrong
+    # together. Here the 3 errors are gone measured against machine-proved values, which is the
+    # stronger claim and the reason both corpora are run.
     "g1_docs.metta"       => (0, 1),
 )
 
