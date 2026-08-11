@@ -166,6 +166,21 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # declined as "GResidual (unflattened node: IRExpression)", which is PLeaTTa's `EX.variable_head`
     # obligation (their status: GAP, no proof). Ratchet unmoved at IL 847 / MM2 377, as predicted —
     # the ratchet corpus has 0 nested heads.
+    # ⚠️ AND LOWERING THE VARIABLE-HEADED BODY WAS TRIED 2026-08-11, MEASURED, AND REVERTED.
+    # `metta` is runtime dispatch, so `(chain (metta ($f $x $y) %Undefined% &self) $out …)` looked like
+    # the answer to the whole `EX.variable_head` class — the largest decline group (CODEMAP: 97 of 153
+    # residuals). FOUR isolated witnesses all AGREED with the source, including the control that a
+    # PARTIAL application must stay unreduced:
+    #     !(apply2 + 1 2) → 3 · !(apply2 is Socrates Human) → True
+    #     !((curry-a is Socrates) Human) → True · !(curry-a is Socrates) → (curry-a is Socrates)
+    # and IL coverage rose 864 → 930, the largest jump of the day.
+    # THEN THE CORPUS: d2 went from 3 extra errors to **13**, compiling 18 clauses instead of 9.
+    # Four passing witnesses and +66 coverage did not predict a 4× worsening on the real script.
+    # UNVERIFIED HYPOTHESIS for the next attempt, flagged as unverified: d2 also contains
+    # variable-headed CONSTRUCTOR applications in value position — `(= (fmap $f ($C $x)) ($C ($f $x)))`
+    # — where `$C` binds a data constructor, not a function. `_var_headed_call` cannot tell those from
+    # a dynamic call, and "POSITION decides" (CODEMAP row 221) does not separate them because BOTH are
+    # in value position. A predicate that does would be the thing to find first.
     "d2_higherfunc.metta" => (3, 0),
     #
     # e1_kb_write's root was NARROWED 2026-08-11 and is NOT what its error text suggests. The text
