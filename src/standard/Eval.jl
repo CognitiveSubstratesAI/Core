@@ -998,6 +998,33 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 #   canonicalization is TODO). Table is global+session-scoped and cleared by table!/untable_all!; entries are now
 #   REVISION-STAMPED per space (CeTTa table_store.c:153) so a mutation to the space auto-evicts its stale answers on
 #   the next lookup (closes the silent-staleness half of §7.7; fine-grained IDG dependency tracking still TODO).
+# 🔴 SCOPE — PROCESS-GLOBAL, NAME-ONLY, AND THE REFERENCE IS NEITHER. Cross-checked 2026-08-11
+# against SWI-Prolog, which this tabler was adopted from (`dev-zone/swipl-devel`):
+#
+#   * SWI has NO global tabled-set. The mark lives ON THE PREDICATE —
+#     `return (props=def->tabling) && ison(props, TP_TABLED);` (`src/pl-tabling.c:5583`), set via
+#     `tbl_set_predicate_attribute(Definition def, …)` (`:8795`). A `Definition` is
+#     (MODULE, NAME, ARITY), so the mark is module-scoped and ARITY-AWARE.
+#   * Tables are abolished at three granularities: `abolish_all_tables/0`,
+#     `abolish_module_tables/1  % +Module`, `abolish_table_subgoals/2` (`library/tables.pl:37-42`).
+#     We have only the first (`untable_all!`).
+#   * SLG SCHEDULING state is THREAD-LOCAL in SWI (`LD->tabling.component`, `LD->tabling.delay_list`,
+#     `pl-tabling.c:320,1123`). Ours — `_GEN_STACK`/`_COMPONENT`/`_NEG_*`/`_WFS_*` below — is global.
+#
+# So this set is wrong on TWO axes the reference gets right: it is not per-space, and it is keyed by
+# NAME ALONE. The arity half is the same defect fixed in `ANormal.is_fun` the same day, where
+# `b1_equal_chain.metta` defines `S` at arity 3 and uses it at arity 1.
+#
+# ⚠️ MEASURED, AND THE HARM IS NOT YET DEMONSTRATED — recorded honestly so the next attempt starts
+# from evidence rather than from this comment's alarm. The MARK does leak: `auto_table!(sp1)` marks
+# `f` because it is pure in sp1, and `f` then reads as tabled in a DIFFERENT space where it is impure.
+# But the impure effect still fired on every call, because `_ANSWER_STAMP` keys answers by
+# `(objectid(space), revision)` and `add-atom` bumps the revision, evicting the entry. So the
+# revision stamp is currently masking the scope bug. A probe comparing effect counts across two
+# spaces was too loose to attribute a difference and is NOT cited as evidence.
+#
+# ⇒ Per-space + arity-keyed is the RIGHT shape (the reference says so). Whether it is URGENT is
+# unproven; a test that exhibits a wrong ANSWER — not merely a leaked mark — is the prerequisite.
 const _TABLED_HEADS = Set{Symbol}()
 const _ANSWER_TABLE = Dict{Atom,Vector{Atom}}()
 const _ANSWER_STAMP = Dict{Atom,Tuple{UInt,Int}}()   # key → (objectid(space), revision) at completion; auto-evict on mismatch
