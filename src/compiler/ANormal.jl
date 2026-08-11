@@ -203,13 +203,33 @@ BECAUSE it is plausible and BECAUSE it flatters the choice. Verify upstream refs
 mutable struct ANCtx
     gen::UniqueAtomIdGenerator
     tmp::Int
-    funs::Set{Base.Symbol}
+    funs::Set{Tuple{Base.Symbol, Int}}      # (head, ARITY) — see `is_fun`
 end
-ANCtx(gen::UniqueAtomIdGenerator) = ANCtx(gen, 0, Set{Base.Symbol}())
-ANCtx(gen::UniqueAtomIdGenerator, funs::Set{Base.Symbol}) = ANCtx(gen, 0, funs)
+ANCtx(gen::UniqueAtomIdGenerator) = ANCtx(gen, 0, Set{Tuple{Base.Symbol, Int}}())
+ANCtx(gen::UniqueAtomIdGenerator, funs::Set{Tuple{Base.Symbol, Int}}) = ANCtx(gen, 0, funs)
 
-"PeTTa `fun/1` — is this head a defined function in the module being compiled?"
-is_fun(c::ANCtx, name::Base.Symbol)::Bool = name in c.funs
+"""PeTTa `fun/1` + `current_predicate(F/Arity)` — is this head a defined function AT THIS ARITY?
+
+🔴 NAME ALONE IS NOT ENOUGH, and the counterexample is in the conformance corpus.
+`b1_equal_chain.metta` defines and uses `S` as two different things:
+
+    line 15   (= (S \$x \$y \$z) (\$x \$z (\$y \$z)))       the SKI combinator — arity 3, a FUNCTION
+    line 42   (= (Add \$x (S \$y)) (Add (S \$x) \$y))     Peano successor    — arity 1, a CONSTRUCTOR
+
+With a name-keyed set, `S` reads as "a function" and the PATTERN `(S \$y)` is hoisted out of the rule
+head, which becomes `(Add \$x \$__t1)` and matches nothing. MEASURED 2026-08-11: that one clause
+produced ALL FOUR of b1's extra errors, and removing `S` alone from the known set took the diff to
+zero. `S` is not even defined at two arities — it is defined at 3 and USED at 1, which name-keying
+cannot express.
+
+PeTTa carries the arity: `assertz(arity(F, Arity))` at `translator.pl:258`, and `reduce/2` gates the
+call on `current_predicate(F/Arity)` (`translator.pl:53`), not on `fun(F)` alone. This is that pair.
+
+⚠️ THE OLD NAME-ONLY BEHAVIOUR WAS ONLY SAFE BY ACCIDENT. It never bit because
+`CompileLane.compile_definition` compiles ONE FORM AT A TIME, so `funs` held a single head and almost
+nothing was classified as a call. Any whole-module compile — which the coverage ratchet already does —
+was exposed to this the whole time."""
+is_fun(c::ANCtx, name::Base.Symbol, arity::Int)::Bool = (name, arity) in c.funs
 
 "Mint a fresh temporary — PeTTa's anonymous intermediate variables, named for debuggability."
 function fresh_var(c::ANCtx)::IRVariable
@@ -272,7 +292,7 @@ function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
     # which matches nothing and derives nothing silently.
     if a.head isa IRSymbol
         h = (a.head::IRSymbol).name
-        if is_fun(c, h)
+        if is_fun(c, h, length(args))
             out = fresh_var(c)
             push!(goals, GCall(h, args, out))
             return (goals, out)
@@ -500,8 +520,12 @@ question §3c of the JeTTa spec says we have no answer to.
 function constrain_args(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
     (a isa IRVariable || a isa IRSymbol || a isa IRGrounded) && return (Goal[], a)
     if a isa IRExpression
-        # A call in head position: hoist it.
-        if a.head isa IRSymbol
+        # A CALL in head position: hoist it. A CONSTRUCTOR PATTERN: keep it, and recurse into its
+        # arguments. PeTTa gates this on `fun(F)` — `constrain_args([F|Args], Var, Goals) :- atom(F),
+        # fun(F), !, translate_expr(...)` (translator.pl:9-12) — and ours did not, hoisting anything
+        # with a symbol head. That was invisible only because `funs` was near-empty per form; with
+        # real knowledge it destroys `(= (Add $x (S $y)) …)` by hoisting the Peano pattern.
+        if a.head isa IRSymbol && is_fun(c, (a.head::IRSymbol).name, length(a.args))
             g, v = translate_expr(c, a)
             return (g, v)
         end
@@ -540,6 +564,20 @@ function translate_clause(c::ANCtx, name::Base.Symbol, clause::IRBoundAtom)::ANC
     ANClause(name, head_args, vcat(prefix, body), out)
 end
 
+"""Every `(head, arity)` this program DEFINES — keyed per CLAUSE, not per definition.
+
+Clauses of one name may differ in arity (`(= (K \$x \$y) \$x)` alongside `(= ((K \$x) \$y) \$x)` in
+`b1_equal_chain.metta`), so the pair comes off each clause's own pattern. A definition whose pattern
+is not an expression — a nullary head written bare — contributes arity 0."""
+function defined_arities(program::IRProgram)::Set{Tuple{Base.Symbol, Int}}
+    out = Set{Tuple{Base.Symbol, Int}}()
+    for d in program.definitions, cl in d.clauses
+        p = cl.pattern
+        push!(out, (d.name, p isa IRExpression ? length((p::IRExpression).args) : 0))
+    end
+    out
+end
+
 """
 A-normalize every clause of every definition in `program`.
 
@@ -548,7 +586,7 @@ without a runtime existence check. This is the whole-module knowledge a compiler
 interpreter does not.
 """
 function translate_program(program::IRProgram)::Vector{ANClause}
-    funs = Set{Base.Symbol}(d.name for d in program.definitions)
+    funs = defined_arities(program)
     c = ANCtx(program.gen, funs)
     out = ANClause[]
     for d in program.definitions, cl in d.clauses

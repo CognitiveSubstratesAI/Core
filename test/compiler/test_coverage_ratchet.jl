@@ -85,8 +85,8 @@ const _RI = MeTTaCore.Eval
 # the next regression.
 const FLOOR_STDLIB  = 10     # of 61  clauses
 const FLOOR_STANDARD = 9     # of 51
-const FLOOR_LIB     = 358    # of 888
-const FLOOR_TOTAL   = 377    # of 1000
+const FLOOR_LIB     = 360    # of 888   (358 -> 360, arity-aware `is_fun`, 2026-08-11)
+const FLOOR_TOTAL   = 379    # of 1000  (377 -> 379, arity-aware `is_fun`, 2026-08-11)
 
 # ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
 # MEASURED, not predicted: 687 of 1000, against MM2's 374. The design doc argued minimal MeTTa should
@@ -138,7 +138,15 @@ const FLOOR_TOTAL   = 377    # of 1000
 # caught it and the rest of the suite did not. `eval`/`function`/`return` have no binder, so
 # A-normalizing their arguments is sound and MM2 uses the goals; only `chain` must be kept whole.
 # Narrowed: MM2 377, IL 847. One IL clause is the price of not regressing the other lane.
-const FLOOR_IL_TOTAL = 847   # of 1000
+# RAISED 2026-08-11 by ARITY-AWARE `is_fun`: 847 -> 864 (+17), MM2 377 -> 379. `funs` became a set of
+# (head, ARITY) pairs instead of names, and `constrain_args` now GATES its hoist on it the way PeTTa
+# does (`translator.pl:9-12`). Previously ANY symbol-headed expression in a pattern argument was run
+# through `translate_expr`; the pattern survived only because `funs` was near-empty per form. Gating
+# it means constructor patterns are kept, more clauses A-normalize cleanly, and coverage rises as a
+# SIDE EFFECT of a correctness fix — the direction this ratchet is supposed to reward.
+# The counterexample that forced it: `b1_equal_chain.metta` defines `S` at arity 3 (SKI) and uses it
+# at arity 1 (Peano), so name-keying hoisted `(S $y)` out of a rule head and broke the clause.
+const FLOOR_IL_TOTAL = 864   # of 1000
 
 "Parens balance, ignoring anything inside a MeTTa string literal."
 function _rt_balanced(s::AbstractString)::Bool

@@ -166,7 +166,7 @@ function _name_spaces(atoms::Vector{StandardMeTTa.Atom}, sp)::Vector{StandardMeT
     #   `compile_run`) went to 288 s wall and pushed the suite past its 10-minute budget.
     # With `sp` excluded, a program that names no other space hits the early return below and pays
     # nothing at all, which is almost every program.
-    names = IdDict{Any, String}()
+    names = IdDict{Eval.Space, String}()      # NO `Any` — standing rule, code and tests alike
     for (tok, a) in sp.tokens
         a isa StandardMeTTa.Grounded || continue
         v = (a::StandardMeTTa.Grounded).value
