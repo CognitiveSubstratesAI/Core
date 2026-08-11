@@ -105,6 +105,35 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # `CompileLane._unroundtrippable` now declines such a definition; it falls back and answers
     # correctly. That guard fired EXACTLY ONCE across all 26 scripts (`total_compiled` 56 → 55), which
     # is why the floor below moved by exactly one.
+    # c3_pln_stv ROOT-CAUSED 2026-08-11, and it is the SAME family as e1_kb_write: the emitted
+    # `eval` chain does not reproduce the interpreter's no-result semantics.
+    #
+    # 🔴 THE 4 000-STEP BUDGET HIDES IT. At 4 000 this shows (1 error, 2 exhausted); at 60 000 the
+    # interpreter passes ALL THREE and the compiled lane fails two outright. Diagnosing at the suite
+    # budget would have mis-read two real wrong answers as "slower". The actual values:
+    #
+    #   (TV (And (Evaluation (Predicate P) (Concept A)) (Evaluation (Predicate P) (Concept B))))
+    #       interpreter  (stv 0.3 0.8)
+    #       compiled     (stv NotReducible NotReducible)          ← ×3
+    #   (TV (frog Fritz))
+    #       interpreter  (stv 0.783 0.68)
+    #       compiled     (stv (* 0.9 (function (return NotReducible))) …)
+    #
+    # WHY. `TV` has THREE clauses; two are `match &self` lookups that yield NO RESULT for a given
+    # argument, and the interpreter prunes that nondeterministic branch. The emitted
+    # `(chain (eval (TV $a)) $__t1 …)` instead binds `$__t1` to `NotReducible` — a VALUE — which then
+    # flows into the `stv` constructor. `metta.txt:78-79` draws exactly this distinction: `Empty` is
+    # "the function doesn't return any result" (absorbing), `NotReducible` "returns the unchanged
+    # function call instead". `eval` produces the second where the interpreter produces the first.
+    # Same mechanism measured directly today: `(chain (eval (Cons 1 Nil)) $t $t)` ⟶ `NotReducible`.
+    #
+    # CONTROLS, so this is not read wider than it is: `(TV (croaks Fritz))` (a plain fact lookup) and
+    # `(TV (Evaluation …))` (one conjunct alone) both AGREE. It takes a multi-clause head whose other
+    # clauses fail to trigger it.
+    #
+    # ⚠️ NOT the `is_fun` root, which was the obvious guess and is wrong here: `TV` IS hoisted (it is
+    # the head being compiled, so it is in `funs`), and the un-hoisted `min`/`s-tv` are USER-DEFINED
+    # heads, which are safe under one `eval` (measured: `(eval (member2 $x (cdr-atom $l)))` → True).
     "c3_pln_stv.metta"    => (1, 2),
     #
     # d2_higherfunc's shapes are NESTED-HEAD definitions — `(= (((curry $f) $x) $y) ($f $x $y))`,
