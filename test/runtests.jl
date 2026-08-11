@@ -55,6 +55,7 @@ module StandardMeTTaTests
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
+    include("compiler/test_definition_name.jl")  # which function is a definition ABOUT — grouping identity
     include("compiler/test_call_staging.jl")
     include("compiler/test_emit_substitution.jl")
     include("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow

@@ -114,8 +114,14 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # `lower_program` groups clauses BY NAME, N such definitions in one call MERGE into one group —
     # measured: 3 distinct functions → 1 IRFunctionDefinition with 3 clauses. Latent in this lane
     # (`compile_definition` runs per form) and absent from the ratchet corpus (0 nested heads there),
-    # so no number moves today; recorded because the ratchet DOES lower whole files.
-    "d2_higherfunc.metta" => (3, 2),
+    # FIXED 2026-08-11 (the merge half): `definition_name` now DESCENDS a compound head, so the three
+    # are `curry` / `curry-a` / `lambda` again and `lower_program` no longer groups them. MEASURED
+    # effect here: exhausted 2 → 0 — two queries that used to burn the whole budget now terminate.
+    # The 3 extra errors are UNCHANGED and are the OTHER half: a variable-headed BODY is still
+    # declined as "GResidual (unflattened node: IRExpression)", which is PLeaTTa's `EX.variable_head`
+    # obligation (their status: GAP, no proof). Ratchet unmoved at IL 847 / MM2 377, as predicted —
+    # the ratchet corpus has 0 nested heads.
+    "d2_higherfunc.metta" => (3, 0),
     #
     # e1_kb_write's root was NARROWED 2026-08-11 and is NOT what its error text suggests. The text
     # reads `(add-atom &self …)` for source that says `&kb`, but that is only `Grounded{Space}`'s
@@ -215,7 +221,7 @@ in each. Measured: the LeaTTa half reproduces 7 of the conformance half's deviat
 BASELINE, which here is machine-proved rather than self-referential."""
 const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
     "c3_pln_stv.metta"    => (1, 2),
-    "d2_higherfunc.metta" => (3, 2),
+    "d2_higherfunc.metta" => (3, 0),   # exhausted 2 → 0, same compound-head fix; see the other dict
     "e1_kb_write.metta"   => (2, 0),
     # e2_states was (3, 0) here too and is FIXED against the PROVED baseline as well — the same
     # `_unroundtrippable` decline. Worth stating separately from the conformance half: that half's

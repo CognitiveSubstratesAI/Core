@@ -345,17 +345,48 @@ MUST handle a GROUNDED head, not only `Sym`. `parse_from` substitutes bound toke
 `Grounded{Operation}`/`Grounded{SpaceOp}`, never as `Sym`. MEASURED 2026-08-06: without this,
 `(= (id \$x) \$x)` compiled to `(exec 0 (, ( \$x)) …)` — an EMPTY head, a pattern that matches
 nothing, and a rule that silently never fires.
+
+MUST ALSO DESCEND A COMPOUND HEAD — the THIRD instance of the same rule, after `Sym` and then
+`Grounded` (`:199` records that sweep). A curried definition puts an EXPRESSION where the head symbol
+goes:
+
+    (= (((curry \$f) \$x) \$y) (\$f \$x \$y))     ⟶ head is ((curry \$f) \$x)
+    (= ((lambda \$var \$body) \$arg) …)         ⟶ head is (lambda \$var \$body)
+
+None of the three cases fired, so this returned `Symbol("")` — and `lower_program` groups clauses BY
+NAME, so every compound-head definition in one call landed in the SAME group. MEASURED 2026-08-11:
+three distinct functions (`curry`, `curry-a`, `lambda`) collapsed into ONE `IRFunctionDefinition` with
+3 clauses, which then PARTIALLY emitted (1 of 3; the other two declined). All of
+`d2_higherfunc.metta` is this shape.
+
+The name to take is the INNERMOST symbol head, reached by descending: `curry`, `curry-a`, `lambda`.
+That is the function the definition is about, and it keeps the three apart. Grouping two clauses of
+ONE curried function together stays correct — their PATTERNS still differ, and that is what
+multi-clause dispatch matches on; the name is only a grouping key.
+
+⚠️ A VARIABLE HEAD — `(= (\$f \$x) …)` — is genuinely un-nameable and still yields `NO_NAME`. Descending
+cannot help: there is no symbol. `lower_program` handles it by NOT grouping, because a name that
+cannot identify a function must not be used to claim two definitions are the same one.
 """
 function definition_name(a::Expression)::Base.Symbol
     lhs = a.children[2]
-    if lhs isa Expression && !isempty(lhs.children)
-        h = lhs.children[1]
+    while lhs isa Expression && !isempty(lhs.children)
+        h = (lhs::Expression).children[1]
         h isa Sym && return (h::Sym).name
         h isa Grounded{Eval.Operation} && return Base.Symbol(h.value.name)
         h isa Grounded{Eval.SpaceOp}   && return Base.Symbol(h.value.name)
+        h isa Expression || break          # a Var head: un-nameable, and descending cannot help
+        lhs = h                            # compound head — the name is one level further in
     end
-    lhs isa Sym ? (lhs::Sym).name : Base.Symbol("")
+    lhs isa Sym ? (lhs::Sym).name : NO_NAME
 end
+
+"""What `definition_name` returns when a definition's head cannot identify a function.
+
+Only a VARIABLE head reaches this now — `(= (\$f \$x) …)`. It is a sentinel, NOT a name, and
+`lower_program` must not group by it: two such definitions are not known to be the same function,
+and merging them silently built one multi-clause definition out of unrelated code."""
+const NO_NAME = Base.Symbol("")
 
 """
     lower_program(atoms) -> IRProgram
@@ -374,6 +405,7 @@ function lower_program(atoms::Vector{Atom})::IRProgram
     c = Ctx(prog)
     order = Base.Symbol[]
     byname = Dict{Base.Symbol, Vector{IRBoundAtom}}()
+    unnamed = IRBoundAtom[]                          # variable-headed clauses — one group each
 
     for a in atoms
         if is_definition(a)
@@ -382,8 +414,16 @@ function lower_program(atoms::Vector{Atom})::IRProgram
             c.scope = Scope()                        # fresh scope PER CLAUSE
             lhs = lower(c, e.children[2])
             rhs = lower(c, e.children[3])            # same scope — shared variables
-            haskey(byname, name) || (byname[name] = IRBoundAtom[]; push!(order, name))
-            push!(byname[name], IRBoundAtom(lhs, rhs, fresh(c), NO_SOURCE))
+            # GROUPING IS BY NAME, so an un-nameable head must NOT be grouped. `NO_NAME` is a
+            # sentinel meaning "this head identifies no function"; treating it as a name merged
+            # unrelated definitions into one multi-clause group. Each gets its own group instead —
+            # the clauses are still emitted, they are just no longer claimed to be one function.
+            if name === NO_NAME
+                push!(unnamed, IRBoundAtom(lhs, rhs, fresh(c), NO_SOURCE))
+            else
+                haskey(byname, name) || (byname[name] = IRBoundAtom[]; push!(order, name))
+                push!(byname[name], IRBoundAtom(lhs, rhs, fresh(c), NO_SOURCE))
+            end
         else
             c.scope = Scope()
             push!(prog.runs, IRRun(lower(c, a), fresh(c), NO_SOURCE))
@@ -393,6 +433,12 @@ function lower_program(atoms::Vector{Atom})::IRProgram
     for name in order
         push!(prog.definitions,
               IRFunctionDefinition(name, byname[name], nothing, fresh(c), NO_SOURCE))
+    end
+    # Un-nameable clauses last, one definition each. Order among themselves is source order; they
+    # cannot collide with a named group because `NO_NAME` is never a key in `byname`.
+    for cl in unnamed
+        push!(prog.definitions,
+              IRFunctionDefinition(NO_NAME, IRBoundAtom[cl], nothing, fresh(c), NO_SOURCE))
     end
     prog
 end
