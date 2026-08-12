@@ -86,6 +86,25 @@ function compile_definition(sp, form::AbstractString)::Union{Vector{String}, Not
     # ALL-OR-NOTHING per form. A form can lower to several clauses; if any is declined, loading the
     # compiled subset plus the whole source form would double the surviving answers (Invariant 6).
     (r.emitted == length(cls) && isempty(r.declined)) || return nothing
+    # 🔴 `r.clauses`, NOT `r.atoms` — AND THE ATTEMPT TO USE `r.atoms` IS RECORDED BECAUSE THE REASON
+    # IS NOT OBVIOUS. Consuming the emitter's atoms directly (skipping `load_metta!`) broke FIVE
+    # corpus scripts on 2026-08-11: b2_backchain +5 errors, c3_pln_stv +5, c1_grounded_basic +4,
+    # d2_higherfunc +3, e1_kb_write +2.
+    #
+    # WHY: `EmitIL`'s atom builders are TEXT-EQUIVALENT, deliberately — `&self` becomes `Sym("&self")`
+    # and a string literal becomes `Sym("\"abc\"")`, because they were proven against `render`. The
+    # text path then PARSES that text, and parsing turns `&self` into a `Grounded{Space}` and the
+    # literal into a grounded string. Skipping the parse adds the Syms literally.
+    #
+    # ⚠️ SO THE SAFETY PROPERTY PROVED THE WRONG THING FOR THIS USE. `test_emit_il.jl` asserts
+    # `string(_il_atom(a)) == _render_il(a)` — atom ⇒ TEXT. What the lane needs is
+    # `atom == parse(text)` — atom ⇒ ATOM. Both are "equivalence"; only the second licenses bypassing
+    # the parser, and a property that passes while the behaviour changes is worse than none.
+    #
+    # ⇒ The switch is still right (it deletes the round-trip corruption class at the source), but its
+    # prerequisite is builders that produce PARSE-EQUIVALENT atoms — resolving tokens against `sp`,
+    # emitting real `Grounded` values — plus a property asserting `atom == parse(render(atom))`.
+    # That is a bigger, well-defined piece of work, and it is the next one here.
     r.clauses
 end
 

@@ -220,6 +220,7 @@ end
     # every node the corpus produces. Any divergence introduced later is then a DELIBERATE, visible
     # change rather than something hidden inside a refactor.
     _IL = MeTTaCore.CompilerEmitIL
+    _CE = MeTTaCore.CompilerEmit
     _IR = MeTTaCore.CompilerIR
 
     # walk every IR node the real corpus lowers, not a handful I thought of
@@ -252,20 +253,31 @@ end
                             g isa _IA.GResidual ? _IR.IRAtom[g.node, g.out] : _IR.IRAtom[]
             for g in _IA.all_goals(cl.goals), nd in goal_atoms(g)
                 _walk(nd, a -> begin
-                    txt = _IL._render_il(a); at = _IL._il_atom(a)
                     checked += 1
-                    if at === nothing
-                        occursin("<unrenderable", txt) ||
-                            push!(mismatches, (txt, "nothing"))
-                    elseif string(at) != txt
-                        push!(mismatches, (txt, string(at)))
+                    # BOTH builders against THEIR OWN renderer. Checking only `_il_atom` vs
+                    # `_render_il` would pass while the `render`-sites diverged — the exact gap
+                    # recorded in `6a9e2dd`, since `render` has no `IRSpecial` method and `_il_atom`
+                    # does. A property that holds while behaviour changes is worse than none.
+                    for (txt, at, which) in ((_IL._render_il(a), _IL._il_atom(a),     "_il_atom"),
+                                             (_CE.render(a),     _IL._render_atom(a), "_render_atom"))
+                        if at === nothing
+                            occursin("<unrenderable", txt) ||
+                                push!(mismatches, (which * " " * txt, "nothing"))
+                        elseif string(at) != txt
+                            push!(mismatches, (which * " " * txt, string(at)))
+                        end
                     end
                 end)
             end
             for a in cl.head_args
-                txt = _IL._render_il(a); at = _IL._il_atom(a); checked += 1
-                at === nothing ? (occursin("<unrenderable", txt) || push!(mismatches, (txt, "nothing"))) :
-                    (string(at) == txt || push!(mismatches, (txt, string(at))))
+                checked += 1
+                for (txt, at, which) in ((_IL._render_il(a), _IL._il_atom(a),     "_il_atom"),
+                                         (_CE.render(a),     _IL._render_atom(a), "_render_atom"))
+                    at === nothing ?
+                        (occursin("<unrenderable", txt) ||
+                            push!(mismatches, (which * " " * txt, "nothing"))) :
+                        (string(at) == txt || push!(mismatches, (which * " " * txt, string(at))))
+                end
             end
         end
     end

@@ -51,6 +51,11 @@ export emit_il_clause, emit_il_program, ILResult
 
 "Result of lowering a program to minimal MeTTa. `declined` carries a REASON per clause, never a bare count."
 struct ILResult
+    # BOTH forms, from ONE emission. `atoms` is what the compile lane consumes — no re-parse, so the
+    # round-trip corruption class cannot arise internally. `clauses` is `string.(atoms)`: the WIRE
+    # form, which the IL still owes as Fig-2's distributed artifact, plus every existing consumer
+    # (ratchet, differentials, `test_eval_one_step`) unchanged. Struct in memory, bytes on the wire.
+    atoms::Vector{Atom}
     clauses::Vector{String}
     emitted::Int
     expanded::Int                                       # extra clauses produced by GDisj expansion
@@ -92,11 +97,29 @@ end
 # `fail` is the FAILURE continuation — where a non-matching `unify` goes. It is a parameter and not
 # the constant `(return Empty)` because a branch's condition must fall through to the NEXT ARM, not
 # out of the clause. Hardcoding it was a wrong-answer bug (see `_instr(::GBranch, …)`).
-function _seq(gs::Vector{Goal}, i::Int, tail::String, fail::String)::Union{String, Nothing}
+# The instruction heads, interned once. `Sym` holds a Julia `Symbol`, so these are pointer-compares
+# rather than the string concatenation the text emitter did per node.
+const _A_EQ, _A_FUNCTION, _A_RETURN   = Sym("="), Sym("function"), Sym("return")
+const _A_CHAIN, _A_UNIFY, _A_METTA    = Sym("chain"), Sym("unify"), Sym("metta")
+const _A_EVAL, _A_COLLAPSE            = Sym("eval"), Sym("collapse-bind")
+const _A_EMPTY, _A_UNDEF, _A_SELF     = Sym("Empty"), Sym("%Undefined%"), Sym("&self")
+_ret(a::Atom)::Atom = Expression(Atom[_A_RETURN, a])
+const _RET_EMPTY = Expression(Atom[_A_RETURN, _A_EMPTY])
+
+function _seq(gs::Vector{Goal}, i::Int, tail::Atom, fail::Atom)::Union{Atom, Nothing}
     i > length(gs) && return tail
     cont = _seq(gs, i + 1, tail, fail)
     cont === nothing && return nothing
     _instr(gs[i], cont, fail)
+end
+
+"Every argument as an atom, or `nothing` if any is unrenderable (the old `<unrenderable` scan)."
+function _atom_args(args::Vector{IRAtom})::Union{Vector{Atom}, Nothing}
+    out = Atom[]
+    for a in args
+        v = _render_atom(a); v === nothing && return nothing; push!(out, v)
+    end
+    out
 end
 
 _render_args(args::Vector{IRAtom})::String = join(String[render(a) for a in args], " ")
@@ -158,17 +181,21 @@ emitting a `match` its target cannot run — measured 2026-08-10 at MM2 376 → 
 ⇒ The switch needs the SAME two-renderer split on the atom side: a `render`-equivalent builder for the
 `GCall`/`GUnify`/`GBranch`/`GFindall` sites and this one for `GResidual`. Doing it with a single
 builder is the easy mistake, and the ratchet will applaud it."""
-function _il_atom(a::IRAtom)::Union{Atom, Nothing}
+function _atom_of(a::IRAtom, specials::Bool)::Union{Atom, Nothing}
     if a isa IRSpecial
+        # `specials=false` mirrors the SHARED `render`, which has no `IRSpecial` method and returns
+        # `<unrenderable:IRSpecial>` ⇒ the caller declines. That is not an oversight to fix here:
+        # widening it is what silently widened MM2 (376 → 378) on 2026-08-10.
+        specials || return nothing
         kids = Atom[Sym(String((a::IRSpecial).surface))]
         for x in (a::IRSpecial).args
-            c = _il_atom(x); c === nothing && return nothing; push!(kids, c)
+            c = _atom_of(x, specials); c === nothing && return nothing; push!(kids, c)
         end
         return Expression(kids)
     elseif a isa IRExpression
         kids = Atom[]
         for x in IRAtom[(a::IRExpression).head; (a::IRExpression).args]
-            c = _il_atom(x); c === nothing && return nothing; push!(kids, c)
+            c = _atom_of(x, specials); c === nothing && return nothing; push!(kids, c)
         end
         return Expression(kids)
     elseif a isa IRSymbol       ; return Sym(String((a::IRSymbol).name))
@@ -186,10 +213,24 @@ function _il_atom(a::IRAtom)::Union{Atom, Nothing}
     nothing                                   # ⇒ `<unrenderable:…>` in the text path
 end
 
+"""The `_render_il` twin — handles `IRSpecial`. Use ONLY where the text path calls `_render_il`,
+i.e. `_instr(::GResidual, …)`."""
+_il_atom(a::IRAtom)::Union{Atom, Nothing} = _atom_of(a, true)
+
+"""The SHARED-`render` twin — `IRSpecial` yields `nothing`, matching `<unrenderable:IRSpecial>`.
+Use at every OTHER site (`GUnify`/`GCall`/`GBranch`/`GFindall`), which is what the text path does.
+
+Two builders, because there are two renderers — see the trap note on `_atom_of`. Collapsing them into
+one is the easy mistake, and the ratchet would score it as a win."""
+_render_atom(a::IRAtom)::Union{Atom, Nothing} = _atom_of(a, false)
+
 "`(unify <atom> <pattern> <then> <else>)` — spec §3. A failed unification yields `Empty`, Core's own
 `EMPTY` sentinel (`Eval.jl:39`), so a non-matching clause contributes no result rather than erroring."
-_instr(g::GUnify, cont::String, fail::String)::String =
-    "(unify " * render(g.lhs) * " " * render(g.rhs) * " " * cont * " " * fail * ")"
+function _instr(g::GUnify, cont::Atom, fail::Atom)::Union{Atom, Nothing}
+    l = _render_atom(g.lhs); l === nothing && return nothing
+    r = _render_atom(g.rhs); r === nothing && return nothing
+    Expression(Atom[_A_UNIFY, l, r, cont, fail])
+end
 
 """`(chain (metta (f a b) %Undefined% &self) \$out ⟨cont⟩)` — spec §3: interpret the atom, substitute
 `<var>` in the template.
@@ -228,9 +269,12 @@ disease.
 information at a call site, and `%Undefined%` is exactly MeTTa's "no expectation" meta-type
 (`metta_language_spec.md` §2.4). `&self` is the context space, which re-parses to whatever space the
 clause is loaded into — correct by construction, and the same property `_name_spaces` relies on."""
-_instr(g::GCall, cont::String, ::String)::String =
-    "(chain (metta (" * String(g.head) * (isempty(g.args) ? "" : " " * _render_args(g.args)) *
-    ") %Undefined% &self) " * render(g.out) * " " * cont * ")"
+function _instr(g::GCall, cont::Atom, ::Atom)::Union{Atom, Nothing}
+    args = _atom_args(g.args); args === nothing && return nothing
+    o = _render_atom(g.out);   o === nothing && return nothing
+    call = Expression(Atom[Sym(String(g.head)); args])
+    Expression(Atom[_A_CHAIN, Expression(Atom[_A_METTA, call, _A_UNDEF, _A_SELF]), o, cont])
+end
 
 """Branch — condition goals, then a 4-ary `unify` against `True`, JOINED before the continuation.
 
@@ -250,32 +294,35 @@ So the arms are closed into a value and bound ONCE:
     (chain (function (unify cv True ⟨then…(return out)⟩ ⟨else…(return out)⟩)) out ⟨cont⟩)
 
 `cont` now appears exactly once regardless of nesting, which is the whole point of a join."""
-function _instr(g::GBranch, cont::String, ::String)::Union{String, Nothing}
-    ret = "(return " * render(g.out) * ")"
-    thn = _seq(g.then, 1, ret, "(return Empty)"); thn === nothing && return nothing
+function _instr(g::GBranch, cont::Atom, ::Atom)::Union{Atom, Nothing}
+    o = _render_atom(g.out); o === nothing && return nothing
+    ret = _ret(o)
+    thn = _seq(g.then, 1, ret, _RET_EMPTY); thn === nothing && return nothing
     # An EMPTY `els` means "no further arm" — failing there yields Empty, it does not fall out of the
     # clause. A non-empty `els` is the NEXT ARM and is itself a GBranch.
-    els = isempty(g.els) ? "(return Empty)" : _seq(g.els, 1, ret, "(return Empty)")
+    els = isempty(g.els) ? _RET_EMPTY : _seq(g.els, 1, ret, _RET_EMPTY)
     els === nothing && return nothing
     # `cond` carries the REAL test (a GUnify). Its success continuation is the then-arm and its
     # FAILURE continuation is the else-arm — that threading is the whole fix.
     body = _seq(g.cond, 1, thn, els); body === nothing && return nothing
-    "(chain (function " * body * ") " * render(g.out) * " " * cont * ")"
+    Expression(Atom[_A_CHAIN, Expression(Atom[_A_FUNCTION, body]), o, cont])
 end
 
 """`collapse` — `(chain (collapse-bind (function ⟨body … (return tmpl)⟩)) \$out ⟨cont⟩)`.
 
 Spec §3: `collapse-bind` interprets an atom and returns a tuple of ALL its results. The body is a goal
 sequence, so it is wrapped in `function`/`return` to become one interpretable atom."""
-function _instr(g::GFindall, cont::String, ::String)::Union{String, Nothing}
-    body = _seq(g.body, 1, "(return " * render(g.template) * ")", "(return Empty)")
-    body === nothing && return nothing
-    "(chain (collapse-bind (function " * body * ")) " * render(g.out) * " " * cont * ")"
+function _instr(g::GFindall, cont::Atom, ::Atom)::Union{Atom, Nothing}
+    tm = _render_atom(g.template); tm === nothing && return nothing
+    o  = _render_atom(g.out);      o  === nothing && return nothing
+    body = _seq(g.body, 1, _ret(tm), _RET_EMPTY); body === nothing && return nothing
+    Expression(Atom[_A_CHAIN,
+                    Expression(Atom[_A_COLLAPSE, Expression(Atom[_A_FUNCTION, body])]), o, cont])
 end
 
 # GDisj never reaches here — `_expand_disj` removes it before the fold. If one survives, that is a bug
 # in the expansion, not a shape to improvise around, so decline loudly rather than guess.
-_instr(::GDisj, ::String, ::String)::Nothing = nothing
+_instr(::GDisj, ::Atom, ::Atom)::Nothing = nothing
 
 """A residual is, by definition, a node A-normalization could not flatten — so declining is the
 default and the honest outcome. It is COUNTED, and the interpreter fallback still handles the clause.
@@ -294,11 +341,16 @@ RULE reads a space the source never had, and would silently answer differently. 
 corpus: 180 of 182 `match` patterns are DATA-shaped (`(ChemRule \$p \$r \$w)`, `(Concentration
 Tension \$v)`) and 2 are rule-shaped. Only a pattern with a SYMBOL head other than `=`/`:` is
 lowered; a bare variable or a variable head is declined, because either can bind a rule."""
-function _instr(g::GResidual, cont::String, ::String)::Union{String, Nothing}
+function _instr(g::GResidual, cont::Atom, ::Atom)::Union{Atom, Nothing}
     n = g.node
-    inner = _lowerable_match(n)         ? "(eval " * _render_il(n) * ")" :
-            _is_minimal_instruction(n)  ? _render_il(n) :
-            _var_headed_call(n)         ? "(metta " * _render_il(n) * " %Undefined% &self)" :
+    # `_il_atom` (NOT `_render_atom`) — this is the one site the text path renders with `_render_il`,
+    # which handles `IRSpecial`. Using the same builder as the other sites here would DECLINE clauses
+    # that emit today; using this builder at the other sites would WIDEN them. See `_atom_of`.
+    nd = _il_atom(n)
+    inner = nd === nothing              ? nothing :
+            _lowerable_match(n)         ? Expression(Atom[_A_EVAL, nd]) :
+            _is_minimal_instruction(n)  ? nd :
+            _var_headed_call(n)         ? Expression(Atom[_A_METTA, nd, _A_UNDEF, _A_SELF]) :
                                           nothing
     inner === nothing && return nothing
     # THE RENDER GUARD, and it closes a CLASS rather than the instance that produced it. Lowering a
@@ -308,9 +360,10 @@ function _instr(g::GResidual, cont::String, ::String)::Union{String, Nothing}
     #   `(function (chain (eval <unrenderable:IRSpecial>) NotReducible (return NotReducible)))`
     # — well-formed, executable, and wrong. The coverage ratchet scored it identically to the working
     # version. Any future verbatim lowering gets this check for free by going through here.
-    occursin("<unrenderable", inner) && return nothing
-    o = render(g.out); occursin("<unrenderable", o) && return nothing
-    "(chain " * inner * " " * o * " " * cont * ")"
+    # The old `<unrenderable` SUBSTRING SCAN is gone: an unrenderable node is now `nothing` from the
+    # builder and propagates by construction, so the guard cannot be forgotten by a future `_instr`.
+    o = _render_atom(g.out); o === nothing && return nothing
+    Expression(Atom[_A_CHAIN, inner, o, cont])
 end
 
 """A VARIABLE-HEADED application in value position — `(\$f \$x \$y)` — which `metta` can dispatch.
@@ -425,7 +478,7 @@ end
 Lower one A-normal clause to minimal-MeTTa `(= head body)` clauses. Returns several when the clause
 contains a `GDisj` (one per branch), or `nothing` if it cannot be lowered at all.
 """
-function emit_il_clause(c::ANClause)::Union{Vector{String}, Nothing}
+function emit_il_clause(c::ANClause)::Union{Vector{Atom}, Nothing}
     variants = _expand_disj(c.goals)
     variants === nothing && return nothing
     # A NESTED head is rendered from the CONSTRAINED PATTERN the clause carries, not rebuilt from
@@ -437,24 +490,25 @@ function emit_il_clause(c::ANClause)::Union{Vector{String}, Nothing}
     # obstacle — the clause struct was. Declining was the safe stopgap; this is the fix.
     if c.nested_head
         c.head_pattern === nothing && return nothing        # nested but no pattern carried ⇒ decline
-        hp = _render_il(c.head_pattern)
-        occursin("<unrenderable", hp) && return nothing
+        hp = _il_atom(c.head_pattern); hp === nothing && return nothing
         return _emit_with_head(c, hp)
     end
-    head = "(" * String(c.name) * (isempty(c.head_args) ? "" : " " * _render_args(c.head_args)) * ")"
+    hargs = _atom_args(c.head_args); hargs === nothing && return nothing
+    head = Expression(Atom[Sym(String(c.name)); hargs])
     _emit_with_head(c, head, variants)
 end
 
 """Emit one clause given an already-rendered HEAD — shared by the plain and nested-head paths so the
 unrenderable sweep and the all-or-nothing decline apply identically to both."""
-function _emit_with_head(c::ANClause, head::String,
-                         variants = _expand_disj(c.goals))::Union{Vector{String}, Nothing}
+function _emit_with_head(c::ANClause, head::Atom,
+                         variants = _expand_disj(c.goals))::Union{Vector{Atom}, Nothing}
     variants === nothing && return nothing
-    out = String[]
+    o = _render_atom(c.out); o === nothing && return nothing
+    out = Atom[]
     for gs in variants
-        body = _seq(gs, 1, "(return " * render(c.out) * ")", "(return Empty)")
+        body = _seq(gs, 1, _ret(o), _RET_EMPTY)
         body === nothing && return nothing            # decline the clause WHOLE, never half of it
-        push!(out, "(= " * head * " (function " * body * "))")
+        push!(out, Expression(Atom[_A_EQ, head, Expression(Atom[_A_FUNCTION, body])]))
     end
     # 🔴 THE UNRENDERABLE SWEEP — ONE CHECK, AT THE END, COVERING EVERY PATH.
     #
@@ -472,7 +526,10 @@ function _emit_with_head(c::ANClause, head::String,
     # Guarding the ONE place every clause passes through is deliberate: twelve per-site guards is a
     # rule a future `_instr` can forget, and this one it cannot. Cheap — a substring scan of text we
     # just built.
-    any(s -> occursin("<unrenderable", s), out) && return nothing
+    # (The old `<unrenderable` substring sweep lived here. It is now STRUCTURAL: an unrenderable node
+    # is `nothing` from `_render_atom`/`_il_atom` and propagates out of `_seq`, so a clause cannot be
+    # built half-formed at all. That sweep's own comment warned twelve per-site guards is "a rule a
+    # future `_instr` can forget" — there is nothing left to forget.)
     # A GDisj with ZERO branches expands to zero variants, so the loop above runs no iterations and
     # `out` is empty. Without this guard the clause counted as EMITTED while producing nothing —
     # measured on the corpus as "expanded = -1", which is how the bug surfaced at all. Emitting
@@ -488,7 +545,7 @@ Lower a whole program. Declines are recorded with reasons and never dropped: a s
 discards what it cannot handle is how a lane comes to return `String[]` against a populated space.
 """
 function emit_il_program(clauses::Vector{ANClause})::ILResult
-    out = String[]
+    out = Atom[]
     declined = Tuple{Base.Symbol, String}[]
     nemit = 0
     nexpanded = 0
@@ -502,7 +559,9 @@ function emit_il_program(clauses::Vector{ANClause})::ILResult
             append!(out, r)
         end
     end
-    ILResult(out, nemit, nexpanded, declined)
+    # `clauses` is DERIVED, never separately built — one emission, two views, so the wire form cannot
+    # drift from what the lane actually loads.
+    ILResult(out, String[string(a) for a in out], nemit, nexpanded, declined)
 end
 
 end # module CompilerEmitIL
