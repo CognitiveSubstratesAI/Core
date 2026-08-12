@@ -78,7 +78,9 @@ module StandardMeTTaTests
     include("standard/test_conformance.jl")
     include("oracle/leatta/test_leatta_oracle.jl")   # differential vs the Lean-4 machine-proved MeTTa
     include("oracle/mettaref/test_mettaref_oracle.jl")  # MeTTapedia metta-ref: HOL4-specified M1
-                                                        # goldens + a nondeterminism/bag corpus
+                                                        # goldens + a nondeterminism/bag corpus.
+                                                        # VENDORED, no MeTTapedia/Lean/HOL4 toolchain
+                                                        # at test time — .metta files + .expected only.
 end
 
 # MM2 dual-lane router (src/standard/MM2Router.jl) — module-wrapped so its top-level `MC`/`facts`/`prog`
