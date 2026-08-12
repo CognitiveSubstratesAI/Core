@@ -63,6 +63,8 @@ module StandardMeTTaTests
     include("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
     include("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus
     include("compiler/test_il_roundtrip.jl")    # IL goes out as TEXT: which values survive parse(show(v))
+    include("compiler/test_il_wire_roundtrip.jl")  # randomized parse(il_text(a))==a over the
+                                                   # WIRE form, with the known-loss ledger
     include("compiler/test_eval_one_step.jl")   # metta.txt:96 — `eval` is ONE STEP; args are not reduced
     include("compiler/test_gslt_presentation.jl")  # G = (Σ,E,R): binders · freshness · premised rewrites
     include("compiler/test_gslt_parse.jl")         # the s-expr surface — presentations you can WRITE
