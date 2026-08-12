@@ -83,10 +83,12 @@ const _RI = MeTTaCore.Eval
 # no longer hoisted, and one clause that the hoisted goals had been blocking now emits. Small, but
 # raised in the same commit because a floor left below the measurement is a floor that cannot catch
 # the next regression.
-const FLOOR_STDLIB  = 10     # of 61  clauses
+const FLOOR_STDLIB  = 11     # of 61  clauses (10 -> 11, the `()` unit-atom fix, 2026-08-12:
+                             # a stdlib clause containing `()` used to lower to `(Nil)` and fail)
 const FLOOR_STANDARD = 9     # of 51
 const FLOOR_LIB     = 360    # of 888   (358 -> 360, arity-aware `is_fun`, 2026-08-11)
-const FLOOR_TOTAL   = 379    # of 1000  (377 -> 379, arity-aware `is_fun`, 2026-08-11)
+const FLOOR_TOTAL   = 380    # of 1000  (377 -> 379 arity-aware `is_fun` 2026-08-11;
+                             #           379 -> 380 the `()` unit-atom fix 2026-08-12)
 
 # ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
 # MEASURED, not predicted: 687 of 1000, against MM2's 374. The design doc argued minimal MeTTa should

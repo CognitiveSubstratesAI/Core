@@ -497,7 +497,69 @@ function _decline_reason(gs::Vector{Goal})::String
         g isa GDisj && isempty((g::GDisj).branches) && return "GDisj with zero branches (emits nothing)"
     end
     any(g -> g isa GDisj, gs) && return "GDisj expansion exceeded the 64-clause limit"
-    "a nested goal could not be lowered"
+
+    # 🔴 WAS A CATCH-ALL. Everything that did not match a case above returned the same string, "a
+    # nested goal could not be lowered" — which named a SYMPTOM (the clause has goals and one failed)
+    # and not a cause, and which 34 corpus clauses landed in. There are ~18 `return nothing` sites in
+    # this file and they were indistinguishable from the outside.
+    #
+    # So instead of guessing, ASK THE BUILDERS. Every one of those sites bottoms out in `_atom_of`
+    # returning `nothing` for a node it cannot build, so walking the goals' atoms and reporting the
+    # FIRST such node names the actual blocker. Pure — it rebuilds nothing and mutates nothing, it
+    # just re-runs the predicate that already failed and reports what it tripped on.
+    blocker = _first_unbuildable(gs)
+    blocker === nothing ||
+        return "unbuildable node in a goal: " * blocker
+    "a nested goal could not be lowered (no unbuildable node found — the failure is structural)"
+end
+
+"""Name the first IR node in `gs` that the atom builders cannot produce, or `nothing` if every node
+builds (in which case the decline came from a structural path — arity, `nested_head` without a
+pattern, a `_seq` continuation — rather than from an unrenderable node)."""
+function _first_unbuildable(gs::Vector{Goal})::Union{Nothing, String}
+    found = Ref{Union{Nothing, String}}(nothing)
+    note(a::IRAtom) = begin
+        found[] === nothing || return nothing
+        # `specials=false` is the strict mode every non-`GResidual` site uses; a node that builds only
+        # under `specials=true` is exactly the interesting case, so it is REPORTED with that fact.
+        if _atom_of(a, false) === nothing
+            found[] = _atom_of(a, true) === nothing ?
+                      string(nameof(typeof(a))) :
+                      string(nameof(typeof(a))) * " (builds only in GResidual position)"
+        end
+        nothing
+    end
+    walk(a::IRAtom) = begin
+        note(a)
+        if a isa IRExpression
+            walk((a::IRExpression).head)
+            for x in (a::IRExpression).args; walk(x); end
+        elseif a isa IRSpecial
+            for x in (a::IRSpecial).args; walk(x); end
+        end
+        nothing
+    end
+    for g in gs
+        if g isa GUnify
+            walk((g::GUnify).lhs); walk((g::GUnify).rhs)
+        elseif g isa GCall
+            for x in (g::GCall).args; walk(x); end
+            walk((g::GCall).out)
+        elseif g isa GResidual
+            walk((g::GResidual).node)
+        elseif g isa GBranch
+            walk((g::GBranch).out)
+            for sub in ((g::GBranch).cond, (g::GBranch).then, (g::GBranch).els)
+                r = _first_unbuildable(sub)
+                r === nothing || (found[] === nothing && (found[] = r))
+            end
+        elseif g isa GFindall
+            walk((g::GFindall).template); walk((g::GFindall).out)
+            r = _first_unbuildable((g::GFindall).body)
+            r === nothing || (found[] === nothing && (found[] = r))
+        end
+    end
+    found[]
 end
 
 """
