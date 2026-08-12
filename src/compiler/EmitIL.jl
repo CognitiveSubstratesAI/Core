@@ -43,7 +43,8 @@ module CompilerEmitIL
 
 using ..CompilerIR
 using ..CompilerANormal
-using ..CompilerEmit: render, _escape_il_string   # reuse the renderer AND its escaper — a second
+using ..CompilerEmit: render, _escape_il_string
+import ..CompilerEmit   # reuse the renderer AND its escaper — a second
                                                   # of either would drift from the first
 using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded   # typed atom model — same idiom as Frontend.jl:38
 import ..Eval                          # TOKEN_REGISTRY, for parse-equivalent predefined ops
@@ -212,6 +213,8 @@ function _atom_of(a::IRAtom, specials::Bool)::Union{Atom, Nothing}
         end
         return Expression(kids)
     elseif a isa IRExpression
+        # The unit atom `()` is an EMPTY Expression, not a one-element one containing the sentinel.
+        CompilerEmit._is_unit(a::IRExpression) && return Expression(Atom[])
         kids = Atom[]
         for x in IRAtom[(a::IRExpression).head; (a::IRExpression).args]
             c = _atom_of(x, specials); c === nothing && return nothing; push!(kids, c)

@@ -183,7 +183,18 @@ function lower(c::Ctx, a::Grounded{T})::IRAtom where {T}
 end
 
 function lower(c::Ctx, a::Expression)::IRAtom
-    isempty(a.children) && return IRExpression(IRSymbol(:Nil, fresh(c), NO_SOURCE),
+    # THE UNIT ATOM `()`. It needs a head because `IRExpression` has one, and the head used to be
+    # `:Nil` — which COLLIDES with the ordinary one-element expression `(Nil)`: both lowered to
+    # `IRExpression(IRSymbol(:Nil), [])`, both rendered `(Nil)`, and `()` silently became `(Nil)`
+    # (measured 2026-08-12). That is not a rendering bug, it is a LOSSY LOWERING — and `()` is the
+    # value MeTTa returns from `add-atom` and from a passing `assertEqual`, so it is not an exotic
+    # input.
+    #
+    # `UNIT_HEAD` is `Symbol("()")`, which no source program can produce: the tokenizer treats `(`
+    # and `)` as delimiters (Eval.jl `tokenize`), so no symbol token can contain them. Collision-free
+    # by construction rather than by convention. `Emit.render` and `EmitIL._atom_of` special-case it
+    # back to `()` / `Expression(Atom[])`.
+    isempty(a.children) && return IRExpression(IRSymbol(UNIT_HEAD, fresh(c), NO_SOURCE),
                                                IRAtom[], fresh(c), NO_SOURCE)
     h = a.children[1]
     rest = @view a.children[2:end]

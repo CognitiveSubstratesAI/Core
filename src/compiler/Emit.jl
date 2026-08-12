@@ -103,8 +103,16 @@ function render(a::IRGrounded)::String
     string(a.value)
 end
 
-render(a::IRExpression)::String =
+function render(a::IRExpression)::String
+    # The unit atom: head is the unwritable `UNIT_HEAD` sentinel and there are no args. Rendering the
+    # head would produce `(())`, and rendering it as `:Nil` used to produce `(Nil)` — a DIFFERENT atom.
+    _is_unit(a) && return "()"
     "(" * join(String[render(a.head); String[render(x) for x in a.args]], " ") * ")"
+end
+
+"An `IRExpression` that IS the unit atom `()` — the sentinel head, no arguments."
+_is_unit(a::IRExpression)::Bool =
+    isempty(a.args) && a.head isa IRSymbol && (a.head::IRSymbol).name === UNIT_HEAD
 
 # Total, so an unhandled node is a visible marker rather than a MethodError mid-emit.
 render(a::IRAtom)::String = "<unrenderable:" * string(nameof(typeof(a))) * ">"

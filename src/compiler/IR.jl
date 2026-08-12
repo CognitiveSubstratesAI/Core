@@ -125,7 +125,15 @@ IRVariable(name::Base.Symbol) = IRVariable(name, NO_ID, NO_ID, NO_SOURCE)
 IRVariable(name::AbstractString) = IRVariable(Base.Symbol(name))
 is_resolved(v::IRVariable)::Bool = v.unique != NO_ID
 
+"""Head symbol marking the UNIT atom `()` — an `IRExpression` with this head and no args IS `()`.
+
+`Symbol("()")` is unwritable in source (the tokenizer treats parens as delimiters, so no symbol token
+can contain them), so it cannot collide with a user symbol. The previous sentinel `:Nil` COULD and did:
+`()` and `(Nil)` lowered to the same node and `()` was silently rewritten to `(Nil)`."""
+const UNIT_HEAD = Symbol("()")
+
 "JeTTa `GroundedType` — the type tag of a grounded value."
+
 @enum GroundedType GROUNDED_INT GROUNDED_FLOAT GROUNDED_BOOL GROUNDED_STRING GROUNDED_OPAQUE
 
 """
@@ -394,6 +402,7 @@ export NodeId, NO_ID, UniqueAtomIdGenerator, next_id!,
        Position, SourcePosition, NO_POSITION, NO_SOURCE,
        IRAtom, IRSymbol, IRVariable, IRGrounded, GroundedType,
        GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL, GROUNDED_STRING, GROUNDED_OPAQUE,
+       UNIT_HEAD,
        IRResolvedSymbol, IRExpression, IRSpecial, SpecialKind,
        SPECIAL_LET, SPECIAL_LET_SEQ, SPECIAL_IF, SPECIAL_CASE, SPECIAL_MATCH,
        SPECIAL_SUPERPOSE, SPECIAL_COLLAPSE, SPECIAL_QUOTE, SPECIAL_EVAL, SPECIAL_CHAIN,
