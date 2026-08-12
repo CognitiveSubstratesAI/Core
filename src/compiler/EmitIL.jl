@@ -518,24 +518,30 @@ builds (in which case the decline came from a structural path — arity, `nested
 pattern, a `_seq` continuation — rather than from an unrenderable node)."""
 function _first_unbuildable(gs::Vector{Goal})::Union{Nothing, String}
     found = Ref{Union{Nothing, String}}(nothing)
-    note(a::IRAtom) = begin
+    # 🔴 THE MODE MUST MATCH THE SITE. `GResidual` is emitted with `_il_atom` (specials=TRUE); every
+    # other site uses `_render_atom` (specials=FALSE). A first version of this function tested every
+    # node with `false`, so every residual holding an `IRSpecial` was reported as "builds only in
+    # GResidual position" — a node the emitter builds without difficulty. That mislabelled 11 clauses
+    # and would have sent the next reader to widen a restriction that was not the blocker.
+    # A diagnostic that does not reproduce the caller's conditions invents its own findings.
+    note(a::IRAtom, specials::Bool) = begin
         found[] === nothing || return nothing
-        # `specials=false` is the strict mode every non-`GResidual` site uses; a node that builds only
-        # under `specials=true` is exactly the interesting case, so it is REPORTED with that fact.
-        if _atom_of(a, false) === nothing
-            found[] = _atom_of(a, true) === nothing ?
-                      string(nameof(typeof(a))) :
-                      string(nameof(typeof(a))) * " (builds only in GResidual position)"
+        if _atom_of(a, specials) === nothing
+            found[] = specials ?
+                      string(nameof(typeof(a))) * " (unbuildable even in GResidual position)" :
+                      (_atom_of(a, true) === nothing ?
+                       string(nameof(typeof(a))) :
+                       string(nameof(typeof(a))) * " (builds only in GResidual position)")
         end
         nothing
     end
-    walk(a::IRAtom) = begin
-        note(a)
+    walk(a::IRAtom, specials::Bool = false) = begin
+        note(a, specials)
         if a isa IRExpression
-            walk((a::IRExpression).head)
-            for x in (a::IRExpression).args; walk(x); end
+            walk((a::IRExpression).head, specials)
+            for x in (a::IRExpression).args; walk(x, specials); end
         elseif a isa IRSpecial
-            for x in (a::IRSpecial).args; walk(x); end
+            for x in (a::IRSpecial).args; walk(x, specials); end
         end
         nothing
     end
@@ -546,7 +552,7 @@ function _first_unbuildable(gs::Vector{Goal})::Union{Nothing, String}
             for x in (g::GCall).args; walk(x); end
             walk((g::GCall).out)
         elseif g isa GResidual
-            walk((g::GResidual).node)
+            walk((g::GResidual).node, true)      # emitted via `_il_atom` — specials ARE buildable here
         elseif g isa GBranch
             walk((g::GBranch).out)
             for sub in ((g::GBranch).cond, (g::GBranch).then, (g::GBranch).els)
