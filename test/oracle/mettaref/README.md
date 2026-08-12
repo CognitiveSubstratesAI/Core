@@ -68,10 +68,19 @@ Recorded here because it bears directly on the wire-format work:
   shared between compile time and call time"*, verified byte-for-byte against
   `hyperon-experimental`. Two findings:
 
-  1. **Its IR is nearly ours.** `frontend-api/.../ir/` carries `Symbol`, `ResolvedSymbol`, `Position`,
-     `BoundAtom`, `Match`/`MatchBranch`, `ArrowType`, and a `UniqueAtomIdGenerator` — the same node
-     set and the same identity/provenance decisions as `Core/src/compiler/IR.jl`. Independent
-     convergence, and further evidence against SPECMAP C7's retracted "ours has NO IR".
+  1. **Its IR is ours — BY DESCENT, not by coincidence.** ⚠️ This entry first said "the same node set
+     … independent convergence". That was wrong, and the answer was in the header of the file being
+     compared: `Core/src/compiler/IR.jl:12-15` says *"The node set is JeTTa's (`dev-zone/jetta` …
+     `frontend-api/src/main/kotlin/.../frontend/ir/`). JeTTa is the only MeTTa-specific compiler IR
+     among our references, so it is the one to follow."* Thirty-one JeTTa citations in that file, plus
+     more in `Frontend.jl`/`ANormal.jl`. So `Symbol`/`ResolvedSymbol`/`Position`/`BoundAtom`/
+     `Match`/`ArrowType`/`UniqueAtomIdGenerator` matching is a DELIBERATE PORT.
+
+     That removes the corroboration value — a copy agreeing with its source is not evidence — but it
+     sharpens the useful part: we followed JeTTa's NODE SET and did NOT follow its SERIALIZER. The
+     tag-per-grounded-type design below is the piece left on the table, from a source we had already
+     decided to follow. (It remains evidence against SPECMAP C7's retracted "ours has NO IR", since
+     that claim is about existence, not provenance.)
   2. 🔴 **Its persistence format is TAGGED BINARY, not text** — `runtime/space/SAtomSerializer.kt`:
 
          TAG_SYMBOL 0 · TAG_EXPRESSION 1 · TAG_VARIABLE 3 · TAG_SPECIAL 4
