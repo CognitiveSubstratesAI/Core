@@ -258,13 +258,20 @@ end
                     # `_render_il` would pass while the `render`-sites diverged — the exact gap
                     # recorded in `6a9e2dd`, since `render` has no `IRSpecial` method and `_il_atom`
                     # does. A property that holds while behaviour changes is worse than none.
+                    #
+                    # ⚠️ COMPARED VIA `il_text`, NOT `string`. The builders are now PARSE-EQUIVALENT:
+                    # a grounded string becomes a real `Grounded{String}`, and `show` prints it
+                    # WITHOUT quotes (`string(Grounded("one")) == "one"`), which re-parses as a
+                    # SYMBOL. `il_text` is the emitter's wire serializer and quotes it correctly.
+                    # This test caught exactly that when the builders changed under it — comparing
+                    # against `show` asserted a property the wire format does not have.
                     for (txt, at, which) in ((_IL._render_il(a), _IL._il_atom(a),     "_il_atom"),
                                              (_CE.render(a),     _IL._render_atom(a), "_render_atom"))
                         if at === nothing
                             occursin("<unrenderable", txt) ||
                                 push!(mismatches, (which * " " * txt, "nothing"))
-                        elseif string(at) != txt
-                            push!(mismatches, (which * " " * txt, string(at)))
+                        elseif _IL.il_text(at) != txt
+                            push!(mismatches, (which * " " * txt, _IL.il_text(at)))
                         end
                     end
                 end)
@@ -276,7 +283,7 @@ end
                     at === nothing ?
                         (occursin("<unrenderable", txt) ||
                             push!(mismatches, (which * " " * txt, "nothing"))) :
-                        (string(at) == txt || push!(mismatches, (which * " " * txt, string(at))))
+                        (_IL.il_text(at) == txt || push!(mismatches, (which * " " * txt, _IL.il_text(at))))
                 end
             end
         end

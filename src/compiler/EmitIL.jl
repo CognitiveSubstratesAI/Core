@@ -44,7 +44,8 @@ module CompilerEmitIL
 using ..CompilerIR
 using ..CompilerANormal
 using ..CompilerEmit: render          # reuse the renderer — a second one would drift from the first
-using ..StandardMeTTa: Atom, Sym, Var, Expression   # typed atom model — same idiom as Frontend.jl:38
+using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded   # typed atom model — same idiom as Frontend.jl:38
+import ..Eval                          # TOKEN_REGISTRY, for parse-equivalent predefined ops
 
 export emit_il_clause, emit_il_program, ILResult
 
@@ -104,6 +105,23 @@ const _A_CHAIN, _A_UNIFY, _A_METTA    = Sym("chain"), Sym("unify"), Sym("metta")
 const _A_EVAL, _A_COLLAPSE            = Sym("eval"), Sym("collapse-bind")
 const _A_EMPTY, _A_UNDEF, _A_SELF     = Sym("Empty"), Sym("%Undefined%"), Sym("&self")
 _ret(a::Atom)::Atom = Expression(Atom[_A_RETURN, a])
+
+"""Atom → the IL's WIRE TEXT. `string`/`show` is NOT this, and that gap is the session's recurring
+defect in a third place.
+
+`Base.show(::Grounded)` prints the underlying value, so a `Grounded{String}` prints WITHOUT quotes —
+`string(Grounded("abc")) == "abc"`, which re-parses as a SYMBOL. `render(::IRGrounded)` gets it right
+by quoting, and this keeps that. Everything else agrees with `show`: an `Operation` prints its name, a
+`Space` prints `&self`, numbers print themselves, and `_name_spaces` has already turned a NAMED space
+into a `Sym` before lowering, so no name lookup is needed here.
+
+⇒ `clauses = il_text.(atoms)`: ONE emission, two views, and the wire form is produced by a serializer
+that knows the quoting rule rather than by a display method that does not."""
+function il_text(a::Atom)::String
+    a isa Expression && return "(" * join(String[il_text(c) for c in a.children], " ") * ")"
+    a isa Grounded && a.value isa AbstractString && return "\"" * String(a.value) * "\""
+    string(a)
+end
 const _RET_EMPTY = Expression(Atom[_A_RETURN, _A_EMPTY])
 
 function _seq(gs::Vector{Goal}, i::Int, tail::Atom, fail::Atom)::Union{Atom, Nothing}
@@ -199,16 +217,22 @@ function _atom_of(a::IRAtom, specials::Bool)::Union{Atom, Nothing}
         end
         return Expression(kids)
     elseif a isa IRSymbol       ; return Sym(String((a::IRSymbol).name))
-    elseif a isa IRPredefined   ; return Sym(String((a::IRPredefined).name))
     elseif a isa IRResolvedSymbol; return Sym(String((a::IRResolvedSymbol).name))
     elseif a isa IRVariable     ; return Var(String((a::IRVariable).name))
+    elseif a isa IRPredefined
+        # PARSE-EQUIVALENT: parsing `+` against a space's token table yields `Grounded{Operation}`,
+        # not `Sym("+")`. The IR keeps only the NAME, so the registry supplies the value — the one
+        # lookup this direction needs. Falls back to `Sym` for a name that is not registered, which
+        # is what parsing would also produce.
+        return get(Eval.TOKEN_REGISTRY, String((a::IRPredefined).name),
+                   Sym(String((a::IRPredefined).name)))
     elseif a isa IRGrounded
-        # mirror `render(::IRGrounded)`: a STRING keeps its quotes in the text form, so the
-        # text-equivalent atom is the quoted SYMBOL, not a Grounded string. Improving this is the
-        # next change, not this one.
-        return (a::IRGrounded).ty === GROUNDED_STRING ?
-               Sym("\"" * string((a::IRGrounded).value) * "\"") :
-               Sym(string((a::IRGrounded).value))
+        # PARSE-EQUIVALENT: the IR already HOLDS the value, so this is the real thing — a
+        # `Grounded{String}`, `Grounded{Int}`, `Grounded{Space}` — exactly what parsing the rendered
+        # text produces, and for a Space it is the SAME OBJECT (`parse("&self") === sp`, measured).
+        # The earlier version returned a text-equivalent `Sym`, which is why consuming these atoms in
+        # the lane broke five corpus scripts.
+        return Grounded((a::IRGrounded).value)
     end
     nothing                                   # ⇒ `<unrenderable:…>` in the text path
 end
@@ -561,7 +585,7 @@ function emit_il_program(clauses::Vector{ANClause})::ILResult
     end
     # `clauses` is DERIVED, never separately built — one emission, two views, so the wire form cannot
     # drift from what the lane actually loads.
-    ILResult(out, String[string(a) for a in out], nemit, nexpanded, declined)
+    ILResult(out, String[il_text(a) for a in out], nemit, nexpanded, declined)
 end
 
 end # module CompilerEmitIL
