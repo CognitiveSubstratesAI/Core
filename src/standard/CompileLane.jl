@@ -101,10 +101,26 @@ function compile_definition(sp, form::AbstractString)::Union{Vector{String}, Not
     # `atom == parse(text)` — atom ⇒ ATOM. Both are "equivalence"; only the second licenses bypassing
     # the parser, and a property that passes while the behaviour changes is worse than none.
     #
-    # ⇒ The switch is still right (it deletes the round-trip corruption class at the source), but its
-    # prerequisite is builders that produce PARSE-EQUIVALENT atoms — resolving tokens against `sp`,
-    # emitting real `Grounded` values — plus a property asserting `atom == parse(render(atom))`.
-    # That is a bigger, well-defined piece of work, and it is the next one here.
+    # ⇒ The switch is still right (it deletes the round-trip corruption class at the source), and the
+    # prerequisite is builders that produce PARSE-EQUIVALENT atoms. MEASURED 2026-08-12, which
+    # CORRECTS the shape of that work:
+    #
+    #   * `IRGrounded` ALREADY CARRIES THE REAL VALUE (`.value::T`), so the parse-equivalent atom is
+    #     `Grounded(value)` — no Space and no token table needed. And `parse("&self") === sp` is TRUE,
+    #     so this is not merely equivalent to the text path, it is BETTER: the actual Space object
+    #     flows through and `_name_spaces` becomes unnecessary for the internal lane.
+    #   * `IRPredefined` carries only a NAME, so `+` needs `Eval.TOKEN_REGISTRY` to become the
+    #     `Grounded{Operation}` that parsing yields. That is the one lookup required.
+    #   * 🔴 BUT `atoms` AND `clauses` CANNOT BOTH COME FROM ONE BUILDER, and the property proposed
+    #     here earlier (`atom == parse(render(atom))`) is UNACHIEVABLE under `show`:
+    #         string(Grounded("abc"))  ⟶  abc     (no quotes — re-parses as a SYMBOL)
+    #         render(IRGrounded, STR)  ⟶  "abc"   (quoted — correct wire form)
+    #     `show` is lossy for a grounded STRING exactly as it is for `Space` and `StateCell`. So the
+    #     wire text must keep coming from `render` (which quotes correctly) while the lane takes
+    #     parse-equivalent atoms — TWO producers by necessity, not by sloppiness, with a property
+    #     asserting they agree on everything except the cases where `show` is known lossy.
+    #
+    # That is the corrected scope. It is bigger than a signature change and smaller than a rewrite.
     r.clauses
 end
 
