@@ -47,7 +47,7 @@ error-free in both lanes (0 → 0 measured). A lane that dropped a `superpose` b
 - curated goldens: **4/4 agree** with the M1 reference.
 - cetta_selected: **24 definitions compiled, 13 fell back, 21 bags compared, zero deviations.**
 
-## Cross-check: how the other MeTTa-IL implementations handle serialization
+## Cross-check: how four other MeTTa implementations handle the representation boundary
 
 Recorded here because it bears directly on the wire-format work:
 
@@ -62,3 +62,47 @@ Recorded here because it bears directly on the wire-format work:
   on the text as an identity.
 - **`dev-zone/MeTTaIL`** (Scala, F1R3FLY/GSLT) parses via ANTLR/BNFC into a generated typed AST and
   interprets that; no text between phases.
+
+- **`dev-zone/jetta`** (Kotlin → JVM bytecode, AOT) is the closest counterpart we have: a real MeTTa
+  COMPILER whose stated bet is *"partial evaluation with a runtime fallback"* and *"one code path
+  shared between compile time and call time"*, verified byte-for-byte against
+  `hyperon-experimental`. Two findings:
+
+  1. **Its IR is nearly ours.** `frontend-api/.../ir/` carries `Symbol`, `ResolvedSymbol`, `Position`,
+     `BoundAtom`, `Match`/`MatchBranch`, `ArrowType`, and a `UniqueAtomIdGenerator` — the same node
+     set and the same identity/provenance decisions as `Core/src/compiler/IR.jl`. Independent
+     convergence, and further evidence against SPECMAP C7's retracted "ours has NO IR".
+  2. 🔴 **Its persistence format is TAGGED BINARY, not text** — `runtime/space/SAtomSerializer.kt`:
+
+         TAG_SYMBOL 0 · TAG_EXPRESSION 1 · TAG_VARIABLE 3 · TAG_SPECIAL 4
+         TAG_GROUNDED_LONG 20 · DOUBLE 21 · STRING 22 · BOOLEAN 23 · INT 24
+
+     A grounded string is written under its OWN tag, so it can never read back as a symbol. That is
+     precisely the defect we hit: our text form distinguishes the two only by a quoting convention
+     that `show` does not honour, which is why `il_text` had to be written by hand. JeTTa also gives
+     `SSpecial` a tag — the construct our emitter currently DECLINES in ten places — and throws on an
+     unsupported atom type rather than degrading silently, the same fail-closed stance as
+     `_unroundtrippable`, but located at the serializer instead of upstream of it.
+
+- **`dev-zone/MeTTaScript`** (TypeScript, faithful interpreter port) contributes no new corpus — its
+  `corpus/` is the same hyperon set we already run through LeaTTa — but two things are worth knowing:
+  `packages/fuzz/` is a grammar-driven term generator with a decoder (the machinery a randomized
+  round-trip property needs), and `packages/core/src/atomlog.ts` records that a flat `Atom[]` copied
+  on every `add-atom` is O(N²) — they replaced it with an append-only linked log with structural
+  sharing and a lazily-built hash index. Our `Space` is also a `Vector{Atom}`; we `push!` rather than
+  copy, so we do not have their bug, but their O(1)-snapshot motivation is relevant to the second
+  atom store.
+
+### What the four agree on
+
+None of them treats rendered text as an identity. JeTTa tags bytes; MeTTaIL generates a typed AST from
+a BNF grammar; mettail-rust keeps a typed AST and settles for display IDEMPOTENCE, explicitly excluding
+variables and binders; MeTTaScript keeps atoms as structures and indexes them by hash. Our conclusion —
+keep terms typed, remove the in-process round-trip, and write the wire serializer by hand rather than
+inheriting `show` — is the same conclusion, reached the expensive way.
+
+⇒ The concrete borrowable design is **JeTTa's tag-per-grounded-type**. Our wire form is text because
+Fig-2 makes MeTTa-IL the distributed artifact, and text is legitimate there; but the LOSSY cases
+(`Space`, `StateCell`, and until this session grounded strings) are exactly the cases a type tag
+resolves. That is the shape to reach for when the `Atom → MORK.Expr` bridge replaces its lossy sexpr
+text write path.
