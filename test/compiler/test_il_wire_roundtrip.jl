@@ -39,7 +39,8 @@ const _WR_IL = MeTTaCore.CompilerEmitIL
 # emitter does emit user symbols verbatim. Generating them is how that gets measured instead of assumed.
 const _WR_SYMS = String["foo", "Bar", "f", "a", "+", "if", "chain", "return", "Nil", "empty-thing"]
 const _WR_VARS = String["x", "y", "acc", "_ignored"]
-const _WR_STRS = String["", "abc", "with space", "has\"quote", "(parens)", "42"]
+const _WR_STRS = String["", "abc", "with space", "has\"quote", "(parens)", "42",
+                        "back\\slash", "both\"\\mixed", "new\nline", "tab\there", "\U1F600"]
 
 "Generate a random atom drawn only from kinds the emitter can put on the wire."
 function _wr_gen(rng::Random.AbstractRNG, depth::Int)::_WR_SM.Atom
@@ -71,6 +72,13 @@ end
 # and, where one exists, the upstream authority. The test asserts the observed losses are EXACTLY this
 # set: a new class fails (a regression), and a class that stops appearing ALSO fails, so a fix cannot
 # land silently and the ledger cannot rot. Same discipline as the LeaTTa oracle's MISSING_OP ledger.
+# `"unparseable"` WAS a third entry here: a string containing `"` could not be read back. FIXED
+# 2026-08-12 — the loss was on the WRITE side only. `Eval.tokenize` had decoded `\n \r \t \" \\ \'`
+# all along (citing hyperon `text.rs:550-573`); `il_text` and `render` simply never ESCAPED, so
+# `back\\slash` came back `backslash` — silently corrupted, not rejected. Both producers now share
+# `CompilerEmit._escape_il_string`, and the generator alphabet above was widened to the characters that
+# were being eaten. This is what the two-sided ledger is for: the entry could not be quietly deleted,
+# its disappearance had to fail the test first.
 const _WR_KNOWN = Dict{String, String}(
     "kind changed: Grounded → Sym" =>
         "Grounded{Bool}: `il_text` writes `true`/`false` and the reader has no boolean case " *
@@ -85,15 +93,6 @@ const _WR_KNOWN = Dict{String, String}(
         "word. INHERENT to an untagged text format — `dev-zone/jetta` avoids it structurally by " *
         "writing TAG_SYMBOL vs a grounded tag (`runtime/space/SAtomSerializer.kt`). Not fixable " *
         "without tagging the wire form or escaping operator-shaped symbols.",
-    "unparseable" =>
-        "A string containing `\"`. NEITHER SIDE HANDLES ESCAPES: `il_text` does not emit them and " *
-        "`Eval.tokenize` does not consume them (measured: `\"has\\\"quote\"` lexes to one token " *
-        "and parses to `Grounded(\"has\")` — silently TRUNCATED, not rejected). " *
-        "🔴 UPSTREAM DOES SUPPORT THEM: hyperon-experimental `lib/src/metta/text.rs:534-570` " *
-        "handles `\\'`, `\\\"`, `\\\\` and numeric escapes in `parse_string`. So this is a " *
-        "Core LEXER conformance gap that predates the compiler and is reachable from ordinary MeTTa " *
-        "source, not only from the emitter. Fixing it means changing the reader, which needs its own " *
-        "upstream differential — recorded here rather than patched in passing.",
 )
 
 @testset "MeTTa-IL wire form — parse(il_text(a)) == a over generated atoms" begin
@@ -152,20 +151,47 @@ end
 
 @testset "the wire ledger and CompileLane._unroundtrippable must agree" begin
     # `_unroundtrippable` exists to refuse what the text form cannot carry. The property test found two
-    # things it lets through. This pins the disagreement so it is a decision, not an oversight.
+    # things it let through. ONE IS NOW CLOSED, and not by tightening the guard: strings containing `"`
+    # or `\\` were lost on the WRITE side only, so escaping both producers fixed it and the guard's
+    # permissive `v isa AbstractString` became correct rather than wrong. The other remains.
     sp = _WR_V.Space(); _WR_V.load_core_stdlib!(sp)
     # `CompileLane.jl` is `include`d straight into `MeTTaCore` (MeTTaCore.jl:164), not a submodule —
     # unlike `CompilerEmitIL`. Guessing the qualified name is what produced two false "DECLINED"
     # diagnoses earlier in this session, so it is resolved from the include site.
     unr = MeTTaCore._unroundtrippable
-    # A Grounded{Bool} is ALLOWED by the guard (`v isa Bool`) but does not survive the wire.
+
+    # STILL OPEN: a Grounded{Bool} is ALLOWED by the guard (`v isa Bool`) and does not survive the wire.
     @test unr(_WR_SM.Atom[_WR_SM.Grounded(true)], sp) === nothing        # guard permits it …
     @test _wr_parse(_WR_IL.il_text(_WR_SM.Grounded(true))) != _WR_SM.Grounded(true)   # … and it is lost
-    # A string containing a quote is ALLOWED (`v isa AbstractString`) and is silently TRUNCATED.
-    @test unr(_WR_SM.Atom[_WR_SM.Grounded("has\"quote")], sp) === nothing
-    @test _wr_parse(_WR_IL.il_text(_WR_SM.Grounded("has\"quote"))) != _WR_SM.Grounded("has\"quote")
-    # 🔴 NOT FIXED HERE ON PURPOSE. Since `2105f9d` the LANE no longer round-trips through text, so the
-    # guard now answers the wrong question: lane-loadability (nothing to check — atoms flow directly)
-    # has been conflated with wire-faithfulness (still needed, and demonstrably incomplete). Splitting
-    # the two changes what the lane compiles, so it is its own change with its own corpus measurement.
+    # CLOSED: quoted and backslashed strings now round-trip, so the guard permitting them is right.
+    for s in ("has\"quote", "back\\slash", "both\"\\mixed")
+        @test unr(_WR_SM.Atom[_WR_SM.Grounded(s)], sp) === nothing
+        @test _wr_parse(_WR_IL.il_text(_WR_SM.Grounded(s))) == _WR_SM.Grounded(s)
+    end
+    # 🔴 THE BOOL HOLE IS NOT FIXED HERE ON PURPOSE. Since `2105f9d` the LANE no longer round-trips
+    # through text, so the guard now answers the wrong question: lane-loadability (nothing to check —
+    # atoms flow directly) has been conflated with wire-faithfulness (still needed, demonstrably
+    # incomplete). Splitting the two changes what the lane compiles, so it is its own change with its
+    # own corpus measurement.
+end
+
+@testset "string escapes decode as upstream hyperon decodes them" begin
+    # Conformance for the lexer change made alongside the escaping fix. Authority:
+    # hyperon-experimental `lib/src/metta/text.rs:534-600` (`parse_string`, `parse_2_digit_radix_char`,
+    # `parse_unicode_sequence`). Note `\u` is BRACED there — `\u{41}`, not `\u0041` — which this pins,
+    # because the first probe written for it assumed the unbraced form and would have "verified" a
+    # format upstream does not accept.
+    for (src, want) in (("\"a\\\"b\"", "a\"b"), ("\"a\\\\b\"", "a\\b"),
+                        ("\"a\\nb\"", "a\nb"), ("\"a\\tb\"", "a\tb"), ("\"a\\rb\"", "a\rb"),
+                        ("\"\\x41\"", "A"), ("\"\\u{1F600}\"", "\U1F600"))
+        got = _wr_parse(src)
+        @test got isa _WR_SM.Grounded && String((got::_WR_SM.Grounded).value) == want
+    end
+    # DELIBERATE DIVERGENCE, pinned so it stays a decision: upstream raises "Invalid escape sequence"
+    # for an unknown or malformed escape; we drop the backslash and keep the character. Rejecting input
+    # Core currently accepts needs its own corpus pass.
+    for (src, want) in (("\"\\q\"", "q"), ("\"\\xZZ\"", "xZZ"), ("\"\\u0041\"", "u0041"))
+        got = _wr_parse(src)
+        @test got isa _WR_SM.Grounded && String((got::_WR_SM.Grounded).value) == want
+    end
 end

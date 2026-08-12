@@ -2570,6 +2570,16 @@ _GROUNDED_OP_TYPES[TRACE_BANG]  = "(-> %Undefined% Atom %Undefined%)"   # arg1 r
 # crashed the recursive driver). Intrinsic (out of the space, can't disturb match &self).
 _GROUNDED_OP_TYPES[EQ_OP]       = "(-> \$t \$t Bool)"
 
+# ⚠️ ESCAPE HANDLING vs UPSTREAM (hyperon-experimental `lib/src/metta/text.rs:534-600`).
+# Decoded here: `\n` `\r` `\t` `\"` `\\` `\'`, plus `\xNN` (exactly two hex digits) and `\u{X…}`
+# (BRACED, up to 8 hex digits — upstream's `parse_unicode_sequence` requires the braces; a bare
+# `\u0041` is NOT a unicode escape there either). The `\x`/`\u` forms were added 2026-08-12 after a
+# randomized wire-form property measured them decoding to the literal text `x41`/`u0041`.
+#
+# ONE DELIBERATE DIVERGENCE REMAINS: on a MALFORMED or UNKNOWN escape (`\q`, `\xZZ`, `\u{}`) upstream
+# produces an "Invalid escape sequence" error node, while this drops the backslash and keeps the
+# character. Not changed here because rejecting input that Core currently accepts is a behavioural
+# change that needs its own corpus pass — recorded so it is a decision rather than an oversight.
 function tokenize(s::AbstractString)::Vector{String}
     cs = collect(s); n = length(cs); toks = String[]; i = 1
     while i <= n
@@ -2582,7 +2592,29 @@ function tokenize(s::AbstractString)::Vector{String}
             while i <= n && cs[i] != '"'
                 if cs[i] == '\\' && i < n                   # decode escapes (hyperon text.rs:550-573):
                     i += 1; d = cs[i]                        #   \n \t \r → control char; \" \\ \' → literal
-                    push!(buf, d == 'n' ? '\n' : d == 't' ? '\t' : d == 'r' ? '\r' : d)
+                    if d == 'x' && i + 2 <= n                # \xNN — EXACTLY two hex digits, high<<4|low
+                        hi = tryparse(UInt8, String(cs[i+1:i+1]); base = 16)
+                        lo = tryparse(UInt8, String(cs[i+2:i+2]); base = 16)
+                        if hi !== nothing && lo !== nothing
+                            push!(buf, Char((UInt32(hi) << 4) | UInt32(lo))); i += 2
+                        else
+                            push!(buf, d)                    # malformed: literal, see the note below
+                        end
+                    elseif d == 'u' && i + 1 <= n && cs[i+1] == '{'   # \u{X…} — BRACED, up to 8 hex digits
+                        j = i + 2; acc = UInt32(0); ndig = 0; ok = true
+                        while j <= n && cs[j] != '}'
+                            dv = tryparse(UInt32, String(cs[j:j]); base = 16)
+                            (dv === nothing || ndig >= 8) && (ok = false; break)
+                            acc = (acc << 4) | dv; ndig += 1; j += 1
+                        end
+                        if ok && j <= n && cs[j] == '}' && ndig > 0 && acc <= 0x10FFFF
+                            push!(buf, Char(acc)); i = j
+                        else
+                            push!(buf, d)
+                        end
+                    else
+                        push!(buf, d == 'n' ? '\n' : d == 't' ? '\t' : d == 'r' ? '\r' : d)
+                    end
                 else
                     push!(buf, cs[i])
                 end

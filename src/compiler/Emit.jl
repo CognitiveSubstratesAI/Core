@@ -78,8 +78,28 @@ render(a::IRResolvedSymbol)::String = String(a.name)
 # the invariant resolution established.
 render(a::IRVariable)::String      = "\$" * String(a.name)
 
+"""Escape a string for the IL wire form, matching what `Eval.tokenize` decodes and what upstream
+hyperon's `parse_string` accepts (`lib/src/metta/text.rs:550-573`).
+
+🔴 MEASURED — the write side escaped NOTHING while the read side has decoded escapes all along:
+
+    Grounded("has\"quote")   wrote  "has"quote"    read back  "has"      TRUNCATED
+    Grounded("back\\slash")   wrote  "back\\slash"    read back  "backslash" CORRUPTED
+
+The backslash case is the worse one: it comes back a plausible-looking string with a character silently
+removed, so nothing downstream can tell. A randomized `parse(il_text(a)) == a` property found both;
+neither corpus did, because no corpus script contains a quote or a backslash inside a string literal.
+
+Newline/tab are escaped too, though a raw one happens to survive our lexer: IL clauses are LINE-ORIENTED
+on the wire, so a literal newline inside a clause would split it for any line-based consumer."""
+_escape_il_string(s::AbstractString)::String = replace(String(s),
+    "\\" => "\\\\", "\"" => "\\\"", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t")
+
 function render(a::IRGrounded)::String
-    a.ty === GROUNDED_STRING && return "\"" * string(a.value) * "\""
+    # Escaped via the shared `_escape_il_string` — the two producers must agree on the wire form,
+    # and `test_emit_il.jl` asserts that. Unescaped, a string containing `"` or `\\` is
+    # truncated or silently corrupted on read (measured 2026-08-12).
+    a.ty === GROUNDED_STRING && return "\"" * _escape_il_string(string(a.value)) * "\""
     string(a.value)
 end
 

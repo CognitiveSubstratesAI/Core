@@ -43,7 +43,8 @@ module CompilerEmitIL
 
 using ..CompilerIR
 using ..CompilerANormal
-using ..CompilerEmit: render          # reuse the renderer — a second one would drift from the first
+using ..CompilerEmit: render, _escape_il_string   # reuse the renderer AND its escaper — a second
+                                                  # of either would drift from the first
 using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded   # typed atom model — same idiom as Frontend.jl:38
 import ..Eval                          # TOKEN_REGISTRY, for parse-equivalent predefined ops
 
@@ -119,7 +120,7 @@ into a `Sym` before lowering, so no name lookup is needed here.
 that knows the quoting rule rather than by a display method that does not."""
 function il_text(a::Atom)::String
     a isa Expression && return "(" * join(String[il_text(c) for c in a.children], " ") * ")"
-    a isa Grounded && a.value isa AbstractString && return "\"" * String(a.value) * "\""
+    a isa Grounded && a.value isa AbstractString && return "\"" * _escape_il_string(a.value) * "\""
     string(a)
 end
 const _RET_EMPTY = Expression(Atom[_A_RETURN, _A_EMPTY])
