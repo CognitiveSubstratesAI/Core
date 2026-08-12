@@ -160,9 +160,16 @@ end
     # diagnoses earlier in this session, so it is resolved from the include site.
     unr = MeTTaCore._unroundtrippable
 
-    # STILL OPEN: a Grounded{Bool} is ALLOWED by the guard (`v isa Bool`) and does not survive the wire.
-    @test unr(_WR_SM.Atom[_WR_SM.Grounded(true)], sp) === nothing        # guard permits it …
-    @test _wr_parse(_WR_IL.il_text(_WR_SM.Grounded(true))) != _WR_SM.Grounded(true)   # … and it is lost
+    # 🟢 CLOSED. This previously asserted the HOLE — "the guard permits Grounded{Bool} and it is lost".
+    # The guard now names it. Note what made that cheap: while the verdict DECLINED a definition,
+    # adding a case cost compiled coverage, so every addition was a trade. Since the split
+    # (2026-08-12) the verdict only ANNOTATES the wire form, so naming a real lossy case costs nothing
+    # and there is no longer a reason to leave one out.
+    @test unr(_WR_SM.Atom[_WR_SM.Grounded(true)], sp) !== nothing                      # guard names it …
+    @test occursin("bool", lowercase(String(unr(_WR_SM.Atom[_WR_SM.Grounded(true)], sp))))
+    @test _wr_parse(_WR_IL.il_text(_WR_SM.Grounded(true))) != _WR_SM.Grounded(true)    # … and it IS lost
+    # The loss itself is unchanged and still ledgered above — this asserts the guard AGREES with the
+    # ledger, which is the whole point of this testset.
     # CLOSED: quoted and backslashed strings now round-trip, so the guard permitting them is right.
     for s in ("has\"quote", "back\\slash", "both\"\\mixed")
         @test unr(_WR_SM.Atom[_WR_SM.Grounded(s)], sp) === nothing

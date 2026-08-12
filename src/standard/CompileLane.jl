@@ -80,7 +80,8 @@ function _resolve_tokens(a::StandardMeTTa.Atom, sp)::StandardMeTTa.Atom
     a
 end
 
-const ILForm = @NamedTuple{atoms::Vector{StandardMeTTa.Atom}, clauses::Vector{String}}
+const ILForm = @NamedTuple{atoms::Vector{StandardMeTTa.Atom}, clauses::Vector{String},
+                           wire::Union{Nothing, String}}
 
 """
     compile_definition(sp, form) -> Union{ILForm, Nothing}
@@ -113,7 +114,14 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     # A value that cannot survive the IL TEXT round-trip makes the emitted clause quietly mean
     # something else — see `_unroundtrippable`. Checked on the PARSED atoms, before any lowering,
     # because the corruption is in serialization and every later stage inherits it.
-    _unroundtrippable(atoms, sp) === nothing || return nothing
+    # 🔴 NOT A DECLINE ANY MORE — SPLIT 2026-08-12. This guard was written when the lane round-tripped
+    # through TEXT: a definition whose clause text could not be re-parsed faithfully had to be refused,
+    # or the lane would load a corrupted atom. Since `2105f9d` the lane loads the emitter's ATOMS
+    # directly and takes no such hop, so refusing here costs coverage for a reason that no longer
+    # applies. The check still matters for the OTHER consumer — `clauses` is the wire form, and Fig-2
+    # makes it the distributed artifact — so its verdict is now REPORTED on the ILForm instead of
+    # silently dropping the definition.
+    wire_verdict = _unroundtrippable(atoms, sp)
     prog = try CompilerFrontend.lower_program(atoms) catch; return nothing end
     isempty(prog.definitions) && return nothing        # a fact, not a definition — not a decline
     cls = try CompilerANormal.translate_program(prog) catch; return nothing end
@@ -137,7 +145,7 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     # `TOKEN_REGISTRY`), so the atoms are now what parsing produces — and for a Space, `parse("&self")
     # === sp`, so it is the SAME OBJECT rather than an equal one. `clauses` stays available and is
     # still the artifact that gets written out; nothing downstream of the wire changes.
-    (atoms = r.atoms, clauses = r.clauses)
+    (atoms = r.atoms, clauses = r.clauses, wire = wire_verdict)
 end
 
 """
@@ -292,8 +300,17 @@ function _unroundtrippable(atoms::Vector{StandardMeTTa.Atom}, sp)::Union{Nothing
                 why = "a state cell (prints as `(State …)`, re-parses as an Expression — type lost)"
             elseif v isa Eval.WFSBottom
                 why = "WFSBottom (prints as `undefined`, re-parses as the symbol `undefined`)"
+            elseif v isa Bool
+                # ADDED 2026-08-12. `il_text` writes `true`/`false` and `Eval.parse_atom` has no boolean
+                # case, so a grounded Bool comes back a SYMBOL. MeTTa's own convention is that booleans
+                # are the symbols True/False, which round-trip fine — a Grounded{Bool} can only have
+                # arrived from a grounded op returning a Julia Bool. This slot previously listed `Bool`
+                # among the ALLOWED types, which was wrong for the wire; found by the randomized
+                # property in `test/compiler/test_il_wire_roundtrip.jl`. Now that the verdict annotates
+                # rather than declines, saying so costs no coverage.
+                why = "a grounded Bool (prints as `true`/`false`, re-parses as a symbol — MeTTa booleans are the symbols True/False)"
             elseif !(v isa Eval.Operation || v isa Eval.SpaceOp ||
-                     v isa Number || v isa AbstractString || v isa Bool)
+                     v isa Number || v isa AbstractString)
                 why = "a grounded $(typeof(v)) with no faithful textual form"
             end
         end

@@ -93,10 +93,14 @@ end
         @test "Fritz" in got                   # …and specifically FINDS the atom it wrote
         @test r.compiled >= 1                  # …having actually COMPILED it, not fallen back
 
-        # The corpus case, reduced: a definition whose entire body is a bound state cell. This one is
-        # STILL declined, and the asymmetry is the point — a space has a WORD that re-parses to the
-        # same space, a state cell has no textual form at all (`(State (A B))` re-parses as an
-        # Expression, and the cell is MUTABLE IDENTITY besides). Naming cannot save it.
+        # The corpus case, reduced: a definition whose entire body is a bound state cell.
+        #
+        # 🔴 THIS USED TO ASSERT `r2.fell_back >= 1` — "correct by DECLINING, there is no word to emit".
+        # That was right while the lane round-tripped through TEXT, and it is wrong now. Since the guard
+        # split (2026-08-12) the lane loads ATOMS, so the cell's MUTABLE IDENTITY flows through as
+        # itself and never has to survive `(State (A B))` re-parsing as an Expression. It now COMPILES
+        # and is still correct — which is the coverage the split was for, demonstrated on the exact case
+        # that motivated the old guard.
         prog2 = "!(bind! &tok (new-state (A B)))\n" *
                 "(= (get-token) &tok)\n" *
                 "!(get-state (get-token))\n"
@@ -104,7 +108,19 @@ end
         got2 = sort(vcat([a for (_, a) in r2.answers]...))
         @test got2 == _rt_interp(prog2)
         @test "(A B)" in got2
-        @test r2.fell_back >= 1                # correct by DECLINING — there is no word to emit
+        @test r2.compiled >= 1                 # COMPILED now, not declined — and still correct
+
+        # …AND THE TRADEOFF IS REPORTED, not hidden. The lane is fine with this definition; its WIRE
+        # form is not, and `clauses` is what Fig-2 distributes. The verdict that used to drop the
+        # definition now rides along on the ILForm so a consumer of the text can see it.
+        let sp2 = _RT_V.Space()
+            _RT_V.load_core_stdlib!(sp2)
+            _RT_V.load_metta!(sp2, "!(bind! &tok (new-state (A B)))")
+            il = MeTTaCore.compile_definition(sp2, "(= (get-token) &tok)")
+            @test il !== nothing                       # admitted to the lane …
+            @test il.wire !== nothing                  # … while flagged as not wire-faithful
+            @test occursin("state cell", lowercase(String(il.wire)))
+        end
     end
 
     @testset "`&self` is NOT declined — the guard must not over-reach" begin
