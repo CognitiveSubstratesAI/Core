@@ -49,16 +49,52 @@ function purity_may_mutate(program::AbstractString)
 end
 
 """
-    compile_definition(sp, form) -> Union{Vector{String}, Nothing}
+    _resolve_tokens(a, sp) -> Atom
 
-Compile ONE top-level form to minimal-MeTTa clauses, or `nothing` if it is not a compilable
+Apply the SPACE-DEPENDENT half of `parse_atom` (`Eval.jl:2602-2610`) to an emitted atom.
+
+The emitter is space-blind, so it cannot do the two lookups the parser does on every bare word:
+
+    haskey(sp.tokens, tok)       -->  tokens[tok]         `bind!` tokens — e.g. `&kb`
+    haskey(TOKEN_REGISTRY, tok)  -->  TOKEN_REGISTRY[tok]  grounded operators
+
+🔴 THIS IS WHY THE FIRST TWO ATTEMPTS AT THE SWITCH FAILED, and the second failure is the informative
+one. `f24d636` made the LEAF builders parse-equivalent (`IRGrounded` -> `Grounded(value)`,
+`IRPredefined` -> registry) and the same five scripts broke by the same margins — because
+parse-equivalence is NOT A PROPERTY OF AN ATOM ALONE. It is relative to a SPACE. `_name_spaces` turns
+`&kb` back into a symbol so the wire text has a word to print; the text path then re-resolves that word
+through `sp.tokens`, and the atom path had no way to.
+
+So the resolution runs HERE, in the one component that holds the space, mirroring `parse_atom`'s order
+exactly — deliberately including symbols that collide with operator names, because parsing the text
+would resolve those too, and the text path is the baseline this must not deviate from."""
+function _resolve_tokens(a::StandardMeTTa.Atom, sp)::StandardMeTTa.Atom
+    if a isa StandardMeTTa.Expression
+        ch = (a::StandardMeTTa.Expression).children
+        return StandardMeTTa.Expression(StandardMeTTa.Atom[_resolve_tokens(c, sp) for c in ch])
+    elseif a isa StandardMeTTa.Sym
+        n = String((a::StandardMeTTa.Sym).name)
+        haskey(sp.tokens, n) && return sp.tokens[n]
+        haskey(Eval.TOKEN_REGISTRY, n) && return Eval.TOKEN_REGISTRY[n]
+    end
+    a
+end
+
+const ILForm = @NamedTuple{atoms::Vector{StandardMeTTa.Atom}, clauses::Vector{String}}
+
+"""
+    compile_definition(sp, form) -> Union{ILForm, Nothing}
+
+Compile ONE top-level form to minimal-MeTTa IL — returned as BOTH the atoms the lane loads and
+the clause text that goes on the wire — or `nothing` if it is not a compilable
 definition (a bare fact, an unparseable form) or the compiler declines it.
 
 Deliberately per-form: see the correctness constraint above. A form that yields no `(=)` definition —
 a ground fact like `(edge a b)` — is NOT a compiler failure and must not be counted as a decline; it
 is simply data, and it returns `nothing` so the caller loads it verbatim.
 """
-function compile_definition(sp, form::AbstractString)::Union{Vector{String}, Nothing}
+
+function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     atoms = try
         toks = Eval.tokenize(form); i = Ref(1)
         out = StandardMeTTa.Atom[]
@@ -86,42 +122,22 @@ function compile_definition(sp, form::AbstractString)::Union{Vector{String}, Not
     # ALL-OR-NOTHING per form. A form can lower to several clauses; if any is declined, loading the
     # compiled subset plus the whole source form would double the surviving answers (Invariant 6).
     (r.emitted == length(cls) && isempty(r.declined)) || return nothing
-    # 🔴 `r.clauses`, NOT `r.atoms` — AND THE ATTEMPT TO USE `r.atoms` IS RECORDED BECAUSE THE REASON
-    # IS NOT OBVIOUS. Consuming the emitter's atoms directly (skipping `load_metta!`) broke FIVE
-    # corpus scripts on 2026-08-11: b2_backchain +5 errors, c3_pln_stv +5, c1_grounded_basic +4,
-    # d2_higherfunc +3, e1_kb_write +2.
+    # 🟢 RETURNS BOTH VIEWS, and the lane now takes the ATOMS. Consuming them was tried on 2026-08-11
+    # and REVERTED: it broke five corpus scripts (b2_backchain +5 errors, c3_pln_stv +5,
+    # c1_grounded_basic +4, d2_higherfunc +3, e1_kb_write +2), because `EmitIL`'s builders were then
+    # TEXT-EQUIVALENT — `&self` was `Sym("&self")` and a literal was `Sym("\"abc\"")`, proven against
+    # `render`. The text path PARSED that back into a `Grounded{Space}` and a grounded string; skipping
+    # the parse added the Syms literally.
     #
-    # WHY: `EmitIL`'s atom builders are TEXT-EQUIVALENT, deliberately — `&self` becomes `Sym("&self")`
-    # and a string literal becomes `Sym("\"abc\"")`, because they were proven against `render`. The
-    # text path then PARSES that text, and parsing turns `&self` into a `Grounded{Space}` and the
-    # literal into a grounded string. Skipping the parse adds the Syms literally.
+    # ⚠️ THE LESSON IS ABOUT THE PROPERTY, NOT THE PATCH. `test_emit_il.jl` proved atom ⇒ TEXT
+    # (`il_text(_il_atom(a)) == _render_il(a)`). What bypassing the parser needs is atom ⇒ ATOM. Both
+    # are called "equivalence"; only the second licenses the switch, and the first passed throughout.
     #
-    # ⚠️ SO THE SAFETY PROPERTY PROVED THE WRONG THING FOR THIS USE. `test_emit_il.jl` asserts
-    # `string(_il_atom(a)) == _render_il(a)` — atom ⇒ TEXT. What the lane needs is
-    # `atom == parse(text)` — atom ⇒ ATOM. Both are "equivalence"; only the second licenses bypassing
-    # the parser, and a property that passes while the behaviour changes is worse than none.
-    #
-    # ⇒ The switch is still right (it deletes the round-trip corruption class at the source), and the
-    # prerequisite is builders that produce PARSE-EQUIVALENT atoms. MEASURED 2026-08-12, which
-    # CORRECTS the shape of that work:
-    #
-    #   * `IRGrounded` ALREADY CARRIES THE REAL VALUE (`.value::T`), so the parse-equivalent atom is
-    #     `Grounded(value)` — no Space and no token table needed. And `parse("&self") === sp` is TRUE,
-    #     so this is not merely equivalent to the text path, it is BETTER: the actual Space object
-    #     flows through and `_name_spaces` becomes unnecessary for the internal lane.
-    #   * `IRPredefined` carries only a NAME, so `+` needs `Eval.TOKEN_REGISTRY` to become the
-    #     `Grounded{Operation}` that parsing yields. That is the one lookup required.
-    #   * 🔴 BUT `atoms` AND `clauses` CANNOT BOTH COME FROM ONE BUILDER, and the property proposed
-    #     here earlier (`atom == parse(render(atom))`) is UNACHIEVABLE under `show`:
-    #         string(Grounded("abc"))  ⟶  abc     (no quotes — re-parses as a SYMBOL)
-    #         render(IRGrounded, STR)  ⟶  "abc"   (quoted — correct wire form)
-    #     `show` is lossy for a grounded STRING exactly as it is for `Space` and `StateCell`. So the
-    #     wire text must keep coming from `render` (which quotes correctly) while the lane takes
-    #     parse-equivalent atoms — TWO producers by necessity, not by sloppiness, with a property
-    #     asserting they agree on everything except the cases where `show` is known lossy.
-    #
-    # That is the corrected scope. It is bigger than a signature change and smaller than a rewrite.
-    r.clauses
+    # `f24d636` made the builders PARSE-EQUIVALENT (`IRGrounded` → `Grounded(value)`, `IRPredefined` →
+    # `TOKEN_REGISTRY`), so the atoms are now what parsing produces — and for a Space, `parse("&self")
+    # === sp`, so it is the SAME OBJECT rather than an equal one. `clauses` stays available and is
+    # still the artifact that gets written out; nothing downstream of the wire changes.
+    (atoms = r.atoms, clauses = r.clauses)
 end
 
 """
@@ -376,8 +392,12 @@ function _compile_run_inner(program::AbstractString, fallback::Bool)
                 Eval.load_metta!(sp, d)
                 nfallback += 1
             else
-                for c in il
-                    Eval.load_metta!(sp, c)
+                # ATOMS, not text. `load_metta!` on a non-directive form is exactly
+                # `add_atom!(space, parse(form))` (Eval.jl:2649), so this is the same operation with
+                # the round-trip removed — and the round-trip is where `Space`, `StateCell` and
+                # grounded strings were being corrupted.
+                for a in il.atoms
+                    Eval.add_atom!(sp, _resolve_tokens(a, sp))
                 end
                 ncompiled += 1
             end
