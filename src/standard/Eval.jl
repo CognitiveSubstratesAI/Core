@@ -2570,6 +2570,15 @@ _GROUNDED_OP_TYPES[TRACE_BANG]  = "(-> %Undefined% Atom %Undefined%)"   # arg1 r
 # crashed the recursive driver). Intrinsic (out of the space, can't disturb match &self).
 _GROUNDED_OP_TYPES[EQ_OP]       = "(-> \$t \$t Bool)"
 
+# Hex digit → value, or -1. Allocation-free: the first version of the `\x`/`\u{}` decoding called
+# `tryparse(UInt8, String(cs[j:j]); base=16)`, which allocates a 1-element Char slice AND a String PER
+# DIGIT inside the lexer's inner loop. Nothing measured it; it was simply the wrong tool for reading
+# one character.
+@inline _hexval(c::Char)::Int =
+    ('0' <= c <= '9') ? Int(c) - Int('0') :
+    ('a' <= c <= 'f') ? Int(c) - Int('a') + 10 :
+    ('A' <= c <= 'F') ? Int(c) - Int('A') + 10 : -1
+
 # ⚠️ ESCAPE HANDLING vs UPSTREAM (hyperon-experimental `lib/src/metta/text.rs:534-600`).
 # Decoded here: `\n` `\r` `\t` `\"` `\\` `\'`, plus `\xNN` (exactly two hex digits) and `\u{X…}`
 # (BRACED, up to 8 hex digits — upstream's `parse_unicode_sequence` requires the braces; a bare
@@ -2593,9 +2602,8 @@ function tokenize(s::AbstractString)::Vector{String}
                 if cs[i] == '\\' && i < n                   # decode escapes (hyperon text.rs:550-573):
                     i += 1; d = cs[i]                        #   \n \t \r → control char; \" \\ \' → literal
                     if d == 'x' && i + 2 <= n                # \xNN — EXACTLY two hex digits, high<<4|low
-                        hi = tryparse(UInt8, String(cs[i+1:i+1]); base = 16)
-                        lo = tryparse(UInt8, String(cs[i+2:i+2]); base = 16)
-                        if hi !== nothing && lo !== nothing
+                        hi = _hexval(cs[i+1]); lo = _hexval(cs[i+2])
+                        if hi >= 0 && lo >= 0
                             push!(buf, Char((UInt32(hi) << 4) | UInt32(lo))); i += 2
                         else
                             push!(buf, d)                    # malformed: literal, see the note below
@@ -2603,9 +2611,9 @@ function tokenize(s::AbstractString)::Vector{String}
                     elseif d == 'u' && i + 1 <= n && cs[i+1] == '{'   # \u{X…} — BRACED, up to 8 hex digits
                         j = i + 2; acc = UInt32(0); ndig = 0; ok = true
                         while j <= n && cs[j] != '}'
-                            dv = tryparse(UInt32, String(cs[j:j]); base = 16)
-                            (dv === nothing || ndig >= 8) && (ok = false; break)
-                            acc = (acc << 4) | dv; ndig += 1; j += 1
+                            dv = _hexval(cs[j])
+                            (dv < 0 || ndig >= 8) && (ok = false; break)
+                            acc = (acc << 4) | UInt32(dv); ndig += 1; j += 1
                         end
                         if ok && j <= n && cs[j] == '}' && ndig > 0 && acc <= 0x10FFFF
                             push!(buf, Char(acc)); i = j
