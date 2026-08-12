@@ -1,12 +1,45 @@
 # LeaTTa proved-oracle — Core vs machine-checked MeTTa semantics
 
-Ground-truth for `test/oracle/leatta/test_leatta_oracle.jl`. **LeaTTa** (godelclaw/LeaTTa 1.0.6,
-`~/JuliaAGI/dev-zone/LeaTTa`) is a **Lean-4 machine-checked** MeTTa/Hyperon interpreter: its
+Ground-truth for `test/oracle/leatta/test_leatta_oracle.jl`. **LeaTTa** (1.0.6, hosted under
+godelclaw, `~/JuliaAGI/dev-zone/LeaTTa`) is a **Lean-4 machine-checked** MeTTa/Hyperon interpreter: its
 minimal interpreter + standard library run **Hyperon's own unmodified oracle corpus — 270 passing
 assertions across 22 files** — and its metatheory (`MettaHyperonFull/Proofs/`) carries kernel-checked
 proofs (determinism, confluence, first-argument-indexing soundness/completeness, gradual-type totality,
-α-equivalence) with `0 sorry / admit / native_decide`. So a Core⟂LeaTTa disagreement is **our** bug, not a
-difference of opinion — the strongest oracle in the fleet by provenance.
+α-equivalence) with `0 sorry / admit / native_decide`.
+
+## ⚠️ What that does and does not license (revised 2026-08-12)
+
+This file used to say flatly: *"a Core⟂LeaTTa disagreement is our bug, not a difference of opinion."*
+**That is too strong, and the qualification matters.**
+
+- **Authorship.** Written mostly by **MesTTo** (139 of 143 commits; Zarathustra Goertzel has 4).
+  `godelclaw` is where it is hosted, not who wrote it. Corrected after Zar pointed it out directly.
+- **🔴 LeaTTa DELIBERATELY DIFFERS FROM hyperon-experimental at several points**, by its own README's
+  section *"Where LeaTTa improves the current interpreter"*: HE's mutable `is_evaluated()` bit becomes
+  static return-type gating; the `is_variable_op` hotfix becomes a total `isVariableHeaded` guard;
+  `Rc<RefCell>` mutation becomes a pure immutable stack; the global `make_unique` counter becomes a
+  threaded pure gensym; the unbounded loop becomes a fuel-bounded driver; linear rule lookup becomes
+  first-argument indexing. Where Core follows HE and LeaTTa follows its improved construct, a
+  disagreement IS a difference of opinion.
+- **Its conformance to HE was being established, and paused.** Zar (2026-08-12): *"I think we were
+  trying to verify its correctness against HE specs (while fixing HE specs). I kinda paused somewhere
+  due to lower credits."* Reported recollection, hedged as stated — but it means "machine-checked
+  metatheory" must not be read as "verified conformance to hyperon".
+
+**What the gate still soundly licenses.** The oracle is CORPUS-based: hyperon's own 270 self-checking
+assertions, where a pass means Core computed the value the assertion demands. The improvements above do
+not change results the corpus pins, so for everything the corpus exercises the gate holds exactly as
+before. The narrowed claim is: *a Core⟂LeaTTa disagreement ON A CORPUS DIRECTIVE is our bug; a
+disagreement outside it may be either.* That is the same rule as `[[feedback_oracle_inherits_corpus_
+coverage]]` — a proved oracle guarantees what its CORPUS exercises, not what its spec states — applied
+to an oracle we had been quoting past that line.
+
+## Oracle independence — LeaTTa and MeTTaScript are NOT independent
+
+`dev-zone/MeTTaScript` is also **MesTTo's** (60 of 60 commits). Treating agreement between them as
+corroboration would be double-counting one author's reading of MeTTa. The genuinely independent points
+in the fleet are hyperon-experimental itself (the upstream), MeTTapedia's `metta-ref` (zariuq /
+godelclaw — see `../mettaref/README.md`), and CeTTa.
 
 ## What's here
 
