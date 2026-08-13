@@ -65,6 +65,8 @@ module StandardMeTTaTests
     include("compiler/test_il_roundtrip.jl")    # IL goes out as TEXT: which values survive parse(show(v))
     include("compiler/test_il_wire_roundtrip.jl")  # randomized parse(il_text(a))==a over the
     include("compiler/test_type_declarations.jl")  # `(: name type)` visible to the compiler —
+    include("compiler/test_lib_differential.jl")   # Core/lib compiled-vs-interpreted answers —
+                                                   # the gate the three corpora do not cover
                                                    # the arrow half of the call-vs-data predicate
                                                    # WIRE form, with the known-loss ledger
     include("compiler/test_eval_one_step.jl")   # metta.txt:96 — `eval` is ONE STEP; args are not reduced
