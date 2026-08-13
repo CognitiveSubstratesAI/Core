@@ -368,6 +368,84 @@ IRProgram() = IRProgram(IRFunctionDefinition[], IRRun[], Dict{Base.Symbol, IRPre
                         Dict{Base.Symbol, Dict{NodeId, NodeId}}(),
                         Dict{Base.Symbol, Vector{IRAtom}}(), UniqueAtomIdGenerator())
 
+# ── type inference, ported from `Eval.jl` ────────────────────────────────────────────────────────
+#
+# The evaluator answers "is this expression a CALL or a DATA TUPLE" with
+# `_arg_actual_types_uncached` (Eval.jl:1888): get the HEAD's types — recursively when the head is
+# itself an expression — keep the function types whose arity matches, and if any survives it is an
+# application. `is_function_type(t)` there is `t.children[1] == ARROW`.
+#
+# These are the IR-side counterparts. They read `IRProgram.types` where the evaluator reads the SPACE
+# (`atom_types(op, space)`), which is the only reason the compiler could not use its algorithm.
+#
+# 🔴 SCOPE, STATED: this ports the ARITY question, not the whole of `arg_actual_types`. The evaluator
+# also threads type-variable bindings across arguments (`match_types_b` / `subst`, and
+# `type_check_errors`) to reject `(-> $t $t Bool)` applied at two different types. That is real and NOT
+# here — so these answer "could this be a call of this arity", never "is this call well-typed". The
+# decline question needs the first; anything that needs the second must port the rest.
+
+"Is `t` an arrow type — `(-> …)` — in IR form?"
+ir_is_function_type(t::IRAtom)::Bool =
+    t isa IRExpression && (t::IRExpression).head isa IRSymbol &&
+    ((t::IRExpression).head::IRSymbol).name === :(->)
+
+"The argument types of an arrow type; the trailing element is the RETURN type, as in `fn_arg_types`."
+ir_fn_arg_types(t::IRExpression)::Vector{IRAtom} =
+    isempty(t.args) ? IRAtom[] : t.args[1:end-1]
+
+"The return type of an arrow type — `fn_ret_type`."
+ir_fn_ret_type(t::IRExpression)::Union{IRAtom, Nothing} =
+    isempty(t.args) ? nothing : t.args[end]
+
+"""Every type this IR node could have, mirroring `Eval.atom_types` over `IRProgram.types`.
+
+A VARIABLE has no declared type — the evaluator guards this explicitly (`atom_types`, Eval.jl:1817:
+*"A VARIABLE has no declared type (types.rs:386)"*), because querying `(: \$v \$T)` would otherwise unify
+with every declaration in the space. Same hazard here, same guard.
+
+An EXPRESSION head is where the recursion lives: its type is the RETURN type of its own head's arrow
+type, when the arity fits. That is what makes `((curry +) 2)` decidable — the case `Eval.jl:1890` names.
+"""
+function ir_types(p::IRProgram, a::IRAtom)::Vector{IRAtom}
+    a isa IRVariable && return IRAtom[]
+    if a isa IRSymbol
+        return declared_types(p, (a::IRSymbol).name)
+    elseif a isa IRResolvedSymbol
+        return declared_types(p, (a::IRResolvedSymbol).name)
+    elseif a isa IRPredefined
+        return declared_types(p, (a::IRPredefined).name)
+    elseif a isa IRExpression
+        e = a::IRExpression
+        nargs = length(e.args)
+        out = IRAtom[]
+        for ht in ir_types(p, e.head)                    # RECURSES on an expression head
+            ir_is_function_type(ht) || continue
+            hte = ht::IRExpression
+            length(ir_fn_arg_types(hte)) == nargs || continue
+            r = ir_fn_ret_type(hte)
+            r === nothing || push!(out, r)
+        end
+        return out
+    end
+    IRAtom[]
+end
+
+"""Could this node be a CALL of its own arity, rather than a data tuple?
+
+`Eval.jl:1495`'s rule, on the IR: keep the head's function types whose arity matches the number of
+arguments; a call is one that survives. An untyped head yields none, which is the evaluator's untyped
+fallthrough — *"No space ⇒ no type system … Falls through to the untyped tuple/grounded path"* — and so
+means "not known to be a call", NOT "known to be data"."""
+function ir_denotes_call(p::IRProgram, a::IRAtom)::Bool
+    a isa IRExpression || return false
+    e = a::IRExpression
+    nargs = length(e.args)
+    for ht in ir_types(p, e.head)
+        ir_is_function_type(ht) && length(ir_fn_arg_types(ht::IRExpression)) == nargs && return true
+    end
+    false
+end
+
 "The declared types of `name`, in declaration order; empty if it has none."
 declared_types(p::IRProgram, name::Base.Symbol)::Vector{IRAtom} =
     get(p.types, name, IRAtom[])
@@ -455,7 +533,8 @@ export NodeId, NO_ID, UniqueAtomIdGenerator, next_id!,
        GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL, GROUNDED_STRING, GROUNDED_OPAQUE,
        UNIT_HEAD,
        IRResolvedSymbol, IRExpression, IRSpecial, SpecialKind,
-       declared_types, has_arrow_type,
+       declared_types, has_arrow_type, ir_types, ir_denotes_call,
+       ir_is_function_type, ir_fn_arg_types, ir_fn_ret_type,
        SPECIAL_LET, SPECIAL_LET_SEQ, SPECIAL_IF, SPECIAL_CASE, SPECIAL_MATCH,
        SPECIAL_SUPERPOSE, SPECIAL_COLLAPSE, SPECIAL_QUOTE, SPECIAL_EVAL, SPECIAL_CHAIN,
        SPECIAL_FUNCTION, SPECIAL_RETURN, SPECIAL_ERROR, SPECIAL_CATCH,
