@@ -323,6 +323,30 @@ function _instr(g::GCall, cont::Atom, ::Atom)::Union{Atom, Nothing}
     args = _atom_args(g.args); args === nothing && return nothing
     o = _render_atom(g.out);   o === nothing && return nothing
     call = Expression(Atom[Sym(String(g.head)); args])
+    # ── DEFER BY DEFAULT, DECIDE ONLY ON EVIDENCE ─────────────────────────────────────────────────
+    # `metta` is one of the THIRTEEN minimal-MeTTa instructions (`metta.txt:96`), so handing an atom
+    # back to the full evaluator is FIRST-CLASS in the target language, not a workaround. Every call
+    # goes through it, and variable-headed residuals do too (`_var_headed_call`). The compiled lane is
+    # therefore not a static evaluator; it is a lowering that defers what it cannot establish.
+    #
+    # THAT IS THE RIGHT DEFAULT, and the spec says why: `metta.txt:37` — the same shape is a definition
+    # or data by RECOGNITION, not by syntax; `:79` — an unreducible call "returns the unchanged function
+    # call instead". So call-ness must be ESTABLISHED; absent evidence, the conservative answer is to
+    # hand the term back.
+    #
+    # ⚠️ BOTH REMAINING KNOWN DEFECTS ARE THE OPPOSITE OF UNDER-DEFERRING — they are work done that
+    # should not have been:
+    #   * the `Empty` at the branch fallthrough discards an answer the spec says to return (see the
+    #     note on `_RET_EMPTY`);
+    #   * A-normalization hoists a binder TEMPLATE out of its scope and evaluates it once, ahead of
+    #     time, when it must be evaluated per step.
+    #
+    # ⚠️ AND THE COST OF DEFERRING EVERYTHING, stated so the pendulum does not swing: a lane that defers
+    # every decision is the interpreter with extra steps. The value of compiling comes from what can be
+    # decided ahead of time — which needs evidence. `IRProgram.types` is that evidence, and MEASURED on
+    # this corpus it currently recovers ZERO declines, because the libraries are almost entirely
+    # untyped. So today deferral buys correctness and static decisions buy nothing yet; that changes
+    # only when declarations exist to decide from.
     Expression(Atom[_A_CHAIN, Expression(Atom[_A_METTA, call, _A_UNDEF, _A_SELF]), o, cont])
 end
 
