@@ -380,7 +380,24 @@ other half — is the head a defined symbol — `ANormal` already has as PeTTa's
 
 ⚠️ NOT YET WIRED into any lowering decision. Capturing the information and USING it are separate
 changes on purpose: the last attempt to widen expression-head lowering committed to one static reading
-and broke `test_stdlib.metta` on `(() () \$l2)`."""
+and broke `test_stdlib.metta` on `(() () \$l2)`.
+
+🔴 AND A LOOKUP LIKE THIS ONE CANNOT, BY ITSELF, RECOVER ANY OF THE DECLINED CLAUSES. Measured
+2026-08-12 over the 74 lib + stdlib files, before building the rule that would have used it:
+
+    type declarations across the corpus : 56
+    IRExpression residuals in declines  : 121
+      head is itself an EXPRESSION      : 121      <- ALL of them
+      symbol head WITH an arrow type    : 0
+
+Every declined residual has an EXPRESSION head, and this function needs a NAME. The recoverable set for
+a name-keyed lookup is exactly zero.
+
+What those clauses need is what `Eval.jl`'s `_arg_actual_types_uncached` does: INFER the head
+expression's type by applying its own head's function type to its arguments, recursively —
+`head_types = head isa Expression ? arg_actual_types(head, space) : atom_types(head, space)`. That is a
+type-inference pass over the IR, not a table lookup, and this table is its input rather than its
+substitute."""
 function has_arrow_type(p::IRProgram, name::Base.Symbol)::Bool
     for t in declared_types(p, name)
         t isa IRExpression || continue
