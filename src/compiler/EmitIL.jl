@@ -125,6 +125,28 @@ function il_text(a::Atom)::String
     string(a)
 end
 const _RET_EMPTY = Expression(Atom[_A_RETURN, _A_EMPTY])
+# ⚠️ THIS `Empty` IS WRONG AND SWAPPING IT FOR `NotReducible` DOES NOT FIX IT — tried and reverted
+# 2026-08-12, with the measurement kept so the next attempt starts past it.
+#
+# THE DEFECT IS REAL. `metta.txt:78-79` distinguishes "Empty — the function doesn't return any result"
+# from "NotReducible — returns the UNCHANGED FUNCTION CALL instead". When a guard cannot decide — its
+# condition unifies with neither True nor False — the call must come back as itself. Measured on
+# `(= (guarded $x) (if (< $x 0) neg pos))` applied to a symbol:
+#     hyperon-experimental  (if (< sym 0) neg pos)
+#     Core interpreter      (if (< sym 0) neg pos)      ← ours is right
+#     Core COMPILED lane    (no result)                 ← the answer is lost
+#
+# THE OBVIOUS FIX MAKES IT WORSE. Emitting `(return NotReducible)` at the branch fallthrough leaves the
+# sentinel BOUND TO THE CHAIN VARIABLE instead of reaching the evaluator's `metta-noreduce` backstop
+# (`Eval.jl:1593-1602`, hyperon `interpreter.rs:145`), so the compiled lane answered with its own IL:
+#     (function (chain (metta (< sym 0) %Undefined% &self) … (return NotReducible)))
+# — leaking the compiled form into a MeTTa answer, which is worse than losing it. Corpora stayed at
+# 70/71 either way, so the corpus differential could NOT have caught this; the five-engine check did.
+#
+# ⇒ The fix is not a different sentinel at this site. `metta-noreduce` wraps a call and surfaces the
+# ORIGINAL atom when its result is the sentinel; the compiled clause never sets that wrapper up. Making
+# it work means emitting the backstop around the clause body, with the head as the original — a change
+# to `_emit_with_head`, not to this constant.
 
 function _seq(gs::Vector{Goal}, i::Int, tail::Atom, fail::Atom)::Union{Atom, Nothing}
     i > length(gs) && return tail
