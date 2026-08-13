@@ -501,10 +501,33 @@ function _num_cmp(name, f)
 end
 const LT = _num_cmp("<", <)
 
-mutable struct Space
+# ── THE STORE (Phase 2 of the MORK-backing migration) ─────────────────────────────────────────────
+#
+# 🔴 THE STORE IS NOT JUST `atoms`. `index`, `wildcard` and `bucket_trie` are storage ACCELERATION, and
+# a trie-backed store has NONE of them — it has the trie. So they are this store's private business,
+# not fields a foreign backend would leave empty. That distinction is the whole reason this struct
+# exists: moving only `atoms` would have produced five renamed accessors, not a seam.
+#
+# `lib_count` is store-side too: it is an index INTO `atoms` (the leading run of imported-library
+# atoms), meaningless without the vector it indexes.
+#
+# What deliberately STAYS on `Space`: `tokens`, `imported`, `type_epoch`, `revision` — runner state,
+# fused into the space by Core (upstream `GroundingSpace` has only index/common/name and keeps the
+# tokenizer on the runner). That fusion is exactly why `Space` must stay CONCRETE with the store
+# swapped behind it, rather than `Space` becoming an abstract supertype: a foreign backend would
+# otherwise have to supply all four or silently lack them.
+# Verified upstream shape: CeTTa holds its backend vtable in a FIELD of one concrete `Space`
+# (`space.h:169`, "share one runtime seam without confusing storage with execution"); MeTTaScript's
+# `SpaceView` holds a `SpaceLike` in a private field. Neither subtypes its space.
+#
+# ⚠️ CONCRETE FIELD ON PURPOSE, FOR NOW. `store::VectorStore` is concrete, so this commit changes
+# NOTHING about dispatch or allocation — the field move and the backend-swap are separate steps, and
+# only the first is landing here. Making it `Space{S<:AbstractStore}` is then a one-line change with
+# its own allocation gate, per `docs/specs/space_api_upstream_survey_2026-08-13.md` §9.3.
+abstract type AbstractStore end
+
+mutable struct VectorStore <: AbstractStore
     atoms::Vector{Atom}
-    tokens::Dict{String,Atom}     # bind! token table: token-name → atom (parse-time substitution)
-    imported::Set{String}         # modules already imported here — re-import is ignored (+ cycle guard)
     lib_count::Int                # leading atoms that came from an imported LIBRARY (stdlib). Core keeps
                                   # the library flattened (so &self/match/query stay single-space), but
                                   # `get-atoms` returns only atoms[lib_count+1:end] — the space's OWN
@@ -520,9 +543,6 @@ mutable struct Space
     # (get-atoms/lib_count/order); the index is a parallel acceleration kept in sync at add/remove.
     index::Dict{Tuple{Symbol,Symbol},Vector{Atom}}
     wildcard::Vector{Atom}
-    type_epoch::Int               # monotonic; bumped ONLY when a (: …) type decl is added/removed (see
-                                  # add_atom!/remove_atom!). Keys the arg_actual_types memo — actual types
-                                  # derive solely from `:` decls, so cached types invalidate exactly on change.
     # Control accel #2 (CeTTa subst_tree, space.c:497): a LAZY per-bucket discrimination trie. The 2-symbol
     # `index` narrows to same-(head,arg1-head) atoms, but a WIDE bucket (many rules/facts sharing that key,
     # differing deeper) still costs O(bucket) rename+match per query. This trie prunes that scan by shared LHS
@@ -532,15 +552,31 @@ mutable struct Space
     # (small buckets keep the zero-overhead linear scan). Field is LAST + inner-ctor-defaulted ⇒ existing
     # 6/7-arg positional Space(...) calls keep working.
     bucket_trie::Dict{Tuple{Symbol,Symbol},Any}
+    VectorStore(atoms, lib_count, index, wildcard) =
+        new(atoms, lib_count, index, wildcard, Dict{Tuple{Symbol,Symbol},Any}())
+end
+VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
+
+mutable struct Space
+    store::VectorStore            # ← the swappable half. Concrete today; see the note above.
+    tokens::Dict{String,Atom}     # bind! token table: token-name → atom (parse-time substitution)
+    imported::Set{String}         # modules already imported here — re-import is ignored (+ cycle guard)
+    type_epoch::Int               # monotonic; bumped ONLY when a (: …) type decl is added/removed (see
+                                  # add_atom!/remove_atom!). Keys the arg_actual_types memo — actual types
+                                  # derive solely from `:` decls, so cached types invalidate exactly on change.
     # monotonic mutation counter (bumped on EVERY add/remove). Stamps SLG answer-table entries (CeTTa
     # table_store.c:153 per-space `revision`): a tabled answer computed at revision r is stale once the space
     # mutates (r'≠r) and is auto-evicted on lookup — closes the "table can go silently stale" hole (§7.7).
     revision::Int
-    Space(atoms, tokens, imported, lib_count, index, wildcard, type_epoch=0) =
-        new(atoms, tokens, imported, lib_count, index, wildcard, type_epoch,
-            Dict{Tuple{Symbol,Symbol},Any}(), 0)
+    Space(store::VectorStore, tokens, imported, type_epoch=0) =
+        new(store, tokens, imported, type_epoch, 0)
 end
-Space() = Space(Atom[], Dict{String,Atom}(), Set{String}(), 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
+# ⚠️ COMPATIBILITY CONSTRUCTOR — the 6/7-arg positional form is used at 14 sites across Core/src +
+# Core/test and MUST keep working; the previous inner constructor's own comment records that this
+# signature was already preserved deliberately once. It now packs the store instead of setting fields.
+Space(atoms, tokens, imported, lib_count, index, wildcard, type_epoch=0) =
+    Space(VectorStore(atoms, lib_count, index, wildcard), tokens, imported, type_epoch)
+Space() = Space(VectorStore(), Dict{String,Atom}(), Set{String}(), 0)
 Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
 # Bounded display: a Space embedded in a result/error atom (e.g. `&self` passed as an argument to an
 # undefined op, which then echoes back) must NOT dump its entire atom list — the default struct show
@@ -564,27 +600,27 @@ end
 _is_type_decl(a::Atom)::Bool = a isa Expression && length(a.children) >= 2 &&
     a.children[1] isa Sym && (a.children[1]::Sym).name === Symbol(":")
 function add_atom!(s::Space, a::Atom)
-    push!(s.atoms, a)
+    push!(s.store.atoms, a)
     s.revision += 1                              # bump the mutation counter (SLG answer-table staleness stamp)
     k = _index_key(a)
     if k === nothing
-        push!(s.wildcard, a)
+        push!(s.store.wildcard, a)
     else
-        push!(get!(() -> Atom[], s.index, k), a)
-        isempty(s.bucket_trie) || delete!(s.bucket_trie, k)   # invalidate the bucket's discrimination trie
+        push!(get!(() -> Atom[], s.store.index, k), a)
+        isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
 function remove_atom!(s::Space, a::Atom)
-    filter!(x -> x != a, s.atoms)
+    filter!(x -> x != a, s.store.atoms)
     s.revision += 1
     k = _index_key(a)
     if k === nothing
-        filter!(x -> x != a, s.wildcard)
+        filter!(x -> x != a, s.store.wildcard)
     else
-        b = get(s.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
-        isempty(s.bucket_trie) || delete!(s.bucket_trie, k)   # invalidate the bucket's discrimination trie
+        b = get(s.store.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
+        isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
     _is_type_decl(a) && (s.type_epoch += 1)
     s
@@ -597,12 +633,12 @@ end
 # they wrap the Julia `Vector{Atom}` verbatim — ZERO behaviour change; Phase 2 adds MORK-backed
 # methods. `.atoms` was reached directly at ~9 sites (get-atoms, _match_pat, fork-space,
 # auto_table!, MM2Router own-atoms/dedup, the server's own-atom counts); all now route here.
-all_atoms(s::Space) = s.atoms                                   # every atom, incl. the flattened library
-own_atoms(s::Space) = @view s.atoms[(s.lib_count + 1):end]      # own atoms only (excludes imported library)
-atom_count(s::Space) = length(s.atoms)
-own_atom_count(s::Space) = length(s.atoms) - s.lib_count
-contains_atom(s::Space, a::Atom) = any(==(a), s.atoms)
-clone_store(s::Space) = (f = Space(copy(s.atoms)); f.lib_count = s.lib_count; f)
+all_atoms(s::Space) = s.store.atoms                                   # every atom, incl. the flattened library
+own_atoms(s::Space) = @view s.store.atoms[(s.store.lib_count + 1):end]      # own atoms only (excludes imported library)
+atom_count(s::Space) = length(s.store.atoms)
+own_atom_count(s::Space) = length(s.store.atoms) - s.store.lib_count
+contains_atom(s::Space, a::Atom) = any(==(a), s.store.atoms)
+clone_store(s::Space) = (f = Space(copy(s.store.atoms)); f.store.lib_count = s.store.lib_count; f)
 
 const _VAR_COUNTER = Ref(UInt64(0))
 freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
@@ -766,10 +802,10 @@ function _trie_collect!(acc::Vector{Atom}, node::_TNode, q::Vector{_Tok}, qi::In
 end
 
 function _bucket_candidates(space::Space, k::Tuple{Symbol,Symbol}, b::Vector{Atom}, pattern::Atom)::Vector{Atom}
-    entry = get(space.bucket_trie, k, nothing)
+    entry = get(space.store.bucket_trie, k, nothing)
     if entry === nothing
         entry = _trie_build(b)
-        space.bucket_trie[k] = entry
+        space.store.bucket_trie[k] = entry
     end
     root, pos = entry::Tuple{_TNode,IdDict{Atom,Int}}
     acc = Atom[]
@@ -789,12 +825,12 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     @inline prep(stored::Atom) = (gg && _is_closed_rule(stored)) ? stored : rename_fresh(stored)
     k = _index_key(pattern)
     if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
-        for stored in space.atoms
+        for stored in space.store.atoms
             append!(out, match_atoms(pattern, prep(stored)))
         end
         return out
     end
-    b = get(space.index, k, nothing)                   # same-discriminant atoms — the (= (f …) …) rules for this f
+    b = get(space.store.index, k, nothing)                   # same-discriminant atoms — the (= (f …) …) rules for this f
     if b !== nothing
         if length(b) > _TRIE_MIN_BUCKET                # wide bucket → prune the scan by shared LHS structure
             for stored in _bucket_candidates(space, k, b, pattern)
@@ -806,7 +842,7 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
             end
         end
     end
-    for stored in space.wildcard                       # + var-headed atoms, which can match any discriminant
+    for stored in space.store.wildcard                       # + var-headed atoms, which can match any discriminant
         append!(out, match_atoms(pattern, prep(stored)))
     end
     out
@@ -2732,7 +2768,7 @@ function load_metta!(space::Space, text::AbstractString; as_library::Bool=false,
     end
     # mark everything loaded so far as imported-library content, hidden from `get-atoms` (hyperon: a
     # dependency lives in a child space and is not returned by get-atoms of the importing space).
-    as_library && (space.lib_count = atom_count(space))
+    as_library && (space.store.lib_count = atom_count(space))
     auto_table && !as_library && auto_table!(space)   # opt-in: auto-table the just-loaded user program's pure fns
     results
 end
