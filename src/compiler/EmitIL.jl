@@ -490,9 +490,13 @@ end
 
 "Why a clause could not be lowered — a reason string, so declines are diagnosable rather than a tally."
 function _decline_reason(gs::Vector{Goal})::String
-    for g in gs
-        g isa GResidual && return "GResidual (unflattened node: " * string(nameof(typeof(g.node))) * ")"
-    end
+    # RECURSIVE. This scan used to look only at TOP-LEVEL goals, so a residual inside a `GBranch` or
+    # `GFindall` was invisible to it — the clause fell through to the catch-all and was reported as
+    # "structural", i.e. as a different problem. MEASURED 2026-08-12: 25 of the 28 clauses that
+    # reported "structural" carry a NESTED residual, and it is the same two node kinds as the
+    # top-level ones. The decline taxonomy looked like six classes and is really two.
+    nested = _first_residual(gs)
+    nested === nothing || return "GResidual (unflattened node: " * nested * ")"
     for g in gs
         g isa GDisj && isempty((g::GDisj).branches) && return "GDisj with zero branches (emits nothing)"
     end
@@ -511,6 +515,22 @@ function _decline_reason(gs::Vector{Goal})::String
     blocker === nothing ||
         return "unbuildable node in a goal: " * blocker
     "a nested goal could not be lowered (no unbuildable node found — the failure is structural)"
+end
+
+"Name the node kind of the first `GResidual` in `gs`, descending into branch and findall bodies."
+function _first_residual(gs::Vector{Goal})::Union{Nothing, String}
+    for g in gs
+        if g isa GResidual
+            return string(nameof(typeof((g::GResidual).node)))
+        elseif g isa GBranch
+            for sub in ((g::GBranch).cond, (g::GBranch).then, (g::GBranch).els)
+                r = _first_residual(sub); r === nothing || return r
+            end
+        elseif g isa GFindall
+            r = _first_residual((g::GFindall).body); r === nothing || return r
+        end
+    end
+    nothing
 end
 
 """Name the first IR node in `gs` that the atom builders cannot produce, or `nothing` if every node
