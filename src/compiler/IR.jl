@@ -351,10 +351,44 @@ struct IRProgram
     runs::Vector{IRRun}
     predefined::Dict{Base.Symbol, IRPredefined}
     annotations::Dict{Base.Symbol, Dict{NodeId, NodeId}}
+    # DECLARED TYPES, from `(: name type)` forms. A VECTOR per name because an atom may carry SEVERAL
+    # types — hyperon's `get_atom_types` returns a list and `types.rs` documents `get_atom_types((a b))`
+    # as `[(A B), (B B)]` when `a:{A,B}`. Collapsing to one would silently pick a winner.
+    #
+    # WHY THE COMPILER NEEDS THIS AT ALL: every upstream that resolves "is this expression a CALL or a
+    # DATA TUPLE" consults types to do it — hyperon forks on whether the head has a function type,
+    # MeTTaScript's predicate is `defined-head OR arrow-typed head`, CeTTa infers a product type. We had
+    # no type information in the compiler at all, so none of those was available to us and expression
+    # heads were simply declined (41 of 66 declines, measured 2026-08-12). See
+    # `docs/specs/expression_head_call_vs_data_four_upstreams.md`.
+    types::Dict{Base.Symbol, Vector{IRAtom}}
     gen::UniqueAtomIdGenerator
 end
 IRProgram() = IRProgram(IRFunctionDefinition[], IRRun[], Dict{Base.Symbol, IRPredefined}(),
-                        Dict{Base.Symbol, Dict{NodeId, NodeId}}(), UniqueAtomIdGenerator())
+                        Dict{Base.Symbol, Dict{NodeId, NodeId}}(),
+                        Dict{Base.Symbol, Vector{IRAtom}}(), UniqueAtomIdGenerator())
+
+"The declared types of `name`, in declaration order; empty if it has none."
+declared_types(p::IRProgram, name::Base.Symbol)::Vector{IRAtom} =
+    get(p.types, name, IRAtom[])
+
+"""Does `name` carry a declared ARROW type — i.e. an `(-> …)` expression?
+
+This is the half of MeTTaScript's call-vs-data predicate that we could not compute before
+(`eval.ts::getTypesForQuery`: *defined-head symbol OR arrow-typed head* → function, else tuple). The
+other half — is the head a defined symbol — `ANormal` already has as PeTTa's `fun/1`.
+
+⚠️ NOT YET WIRED into any lowering decision. Capturing the information and USING it are separate
+changes on purpose: the last attempt to widen expression-head lowering committed to one static reading
+and broke `test_stdlib.metta` on `(() () \$l2)`."""
+function has_arrow_type(p::IRProgram, name::Base.Symbol)::Bool
+    for t in declared_types(p, name)
+        t isa IRExpression || continue
+        h = (t::IRExpression).head
+        h isa IRSymbol && (h::IRSymbol).name === :(->) && return true
+    end
+    false
+end
 
 "Record an analysis result for `node` under `pass`, without touching the tree."
 function annotate!(p::IRProgram, pass::Base.Symbol, node::NodeId, value::NodeId)
@@ -404,6 +438,7 @@ export NodeId, NO_ID, UniqueAtomIdGenerator, next_id!,
        GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL, GROUNDED_STRING, GROUNDED_OPAQUE,
        UNIT_HEAD,
        IRResolvedSymbol, IRExpression, IRSpecial, SpecialKind,
+       declared_types, has_arrow_type,
        SPECIAL_LET, SPECIAL_LET_SEQ, SPECIAL_IF, SPECIAL_CASE, SPECIAL_MATCH,
        SPECIAL_SUPERPOSE, SPECIAL_COLLAPSE, SPECIAL_QUOTE, SPECIAL_EVAL, SPECIAL_CHAIN,
        SPECIAL_FUNCTION, SPECIAL_RETURN, SPECIAL_ERROR, SPECIAL_CATCH,

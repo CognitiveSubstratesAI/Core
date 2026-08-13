@@ -399,6 +399,27 @@ Only a VARIABLE head reaches this now — `(= (\$f \$x) …)`. It is a sentinel,
 and merging them silently built one multi-clause definition out of unrelated code."""
 const NO_NAME = Base.Symbol("")
 
+"""Record `(: <name> <type>)` into `prog.types`. A no-op for any other form.
+
+Only a SYMBOL subject is recorded: `(: (f \$x) T)` declares the type of an APPLICATION, not of a name,
+and there is nothing to key it by. Multiple declarations for one name accumulate — hyperon permits an
+atom to have several types and returns them all from `get_atom_types`."""
+function _record_type_decl!(prog::IRProgram, c::Ctx, a::Atom)
+    a isa Expression || return nothing
+    ch = (a::Expression).children
+    length(ch) == 3 || return nothing
+    h = ch[1]
+    hname = h isa Sym ? Base.Symbol(String((h::Sym).name)) :
+            h isa Grounded && hasfield(typeof((h::Grounded).value), :name) ?
+                Base.Symbol(String(getfield((h::Grounded).value, :name))) : nothing
+    hname === :(:) || return nothing
+    subj = ch[2]
+    subj isa Sym || return nothing
+    nm = Base.Symbol(String((subj::Sym).name))
+    push!(get!(() -> IRAtom[], prog.types, nm), lower(c, ch[3]))
+    nothing
+end
+
 """
     lower_program(atoms) -> IRProgram
 
@@ -437,6 +458,12 @@ function lower_program(atoms::Vector{Atom})::IRProgram
             end
         else
             c.scope = Scope()
+            # A `(: name type)` form is RECORDED as a declaration and STILL pushed as a run. Recording
+            # it does not change what the program does — the atom must still reach the space, since
+            # `get-type` and the evaluator's own type checks read it from there. This only makes the
+            # declaration visible to the COMPILER, which previously saw type declarations as opaque
+            # top-level forms.
+            _record_type_decl!(prog, c, a)
             push!(prog.runs, IRRun(lower(c, a), fresh(c), NO_SOURCE))
         end
     end
