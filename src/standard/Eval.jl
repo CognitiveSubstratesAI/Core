@@ -2400,6 +2400,47 @@ const NOP = Grounded(Operation("nop", (xs::Vector{Atom}) -> ExecOk(Atom[Expressi
 # Minimal's CORE grounded set, not CoreExtensions. println! evaluates its arg, prints it, returns unit;
 # trace! prints arg0 (evaluated message), returns arg1 (Atom-typed = raw, then re-mettad by the driver).
 _print_form(a::Atom) = (a isa Grounded && a.value isa AbstractString) ? a.value : string(a)
+# _collapse-add-next-atom-from-collapse-bind-result — the fold step upstream uses to turn
+# `collapse-bind`'s `(Atom Bindings)` PAIRS into a plain tuple. Ported from hyperon
+# `stdlib/core.rs:347-351`, typed there `(-> Expression Expression Atom)`, and used by upstream's own
+# minimal-MeTTa definition of `collapse` (`stdlib.metta:1203-1209`).
+#
+# WHY IT EXISTS HERE: our INTERPRETER has a correct grounded `collapse` (COLLAPSE below), but the
+# COMPILER lowers `collapse` into minimal MeTTa, where the only capture primitive is `collapse-bind` —
+# which by contract returns pairs. Stripping them needs an append that minimal MeTTa does not have, so
+# upstream grounds exactly this one step, and so do we.
+const COLLAPSE_ADD_NEXT = Grounded(Operation("_collapse-add-next-atom-from-collapse-bind-result",
+    function (xs::Vector{Atom})
+        length(xs) == 2 || return ExecNoReduce()
+        acc, item = xs[1], xs[2]
+        acc isa Expression || return ExecNoReduce()
+        # `item` is `(atom bindings)`; take the ATOM. Anything else passes through unchanged rather
+        # than being silently dropped — a malformed pair is a bug to surface, not to hide.
+        at = (item isa Expression && length((item::Expression).children) == 2) ?
+             (item::Expression).children[1] : item
+        # ⚠️ TWO DIFFERENCES THAT CANCEL, AND THAT IS A SMELL WORTH NAMING. This PREPENDS where
+        # upstream's helper APPENDS, because `collapse_bind_op` yields alternatives in the opposite
+        # order to hyperon's — which our own `COLLAPSE` already compensates for with
+        # `reverse(metta_run(…))`. End to end the answer is right (5/5 engines agree on
+        # `(collapse (match &self (foo $x) $x))` → `(bar baz)`), but a caller invoking THIS op directly
+        # and expecting upstream's append semantics gets the other order.
+        #
+        # The principled fix is to make `collapse_bind_op` yield in hyperon's order and let this append
+        # faithfully — one difference instead of two. Not done here because `collapse_bind_op` is under
+        # test elsewhere and that is its own change with its own before/after.
+        #
+        # CeTTa has tests for exactly this surface (`tests/test_collapse_bind*.metta`,
+        # `tests/test_collapse_add_next_atom_from_collapse_bind_result.metta`). They do NOT settle the
+        # ordering question — they are written against CeTTa's symbolic `(Bindings …)` serialization,
+        # so hyperon fails them too — but they do confirm our compiled lane and interpreter agree.
+        # PREPENDS, where upstream's helper appends — the same
+        # compensation our own `COLLAPSE` already makes. `collapse_bind_op` yields alternatives in the
+        # opposite order to hyperon's, which is why `COLLAPSE` wraps `reverse(metta_run(…))`
+        # (Eval.jl, `const COLLAPSE`). A fold that appended would produce `(baz bar)` where every other
+        # engine returns `(bar baz)` — measured against hyperon, CeTTa, PeTTa and our interpreter.
+        ExecOk(Atom[Expression(Atom[at, (acc::Expression).children...])])
+    end))
+
 const PRINTLN_BANG = Grounded(Operation("println!", function (xs::Vector{Atom})
     length(xs) == 1 || return ExecNoReduce()
     println(_print_form(xs[1])); ExecOk(Atom[Expression(Atom[])])
@@ -2539,6 +2580,7 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
     "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
+    "_collapse-add-next-atom-from-collapse-bind-result" => COLLAPSE_ADD_NEXT,
     "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "fork-space" => FORK_SPACE,
     # new-mork-space (c2_spaces): the corpus tests that the fork-space ISOLATION CONTRACT holds for
     # "MORK-backed" spaces identically to plain ones — an interpreter Space provides exactly that contract

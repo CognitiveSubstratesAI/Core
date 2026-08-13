@@ -355,8 +355,37 @@ reading the space via `match &self`, and pure arithmetic ALL agree between the l
 `collapse` case diverges — so this is not a space-connectivity problem, which was the leading
 hypothesis when the disagreements first appeared as empty results.
 
-It is the mechanism behind the `Core/lib` differential's findings. FIX: map the collapsed pairs to
-their first element before binding the output. Not done here — it needs its own before/after on the
+It is the mechanism behind the `Core/lib` differential's findings.
+
+🔧 THE FIX, EXACTLY — upstream defines `collapse` in MINIMAL MeTTa, our own target language
+(`hyperon-experimental/lib/src/metta/runner/stdlib/stdlib.metta:1203-1209`):
+
+    (: collapse (-> Atom Atom))
+    (= (collapse \$atom)
+      (function
+        (chain (context-space) \$space
+          (chain (collapse-bind (metta \$atom %Undefined% \$space)) \$eval
+            (chain (eval (foldl-atom \$eval () \$res \$item
+                           (_collapse-add-next-atom-from-collapse-bind-result \$res \$item))) \$result
+              (return \$result))))))
+
+and documents the distinction we missed, in its own `@doc` entries:
+  * `collapse-bind` — "returns an expression which contains all alternative evaluations IN A FORM
+    (Atom Bindings). Bindings are represented in a form of a grounded atom."  `(-> Atom Expression)`
+  * `collapse`      — "Converts a nondeterministic result into A TUPLE."                `(-> Atom Atom)`
+
+We emit ONLY the middle line. The missing parts are `(context-space)` and the FOLD that strips each
+pair to its atom. `_collapse-add-next-atom-from-collapse-bind-result` is a GROUNDED function upstream
+(`stdlib/core.rs:347-351`, typed `(-> Expression Expression Atom)`), so porting the shape needs that
+one grounded op on our side — `context-space` we already have (`Eval.jl:2292`).
+
+⚠️ TWO ROUTES, AND THE CHEAP ONE HAS A COST: emitting our own grounded `collapse` verbatim (it is
+correct — `Eval.jl:2326`) would fix the answer in one line, but `collapse` is NOT one of the thirteen
+minimal-MeTTa instructions, so the emitted IL would stop being minimal MeTTa — and Fig-2 makes that IL
+the DISTRIBUTED artifact, consumed by backends that have no `collapse`. Upstream's shape stays minimal;
+that is why it is written the way it is.
+
+Not applied here — it needs its own before/after on the
 corpora, and the differential that would show it working landed only today.
 
 Original note follows.
@@ -369,9 +398,33 @@ function _instr(g::GFindall, cont::Atom, ::Atom)::Union{Atom, Nothing}
     tm = _render_atom(g.template); tm === nothing && return nothing
     o  = _render_atom(g.out);      o  === nothing && return nothing
     body = _seq(g.body, 1, _ret(tm), _RET_EMPTY); body === nothing && return nothing
+    # STRIP THE BINDINGS. `collapse-bind` returns `(Atom Bindings)` PAIRS by contract (hyperon
+    # `@doc collapse-bind`: "…in a form (Atom Bindings)"), while `collapse` must yield a TUPLE
+    # (`@doc collapse`: "Converts a nondeterministic result into a tuple"). Emitting the capture
+    # primitive alone leaked `Grounded{Bindings}` atoms into answers — measured against four engines,
+    # which all returned `(bar baz)` where this returned `((baz Bindings(…)) (bar Bindings(…)))`.
+    #
+    # This mirrors upstream's own minimal-MeTTa definition (`stdlib.metta:1203-1209`): fold the pairs
+    # with `_collapse-add-next-atom-from-collapse-bind-result`, which is grounded there
+    # (`stdlib/core.rs:347-351`) and grounded here for the same reason — minimal MeTTa has no append.
+    # Upstream wraps `(metta \$atom %Undefined% \$space)`; our body is already a `function`, so the
+    # `(context-space)` step it needs to build that call is not required here.
+    pairs = fresh_ilvar("c")
+    acc   = fresh_ilvar("res")
+    item  = fresh_ilvar("item")
+    fold  = Expression(Atom[_A_EVAL,
+                Expression(Atom[Sym("foldl-atom"), pairs, Expression(Atom[]), acc, item,
+                                Expression(Atom[Sym("_collapse-add-next-atom-from-collapse-bind-result"),
+                                                acc, item])])])
     Expression(Atom[_A_CHAIN,
-                    Expression(Atom[_A_COLLAPSE, Expression(Atom[_A_FUNCTION, body])]), o, cont])
+                    Expression(Atom[_A_COLLAPSE, Expression(Atom[_A_FUNCTION, body])]), pairs,
+                    Expression(Atom[_A_CHAIN, fold, o, cont])])
 end
+
+# Fresh IL-level variable names. Distinct prefix from the A-normalizer's `\$__t` so a collision is
+# impossible by construction rather than by hoping the counters never meet.
+const _IL_VAR_N = Ref(0)
+fresh_ilvar(tag::AbstractString)::Atom = (_IL_VAR_N[] += 1; Var("__il_" * tag * string(_IL_VAR_N[])))
 
 # GDisj never reaches here — `_expand_disj` removes it before the fold. If one survives, that is a bug
 # in the expansion, not a shape to improvise around, so decline loudly rather than guess.
