@@ -27,7 +27,10 @@ const _LD_V = MeTTaCore.Eval
 const _LD_SM = MeTTaCore.StandardMeTTa
 
 const _LD_LIB = joinpath(@__DIR__, "..", "..", "lib")
-const _LD_BINDER_OPS = ("foldl-atom", "map-atom", "filter-atom")
+# TARGET: `lib/pln` — the LIVE library. The first version scanned for binder ops, which pointed it at
+# `lib/ActPC-Chem` (chemistry/bridges). Those are EARLIER work and the gate should not rest on them, so
+# the target is PLN plus a self-contained recursive case below.
+const _LD_TARGET_DIR = "pln"
 const _LD_MAX_STEPS = 2_000
 const _LD_MAX_FILES = 3
 const _LD_MAX_QUERIES_PER_FILE = 2
@@ -100,33 +103,32 @@ end
 # Found by println-tracing the loop: printing BEFORE each query (and flushing) made the hang name
 # itself, where the previous two timeouts had produced no output at all.
 const _LD_SKIP = Set{String}([
-    "chemistry.metta (chem-chain d1)",
 ])
 
 # 🔴 KNOWN DISAGREEMENTS — the defects this gate was built to make visible, pinned so it can run green
 # while they stand. TWO-SIDED, like the wire ledger: an unlisted disagreement FAILS (a regression), and a
 # listed one that stops appearing ALSO fails, so a fix cannot land silently.
 #
-# `boost-successful-rules!` was the FIRST query this differential ever ran, and it disagreed:
-#     interp   ["done"]
-#     compiled ["(foldl-atom ((Empty MeTTaCore.StandardMeTTa.Bindings(…"
-# The compiled lane returns an UNREDUCED `foldl-atom` — and leaks internal Julia `Bindings` objects into
-# a MeTTa answer, which is a second defect riding on the first. This is the binder-template hoisting
-# diagnosed in `docs/specs/binder_template_hoisting_defect.md`, live in `Core/lib`, in a definition that
-# compiles today. It is exactly what "57 definitions compile and nothing checks their answers" meant.
+# `BaseRateTv` called on symbols it cannot compare:
+#     interp   ["(if (or (<= d2 0) (<= d1 0)) no-evidence (let* …"   the unreduced call, returned
+#     compiled String[]                                              the answer, LOST
+#
+# The interpreter is right and the spec says so — `docs/specs/metta grammar/metta.txt:78-79`:
+# "Empty — the function doesn't return any result" vs "NotReducible — returns the unchanged function
+# call instead". An unreducible guard must yield the CALL, not nothing. The compiled lane conflates the
+# two, so a definition whose guard cannot decide silently loses its answer instead of returning itself.
+#
+# ⚠️ THIS IS IN `lib/pln`, THE LIVE LIBRARY — not in the earlier ActPC-Chem work the first version of
+# this file happened to scan. The chem finding (an unreduced `foldl-atom` leaking Julia `Bindings` into
+# a MeTTa answer) is kept in `docs/specs/binder_template_hoisting_defect.md`; it is no longer pinned
+# here because this gate no longer runs those files.
 const _LD_KNOWN = Set{String}([
-    "bridges.metta (boost-successful-rules! d1)",
+    "base_rate.metta (BaseRateTv d1 d2)",
 ])
 
 @testset "Core/lib — compiled lane answers agree with the interpreter" begin
-    files = String[]
-    for (root, _, fs) in walkdir(_LD_LIB), f in fs
-        endswith(f, ".metta") || continue
-        p = joinpath(root, f)
-        src = try read(p, String) catch; continue end
-        any(b -> occursin(b, src), _LD_BINDER_OPS) && push!(files, p)
-    end
-    sort!(files)
+    files = sort([joinpath(_LD_LIB, _LD_TARGET_DIR, f)
+                  for f in readdir(joinpath(_LD_LIB, _LD_TARGET_DIR)) if endswith(f, ".metta")])
     @test !isempty(files)                                        # anti-vacuity: the scan found targets
 
     observed = String[]; detail = String[]
@@ -178,4 +180,26 @@ const _LD_KNOWN = Set{String}([
         @info "LEDGERED lib disagreement no longer observed — fixed, or no longer reached" query=g
     end
     @test isempty(gone)
+end
+
+@testset "fib — a self-contained recursive case, both lanes" begin
+    # A recursive definition the gate owns outright: no library, no legacy code, no synthesised
+    # arguments. `fib` is the smallest program that exercises recursion, arithmetic and a guard at once.
+    #
+    # ⚠️ SINGLE GUARDED CLAUSE, DELIBERATELY. The obvious two-clause form
+    #     (= (fib 0) 0) (= (fib 1) 1) (= (fib $n) (+ (fib (- $n 1)) (fib (- $n 2))))
+    # DOES NOT TERMINATE in MeTTa: every matching clause fires, so `(fib 0)` matches the general clause
+    # too and recurses forever. That non-termination has cost this project two debugging sessions; the
+    # guarded single-clause form is the fix, not a step limit.
+    fib = "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 2)))))\n"
+    # ⚠️ FUEL, MEASURED: at 2 000 steps the INTERPRETER exhausts on `(fib 5)` while the COMPILED lane
+    # computes it — so a larger n compares "interpreter ran out" with a real answer, which is a fuel
+    # artifact, not a finding. Raising n means raising the cap for BOTH lanes, deliberately.
+    for (n, want) in ((2, "1"), (3, "2"))
+        prog = fib * "!(fib $n)\n"
+        i = _ld_interp(prog)
+        c = _ld_compiled(prog)
+        @test i == [want]                    # the interpreter computes it — anchors the expectation
+        @test c == i                         # and the compiled lane agrees
+    end
 end

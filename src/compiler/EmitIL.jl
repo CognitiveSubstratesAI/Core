@@ -336,7 +336,32 @@ function _instr(g::GBranch, cont::Atom, ::Atom)::Union{Atom, Nothing}
     Expression(Atom[_A_CHAIN, Expression(Atom[_A_FUNCTION, body]), o, cont])
 end
 
-"""`collapse` — `(chain (collapse-bind (function ⟨body … (return tmpl)⟩)) \$out ⟨cont⟩)`.
+"""🔴 DEFECT — `collapse` IS LOWERED TO `collapse-bind`, WHICH RETURNS BINDINGS TOO.
+
+MEASURED 2026-08-12. `(= (allfoo) (collapse (match &self (foo \$x) \$x)))` over facts `(foo bar)` and
+`(foo baz)`:
+
+    interpreter  ["(bar baz)"]
+    compiled     ["((baz Bindings(Binding(\$x#4115, baz), …)) (bar Bindings(…)))"]
+
+`collapse_bind_op` (`Eval.jl:944-950`) is faithful to hyperon `interpreter.rs:746` and returns an
+expression of `(atom bindings)` PAIRS — that is its contract, and it is why `superpose-bind` can
+"continue the process of the interpretation from the moment where collapse-bind stopped"
+(`metta.txt:96`). Plain `collapse` must yield the VALUES. This lowering never strips the pairs, so
+internal Julia `Grounded{Bindings}` atoms reach MeTTa answers.
+
+ISOLATED, NOT GUESSED: a five-case probe showed `add-atom`+`match`, a fact + `match`, a definition
+reading the space via `match &self`, and pure arithmetic ALL agree between the lanes. Only the
+`collapse` case diverges — so this is not a space-connectivity problem, which was the leading
+hypothesis when the disagreements first appeared as empty results.
+
+It is the mechanism behind the `Core/lib` differential's findings. FIX: map the collapsed pairs to
+their first element before binding the output. Not done here — it needs its own before/after on the
+corpora, and the differential that would show it working landed only today.
+
+Original note follows.
+
+`collapse` — `(chain (collapse-bind (function ⟨body … (return tmpl)⟩)) \$out ⟨cont⟩)`.
 
 Spec §3: `collapse-bind` interprets an atom and returns a tuple of ALL its results. The body is a goal
 sequence, so it is wrapped in `function`/`return` to become one interpretable atom."""
