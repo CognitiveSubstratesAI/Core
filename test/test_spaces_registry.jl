@@ -296,6 +296,50 @@ const SM = MeTTaCore.StandardMeTTa
         @test any(k -> length(MC.space_modes(k)) > 1, MC.space_kinds())
     end
 
+    @testset "_resolve_space — the consumer the prefix registry never had" begin
+        nm = Symbol("&resolve_probe")
+        MC.unregister_prefix!(nm)
+        @test MC._resolve_space(nm) === nothing        # unregistered resolves to nothing, never mints
+        g = MC.make_space(:mork; mode = MC.Shared, name = nm)
+        MC.core_add!(g, [:score, 10])
+        # BY NAME — this is what `register_prefix!` existed for and had no caller of.
+        @test [:score, 10] ∈ MC.core_atoms(MC._resolve_space(nm))
+        # BY SYMBOLIC HANDLE — same function, second job (space design §4.2). `(SpaceRef &name)` is a
+        # plain expression: matchable and serializable, never a grounded atom holding a live space.
+        # Upstream's `capture` is built as CaptureOp::new(space.clone(), …), which makes every captured
+        # atom process-local; that is the shape being avoided.
+        @test MC.space_ref(nm) == [:SpaceRef, nm]
+        @test [:score, 10] ∈ MC.core_atoms(MC._resolve_space(MC.space_ref(nm)))
+        # already-resolved is identity, so callers need no branch
+        @test MC._resolve_space(g) === g
+        # non-handles resolve to nothing rather than throwing — `match` over mixed atoms stays cheap
+        @test MC._resolve_space([:not, :a, :handle]) === nothing
+        @test MC._resolve_space(nothing) === nothing
+    end
+
+    @testset "CONTAINMENT_POLICY :flat — nesting is rejected, siblings are not" begin
+        @test MC.CONTAINMENT_POLICY === :flat
+        # ✅ MEASURED: name-derived regions CANNOT nest. The `:/` suffix makes `&app` -> "app:/" and
+        # `&app/games` -> "app/games:/" diverge at `:` vs `/`, so they are SHARING, not PREFIX_OF. The
+        # suffix its docstring calls "human-debuggable" is doing load-bearing structural work.
+        @test MC.prefix_compare(Vector{UInt8}("app:/"), Vector{UInt8}("app/games:/"))[1] === MC.PREFIX_SHARING
+        # ...so the policy only governs HAND-PASSED prefixes, which genuinely can nest.
+        @test MC.prefix_compare(Vector{UInt8}("app/"), Vector{UInt8}("app/games/"))[1] === MC.PREFIX_OF
+        MC.register_prefix!(:policy_parent, Vector{UInt8}("polp/"))
+        try
+            err = try MC.check_prefix_free(:policy_child, Vector{UInt8}("polp/kid/")); nothing catch e; e end
+            @test err isa ArgumentError
+            @test occursin("NESTS", err.msg)
+            # a genuine sibling must still be accepted — that IS Figure 4
+            @test MC.check_prefix_free(:policy_sib, Vector{UInt8}("pols/")) === nothing
+            # and one region may not have two names
+            err2 = try MC.check_prefix_free(:policy_alias, Vector{UInt8}("polp/")); nothing catch e; e end
+            @test err2 isa ArgumentError
+        finally
+            MC.unregister_prefix!(:policy_parent)
+        end
+    end
+
     @testset "the ledger renders, and shows both non-capability axes" begin
         io = IOBuffer()
         MC.space_ledger(io)

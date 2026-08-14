@@ -306,6 +306,121 @@ function derive_prefix_from_name(name::Symbol) :: Union{Vector{UInt8}, Nothing}
     Vector{UInt8}(s[2:end] * ":/")
 end
 
+# ── _resolve_space — the consumer this registry never had ─────────────────────
+#
+# 🔴 WHY, AND THE RULE IT SETTLES. `derive_prefix_from_name`, `register_prefix!`, `lookup_prefix` and
+# `rebind_to_shared_prefix` were built, exported, and left with ZERO callers; their docstrings named
+# `_resolve_space` as the consumer, and that function is 0 across all nine live repos — it survives only
+# in the legacy `~/PRIMUS` tree (`PRIMUS_Core/src/interpreter/SpecialForms.jl:535`), left behind by the
+# migration while the docstrings outlived it. Both halves built, the seam never closed.
+#
+# ⇒ RULE: no registry object lands before its consumer. This function IS that consumer, and it is
+# deliberately ONE function serving BOTH needs the design note identified:
+#   · the prefix registry's missing reader — `&common` becomes reachable by NAME, not hand-built bytes;
+#   · the resolver for SYMBOLIC handles — `(SpaceRef &common)`, per "ground the verbs, not the nouns".
+#
+# ⚠️ HANDLES STAY SYMBOLIC ON PURPOSE. Upstream's `SpaceType` wraps a LIVE object, and stdlib `capture`
+# ("wraps an atom and captures the current space") is constructed as `CaptureOp::new(space.clone(), …)`
+# — so every captured atom becomes process-local and unserializable. `(SpaceRef id)` is a plain
+# expression: matchable, serializable, process-independent. The verbs resolve it; the space never
+# becomes an opaque grounded object. Same argument that put `(VecRef h)` in the trie, not the tensor.
+
+"""
+    CONTAINMENT_POLICY
+
+How the region registry treats a NESTED prefix — `PREFIX_OF` / `PREFIX_PREFIXED_BY` from
+`MORK.prefix_compare`. Byte-prefix regions give containment whether or not you asked for it: if
+`&app` and `&app/games` are both registered, a match on `&app` structurally sees `&app/games`'s atoms.
+
+`:flat` (the choice, 2026-08-14) — REJECT a registration that nests with an existing one. Every region
+is mutually disjoint, which is exactly the isolation `test_corespace.jl` already proves in both
+directions, and a violation fails LOUDLY at registration rather than silently widening a later query.
+
+`:nested` — the alternative, deliberately not taken: it buys free module subtrees, at the cost that
+isolation depends on REGISTRATION ORDER. Registering `&app` after `&app/games` would silently change
+what a `&app` query returns.
+
+⚠️ Pick-once: retrofitting changes what existing matches return, which is why this is a constant with a
+reason attached rather than a keyword argument.
+
+✅ **AND MEASURED 2026-08-14: NAME-DERIVED REGIONS CANNOT NEST, so this policy only governs EXPLICIT
+prefixes.** `derive_prefix_from_name` appends `:/`, so `&app` → `"app:/"` and `&app/games` →
+`"app/games:/"` diverge at `:` vs `/` — `prefix_compare` returns `PREFIX_SHARING`, not `PREFIX_OF`. The
+suffix its docstring justifies as "human-debuggable" is doing load-bearing structural work: it makes the
+`&app` / `&app/games` hazard unreachable through the naming path. Nesting can therefore only arrive via
+a hand-passed `prefix = …`, which is exactly where `check_prefix_free` still guards.
+"""
+const CONTAINMENT_POLICY = :flat
+
+"""
+    check_prefix_free(name, prefix) -> Nothing
+
+Enforce `CONTAINMENT_POLICY` against everything already in `PREFIX_REGISTRY`. Throws on a nesting or a
+name/prefix conflict; a `PREFIX_SHARING` or `PREFIX_DISJOINT` sibling is fine — that IS Figure 4.
+
+Uses `MORK.prefix_compare`, which already returns the full containment lattice
+(`EQUALS`/`OF`/`PREFIXED_BY`/`SHARING`/`DISJOINT` + the empty cases) — written on the `server` branch,
+so ⚠️ the port-inventory ratchet cannot see it and will show neither coverage nor gaps for it.
+"""
+function check_prefix_free(name::Symbol, prefix::Vector{UInt8})
+    for (other, op) in PREFIX_REGISTRY
+        other === name && continue
+        rel, _ = prefix_compare(prefix, op)
+        if rel === PREFIX_EQUALS
+            throw(ArgumentError(
+                "region prefix $(String(copy(prefix))) is already registered as :$other — " *
+                "two names for one region would make `(SpaceRef …)` ambiguous"))
+        elseif CONTAINMENT_POLICY === :flat && (rel === PREFIX_OF || rel === PREFIX_PREFIXED_BY)
+            inner, outer = rel === PREFIX_OF ? (name, other) : (other, name)
+            throw(ArgumentError(
+                "region :$name ($(String(copy(prefix)))) NESTS with :$other ($(String(copy(op)))) — " *
+                "a query on :$outer would structurally include :$inner's atoms. CONTAINMENT_POLICY is " *
+                ":flat, so regions must be mutually disjoint; give them sibling names " *
+                "(`&app/games` + `&app/social`, not `&app` + `&app/games`)."))
+        end
+    end
+    nothing
+end
+
+"""
+    _resolve_space(x) -> Union{CoreSpace, Nothing}
+
+Resolve a space REFERENCE to a live `CoreSpace` on the node-shared trie. `nothing` when the reference
+names nothing — callers decide whether that is an error.
+
+Accepts the three forms a caller actually holds:
+
+    _resolve_space(:&common)                  # a registered name
+    _resolve_space([:SpaceRef, :&common])     # the symbolic handle, as a plain matchable expression
+    _resolve_space(cs::CoreSpace)             # already resolved — identity, so callers need no branch
+
+⚠️ Resolution is BY NAME through `PREFIX_REGISTRY`, so an unregistered name returns `nothing` rather
+than silently minting a region. Creating one is `make_space(:mork; mode = Shared, name = …)`, which is
+a different act and should look like one.
+"""
+_resolve_space(cs::CoreSpace) = cs
+_resolve_space(::Nothing)     = nothing
+function _resolve_space(name::Symbol)
+    p = lookup_prefix(name)
+    p === nothing && return nothing
+    new_core_space(get_node_shared(), p)
+end
+function _resolve_space(x::AbstractVector)
+    # (SpaceRef &name) — the symbolic handle. Length 2 with a `SpaceRef` head; anything else is not a
+    # handle and resolves to nothing rather than throwing, so `match` over mixed atoms stays cheap.
+    (length(x) == 2 && x[1] === :SpaceRef) || return nothing
+    _resolve_space(x[2])
+end
+_resolve_space(::SExprConvertible) = nothing     # typed catch-all: fails CLOSED, never `::Any`
+
+"""
+    space_ref(name::Symbol) -> Vector{SExprConvertible}
+
+The symbolic handle for a registered region: `(SpaceRef &common)`. A plain expression — matchable,
+serializable, process-independent — never a grounded atom wrapping a live object.
+"""
+space_ref(name::Symbol) = SExprConvertible[:SpaceRef, name]
+
 """
     rebind_to_shared_prefix(src::CoreSpace, prefix::Vector{UInt8}) :: CoreSpace
 

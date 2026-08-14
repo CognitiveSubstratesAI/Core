@@ -365,6 +365,8 @@ function _make_mork_space(; mode::AccessMode, name = nothing, prefix = nothing)
             "shared-space name must begin with `&` so a trie prefix can be derived from it " *
             "(`:&common` → \"common:/\"); got :$nm. Names without `&` bind as ordinary atoms, " *
             "not as space references."))
+        check_prefix_free(nm, prefix)    # CONTAINMENT_POLICY — reject a NESTING sibling loudly,
+                                        # before it silently widens someone's later query
         register_prefix!(nm, prefix)     # addressable by name, not only by these bytes
     end
     new_core_space(get_node_shared(), prefix isa Vector{UInt8} ? prefix : Vector{UInt8}(prefix))

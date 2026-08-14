@@ -31,7 +31,11 @@ using MORK: Space, new_space,
             space_add_all_sexpr!, space_dump_all_sexpr,
             space_val_count, space_metta_calculus!, space_metta_calculus_at!,
             sexpr_to_expr, expr_serialize, read_zipper,
-            space_query_multi, ExecError,
+            space_query_multi, space_query_multi_at, ExecError,
+            # containment lattice for the region registry (kernel/Prefix.jl, server branch —
+            # ⚠️ the port-inventory ratchet is extracted from main and cannot see it)
+            prefix_compare, PREFIX_EQUALS, PREFIX_OF, PREFIX_PREFIXED_BY,
+            PREFIX_SHARING, PREFIX_DISJOINT,
             register_grounded!, is_grounded, GROUNDED_REGISTRY,
             # .act + multi-source machinery (Stage 1 CoreSpaceActIO)
             asource_new, source_factor, ACT_PATH
@@ -278,6 +282,10 @@ export PrefixCounter, prefix_insert!, prefix_counter, prefix_count_support   # i
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
+# _resolve_space — the consumer the prefix registry never had, AND the (SpaceRef id) resolver.
+# One function, both jobs (space design §4.2). CONTAINMENT_POLICY = :flat — nesting is rejected
+# at registration, because :nested would make isolation depend on registration order.
+export _resolve_space, space_ref, check_prefix_free, CONTAINMENT_POLICY
 # Space CONSTRUCTOR REGISTRY + capability ledger (space/Spaces.jl). Kinds are OPEN — a package that owns
 # a backend registers it itself, so Core never depends on FactorVSA/HMH/MORKTensorNetworks to offer them.
 export SpaceCaps, SpaceKind, SPACE_KINDS, register_space_kind!
