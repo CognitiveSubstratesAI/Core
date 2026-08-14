@@ -180,9 +180,14 @@ end
 Create a CoreSpace with its own fresh shared trie and empty prefix (= root).
 Backward-compatible — every existing caller gets an isolated atomspace.
 
-For shared-trie semantics (multi-space on one node), use
-`new_core_space(shared::Space, prefix::Vector{UInt8})` or
-`register_prefix!(name, prefix)` to materialize via `_resolve_space`.
+For shared-trie semantics (multi-space on one node), prefer
+`make_space(:mork_shared; name = Symbol("&app/games"))` (space/Spaces.jl), which derives the
+prefix from the name, registers it, and attaches to the node-shared trie in one step. The
+lower-level `new_core_space(shared::Space, prefix::Vector{UInt8})` remains available.
+
+⚠️ This docstring previously directed the reader to `_resolve_space`, which has not existed in
+this package since the legacy evaluator was retired — a pointer that outlived its target. The
+registry is the live consumer; see `docs/specs/space_creation_registry_2026-08-14.md` §2.3.
 """
 new_core_space() = CoreSpace(new_space(),
     UInt8[],
@@ -209,9 +214,14 @@ new_core_space(shared::Space, prefix::Vector{UInt8}) =
               false)
 
 # ── Node-level prefix registry ────────────────────────────────────────────────
-# Stage 1: process-level Symbol → byte-prefix mapping.  Used by Eval.jl's
-# `_resolve_space` to materialize named spaces like `&common`, `&app/games`
-# as `(shared, prefix)` CoreSpaces.
+# Stage 1: process-level Symbol → byte-prefix mapping, materializing named spaces
+# like `&common`, `&app/games` as `(shared, prefix)` CoreSpaces.
+#
+# ⚠️ The consumer named here used to be `Eval.jl`'s `_resolve_space`, which no
+# longer exists anywhere in the package (it belonged to the retired evaluator).
+# Between that removal and 2026-08-14 this registry had ZERO callers in src/ or
+# test/ — the mechanism worked and nothing could address it by name. The live
+# consumer is now `make_space(:mork_shared; name = …)` in space/Spaces.jl.
 #
 # Multi-node concerns (Stage 2) will replace this with a per-node registry
 # stored on the shared Space itself, but Stage 1 keeps it process-global for

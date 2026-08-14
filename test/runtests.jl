@@ -7,6 +7,9 @@ using MeTTaCore
 # StandardMeTTaTests / test_conformance / the LeaTTa oracle).
 include("test_corespace.jl")
 include("test_corespace_load.jl")   # load_metta!(::CoreSpace) — libs into the shared MORK trie
+# Space constructor REGISTRY + capability ledger. Every declared capability is exercised, so the ledger
+# fails when it drifts from the code — including the DECLINES (:mork evaluate=false IS compile-arrow 6).
+include("test_spaces_registry.jl")
 include("test_lib_policy.jl")        # policy constants stay MeTTa atoms; Julia asks, never copies
 # UNWIRED until 2026-08-05: a conformance gate against upstream MetaMo helpers_test.metta that
 # nothing ran — not runtests, not bin/health, not CI. Wired now; see NumpyOps.jl header.

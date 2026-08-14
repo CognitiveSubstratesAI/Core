@@ -155,6 +155,8 @@ include("compiler/gslt/Multicategory.jl")  # Def 5.1 objects+multimorphisms: int
 # MORK-backed engine), NOT inside the self-contained `Eval` submodule above.
 include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Eval's
                                      # _MODULE_PATH, so it must follow standard/Eval.jl)
+include("space/Spaces.jl")           # Space constructor REGISTRY + capability ledger. Needs BOTH store
+                                     # families in scope (Eval.Space and CoreSpace), so it follows both.
 include("standard/AtomExprBridge.jl")  # typed Atom ⇄ MORK.Expr — lane-neutral, live in CoreSpace/Primitives
 include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST precede every consumer
 # COMPILER-PRIMARY lane: MeTTa → MeTTa-IL → evaluate the IL. The live consumer of compiler/EmitIL.jl,
@@ -273,6 +275,10 @@ export PrefixCounter, prefix_insert!, prefix_counter, prefix_count_support   # i
 # Stage 1 multi-space + .act lifecycle
 export PREFIX_REGISTRY, register_prefix!, lookup_prefix, unregister_prefix!
 export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
+# Space CONSTRUCTOR REGISTRY + capability ledger (space/Spaces.jl). Kinds are OPEN — a package that owns
+# a backend registers it itself, so Core never depends on FactorVSA/HMH/MORKTensorNetworks to offer them.
+export SpaceCaps, SpaceKind, SPACE_KINDS, register_space_kind!
+export make_space, space_kinds, space_kind, space_caps, space_ledger
 export with_read_permit, with_write_permit
 export snapshot_space_to_act!, load_act_source, act_exists, set_act_dir!
 export open_node!, close_node!
