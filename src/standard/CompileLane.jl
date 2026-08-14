@@ -149,6 +149,46 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
 end
 
 """
+    compile_mm2(sp, form) -> Union{@NamedTuple{rules::Vector{String}, emitted::Int}, Nothing}
+
+Compile ONE definition to **MM2 exec atoms** — `compile_definition`'s sibling for the `:mork` backend.
+
+Identical front half (parse -> `_name_spaces` -> `lower_program` -> `translate_program`); the only
+difference is the emitter: `CompilerEmit.emit_program` instead of `CompilerEmitIL.emit_il_program`.
+That pairing is the design, not a fork: per `docs/architecture/COMPILER_IL_STAGE.md` the two are
+SIBLING emitters over the same A-normal clauses, and `test_emit_il.jl` runs both on the same `cls`
+asserting `il.emitted >= mm2.emitted`.
+
+ALL-OR-NOTHING per form, for the same Invariant-6 reason `compile_definition` is: loading a compiled
+subset alongside the source form would DOUBLE the surviving answers.
+
+⚠️ `Emit.jl` emits only all-`GCall`/`GUnify` clauses (2 of 6 goal types; `EmitIL` covers 5), so this
+declines strictly more often than `compile_definition`. Measured scope, not a defect.
+"""
+function compile_mm2(sp, form::AbstractString)
+    atoms = try
+        toks = Eval.tokenize(form); i = Ref(1)
+        out = StandardMeTTa.Atom[]
+        while i[] <= length(toks)
+            toks[i[]] == "!" && (i[] += 1)
+            i[] > length(toks) && break
+            push!(out, Eval.parse_from(toks, i, sp.tokens))
+        end
+        out
+    catch
+        return nothing
+    end
+    atoms = _name_spaces(atoms, sp)
+    prog = try CompilerFrontend.lower_program(atoms) catch; return nothing end
+    isempty(prog.definitions) && return nothing        # a fact, not a definition — not a decline
+    cls = try CompilerANormal.translate_program(prog) catch; return nothing end
+    isempty(cls) && return nothing
+    r = try CompilerEmit.emit_program(cls) catch; return nothing end
+    (r.emitted == length(cls) && isempty(r.declined)) || return nothing
+    (rules = String[String(x) for x in r.rules], emitted = r.emitted)
+end
+
+"""
     compile_run(program; fallback=true) -> (; answers, compiled, fell_back, space)
 
 Run `program` COMPILER-FIRST: each definition is lowered to minimal MeTTa and loaded as IL; declined
@@ -161,7 +201,7 @@ compiled path alone produced an answer, since a fallback that silently rescues t
 compiler comes to look complete.
 """
 function compile_run(program::AbstractString; fallback::Bool = true,
-                     max_steps::Int = 512_000)
+                     max_steps::Int = 512_000, backend::Symbol = :eval)
     # ── METER IT (the cost account) ──────────────────────────────────────────────────────────────
     # `gslt_mettail_summary_spec.md` §8, the C monad: "Every interaction is gated on consuming a
     # token… the token stack drains in step with the reductions actually performed." A GSLT gives
@@ -183,7 +223,7 @@ function compile_run(program::AbstractString; fallback::Bool = true,
     prev_max = Eval._INTERPRET_MAX[]
     Eval.interpret_max_steps!(max_steps)
     try
-        _compile_run_inner(program, fallback)
+        _compile_run_inner(program, fallback, backend)
     finally
         Eval._INTERPRET_MAX[] = prev_max
     end
@@ -393,7 +433,56 @@ function _reads_rules(a)::Bool
     any(_reads_rules, ch)
 end
 
-function _compile_run_inner(program::AbstractString, fallback::Bool)
+# ── BACKEND `:mork` — ARROW 6 ────────────────────────────────────────────────────────────────────
+# Fig-2's caption: "MeTTa-IL … leverages MORK Atomspace". `:eval` runs the IL on `Eval.Space()`
+# (arrow 5); this runs the compiled MM2 on a MORK-backed `CoreSpace`.
+#
+# A BACKEND PARAMETER, NOT A SECOND RUNNER. Both share region splitting, per-form compilation and
+# decline accounting; only the emitter and the execution target differ. `Emit.jl`'s own header states
+# the cost of the alternative: "When the same decision is spelled out at N call sites it drifts — the
+# source functor was hand-typed at four sites in this tree and three were wrong."
+#
+# 🔴 INGESTION IS `space_add_all_sexpr!`, NOT `core_add!`/`load_metta!`. `core_add!` routes through
+# `parse_metta`/`to_sexpr`, which does NOT preserve MORK PATTERN VARIABLES: the execs then load, are
+# SELECTED AND CONSUMED, never match, and the run returns the redex with no answer — a SILENT wrong
+# result. Every earlier arrow-6 probe failed on exactly this; the `(~>)` lane has always ingested
+# correctly (`MeTTaIL.jl:153`).
+#
+# 🔴 A FRESH SPACE PER QUERY IS REQUIRED, NOT TIDINESS. MORK consumes an exec when it is SELECTED,
+# matched or not (`MORK.wiki/Minimal-MeTTa-2-(MM2).md:19`; upstream `space.rs:1704` `btm.remove`
+# precedes `:1707` `interpret`). A second query against the same space would find NO RULES — they
+# were consumed answering the first — and would silently return nothing.
+#
+# ⚠️ Root-prefix only: `core_calculus!` raises on a prefixed CoreSpace pending
+# `space_metta_calculus_in_prefix!` upstream.
+function _compile_run_mork(program::AbstractString, steps::Int)
+    sp = Eval.Space(); Eval.load_core_stdlib!(sp)
+    rules = String[]; declined = String[]; queries = String[]; ncompiled = 0
+    for r in split_program_regions(program, purity_may_mutate(program))
+        for d in r.defs
+            m = compile_mm2(sp, d)
+            m === nothing ? push!(declined, String(d)) :
+                            (append!(rules, m.rules); ncompiled += 1)
+        end
+        append!(queries, String[String(q) for q in r.queries])
+    end
+    answers = Tuple{String, Vector{String}}[]; total = 0
+    for q in queries
+        cs = new_core_space()
+        for rule in rules
+            space_add_all_sexpr!(cs.inner, rule)
+        end
+        space_add_all_sexpr!(cs.inner, q)
+        total += core_calculus!(cs, steps)
+        push!(answers, (q, String[string(a) for a in core_atoms(cs)]))
+    end
+    (; answers, compiled = ncompiled, fell_back = length(declined), exhausted = String[],
+       introspects = false, space = nothing, declined, steps_run = total)
+end
+
+function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Symbol)
+    backend === :mork && return _compile_run_mork(program, 1_000_000)
+    backend === :eval || error("compile_run: unknown backend `:$backend` — expected :eval or :mork")
     sp = Eval.Space(); Eval.load_core_stdlib!(sp)
     # A program that reads its own rules must run on SOURCE rules — see `_program_introspects_rules`.
     introspects = _program_introspects_rules(program)
