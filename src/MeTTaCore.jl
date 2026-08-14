@@ -168,11 +168,9 @@ include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST 
 # split_program_regions) and BEFORE DualTrack (which now consumes its may-mutate predicate instead of
 # keeping a second copy), so the dependency points from the deprecated lane to the surviving one.
 include("standard/CompileLane.jl")
-include("standard/MM2Router.jl")
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
-include("standard/DualTrack.jl")     # dual-track capstone: mc_run unified entry (auto-dispatch by form)
 include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS via the compiler lane
 include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
@@ -257,8 +255,6 @@ export mm2_run!, mm2_is_exec_rule, mm2_split_forms
 # Lane-NEUTRAL, and deliberately not `mm2_`-prefixed: the sequential-effects partition is a property
 # of MeTTa Invariant 1, not of any lane, and it must outlive the MM2 direct-lowering arrow.
 export ProgramRegion, split_program_regions, region_program
-export mm2_route!, mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args, mm2_is_relational
-export mm2_lower_equals_arith, mm2_is_arith_body, mm2_lower_eq, mm2_eq_bisim
 export typed_atom_to_expr, expr_to_atom, mc_closure!
 # Reflectable HE small-step rule-table (CeTTa-adopted)
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
@@ -269,9 +265,14 @@ export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # d
 # GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
 export theory_orient_equations
-# Dual-track capstone — one entry over both execution lanes
+# ── DIRECT-LOWERING ARROW REMOVED (Figure 2 has no MeTTa→MM2 compile edge) ──────────────────────
+# `MM2Router.jl` (893 lines) and `DualTrack.jl` (232) are deleted. They implemented MeTTa→MM2
+# LOWERING plus `mc_run`, the dual-lane entry that selected it. Whitepaper §3/Figure 2 give MM2 a
+# dashed "runs on" edge to MORK Atomspace and exactly ONE compile arrow, MeTTa→MeTTa-IL, so this
+# lane was an arrow the architecture does not have.
+# ⚠️ NOT the same as removing MM2: §3.6 ("Where Hot Loops Live") and §3.9 step 3 keep MORKL/MM2 as
+# the kernel layer compiled code CALLS INTO. What is gone is the lowering arrow, not the callee.
 export SeamError, seam_div, seam_mod, seam_parse_integer
-export mc_run
 # LibPolicy — policy constants stay MeTTa atoms; Julia asks, never copies (see LibPolicy.jl header)
 export policy_space, reset_policy_space!, lib_policy, lib_policy_int, lib_policy_names
 # Frequent-pattern miner (Hyperon Pattern Miner core) on def/match/emit

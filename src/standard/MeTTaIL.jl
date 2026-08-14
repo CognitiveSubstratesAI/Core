@@ -65,9 +65,13 @@ function _il_assert_all_rewrites(program::AbstractString, who::AbstractString)
                             join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n")
     isempty(bangs) || (msg *= "  `!` directives ($(length(bangs))): " *
                               join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n")
+    # ⚠️ This advice used to name the `:direct` lane (`mc_run mode=:direct`). That lane was the
+    # MeTTa→MM2 direct-lowering arrow and is DELETED — whitepaper Figure 2 has exactly one compile
+    # arrow, MeTTa→MeTTa-IL, and gives MM2 a dashed "runs on" edge instead. Pointing a user at a
+    # removed entry point is worse than pointing at nothing, so the advice names the surviving route.
     msg *= "  → ground FACTS belong in the `data` argument, not the program.\n" *
-           "  → `(=)` rules are not lowered by this lane; run them on the :direct lane (mc_run " *
-           "mode=:direct) or express them as `(~> LHS RHS)`."
+           "  → `(=)` rules are not lowered by this lane; compile them (`compile_run`) or express " *
+           "them as `(~> LHS RHS)`."
     error(msg)
 end
 

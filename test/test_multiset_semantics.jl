@@ -22,7 +22,7 @@
 #
 # ── THE TWO STORES, AND WHY THE ANSWER DEPENDS ON WHICH ONE YOU ASK ─────────────────────────────
 #
-#   MeTTa surface   `Eval.Space`, whose `.atoms` is a VECTOR  -> MULTISET, duplicates kept
+#   MeTTa surface   `Eval.Space`, whose store's `.atoms` is a VECTOR  -> MULTISET, duplicates kept
 #   CoreSpace API   `core_add!` etc., backed by the MORK trie        -> SET, duplicates dropped
 #
 # Measured, same session, same process:

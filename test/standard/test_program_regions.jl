@@ -140,10 +140,18 @@ end
         @test mm2_split_forms(region_program(rs[1])) == [(false, "(= (f) a)"), (true, "(f)")]
     end
 
-    @testset "END-TO-END through mc_run: the measured defect must not reproduce" begin
-        # Through `mc_run`, NOT through a primitive. The last time this defect class was probed by
-        # calling `mm2_zam_answers` directly the repro came back green and a real defect was nearly
-        # retracted — the bang has to be inside the program string for the lane to route it.
+    @testset "END-TO-END through the COMPILE lane: the measured defect must not reproduce" begin
+        # 🔴 RETARGETED when the MM2 direct-lowering arrow was deleted (Figure 2 has no MeTTa→MM2
+        # compile edge). This guard used to run through `mc_run` and assert `r.lane == :direct`.
+        # The LANE is gone; the INVARIANT is not — `split_program_regions` was deliberately placed in
+        # `SexprForms.jl` as lane-neutral precisely so it would outlive that arrow, and CODEMAP's own
+        # row warns the `:rewrite` lane INHERITS this defect the day the emitter feeds it bangs.
+        # So the guard now points at the surviving lane instead of being deleted with the old one.
+        # Measured at retarget time: compile_run returns [["a"], ["a","b"]] — the invariant holds here.
+        #
+        # Through a LANE ENTRY, NOT a primitive. The last time this defect class was probed by
+        # calling a lowering primitive directly the repro came back green and a real defect was
+        # nearly retracted — the bang has to be inside the program string for the lane to route it.
         #
         # The expectation is a LIVE interpreter oracle, not a pinned literal: the same forms fed
         # sequentially to one Space, which is the definition of Invariant 1. The oracle's own values
@@ -159,9 +167,8 @@ end
         end
         @test oracle == [["a"], ["a", "b"]]      # the oracle is what Invariant 1 requires
 
-        r = mc_run(MeTTaCore.new_core_space(), "", prog)
-        @test r.lane == :direct
-        got = Vector{String}[sort(ans) for (_, ans) in r.results.evaluated]
+        r = MeTTaCore.compile_run(prog; max_steps = 20_000)
+        got = Vector{String}[sort(ans) for (_, ans) in r.answers]
         @test length(got) == 2
         @test got[1] == ["a"]                    # ← was ["a","b"]: answered with a rule added later
         @test got[2] == ["a", "b"]               # ← and the second still accumulates. Prefix-EXACT.
@@ -172,8 +179,8 @@ end
         # The degenerate single-region case must be untouched by staging — same answers, and both
         # queries still see both rules.
         prog = "(= (f) a)\n(= (f) b)\n!(f)\n!(f)\n"
-        r = mc_run(MeTTaCore.new_core_space(), "", prog)
-        got = Vector{String}[sort(ans) for (_, ans) in r.results.evaluated]
+        r = MeTTaCore.compile_run(prog; max_steps = 20_000)
+        got = Vector{String}[sort(ans) for (_, ans) in r.answers]
         @test got == [["a", "b"], ["a", "b"]]
     end
 

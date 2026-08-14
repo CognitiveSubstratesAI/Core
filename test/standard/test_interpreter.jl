@@ -109,7 +109,7 @@ end
     G(x) = Grounded(x)
     # a pure linear reference over ALL atoms (== bucket+wildcard match set for a keyed pattern), trie-independent.
     # Compare the resolved output multiset (stable across fresh-renames) so a wrong-atom-but-right-count trie bug fails.
-    linref(s, p) = (acc = Bindings[]; for a in s.atoms; append!(acc, match_atoms(p, Eval.rename_fresh(a))); end; acc)
+    linref(s, p) = (acc = Bindings[]; for a in Eval.all_atoms(s); append!(acc, match_atoms(p, Eval.rename_fresh(a))); end; acc)
     outs(bs, p) = sort(String[string(Eval.subst(p, b)) for b in bs])       # resolved match instances
 
     s = Space()
@@ -117,7 +117,7 @@ end
     Eval.add_atom!(s, E(S("rel"), S("a"), V("x")))                          # pos-3 wildcard rule
     Eval.add_atom!(s, E(S("rel"), S("a"), E(S("g"), S("b"))))              # nested
     Eval.add_atom!(s, E(S("rel"), S("a"), G(5)))                            # grounded
-    @test length(s.index[(:rel, :a)]) > Eval._TRIE_MIN_BUCKET              # trie actually fires
+    @test length(s.store.index[(:rel, :a)]) > Eval._TRIE_MIN_BUCKET              # trie actually fires
 
     pats = [E(S("rel"), S("a"), S("v5")), E(S("rel"), S("a"), V("o")), E(S("rel"), S("a"), S("v99")),
             E(S("rel"), S("a"), E(S("g"), S("b"))), E(S("rel"), S("a"), E(S("g"), V("z"))),
