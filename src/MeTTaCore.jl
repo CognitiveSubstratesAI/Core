@@ -168,10 +168,25 @@ include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST 
 # split_program_regions) and BEFORE DualTrack (which now consumes its may-mutate predicate instead of
 # keeping a second copy), so the dependency points from the deprecated lane to the surviving one.
 include("standard/CompileLane.jl")
+include("standard/MM2Router.jl")   # RESTORED 2026-08-14 — see note below
 include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeTTa-adopted)
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
+include("standard/DualTrack.jl")     # RESTORED 2026-08-14 — mc_run + the ZAM readback
 include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS via the compiler lane
+# ── RESTORED 2026-08-14 (`4b54e71` deleted these; the deletion was RIGHT about the ARROW and WRONG
+# about the MECHANISM) ─────────────────────────────────────────────────────────────────────────────
+# `mm2_route!` lowers MeTTa -> MM2 DIRECTLY, an edge Figure 2 does not have; do NOT build on it and do
+# NOT re-expose it as a lane. What came back with it is the part that should never have gone:
+# `mm2_zam_answers` + `mm2_partition` + the five measured gates + `DualTrack`'s end-to-end readback —
+# scratch space per bang, `space_add_all_sexpr!` ingestion, exec-atoms filtered out of the dump, and
+# the `redex-persisted => fall back to the interpreter` guard. Every one of those was re-derived by
+# hand on 2026-08-14, two of them badly, before the file was read back.
+export mm2_route!, mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args, mm2_is_relational
+export mm2_lower_equals_arith, mm2_is_arith_body, mm2_lower_eq, mm2_eq_bisim
+export mm2_zam_answers, mm2_partition
+export mc_run
+
 include("standard/PatternMiner.jl")  # simplified frequent-pattern miner (Hyperon Pattern Miner) on def/match/emit
 
 # (The legacy `(library william)` registry entry — `_PACKAGE_REGISTRY["william"]` — was removed with
@@ -265,13 +280,29 @@ export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # d
 # GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
 export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
 export theory_orient_equations
-# ── DIRECT-LOWERING ARROW REMOVED (Figure 2 has no MeTTa→MM2 compile edge) ──────────────────────
-# `MM2Router.jl` (893 lines) and `DualTrack.jl` (232) are deleted. They implemented MeTTa→MM2
-# LOWERING plus `mc_run`, the dual-lane entry that selected it. Whitepaper §3/Figure 2 give MM2 a
-# dashed "runs on" edge to MORK Atomspace and exactly ONE compile arrow, MeTTa→MeTTa-IL, so this
-# lane was an arrow the architecture does not have.
-# ⚠️ NOT the same as removing MM2: §3.6 ("Where Hot Loops Live") and §3.9 step 3 keep MORKL/MM2 as
-# the kernel layer compiled code CALLS INTO. What is gone is the lowering arrow, not the callee.
+# ── DIRECT-LOWERING ARROW: DO NOT BUILD ON IT — but the FILES ARE BACK (restored 2026-08-14) ─────
+# `MM2Router.jl` and `DualTrack.jl` were deleted in `4b54e71` and RESTORED the same day. The deletion
+# was RIGHT ABOUT THE ARROW and WRONG ABOUT THE MECHANISM, and separating those is the whole point:
+#
+#   THE ARROW — `mm2_route!` lowers MeTTa → MM2 DIRECTLY. Whitepaper §3/Figure 2 give MM2 a dashed
+#   "runs on" edge and exactly ONE compile arrow, MeTTa→MeTTa-IL. That edge does not exist. Do not
+#   build on `mm2_route!`, do not re-expose it as a lane, do not route new work through it.
+#   ⚠️ NOT the same as removing MM2: §3.6 and §3.9 step 3 keep MORKL/MM2 as the kernel layer that
+#   compiled code CALLS INTO. What is wrong is the lowering arrow, not the callee.
+#
+#   THE MECHANISM — `mm2_zam_answers` is ARROW 6's back half and should never have gone with it:
+#   lower `(=)` to execs, load, step, read answers back. It carries knowledge that took measurement
+#   to get and leaves no failing test when removed:
+#     * the COLLECT-ALL shape — add-only exec @prio 0 so every matching clause co-fires, redex
+#       deleted once @prio 1; bisimulation-tested against the interpreter;
+#     * FIVE gates, incl. the MIXED-chaining discriminator a REGRESSION found (a multi-clause head is
+#       safe iff its clauses AGREE — all chain or none; MIXED silently loses answers);
+#     * the end-to-end readback: scratch space PER BANG, `space_add_all_sexpr!` ingestion, exec atoms
+#       FILTERED OUT of the dump, and `redex-persisted ⇒ fall back to the interpreter`;
+#     * the exec-CONSUMPTION constraint with upstream citations, on file here since 2026-08-07.
+#   On 2026-08-14 all of that was re-derived by hand — the scratch space and the ingestion function
+#   twice each, the readback badly (returning every atom in the space, with no redex-persisted
+#   guard) — before anyone re-read this file. A DELETION IS A READ OBLIGATION.
 export SeamError, seam_div, seam_mod, seam_parse_integer
 # LibPolicy — policy constants stay MeTTa atoms; Julia asks, never copies (see LibPolicy.jl header)
 export policy_space, reset_policy_space!, lib_policy, lib_policy_int, lib_policy_names

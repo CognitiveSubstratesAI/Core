@@ -466,7 +466,18 @@ function _compile_run_mork(program::AbstractString, steps::Int)
         end
         append!(queries, String[String(q) for q in r.queries])
     end
-    answers = Tuple{String, Vector{String}}[]; total = 0
+    # ── READBACK: the PROVEN one, taken from `mm2_zam_answers` (MM2Router.jl) rather than re-derived.
+    # My first version of this returned `core_atoms(cs)` WHOLESALE and had no redex guard, so it would
+    # report the rules themselves as answers whenever they were not fully consumed, and report an
+    # UNREDUCED query as a result. Both defects are absent from the original, which had been on file
+    # since 2026-08-07. Three things it does that the naive version does not:
+    #   1. dump via `space_dump_all_sexpr` and FILTER OUT the `exec` atoms — they are machinery, never
+    #      answers, and any that were not selected are still sitting in the space;
+    #   2. SORT, so the answer set is deterministic (MORK's traversal order is not a contract);
+    #   3. 🔴 if the REDEX IS STILL PRESENT, or nothing came back at all, NOTHING FIRED — report it as
+    #      a fallback rather than as an answer. Without this a non-reduction is indistinguishable from
+    #      a successful one, which is the silent-wrong-answer shape this lane exists to avoid.
+    answers = Tuple{String, Vector{String}}[]; unreduced = String[]; total = 0
     for q in queries
         cs = new_core_space()
         for rule in rules
@@ -474,10 +485,19 @@ function _compile_run_mork(program::AbstractString, steps::Int)
         end
         space_add_all_sexpr!(cs.inner, q)
         total += core_calculus!(cs, steps)
-        push!(answers, (q, String[string(a) for a in core_atoms(cs)]))
+        dump = String[String(strip(l)) for l in split(space_dump_all_sexpr(cs.inner), '\n')
+                      if !isempty(strip(l))]
+        reduct = sort(String[x for x in dump
+                             if !(startswith(x, "(") && mm2_head(x) == "exec")])
+        if strip(q) in reduct || isempty(reduct)
+            push!(unreduced, q)                 # redex persisted / nothing produced ⇒ did NOT reduce
+            push!(answers, (q, String[]))
+        else
+            push!(answers, (q, reduct))
+        end
     end
     (; answers, compiled = ncompiled, fell_back = length(declined), exhausted = String[],
-       introspects = false, space = nothing, declined, steps_run = total)
+       introspects = false, space = nothing, declined, unreduced, steps_run = total)
 end
 
 function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Symbol)
