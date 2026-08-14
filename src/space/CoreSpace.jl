@@ -487,9 +487,15 @@ gets correct counts from the same primitive.
 
 The walk is retained because it is the canonical "enumerate ALL atoms" path
 (mirroring `space_dump_all_sexpr`) and `core_match` returns candidates for a
-Julia-side `_unify`.  But it is O(N) where an indexed descent is available:
-routing `core_match` through a comma-wrapped `space_query_multi` is a live
-optimization, not a blocked one.
+Julia-side `_unify`.  But it is O(N) where an indexed descent is available.
+
+✅ **TAKEN 2026-08-14** (`core_match_bind`, below): the comma-wrapped route is
+no longer a proposal.  `core_match_bind` calls `space_query_multi_at` with a
+`(, …)`-wrapped pattern and returns BINDINGS.  The arity facts above were
+re-measured that day and hold — `(, P)` encodes as `ExprArity(0x02)`, so the
+`n_factors == 1` short-circuit is avoided; unwrapped `(belief \$k \$v)` is arity
+3 and yields 0.  `core_match` itself still takes this walk; only the binding
+entry point is indexed.
 """
 function _walk_atoms(f::Function, s::CoreSpace)
     if isempty(s.prefix)
@@ -537,8 +543,15 @@ prefix participate.
 Implementation note: walks the trie via `_walk_atoms` + `_shape_match`
 structural pre-filter rather than `space_query_multi`'s arity-1 fast-path,
 which returns the pattern itself without iterating (see `_walk_atoms`
-docstring).  Cost is O(N) in trie size with a cheap shape rejection — the
-proper structural-trie-matching primitive in MORK is a future optimization.
+docstring).  Cost is O(N) in trie size with a cheap shape rejection.
+
+⚠️ **UPDATED 2026-08-14 — "a future optimization" is no longer accurate.**
+`core_match_bind` (above) now runs the indexed `space_query_multi_at` descent
+and returns bindings; this function was left on the walk deliberately, because
+36 call sites and the conformance corpus depend on its `Vector{SExprConvertible}`
+return.  So the choice here is COMPATIBILITY, not a missing primitive.  Prefer
+`core_match_bind` for new callers, and for anything that needs a witness — this
+one cannot give you one, by construction (`_shape_match` returns a `Bool`).
 """
 # ── Prefix-narrowed query ─────────────────────────────────────────────────────
 # A stored atom's trie path is [ExprArity(n)][ExprSymbol item]… — exactly the
