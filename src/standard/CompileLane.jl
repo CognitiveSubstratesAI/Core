@@ -490,8 +490,16 @@ function _compile_run_mork(program::AbstractString, steps::Int)
         reduct = sort(String[x for x in dump
                              if !(startswith(x, "(") && mm2_head(x) == "exec")])
         if strip(q) in reduct || isempty(reduct)
-            push!(unreduced, q)                 # redex persisted / nothing produced ⇒ did NOT reduce
-            push!(answers, (q, String[]))
+            # NOTHING FIRED. 🔴 The answer is the REDEX ITSELF, not the empty set —
+            # `metta_language_spec.md` §2.5: `NotReducible` "returns the unchanged function call".
+            # MEASURED 2026-08-14, and this lane had it WRONG on the day it landed: for `!(nope 3)`
+            # the interpreter gives `[(nope 3)]` and the `:eval` backend gives `["(nope 3)"]`, while
+            # this returned `String[]` — a three-way divergence from the spec and from both other
+            # engines. `mm2_zam_answers` pushes such a bang to `remaining` instead, which is right for
+            # the DUAL-LANE it lives in (the interpreter then returns the redex); with no interpreter
+            # downstream, returning nothing silently drops the NotReducible result.
+            push!(unreduced, q)                 # still reported, so a non-reduction stays visible
+            push!(answers, (q, String[String(strip(q))]))
         else
             push!(answers, (q, reduct))
         end
