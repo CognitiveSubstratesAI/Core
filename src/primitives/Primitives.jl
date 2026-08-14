@@ -552,10 +552,63 @@ end
 # ── Registration entry point ──────────────────────────────────────────────────
 
 """Register all built-in grounded primitives into MORK.GROUNDED_REGISTRY."""
+
+# ── Region ops — MeTTa-reachable Space CREATION and symbolic HANDLES ──────────
+#
+# WHY THESE AND NOT `(new-space KIND)`. Upstream's stdlib `new-space` is `(-> spaceType)` — NO
+# arguments, no backend parameter — and custom spaces are explicitly "not part of stdlib": they arrive
+# as host-provided atoms reached through a token. So a kind argument on `new-space` would be our
+# invention. These are separate, honestly-named verbs over the region registry instead.
+#
+# AND WHY A GROUNDED OP AT ALL, when `bind!` exists: the tutorial states the limit itself — "if spaces
+# are created dynamically depending on runtime data, bind! is not usable", because `bind!` is
+# parse-time. A runtime-created region needs a verb.
+#
+# 🔴 HANDLES ARE SYMBOLIC, NOT GROUNDED OBJECTS. `(SpaceRef &name)` is a plain expression: matchable,
+# serializable, process-independent. Upstream's `capture` is built as `CaptureOp::new(space.clone(), …)`
+# — a live pointer, which makes every captured atom process-local. Ground the VERBS, not the NOUNS.
+function _register_region_ops!()
+    # (new-region! &name) -> (SpaceRef &name).  Idempotent: naming an existing region returns its
+    # handle rather than erroring, so a script may declare its spaces at the top and re-run.
+    MORK.register_grounded!("new-region!", args -> begin
+        isempty(args) && return "(Error new-region! \"expects a &name\")"
+        nm = Symbol(strip(args[1]))
+        pfx = derive_prefix_from_name(nm)
+        pfx === nothing && return "(Error new-region! \"name must begin with & (got $(nm))\")"
+        if lookup_prefix(nm) === nothing
+            try
+                check_prefix_free(nm, pfx)          # CONTAINMENT_POLICY — loud, before it widens a query
+            catch err
+                return "(Error new-region! \"$(sprint(showerror, err))\")"
+            end
+            register_prefix!(nm, pfx)
+        end
+        "(SpaceRef $(nm))"
+    end)
+
+    # (space-ref &name) -> (SpaceRef &name) for an EXISTING region; () when unregistered, so a caller
+    # can test reachability without creating anything. Creation is `new-region!`, and it should look
+    # like a different act than lookup.
+    MORK.register_grounded!("space-ref", args -> begin
+        isempty(args) && return "()"
+        nm = Symbol(strip(args[1]))
+        lookup_prefix(nm) === nothing ? "()" : "(SpaceRef $(nm))"
+    end)
+
+    # (region-count (SpaceRef &name)) -> how many atoms the region holds. Small, but it is the op that
+    # proves a handle RESOLVES to live storage rather than merely parsing.
+    MORK.register_grounded!("region-count", args -> begin
+        isempty(args) && return "0"
+        cs = _resolve_space(from_sexpr(strip(args[1])))
+        cs === nothing ? "0" : string(length(core_atoms(cs)))
+    end)
+end
+
 function register_core_primitives!()
     _register_arithmetic!()
     _register_comparison!()
     _register_string_ops!()
+    _register_region_ops!()
     _register_type_checks!()
     # car/cdr/cons/size-atom are registered by AtomOps.jl (canonical) — the former
     # _register_list_ops!() duplicate here was dead (AtomOps wins). Removed 2026-06-10.

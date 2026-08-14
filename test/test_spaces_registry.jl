@@ -340,6 +340,63 @@ const SM = MeTTaCore.StandardMeTTa
         end
     end
 
+    @testset "🔴 CROSS-REGION CONJUNCTION IS UNREACHABLE BY PREFIX — the view/region decision" begin
+        # This pins the measurement that decided step 3 is a VIEW object rather than a REGION object.
+        # `space_query_multi_at` takes ONE prefix for the WHOLE pattern, so a conjunction split across
+        # two regions cannot be satisfied from either. Measured 2026-08-14.
+        mk(pfx) = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}(pfx))
+        pat = MC.sexpr_to_expr("(, (likes \$who \$food) (healthy \$food))")
+        nhits(sp, pre) = (n = Ref(0);
+            MC.space_query_multi_at(sp.inner.btm, pre, pat, UInt8(0), (_b, _l) -> (n[] += 1; true)); n[])
+
+        a = mk("xr_a/"); b = mk("xr_b/")
+        MC.core_add!(a, [:likes, :alice, :pizza])
+        MC.core_add!(b, [:healthy, :pizza])
+        @test nhits(a, a.prefix) == 0
+        @test nhits(b, b.prefix) == 0
+
+        # CONTROL — load-bearing. Both conjuncts in ONE region must match, otherwise the zeros above
+        # would only show the pattern was malformed.
+        c = mk("xr_c/")
+        MC.core_add!(c, [:likes, :alice, :pizza]); MC.core_add!(c, [:healthy, :pizza])
+        @test nhits(c, c.prefix) >= 1
+
+        # 🔴 AND WIDENING DOES NOT UNION. Querying at ROOT — which spans both regions — finds nothing,
+        # because region bytes are part of the stored PATH, not a filter over it. Even a SINGLE
+        # conjunct fails at root:
+        single = MC.sexpr_to_expr("(, (likes \$w \$f))")
+        n1(pre) = (n = Ref(0);
+            MC.space_query_multi_at(a.inner.btm, pre, single, UInt8(0), (_b, _l) -> (n[] += 1; true)); n[])
+        @test n1(a.prefix) == 1
+        @test n1(UInt8[]) == 0
+        # ...and the reason, confirmed by the decoder itself: a region prefix's first byte lands in
+        # MORK's RESERVED tag class (Data-in-MORK: 0b01 is reserved; 'x' = 0x78 = 0b0111_1000), so
+        # walking from root cannot even parse it. That is also why ASCII prefixes are collision-free
+        # against expression encodings.
+        @test_throws Exception MC.space_dump_all_sexpr(a.inner)
+    end
+
+    @testset "region ops are MeTTa-reachable — creation by verb, handles symbolic" begin
+        MC.register_core_primitives!()
+        g = MC.GROUNDED_REGISTRY
+        for n in ("new-region!", "space-ref", "region-count")
+            @test haskey(g, n)
+        end
+        nm = "&kb_probe"
+        MC.unregister_prefix!(Symbol(nm))
+        # lookup does NOT create — creation is a different verb and should look like one
+        @test g["space-ref"]([nm]) == "()"
+        @test g["new-region!"]([nm]) == "(SpaceRef $nm)"
+        @test g["new-region!"]([nm]) == "(SpaceRef $nm)"     # idempotent: re-declaring is not an error
+        @test g["space-ref"]([nm]) == "(SpaceRef $nm)"
+        # the handle RESOLVES to live storage, which is what region-count exists to prove
+        cs = MC._resolve_space(Symbol(nm))
+        MC.core_add!(cs, [:fact, 1]); MC.core_add!(cs, [:fact, 2])
+        @test g["region-count"](["(SpaceRef $nm)"]) == "2"
+        # a name with no `&` has no derivable prefix — refuse rather than invent a region
+        @test occursin("must begin with &", g["new-region!"](["nodollar"]))
+    end
+
     @testset "the ledger renders, and shows both non-capability axes" begin
         io = IOBuffer()
         MC.space_ledger(io)
