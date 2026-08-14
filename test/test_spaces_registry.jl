@@ -145,18 +145,54 @@ const SM = MeTTaCore.StandardMeTTa
         @test [:fact, 1] ∈ MC.core_atoms(cs)
     end
 
-    @testset "🔴 :mork DECLINES bindings — core_match FILTERS, it does not BIND" begin
-        @test !MC.space_caps(:mork).bindings
+    @testset "✅ :mork BINDS — core_match_bind captures; core_match still only filters" begin
+        # WAS a decline. Flipped by the space-design §2 seam: the binding primitive was one layer down
+        # the whole time (`space_query_multi_at`) and `core_match` simply called something else. This
+        # testset is the ledger's proof — if `bindings` is ever set true without the capture working,
+        # or the capture regresses while the flag stays, one of these fails.
+        @test MC.space_caps(:mork).bindings
         cs = MC.make_space(:mork)
         MC.core_add!(cs, [:belief, :a, 9])
         MC.core_add!(cs, [:belief, :b, 1])
+        # core_match: still a FILTER — returns the matching ATOMS, no witness for $k.
         hits = MC.core_match(cs, [:belief, Symbol("\$k"), Symbol("\$v")])
-        # Both atoms match, so the pattern is doing real work — but what comes back are the ATOMS, never
-        # a binding for $k. `_shape_match` returns Bool and `_is_var_symbol(pattern) && return true`
-        # accepts a variable position without capturing it (CoreSpace.jl:436-437).
         @test length(hits) == 2
         @test all(h -> h isa Vector && h[1] === :belief, hits)
-        @test [:belief, :a, 9] ∈ hits
+        # core_match_bind: the WITNESS comes back, which is what Λ needs over a MORK-backed S_rule.
+        bs = MC.core_match_bind(cs, [:belief, Symbol("\$k"), Symbol("\$v")])
+        @test length(bs) == 2
+        @test Set(b[Symbol("\$k")] for b in bs) == Set([:a, :b])
+        @test Set(b[Symbol("\$v")] for b in bs) == Set([9, 1])
+        # ⚠️ the value must be the BOUND SUB-ATOM, not the remaining tail. Decoding the ExprEnv cursor
+        # naively yields `$k => "a 9"` — measured — which is why bindings are taken from `loc`.
+        @test all(b -> b[Symbol("\$k")] isa Symbol, bs)
+        # a pinned position binds only the remaining variable
+        pinned = MC.core_match_bind(cs, [:belief, :a, Symbol("\$v")])
+        @test length(pinned) == 1 && pinned[1] == Dict(Symbol("\$v") => 9)
+        @test isempty(MC.core_match_bind(cs, [:belief, :nope, Symbol("\$v")]))
+    end
+
+    @testset ":mork binding — a REPEATED variable must agree (non-linear pattern)" begin
+        cs = MC.make_space(:mork)
+        MC.core_add!(cs, [:link, :x, :x])
+        MC.core_add!(cs, [:link, :p, :q])
+        # `(link $x $x)` must match ONLY the reflexive atom. A positional walk that overwrites instead
+        # of checking would return both, binding $x to whatever came last — silently wrong, not an error.
+        bs = MC.core_match_bind(cs, [:link, Symbol("\$x"), Symbol("\$x")])
+        @test length(bs) == 1
+        @test bs[1] == Dict(Symbol("\$x") => :x)
+    end
+
+    @testset ":mork binding is REGION-SCOPED — a sibling's atoms stay invisible" begin
+        a = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("bind_iso_a/"))
+        b = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("bind_iso_b/"))
+        MC.core_add!(a, [:belief, :mine, 1])
+        MC.core_add!(b, [:belief, :theirs, 2])
+        # The indexed descent must honour s.prefix exactly as the filtering walk does — otherwise the
+        # Figure-4 isolation the shared model rests on would hold for match and leak for bind.
+        got = MC.core_match_bind(a, [:belief, Symbol("\$k"), Symbol("\$v")])
+        @test length(got) == 1
+        @test got[1][Symbol("\$k")] === :mine
     end
 
     @testset ":mork at Shared — siblings co-reside in ONE trie and do not bleed (whitepaper Fig. 4)" begin

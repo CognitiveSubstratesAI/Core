@@ -283,14 +283,13 @@ const _CAPS_VECTOR = SpaceCaps(
 
 # ⚠️ THE MORK KIND DECLINES `bindings` AND `evaluate`, AND BOTH DECLINES ARE LOAD-BEARING.
 #
-#  · bindings=false — VERIFIED in the body, not inferred: `_shape_match(pattern, atom)::Bool`
-#    (CoreSpace.jl:436) returns a Bool, and its first line `_is_var_symbol(pattern) && return true`
-#    accepts a variable position WITHOUT capturing what it matched. `core_match` accordingly returns
-#    `Vector{SExprConvertible}` — the matching ATOMS (:614). So this store FILTERS; it does not BIND,
-#    and `(match &S (belief $k $s $c) $k)` cannot be served from here.
-#    ⚠️ The native binding primitive DOES exist one layer down — `MORK.space_query_multi` streams
-#    `effect(::Dict{ExprVar,ExprEnv}, loc)::Bool` — it is simply not what `core_match` calls. Held by
-#    the substrate but not exposed at this API is a different statement from absent.
+#  · bindings — WAS false, now TRUE, and the history is the lesson. `_shape_match(pattern, atom)::Bool`
+#    (CoreSpace.jl) returns a Bool and accepts a variable position WITHOUT capturing it, so `core_match`
+#    returns only the matching ATOMS. That was read as "the trie cannot bind". It could: the binding
+#    primitive was one layer down the whole time (`space_query_multi_at`), and `core_match_bind` now
+#    routes to it. ⇒ A DECLINE AT AN API IS NOT AN ABSENCE IN THE SUBSTRATE — this row was three
+#    declines deep in that same pattern (bindings, conjunction, partition), each with a live primitive
+#    behind it and no exposure.
 #
 #  · evaluate=false — this is compile-arrow 6 (`docs/specs/COMPILE_ARROW_STATUS.md`). The trie-backed
 #    store LOADS but does not EVALUATE: `load_metta!(::CoreSpace)` supports only `import!` and
@@ -300,7 +299,11 @@ const _CAPS_VECTOR = SpaceCaps(
 
 const _CAPS_MORK = SpaceCaps(
     #= add =# true, #= remove =# true, #= atoms =# true, #= match =# true,
-    #= bindings =# false, #= evaluate =# false, #= conjunction =# false,
+    #= bindings =# true,       # ⇠ FLIPPED (space design §2). `core_match_bind` routes to
+                               # `space_query_multi_at`'s indexed descent and returns
+                               # Dict{Symbol,SExprConvertible} per match. `core_match` still FILTERS —
+                               # both exist; the KIND can now bind, which is what this column declares.
+    #= evaluate =# false, #= conjunction =# false,
     #= persist =# true,        # snapshot_space_to_act! / load_act_source. Returns false for an EMPTY
                                # region (n_atoms == 0), NOT for a root prefix — a root snapshot works
                                # and is merely slower, as CoreSpaceActIO's own comment says.
@@ -317,7 +320,8 @@ const _CAPS_MORK = SpaceCaps(
     "process-shared trie — whitepaper Figure 4, a `common:/` atomspace with per-app siblings " *
     "(`app/games:/`) in ONE trie, mutually invisible when prefixes are disjoint (test_corespace.jl:35-64 " *
     "proves isolation AND that cross-prefix match does not bleed). Atoms are Expr bytes as trie paths, " *
-    "so atom identity IS the path. Filters but does not bind; loads but does not evaluate.")
+    "so atom identity IS the path. `core_match` filters, `core_match_bind` BINDS (indexed, region-scoped); " *
+    "still loads but does not evaluate — that decline is compile-arrow 6.")
 
 # `parent` turns this into what used to be the `:fork` kind: a snapshot-isolated copy. It is the same
 # ACCESS MODE (Private) over the same KIND, seeded differently — which is why it is a keyword and not a

@@ -620,6 +620,95 @@ function _walk_atoms_narrowed(f::Function, s::CoreSpace, prefix_bytes::Vector{UI
     end
 end
 
+# ── core_match_bind — the BINDING seam (space design §2) ──────────────────────────────────────────────
+#
+# 🔴 WHY THIS EXISTS. `core_match` FILTERS: `_shape_match` returns a Bool and accepts a variable position
+# without capturing it, so this store could answer "does anything match?" but never "what did $k match?".
+# That made `(match &S (belief $k $s $c) $k)` unservable from the trie — and it is the slice's blocker,
+# because Λ (the query-Core step) retrieves cases and rules and carries their CONTENTS forward, over an
+# `S_rule` that is MORK-backed for scale. A store that declines to bind cannot host it.
+#
+# The capability was never missing from the substrate — only from this API. `space_query_multi_at`
+# performs the INDEXED descent and hands back the matched location; this routes to it.
+#
+# ⚠️ THE `(, …)` WRAPPER IS MANDATORY, NOT STYLISTIC. `space_query_multi*` short-circuits `n_factors == 1`
+# by calling `effect(Dict(), pat_expr.buf)` — echoing the PATTERN with EMPTY bindings (Space.jl:634-637).
+# An unwrapped `(belief $k $v)` is arity 3, read as a three-factor conjunction, and yields 0. Wrapped, it
+# is `ExprArity(0x02)` and queries correctly. MEASURED, not assumed.
+#
+# 🔴 AND BINDINGS ARE TAKEN FROM `loc`, NOT FROM THE `ExprEnv` DICT — this is the non-obvious part, and
+# reading the dict naively produces SILENTLY WRONG VALUES. Measured on `(belief $k $v)` over
+# `(belief a 9)`: the dict is keyed `(0x00,0x00)`/`(0x00,0x01)` (source id, var index — MORK's encoding
+# drops variable NAMES, they are de Bruijn), and each `ExprEnv` is a CURSOR: `base.buf[offset+1:end]` is
+# the whole REMAINING TAIL, so `$k` decodes as `"a 9"` rather than `"a"`. Extracting one item needs span
+# arithmetic over the tail. `loc` already carries the exact matched atom `(belief a 9)`, so walking the
+# pattern against it is correct by construction and needs no span logic.
+#
+# ⚠️ SCOPE: single-pattern queries. A genuine multi-factor conjunction binds ACROSS factors, where `loc`
+# is one location and the `ExprEnv` dict is the real answer — that path needs the span arithmetic above
+# and is deliberately not attempted here. `conjunction` stays `false` in the ledger until it is.
+
+# Bind `pattern`'s variables against a concrete `atom`, structurally. Returns false on shape mismatch or
+# on an INCONSISTENT repeat (`(link $x $x)` must not match `(link a b)`) — the non-linear case a
+# positional walk gets wrong if it just overwrites.
+function _bind_walk!(b::Dict{Symbol, SExprConvertible}, pattern, atom)::Bool
+    if pattern isa Vector
+        atom isa Vector && length(atom) == length(pattern) || return false
+        for (p, a) in zip(pattern, atom)
+            _bind_walk!(b, p, a) || return false
+        end
+        return true
+    end
+    if pattern isa Symbol
+        ps = string(pattern)
+        if startswith(ps, "\$") || startswith(ps, "__var_")
+            prev = get(b, pattern, nothing)
+            prev === nothing && (b[pattern] = atom; return true)
+            return prev == atom                      # repeated var must agree
+        end
+    end
+    pattern == atom
+end
+
+"""
+    core_match_bind(s, pattern) → Vector{Dict{Symbol, SExprConvertible}}
+
+Query the trie and return VARIABLE BINDINGS, one dict per match, keyed by the pattern's own variable
+symbols (`:\$k`), values being the matched sub-atoms.
+
+This is `core_match`'s binding counterpart and the operation Λ needs. Scoped to `s.prefix` like every
+other region op — verified: a sibling region's atoms do not appear.
+
+Empty-pattern and non-vector patterns return no matches rather than erroring, matching `core_match`'s
+tolerance at the same boundary.
+"""
+core_match_bind(::CoreSpace, ::Nothing) = Dict{Symbol, SExprConvertible}[]
+function core_match_bind(s::CoreSpace, pattern::SExprConvertible) :: Vector{Dict{Symbol, SExprConvertible}}
+    out = Dict{Symbol, SExprConvertible}[]
+    (pattern isa Vector && !isempty(pattern)) || return out
+    pat = try
+        sexpr_to_expr("(, $(to_sexpr_query(pattern)))")   # to_sexpr_query keeps `$` vars AS variables;
+    catch err                                             # plain to_sexpr maps them to ground __var_ names
+        @warn "core_match_bind: unencodable pattern" pattern exception=err maxlog=5
+        return out
+    end
+    with_read_permit(s) do
+        space_query_multi_at(s.inner.btm, s.prefix, pat, UInt8(0), function (_bindings, loc)
+            local atom
+            try
+                atom = from_sexpr(strip(expr_serialize(loc)))
+            catch err
+                @warn "core_match_bind: skipping unparseable match" exception=err maxlog=5
+                return true
+            end
+            b = Dict{Symbol, SExprConvertible}()
+            _bind_walk!(b, pattern, atom) && push!(out, b)
+            true
+        end)
+    end
+    out
+end
+
 core_match(::CoreSpace, ::Nothing) = SExprConvertible[]   # explicit, was an `=== nothing` guard under `::Any`
 function core_match(s::CoreSpace, pattern::SExprConvertible) :: Vector{SExprConvertible}
     results = SExprConvertible[]
