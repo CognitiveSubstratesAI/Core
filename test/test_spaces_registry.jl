@@ -1,15 +1,20 @@
-# ── Space constructor REGISTRY + the capability ledger, verified BY EXECUTION ────────────────────────
+# ── Space KIND registry + the capability ledger, verified BY EXECUTION ───────────────────────────────
 #
-# 🔴 THE POINT OF THIS FILE. A capability table is worthless if it is only asserted against itself —
+# 🔴 THE POINT OF THIS FILE. A capability table is worthless if only asserted against itself —
 # `@test space_caps(:mork).evaluate == false` proves nothing except that someone typed `false`. Every
-# declared capability that can be exercised is exercised here, and the test asserts that the BEHAVIOUR
-# and the DECLARATION agree. A ledger that drifts from the code it describes then fails, which is the
-# only way a ledger stays true (`[[feedback_parses_is_not_fires]]`,
+# declared capability that can be exercised IS exercised here, and the test asserts that BEHAVIOUR and
+# DECLARATION agree. A ledger that drifts from the code it describes then fails, which is the only way a
+# ledger stays true (`[[feedback_parses_is_not_fires]]`,
 # `[[feedback_run_the_check_before_making_the_claim]]`).
 #
 # The declines are tested as hard as the grants, deliberately. `:mork` declining `evaluate` IS
-# compile-arrow 6; if that ever starts working, this file must go red so the ledger gets updated in the
+# compile-arrow 6; if that ever starts working this file must go RED so the ledger is updated in the
 # same commit rather than quietly becoming a lie.
+#
+# ⚠️ AND THE AXES ARE TESTED AS A PROPERTY, not just per-kind (see the final testset). The first version
+# of this registry shipped `:mork_shared` and `:fork` as KINDS — modes wearing a kind's clothing, and
+# the first generation of a `:neural_shared_readonly` explosion. A guard that fails on a kind NAME
+# containing a mode word is cheap, mechanical, and fires on the next person rather than on a reviewer.
 
 using Test
 using MeTTaCore
@@ -23,12 +28,12 @@ const EV = MeTTaCore.Eval
 # they are not bindings of MeTTaCore itself, so qualify them at their real owner.
 const SM = MeTTaCore.StandardMeTTa
 
-@testset "Space registry — construction, kinds, capability ledger" begin
+@testset "Space registry — kinds, access modes, capability ledger" begin
 
-    @testset "the four Core kinds are registered, sorted, and owned" begin
+    @testset "the Core kinds are registered, sorted, and owned" begin
         ks = MC.space_kinds()
         @test ks == sort(ks)                       # stable across load orders, so the list is diffable
-        for k in (:vector, :fork, :mork, :mork_shared)
+        for k in (:vector, :mork)
             @test k in ks
             @test MC.space_kind(k).provider == "MeTTaCore"
         end
@@ -37,17 +42,27 @@ const SM = MeTTaCore.StandardMeTTa
     @testset "unknown kind names what IS available" begin
         err = try MC.make_space(:no_such_kind); catch e; e; end
         @test err isa ArgumentError
-        # The diagnostic must list the registered kinds — an unknown kind is nearly always a typo or an
-        # unloaded provider package, and both are diagnosed by seeing the list.
+        # An unknown kind is nearly always a typo or an unloaded provider package; both are diagnosed
+        # by seeing the list, so the message must carry it.
         @test occursin("vector", err.msg) && occursin("mork", err.msg)
     end
 
     @testset "a second provider cannot claim a registered name" begin
-        caps = MC.space_caps(:vector)
+        k = MC.space_kind(:vector)
         @test_throws ArgumentError MC.register_space_kind!(
-            MC.SpaceKind(:vector, "SomeOtherPackage", EV.Space, (; kwargs...) -> nothing, caps))
-        # ...and the original entry survives the rejected attempt.
-        @test MC.space_kind(:vector).provider == "MeTTaCore"
+            MC.SpaceKind(:vector, "SomeOtherPackage", EV.Space, [MC.Private], MC.Native,
+                         (; kwargs...) -> nothing, k.caps))
+        @test MC.space_kind(:vector).provider == "MeTTaCore"   # original survives the rejected attempt
+    end
+
+    @testset "a kind with no access modes is rejected at registration" begin
+        k = MC.space_kind(:vector)
+        # A kind nothing can be constructed at is a typo; caught here rather than much later at the
+        # make_space call with a confusing message.
+        @test_throws ArgumentError MC.register_space_kind!(
+            MC.SpaceKind(:modeless, "MeTTaCore", EV.Space, MC.AccessMode[], MC.Native,
+                         (; kwargs...) -> nothing, k.caps))
+        @test :modeless ∉ MC.space_kinds()
     end
 
     @testset ":vector — the evaluable store, and it really does evaluate" begin
@@ -64,18 +79,19 @@ const SM = MeTTaCore.StandardMeTTa
         s = MC.make_space(:vector)
         EV.load_metta!(s, "(belief a 0.9 0.8)\n(belief b 0.1 0.2)")
         got = EV.load_metta!(s, raw"!(match &self (belief $k $s $c) $k)")
-        # The variable's WITNESS comes back — precisely the query the MORK kinds below cannot serve.
+        # The variable's WITNESS comes back — precisely the query the MORK kind below cannot serve.
         @test Set(got) == Set(SM.Atom[SM.Sym("a"), SM.Sym("b")])
     end
 
-    @testset ":fork — the c2_spaces isolation contract holds" begin
+    @testset ":vector; parent = … — a fork is a SEEDED PRIVATE region, not a kind" begin
         parent = MC.make_space(:vector)
         EV.load_metta!(parent, "(A)")
-        fork = MC.make_space(:fork; parent = parent)
+        fork = MC.make_space(:vector; parent = parent)
         @test fork isa EV.Space
         @test fork !== parent
         EV.load_metta!(fork, "(B)")
-        # parent → (A); fork → (A B). A later add on the FORK must not propagate back to the parent.
+        # The c2_spaces isolation contract: parent → (A); fork → (A B). A later add on the FORK must
+        # not propagate back.
         @test isempty(EV.load_metta!(parent, "!(match &self (B) found)"))
         @test EV.load_metta!(fork, "!(match &self (B) found)") == SM.Atom[SM.Sym("found")]
         # ...while the snapshot the fork was taken FROM is present in both.
@@ -83,29 +99,41 @@ const SM = MeTTaCore.StandardMeTTa
         @test EV.load_metta!(fork, "!(match &self (A) found)") == SM.Atom[SM.Sym("found")]
     end
 
-    @testset ":fork rejects a CoreSpace parent, and says what to use instead" begin
+    @testset ":vector rejects a CoreSpace parent, and says what to use instead" begin
         cs = MC.make_space(:mork)
-        err = try MC.make_space(:fork; parent = cs); catch e; e; end
+        err = try MC.make_space(:vector; parent = cs); catch e; e; end
         @test err isa ArgumentError
-        # A CoreSpace has no fork op — its isolation comes from disjoint prefixes — so the message must
-        # point at the kind that DOES provide it rather than just refusing.
-        @test occursin("mork_shared", err.msg)
+        # A CoreSpace has no snapshot-fork — its isolation comes from disjoint prefixes — so the message
+        # must point at what DOES provide independence rather than merely refusing.
+        @test occursin("mork", err.msg) && occursin("Shared", err.msg)
     end
 
-    @testset ":mork — isolated trie: stores, and its atoms are its own" begin
+    @testset ":vector rejects parent AND atoms together" begin
+        p = MC.make_space(:vector)
+        # Supplying both would silently discard one seed; better to refuse than to pick.
+        @test_throws ArgumentError MC.make_space(:vector; parent = p, atoms = SM.Atom[])
+    end
+
+    @testset ":mork at Private — an isolated trie, and its atoms are its own" begin
         a = MC.make_space(:mork)
         b = MC.make_space(:mork)
         @test a isa MC.CoreSpace
-        @test a.inner !== b.inner          # :mork is isolated BY CONSTRUCTION — its own fresh trie
+        @test a.inner !== b.inner          # Private :mork is isolated BY CONSTRUCTION — its own trie
         @test isempty(a.prefix)            # ...at the root prefix (= whole trie)
         MC.core_add!(a, [:only_in_a, 1])
         @test [:only_in_a, 1] ∈ MC.core_atoms(a)
         @test [:only_in_a, 1] ∉ MC.core_atoms(b)
     end
 
+    @testset ":mork at Private refuses a name/prefix" begin
+        # A private MORK space owns its whole trie at the root; accepting a name here would silently
+        # produce something that is not what the caller asked for.
+        @test_throws ArgumentError MC.make_space(:mork; name = Symbol("&nope"))
+        @test_throws ArgumentError MC.make_space(:mork; prefix = Vector{UInt8}("nope/"))
+    end
+
     @testset "🔴 :mork DECLINES evaluate — and the decline is real (compile-arrow 6)" begin
         @test !MC.space_caps(:mork).evaluate
-        @test !MC.space_caps(:mork_shared).evaluate
         cs = MC.make_space(:mork)
         # The trie-backed store LOADS but does not EVALUATE: load_metta!(::CoreSpace) accepts only
         # `import!` and `remove-atom` and RAISES on every other directive, by design (silently skipping
@@ -131,12 +159,11 @@ const SM = MeTTaCore.StandardMeTTa
         @test [:belief, :a, 9] ∈ hits
     end
 
-    @testset ":mork_shared — siblings co-reside in ONE trie and do not bleed (whitepaper Fig. 4)" begin
-        @test MC.space_caps(:mork_shared).shared
-        @test !MC.space_caps(:mork).shared
-        games  = MC.make_space(:mork_shared; name = Symbol("&app/games"))
-        social = MC.make_space(:mork_shared; name = Symbol("&app/social"))
-        # ONE trie, two regions — that is the whole model, and it is what :mork cannot do.
+    @testset ":mork at Shared — siblings co-reside in ONE trie and do not bleed (whitepaper Fig. 4)" begin
+        games  = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/games"))
+        social = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/social"))
+        # ONE trie, two regions — that is the whole model, and it is what Private cannot do. Same KIND,
+        # different ACCESS MODE: exactly the axis separation this registry exists to hold.
         @test games.inner === social.inner
         @test games.inner === MC.get_node_shared()
         @test games.prefix != social.prefix
@@ -149,42 +176,56 @@ const SM = MeTTaCore.StandardMeTTa
         @test length(MC.core_match(games, [:score, Symbol("\$v")])) == 1
     end
 
-    @testset ":mork_shared REGISTERS the name — un-orphaning the prefix registry" begin
+    @testset ":mork at Shared REGISTERS the name — un-orphaning the prefix registry" begin
         nm = Symbol("&common")
         MC.unregister_prefix!(nm)                       # start from a known state
         @test MC.lookup_prefix(nm) === nothing
-        s = MC.make_space(:mork_shared; name = nm)
+        s = MC.make_space(:mork; mode = MC.Shared, name = nm)
         # The name→prefix half of the Figure-4 model had ZERO callers before this registry existed:
-        # register_prefix!/derive_prefix_from_name/lookup_prefix were exported and never used, and the
-        # `_resolve_space` their docstrings named as the consumer does not exist. Construction by NAME
-        # is what makes a shared space addressable rather than hand-built from bytes.
+        # register_prefix!/derive_prefix_from_name/lookup_prefix were exported and never used, and
+        # `_resolve_space` — their docstrings' named consumer — is 0 across all 9 live repos.
+        # Construction BY NAME is what makes a shared space addressable rather than hand-built.
         @test MC.lookup_prefix(nm) == Vector{UInt8}("common:/")
         @test s.prefix == Vector{UInt8}("common:/")
     end
 
-    @testset ":mork_shared rejects a name it cannot derive a prefix from" begin
+    @testset ":mork at Shared rejects a name it cannot derive a prefix from" begin
         # No leading `&` ⇒ not a space reference at all (it would bind as an ordinary atom), so there is
         # no prefix to derive and guessing one would invent a region silently.
-        err = try MC.make_space(:mork_shared; name = :plain_name); catch e; e; end
+        err = try MC.make_space(:mork; mode = MC.Shared, name = :plain_name); catch e; e; end
         @test err isa ArgumentError
         @test occursin("&", err.msg)
-        # ...and neither argument at all is also an error, rather than a silent root-prefix space that
+        # ...and neither argument at all is an error too, rather than a silent root-prefix space that
         # would alias the whole shared trie.
-        @test_throws ArgumentError MC.make_space(:mork_shared)
+        @test_throws ArgumentError MC.make_space(:mork; mode = MC.Shared)
     end
 
-    @testset ":mork_shared accepts an explicit prefix, bypassing name derivation" begin
-        s = MC.make_space(:mork_shared; prefix = Vector{UInt8}("explicit_region/"))
+    @testset ":mork at Shared accepts an explicit prefix, bypassing name derivation" begin
+        s = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("explicit_region/"))
         @test s.prefix == Vector{UInt8}("explicit_region/")
         @test s.inner === MC.get_node_shared()
     end
 
+    @testset "an unsupported access mode THROWS rather than silently falling back" begin
+        # A caller who asked for Shared and received an isolated space gets no error and wrong
+        # isolation — the worst available outcome, so the refusal must be loud and name what IS
+        # supported.
+        @test MC.Shared ∉ MC.space_modes(:vector)
+        err = try MC.make_space(:vector; mode = MC.Shared); catch e; e; end
+        @test err isa ArgumentError
+        @test occursin("Private", err.msg)
+        # CopyOnWrite is in the enum and implemented by NOTHING — reserved, not offered.
+        for k in MC.space_kinds()
+            @test MC.CopyOnWrite ∉ MC.space_modes(k)
+        end
+    end
+
     @testset "persist is declared exactly where it holds" begin
-        @test MC.space_caps(:mork).persist && MC.space_caps(:mork_shared).persist
-        @test !MC.space_caps(:vector).persist && !MC.space_caps(:fork).persist
+        @test MC.space_caps(:mork).persist
+        @test !MC.space_caps(:vector).persist
         dir = mktempdir()
         MC.set_act_dir!(dir)
-        s = MC.make_space(:mork_shared; prefix = Vector{UInt8}("persist_probe/"))
+        s = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("persist_probe/"))
         # An EMPTY region returns false — the guard is `n_atoms == 0`, not "root prefix".
         @test MC.snapshot_space_to_act!(s, "empty_probe") === false
         MC.core_add!(s, [:durable, 1])
@@ -193,8 +234,8 @@ const SM = MeTTaCore.StandardMeTTa
     end
 
     @testset "every kind declares an atomicity model and a note" begin
-        # Whitepaper §2.2.1 leaves consistency/failure behaviour "backend-specific" — which obliges the
-        # backend to DECLARE it, not to skip the question. An empty string here is a skipped question.
+        # §2.2.1 leaves consistency/failure behaviour "backend-specific" — which OBLIGES the backend to
+        # declare it, not to skip the question. An empty string here is a skipped question.
         for k in MC.space_kinds()
             c = MC.space_caps(k)
             @test !isempty(strip(c.atomicity))
@@ -202,13 +243,32 @@ const SM = MeTTaCore.StandardMeTTa
         end
     end
 
-    @testset "the ledger renders" begin
+    @testset "🔴 AXIS GUARD — no access mode may be folded into a kind NAME" begin
+        # This is the guard for the mistake this registry already made once: `:mork_shared` and `:fork`
+        # shipped as kinds, which is the first generation of `:neural_shared_readonly`. Mechanical, so
+        # it fires on whoever adds the next kind rather than on a reviewer who happens to notice
+        # (`[[feedback_enforcement_works_prose_memory_does_not]]`).
+        banned = ("shared", "private", "readonly", "read_only", "cow", "copyonwrite", "fork")
+        for k in MC.space_kinds()
+            s = lowercase(string(k))
+            for b in banned
+                @test !occursin(b, s)
+            end
+        end
+        # ...and the axes really are independent: at least one kind offers more than one access mode,
+        # which is what makes the separation load-bearing rather than decorative.
+        @test any(k -> length(MC.space_modes(k)) > 1, MC.space_kinds())
+    end
+
+    @testset "the ledger renders, and shows both non-capability axes" begin
         io = IOBuffer()
         MC.space_ledger(io)
         out = String(take!(io))
         for k in MC.space_kinds()
             @test occursin(string(k), out)
         end
-        @test occursin("provider", out)
+        @test occursin("integration", out)      # IntegrationMode axis is visible
+        @test occursin("access modes", out)     # AccessMode axis is visible
+        @test occursin("Native", out)
     end
 end

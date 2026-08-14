@@ -7,9 +7,10 @@
 # run against?". This script answers all three by DOING it — every space below is constructed for real,
 # written to, and queried, and what prints is what happened.
 #
-# ⚠️ READ THE LEDGER, NOT THE COUNT. Four kinds exist and they are NOT four flavours of one thing. Only
-# `:vector` can be evaluated against; only the two MORK kinds persist; only `:mork_shared` co-resides
-# with siblings. The whitepaper (§2.2.1) promises "MeTTa code is substantially Space-independent" — the
+# ⚠️ READ THE LEDGER, NOT THE COUNT. TWO kinds, on THREE axes — kind (what backs the payload) vs
+# ACCESS MODE (who sees/writes it) vs INTEGRATION MODE (where execution lives). "Shared" is a mode, not
+# a kind; a "fork" is a seeded Private region, not a kind. Only `:vector` can be evaluated against; only
+# `:mork` persists; only `:mork` at Shared co-resides with siblings. The whitepaper (§2.2.1) promises "MeTTa code is substantially Space-independent" — the
 # ledger printed at the end is the honest measurement of how far that is true here, and it is meant to
 # be read as a gap list.
 
@@ -35,14 +36,14 @@ step("evaluate  !(twice 21)                        → $(EV.load_metta!(vs, "!(t
 step("bind      !(match &self (belief \$k \$s \$c) \$k) → $(EV.load_metta!(vs, raw"!(match &self (belief $k $s $c) $k)"))")
 step("↑ the variable's WITNESS comes back. No MORK-backed kind below can do this yet.")
 
-hdr("2. :fork — snapshot isolation (the c2_spaces contract). MULTIPLE SPACES, independent.")
-fk = MC.make_space(:fork; parent = vs)
+hdr("2. :vector; parent = … — a FORK is a seeded PRIVATE region, not a kind of its own.")
+fk = MC.make_space(:vector; parent = vs)
 EV.load_metta!(fk, "(only-in-the-fork)")
 step("parent sees the fork's new atom?  $(!isempty(EV.load_metta!(vs, "!(match &self (only-in-the-fork) yes)")))  ← must be false")
 step("fork sees it?                     $(!isempty(EV.load_metta!(fk, "!(match &self (only-in-the-fork) yes)")))  ← must be true")
 step("fork still has the parent's snapshot? $(!isempty(EV.load_metta!(fk, "!(match &self (belief a 0.9 0.8) yes)")))")
 
-hdr("3. :mork — an ISOLATED MORK atomspace. Its own trie, root prefix.")
+hdr("3. :mork at Private — an ISOLATED MORK atomspace. Its own trie, root prefix.")
 m1 = MC.make_space(:mork)
 m2 = MC.make_space(:mork)
 MC.core_add!(m1, [:only_in_m1, 1])
@@ -58,10 +59,10 @@ catch e
     step("  raises, as declared: " * first(split(msg, '\n')))
 end
 
-hdr("4. :mork_shared — SHARED SPACES. Whitepaper Figure 4: siblings in ONE trie.")
-common = MC.make_space(:mork_shared; name = Symbol("&common"))
-games  = MC.make_space(:mork_shared; name = Symbol("&app/games"))
-social = MC.make_space(:mork_shared; name = Symbol("&app/social"))
+hdr("4. :mork at Shared — SHARED SPACES. Same KIND, different ACCESS MODE. Whitepaper Fig. 4.")
+common = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&common"))
+games  = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/games"))
+social = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/social"))
 step("one shared trie behind all three?  $(common.inner === games.inner === social.inner)")
 for (nm, sp) in (("&common", common), ("&app/games", games), ("&app/social", social))
     step("  $(rpad(nm, 12)) prefix = $(String(copy(sp.prefix)))")
@@ -78,7 +79,7 @@ step("addressable BY NAME (the prefix registry): lookup_prefix(:&app/games) = " 
 hdr("5. Persistence — declared on the MORK kinds, and exercised here.")
 dir = mktempdir()
 MC.set_act_dir!(dir)
-step("empty region snapshot → $(MC.snapshot_space_to_act!(MC.make_space(:mork_shared; prefix = Vector{UInt8}("empty_probe/")), "zoo_empty"))  ← false: nothing to save")
+step("empty region snapshot → $(MC.snapshot_space_to_act!(MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("empty_probe/")), "zoo_empty"))  ← false: nothing to save")
 step("filled region snapshot → $(MC.snapshot_space_to_act!(games, "zoo_games"))   act_exists → $(MC.act_exists("zoo_games"))")
 
 hdr("6. THE CAPABILITY LEDGER — read this as the gap list")

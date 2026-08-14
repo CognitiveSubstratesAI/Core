@@ -278,7 +278,12 @@ export get_node_shared, derive_prefix_from_name, rebind_to_shared_prefix
 # Space CONSTRUCTOR REGISTRY + capability ledger (space/Spaces.jl). Kinds are OPEN — a package that owns
 # a backend registers it itself, so Core never depends on FactorVSA/HMH/MORKTensorNetworks to offer them.
 export SpaceCaps, SpaceKind, SPACE_KINDS, register_space_kind!
-export make_space, space_kinds, space_kind, space_caps, space_ledger
+export make_space, space_kinds, space_kind, space_caps, space_modes, space_ledger
+# THREE AXES, kept orthogonal on purpose: kind (what backs the payload) · AccessMode (who sees/writes it)
+# · IntegrationMode (where execution lives, §2.4). A mode folded into a kind name is how you get
+# :mork_shared, then :mork_readonly, then :neural_shared_readonly. See space/Spaces.jl's header.
+export AccessMode, Private, Shared, ReadOnly, CopyOnWrite
+export IntegrationMode, Native, Bridge, External
 export with_read_permit, with_write_permit
 export snapshot_space_to_act!, load_act_source, act_exists, set_act_dir!
 export open_node!, close_node!
