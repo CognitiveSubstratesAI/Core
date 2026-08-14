@@ -324,6 +324,47 @@ const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
 
 const _CC_LEATTA = joinpath(@__DIR__, "..", "oracle", "leatta", "corpus")
 
+"Error directives and compiled-clause count from the **:mork** backend (ARROW 6)."
+function _cc_mork(src::AbstractString)
+    r = try MeTTaCore.compile_run(src; backend = :mork)
+        catch e; return (errors = -1, compiled = 0, why = sprint(showerror, e)) end
+    errs = 0
+    for (_, answers) in r.answers, a in answers
+        startswith(a, "(Error ") && (errs += 1)
+    end
+    (errors = errs, compiled = r.compiled, why = "")
+end
+
+@testset "ARROW 6 — the :mork backend on the same 26-script corpus" begin
+    # 🔴 RATCHET ON *COMPILED*, NOT ON ERRORS, and the reason is a measurement that looked green.
+    # MEASURED 2026-08-14: across the corpus `:mork` reports ZERO error directives — and on the four
+    # scripts where `:eval` disagrees (c2_spaces 6, f1_imports 14, f1_moduleA 1, f1_moduleB 1) it
+    # COMPILED NOTHING. With no rules every query is NotReducible and returns itself, which never
+    # starts with "(Error ", so those rows score clean by not running. An error-count ratchet here
+    # would read green forever and tighten if coverage went UP. Compiled-clause count cannot be
+    # gamed that way: it only moves when the lane actually emits.
+    files = sort([joinpath(_CC_DIR, f) for f in readdir(_CC_DIR) if endswith(f, ".metta")])
+    @test length(files) == 26
+
+    total_compiled = 0; raised = String[]; wrong = Tuple{String,Int}[]
+    for f in files
+        m = _cc_mork(read(f, String))
+        if m.errors < 0
+            push!(raised, basename(f)); continue
+        end
+        total_compiled += m.compiled
+        # Agreement is only ASSERTABLE where the lane ran. Where it compiled nothing it proves
+        # nothing, and saying so is the point of this file.
+        m.compiled > 0 && m.errors > 0 && push!(wrong, (basename(f), m.errors))
+    end
+
+    @test isempty(raised)                       # the backend must not throw on any corpus script
+    @test isempty(wrong)                        # and must not disagree where it actually executed
+    # FLOOR from the 2026-08-14 measurement: 14 of 26 scripts compile, 69 clauses total.
+    # Raise it deliberately when coverage improves; never lower it to make a run pass.
+    @test total_compiled >= 69
+end
+
 @testset "compile lane — the LeaTTa PROVED corpus (deviation ⇒ our bug, not an opinion)" begin
     scripts = sort([f for f in readdir(_CC_LEATTA) if endswith(f, ".metta")])
     @test length(scripts) >= 20                       # the vendored corpus is intact
