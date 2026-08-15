@@ -591,8 +591,20 @@ _var_headed_call(n::IRAtom)::Bool =
 # ⇒ DO NOT RE-TRY THE ARM ALONE — that is now 2 measured failures (08-11 call-form, 08-15 data-form)
 # plus 3 for `is_fun`. **Fix the IR-layer `()` FIRST, then re-run this exact change**; the diff is
 # small (one predicate + one line in the `_instr` chain) and is recorded above, so the retry is cheap.
-# NEXT DIAGNOSTIC, before any further code: find WHICH `test_stdlib.metta` directive gains the extra
-# result and what its IL renders as — the corpus prints the delta, and nobody has looked at the atom.
+# ✅ DIAGNOSTIC DONE, SAME DAY — **THE CHAIN IS NOW TRACED, NOT PREDICTED.** The arm newly compiles
+# exactly TWO definitions in `test/oracle/leatta/corpus/test_stdlib.metta`, both expression-headed
+# residuals:
+#     (= (remove-857  $list $elem)  (if-decons-expr $list $head $tail (unify $elem $head ($head $tail) …)))
+#     (= (overlap-857 $list1 $list2) (foldl-atom $list1 **(() () $list2)** $accum $elem …))
+# **`(() () $list2)` — the very atom the 08-11 guardrail names — is `overlap-857`'s FOLDL ACCUMULATOR**,
+# and it holds TWO empty expressions. ⇒ the failure chain, end to end:
+#     arm enables `overlap-857` → accumulator `(() () $list2)` → `()` lowers to
+#     `IRExpression(IRSymbol(:Nil), [])` → renders `(Nil)` → does NOT round-trip → wrong answer →
+#     `test_stdlib.metta: extra 1`.
+# So the `()` defect is not a caveat and not a guess: it is THE blocker, with a named definition and a
+# named atom behind it. **FIX ORDER IS SETTLED: repair `()` at the IR layer, then re-apply the one
+# predicate + one line above, then re-run this corpus.** Expect `remove-857` and `overlap-857` to be
+# the two that move; if anything ELSE moves, stop — the arm is doing more than intended.
 #
 # 🔬 UPSTREAM READ (still valid, still the intended shape) — port the THREE
 # arms together, re-run the LeaTTa PROVED corpus (that is what caught the last attempt), and check the
