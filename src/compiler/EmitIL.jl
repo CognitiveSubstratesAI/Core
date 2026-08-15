@@ -552,6 +552,36 @@ patterns never arrive here — `constrain_args` handles those."""
 _var_headed_call(n::IRAtom)::Bool =
     n isa IRExpression && (n::IRExpression).head isa IRVariable
 
+# ⭐ UPSTREAM HAS THE ANSWER, AND IT IS NOT "WIDEN" — IT IS A THIRD ARM. (PeTTa, read 2026-08-15.)
+#
+# WHY THIS MATTERS NOW: this decline is **16 of the 18** definitions the COMPILE ARROW rejects across
+# ECAN+PLN (`Core/tools/il_coverage_survey.jl`: 380/398 = 95.5% compile), and **13 of those 16 are
+# `|-` — PLN's INFERENCE RULE operator.** So the compile arrow covers everything except the path that
+# most needs mechanically-checkable properties. Shape:
+#     (= (|- ((Inheritance $A $B) $Truth)) ((Inheritance $B $A) (Truth_inversion (STV $B) $Truth)))
+# head is a rule, BODY IS A DATA TUPLE whose head is ITSELF an expression.
+#
+# `PeTTa/src/translator.pl`, tail of `translate_expr` — a THREE-WAY split on the head, not two:
+#     ; ( atomic(HV), \+ atom(HV) ; atom(HV), \+ fun(HV) ) -> Out = [HV|AVs], Goals = Inner   % DATA
+#     ; is_list(HV) -> eval_data_term(HV, Gd, HV1),                                           % <<< THIS
+#                      append(Inner, Gd, Goals), Out = [HV1|AVs]
+#     ; append(Inner, [reduce([HV|AVs], Out)], Goals)                                         % runtime dispatch
+#
+# ⇒ when the head is ITSELF a list, upstream neither calls it nor declines it: **`eval_data_term`
+# KEEPS THE TUPLE AS DATA AND HOISTS ONLY THE FUNCTION SUB-CALLS OUT OF IT** (`Truth_inversion`
+# becomes a goal; `(Inheritance $B $A)` stays structure). The 2026-08-11 attempt below widened
+# expression-head → **CALL**; upstream's answer is expression-head → **DATA-WITH-HOISTING**. The
+# `(() () $l2)` counter-example that killed that attempt IS a data tuple mis-read as a call — exactly
+# what the middle clause exists to prevent. So the revert was RIGHT and the conclusion drawn from it
+# ("do not widen") was too broad.
+# ⚠️ This also explains `[[feedback_is_fun_static_half_alone_is_harmful]]` ("whole-program `is_fun`
+# ALONE makes the corpus WORSE, 3× reverted"): `fun/1` is only the FIRST of the three clauses. Alone
+# it forces every non-fun head into one bucket; the list-head case needs `eval_data_term` as its own arm.
+# 🔬 NOT YET IMPLEMENTED OR MEASURED HERE — this is a READ of upstream, not a result. Port the THREE
+# arms together, re-run the LeaTTa PROVED corpus (that is what caught the last attempt), and check the
+# `(() () $l2)` case explicitly. More upstream if needed: `dev-zone/MeTTapedia/papers` (CeTTa.tex,
+# ch_bridges.tex) and CeTTa's own `compile.c`.
+#
 # 🛑 DO NOT WIDEN THIS TO AN EXPRESSION HEAD. Tried 2026-08-11, MEASURED, REVERTED.
 #
 # The reasoning looked airtight: `((curry f) x)` in value position is a runtime dispatch exactly as
