@@ -267,3 +267,66 @@ end
     load_metta!(s2, raw"!(add-atom &x (fact a))"); load_metta!(s2, raw"!(add-atom &x (fact b))")
     @test load_metta!(s2, raw"!(size-atom (collapse (get-atoms &x)))") == Atom[Grounded(2)]
 end
+
+# ── SLG ANSWER-TABLE STALENESS — a CHARACTERISATION test for an invariant, not a regression test ──
+#
+# ⚠️ READ BEFORE DELETING. This test reaches into `sp.store.atoms` directly, which NO production code
+# does and which looks like a deliberate violation of the store API. That is the point: it is the
+# only way to express the invariant, because the invariant is currently upheld by there being
+# nowhere else to write.
+#
+# WHAT IT PINS. `revision` stamps SLG answer tables (`Eval.jl:1394` compares
+# `(objectid(space), space.revision)` against a stored stamp; `:1441` writes it). The comparison is a
+# pure EQUALITY test — SLG never counts revisions or diffs them, it only asks "same revision as when
+# I cached this?". So any value that CHANGES on mutation satisfies it, and batching many writes into
+# one bump is sound. What is NOT sound is a mutation that does not bump at all.
+#
+# MEASURED 2026-08-15:
+#     below-API push into store.atoms   revision 124 -> 124   query -> [1]      STALE
+#     the same atom via add_atom!       revision 124 -> 125   query -> [1, 2]   correct
+# Same space, same tabled head, same atom. The stale answer arrives with no error and is
+# indistinguishable from a correct one.
+#
+# 🔴 THIS IS LATENT, NOT LIVE — and the distinction is why the test exists. Every `Eval` write
+# funnels through `add_atom!`/`remove_atom!`, both of which bump; `space_metta_calculus!` writes a
+# MORK PathMap, which a `VectorStore` does not have. So no current path reaches this. The invariant
+# "all mutations go through the API" is holding by ACCIDENT OF THERE BEING ONE STORE.
+#
+# WHAT MAKES IT LIVE: a trie-backed store (`Space{S<:AbstractStore}` + a MORK store). The calculus
+# writes underneath via `set_val_at!`/`remove_val_at!`, bypassing the API entirely. The seam does not
+# INTRODUCE this bug — it removes the only thing preventing it.
+#
+# THE FIX THIS ARGUES FOR: bump where the WRITES LAND rather than where the API is called, so a
+# trie-backed store is correct by construction rather than by discipline. When that lands, this test
+# flips from characterisation to guarded and the direct push should stop producing a stale answer.
+@testset "SLG staleness — a mutation that does not bump `revision` serves a stale answer" begin
+    Eval.untable_all!()
+    try
+        # BELOW THE API — the shape of a trie written from underneath.
+        s1 = Space()
+        for (_, a) in parse_program("(= (p) 1)"); Eval.add_atom!(s1, a); end
+        Eval.table!(Symbol("p"))
+        q = parse_program("(p)")[1][2]
+        string(metta_run(q, s1))                       # populate the answer table
+        rev0 = s1.revision
+        for (_, a) in parse_program("(= (p) 2)")
+            push!(s1.store.atoms, a)                   # ← DELIBERATE API BYPASS; see the note above
+        end
+        @test s1.revision == rev0                      # the mutation did NOT bump
+        @test !occursin("2", string(metta_run(q, s1))) # ← the defect: the new clause is invisible
+
+        # THROUGH THE API — POSITIVE CONTROL. Without it the assertion above would also pass for an
+        # engine where tabling simply never returned a second answer.
+        s2 = Space()
+        for (_, a) in parse_program("(= (r) 1)"); Eval.add_atom!(s2, a); end
+        Eval.table!(Symbol("r"))
+        q2 = parse_program("(r)")[1][2]
+        string(metta_run(q2, s2))
+        rev1 = s2.revision
+        for (_, a) in parse_program("(= (r) 2)"); Eval.add_atom!(s2, a); end
+        @test s2.revision > rev1                       # the API DID bump
+        @test occursin("2", string(metta_run(q2, s2))) # so the table invalidated and recomputed
+    finally
+        Eval.untable_all!()                            # _TABLED_HEADS is PROCESS-GLOBAL — never leak it
+    end
+end

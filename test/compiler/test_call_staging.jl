@@ -124,3 +124,45 @@ end
         @test !any(x -> occursin("=val", x), r.rules)   # nothing calls (c), so nothing is published
     end
 end
+
+# ── PRIORITY IS THE CALL ORDER, AND GETTING IT BACKWARDS IS SILENT ───────────────────────────────
+# Characterisation of the MM2 semantics any staging scheme must respect. Not a test of the emitter —
+# the emitter does not produce these yet — but of the CONSTRAINT it will be generating against, and
+# of the failure mode that constraint exists to prevent.
+#
+# MEASURED BY HAND 2026-08-15. Same two rules, same redex, only the priorities swapped:
+#
+#   callee LAST  (correct)   (green a) -> (frog a) -> True          ✅
+#   callee FIRST (inverted)  (green a) -> (frog a) -> STUCK          🔴 wrong answer, NO error
+#
+# The inverted case fails because an exec is CONSUMED when selected whether or not it matched
+# (MORK.wiki Minimal-MeTTa-2; upstream space.rs `btm.remove` precedes `interpret`). frog's rule is
+# selected first, matches nothing — no `(frog …)` atom exists yet — and is destroyed. green then
+# rewrites its redex to `(frog a)`, and the rule that would reduce it is gone.
+#
+# There is no error, no exhaustion, no diagnostic: the trie simply holds an unreduced atom. That is
+# why the staged numbering is not cosmetic, and it is the regression this pins.
+@testset "STAGING INVARIANT — a callee's exec must be selected AFTER its caller's" begin
+    _mk() = MeTTaCore.new_core_space()
+    _run(execs, redex) = begin
+        cs = _mk()
+        for e in execs; MeTTaCore.space_add_all_sexpr!(cs.inner, e); end
+        MeTTaCore.space_add_all_sexpr!(cs.inner, redex)
+        MeTTaCore.core_calculus!(cs, 1_000)
+        [strip(l) for l in split(MeTTaCore.space_dump_all_sexpr(cs.inner), '\n')
+         if !isempty(strip(l)) && !startswith(strip(l), "(exec")]
+    end
+    green_first = "(exec 0 (, (green \$x)) (O (+ (frog \$x)) (- (green \$x))))"
+    frog_second = "(exec 1 (, (frog \$y)) (O (+ True) (- (frog \$y))))"
+    green_last  = "(exec 1 (, (green \$x)) (O (+ (frog \$x)) (- (green \$x))))"
+    frog_first  = "(exec 0 (, (frog \$y)) (O (+ True) (- (frog \$y))))"
+
+    # CORRECT: caller at the lower priority, so it is selected first and the callee's rule survives.
+    @test _run([green_first, frog_second], "(green a)") == ["True"]
+
+    # INVERTED: the callee is selected first, matches nothing, and is consumed. POSITIVE CONTROL for
+    # the failure — without this the test above would pass for a scheme that happened to work once.
+    stuck = _run([frog_first, green_last], "(green a)")
+    @test stuck == ["(frog a)"]      # the redex was rewritten and then stranded
+    @test stuck != ["True"]          # stated separately: this is a WRONG ANSWER, not a slow one
+end
