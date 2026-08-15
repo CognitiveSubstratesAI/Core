@@ -239,6 +239,19 @@ end
 #
 # SO: widen this table ONLY when a NAMED control path that needs a PROPERTY is blocked by it. Name the
 # path in the commit message. "It raises coverage" is not a reason — that exam was the wrong one.
+#
+# 🔴 BUT THE LIST YOU WOULD NAME AGAINST DOES NOT EXIST YET — SAY SO RATHER THAN LET THIS RULE DANGLE.
+# As of 2026-08-15 the property-bearing set is a CATEGORY WITH THREE EXAMPLES (PLN inference steps ·
+# MetaMo safety constraints · whatever OmegaSelf governs) and NOBODY HAS ENUMERATED IT. A rule that
+# points at a set nobody wrote down is a DOCUMENTED MECHANISM THAT IS NOT WIRED — the same defect this
+# tree keeps catching elsewhere (the `# allow-layer-edit:` marker that was documented and never
+# implemented; JeTTa's memo denylist with misspelled entries).
+#
+# ⇒ **ENUMERATING IT IS THE PREREQUISITE MEASUREMENT, and it is a SESSION, not a project:** name the
+# control paths that need mechanically-checkable guarantees, then check `EmitIL` coverage against THAT
+# list. Expect dozens of definitions, not the 398 in `lib/`. Until it exists, this rule can only tell
+# you to STOP — it cannot tell you when to proceed. Treat a widening request as BLOCKED-PENDING-LIST,
+# not as approved-by-default, and write the list rather than routing around it.
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 const _ARITH_I64 = Dict{Base.Symbol,String}(
     :+ => "sum_i64", :- => "sub_i64", :* => "product_i64", :% => "mod_i64", :/ => "div_i64")
