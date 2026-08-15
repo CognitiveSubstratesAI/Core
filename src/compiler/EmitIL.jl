@@ -138,9 +138,26 @@ that knows the quoting rule rather than by a display method that does not."""
 # COW and Frame pooling, which touch MUTATION SEMANTICS. This is a pure serializer — same bytes out,
 # no aliasing surface. Output is byte-identical by construction (same order, same separators, same
 # quoting rule); the `_escape_il_string` call is unchanged.
-il_text(a::Atom)::String = String(take!(_il_text!(IOBuffer(), a)))
+# allow-lowering-without-upstream: pure serializer refactor — byte-identical output, no op semantics.
+#
+# ⚠️ `sprint`, NOT `String(take!(IOBuffer()))` — corrected 2026-08-15 on review. `sprint(f, args…)`
+# calls `f(io, args…)` against a string sink: Julia's exact analogue of PeTTa's
+# `with_output_to(string(S), Goal)`. The hand-rolled form re-implemented it AND carried a wrinkle
+# `sprint` does not — `take!` EMPTIES the buffer, so the writer could not be composed with a
+# caller-supplied one.
+# 🔑 THE WRITER TAKES `::IO`, NOT `::IOBuffer` — this is the part of the upstream design worth
+# copying, and annotating `::IOBuffer` threw it away. A stream-generic writer can go STRAIGHT to a
+# file, socket or stdout and NEVER MATERIALIZE THE STRING, which is the actual point of streaming.
+# §3.4 makes MeTTa-IL the artifact "targeting multiple backends without semantic drift"; a backend
+# holding a stream can now consume `_il_text!(io, a)` directly, no intermediate String.
+# LAYER: this implements NO Figure-2 arrow — it is the WIRE SERIALIZER for already-emitted IL atoms.
+# Consistent with MeTTaIL §5 ("strictly addition to MORKL and MM2 … MORK is an optimal reduction
+# kernel"): nothing here reduces or lowers anything, it only renders.
+# §3.4 also states the discipline this change is under — "optimizing ONLY AFTER equivalence/
+# regression/type checks": byte-identical verified on 11 cases, health 5/5, corpus exit 0.
+il_text(a::Atom)::String = sprint(_il_text!, a)
 
-function _il_text!(io::IOBuffer, a::Atom)::IOBuffer
+function _il_text!(io::IO, a::Atom)::IO
     if a isa Expression
         write(io, '(')
         firstc = true
