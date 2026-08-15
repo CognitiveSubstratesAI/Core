@@ -579,7 +579,18 @@ _var_headed_call(n::IRAtom)::Bool =
 # it forces every non-fun head into one bucket; the list-head case needs `eval_data_term` as its own arm.
 # 🔬 NOT YET IMPLEMENTED OR MEASURED HERE — this is a READ of upstream, not a result. Port the THREE
 # arms together, re-run the LeaTTa PROVED corpus (that is what caught the last attempt), and check the
-# `(() () $l2)` case explicitly. More upstream if needed: `dev-zone/MeTTapedia/papers` (CeTTa.tex,
+# `(() () $l2)` case explicitly.
+#
+# 🛑 PREREQUISITE, AND IT IS STATED BELOW IN THIS FILE — the `()` → `(Nil)` rendering defect
+# ("Any future work here must fix that first"). ⚠️ PARTIALLY PROBED 2026-08-15 and it is NARROWER
+# than the note implies: `()` DOES round-trip at parse/render (`parse "()" → () → "()"`; likewise
+# `(() () $l2)`), and `(= (f) ())` compiles cleanly to `(= (f) (function (return ())))`. So the defect
+# is at the **IR layer** (`IRExpression(IRSymbol(:Nil), [])`) and is MASKED precisely because these
+# clauses are declined — it CANNOT be confirmed or refuted from outside without enabling the very path
+# being changed. ⇒ **the port and the `()` fix are ONE piece of work, not two**, and the first run must
+# be against the LeaTTa PROVED corpus with `(() () $l2)` as an explicit case. Budget the diagnosis
+# time BEFORE starting: the 08-11 attempt failed by raising coverage and breaking that corpus, and
+# starting this without room to diagnose reproduces that failure exactly. More upstream if needed: `dev-zone/MeTTapedia/papers` (CeTTa.tex,
 # ch_bridges.tex) and CeTTa's own `compile.c`.
 #
 # 🛑 DO NOT WIDEN THIS TO AN EXPRESSION HEAD. Tried 2026-08-11, MEASURED, REVERTED.
