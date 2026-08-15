@@ -336,6 +336,15 @@ end
         # (MORK Space.jl:232-234, 1771) — so a Core-side wrapper is bypassed by the very writer that
         # motivates it. Either MORK.Space carries the bump, or the store DERIVES a stamp from a cheap
         # trie identity; the latter works only because SLG tests EQUALITY and never counts.
+        # ⚠️ BUT DO NOT PRICE THE DERIVED STAMP AS THE CLEANER OPTION UNTIL THIS IS CHECKED: it
+        # needs an identity that is CHEAP *and* CURRENT AFTER EVERY CALCULUS WRITE, and those may
+        # pull against each other. `map_hash` (PathMap Morphisms.jl:420) hashes ON DEMAND — it does
+        # not maintain a root — so deriving from it means either hashing per query (not cheap) or
+        # caching the hash, and a cache needs to know when to invalidate, which is THIS PROBLEM
+        # RESTATED. If no maintained identity exists, the option is circular and MORK.Space carrying
+        # the bump is the only shape left. OPEN Morphisms.jl AND CHECK before deciding the struct —
+        # this determines whether the store owns a COUNTER or observes a HASH, and they are
+        # different structs, so discovering it during the seam means discovering it by rewriting.
     finally
         Eval.untable_all!()                            # _TABLED_HEADS is PROCESS-GLOBAL — never leak it
     end
