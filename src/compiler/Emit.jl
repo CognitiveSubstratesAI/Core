@@ -913,18 +913,97 @@ function decline_reason(clause::ANClause)::Base.Symbol
 end
 
 """
-    decline_histogram(clauses) -> Dict{Symbol,Int}
+    decline_histogram(clauses) -> (; paths, fully, expanded)
 
-Declines grouped by reason across a whole program — the actionable form of "27.5% coverage".
+Declines grouped by reason across a whole program. Returns TWO tallies, because one of them
+answers "what do I build next" and the other does not:
+
+  * `paths`  — blocked EXECUTION PATHS per reason. Expansion MULTIPLIES clauses (fib becomes two),
+               so a clause with three paths blocked three ways contributes three entries here.
+  * `fully`  — clauses that fixing ONE class would fully unblock, i.e. where EVERY blocked path
+               shares the same reason. **This is the aiming number.** fib is the counter-example:
+               path 1 blocks on `call_in_body`, path 2 on `mixed_arithmetic`, so fib appears twice
+               in `paths` and in NEITHER row of `fully` — fixing either class alone still leaves it
+               declined.
+  * `expanded` — how many declining clauses `expand_control` successfully expanded.
+
+🔴 THIS FUNCTION USED TO REPORT SOMETHING ELSE, AND IT DROVE TWO WRONG PLANS IN TWO DAYS.
+It called `emit_clause` on the RAW clause, so a clause carrying a `GBranch` was attributed
+`control_flow` — even though `emit_program` runs `expand_control` FIRST (`:815`) and the real
+blocker lies inside an arm. MEASURED on the 26-script conformance corpus when the expansion was
+added here:
+
+    reason              RAW (pre-expansion)     AFTER expand_control
+    control_flow                 7                       0     <- vanishes entirely
+    call_in_body                18                      27     <- becomes the largest class
+    mixed_arithmetic             2                       8
+    residual                    23                      24
+
+`control_flow` going to ZERO is `expand_control` working exactly as `b6c0d6c` intended — control
+flow COMPILES, and a stale histogram was hiding that. The ranking also INVERTED: `residual` was
+cited at 57.5% and aimed at; the real top class is `call_in_body`. This index has recorded that
+ranking inverting once before, which is why the reason is recomputed here rather than cached.
+
+⚠️ `fully` is deliberately NOT derivable from `paths`. Summing paths per reason answers "how much
+work is blocked", never "which clauses a fix releases", and only the second one is a plan.
+
+⚠️ AND `fully` MEANS "ALL **BLOCKED** PATHS AGREE", NOT "one fix from correct". A clause may have
+some paths emitting and some blocked; only the blocked ones are counted. For a two-armed `if` with
+one arm emitting and one blocked, that is not a working function. Nor is the class a WORK ITEM — it
+is a symptom label, and nothing here checks that twenty `call_in_body` clauses need the same fix.
+
+── WHAT THE NUMBERS ACTUALLY REST ON (measured by construction 2026-08-15, three probes) ─────────
+Read these before citing any row above; each retired a ranking this histogram had produced.
+
+ 1. CONTROL FLOW COMPILES. `expand_control` (`b6c0d6c`) removes every `GBranch` in the corpus —
+    `control_flow` goes 7 -> 0 once expansion runs. It was never a blocker; it was this function
+    reporting the first reason on an unexpanded clause.
+
+ 2. `Emit.jl` EMITS A BODY ONLY IF EVERY CALL IS ONE OF `+ - * % /`, OR THERE ARE NO CALLS AT ALL.
+    Verified directly: `(= (green \$x) (frog \$x))` DECLINES — one call, no arithmetic, no branch, no
+    recursion, the floor case. `(= (g \$x) \$x)` emits (no call). `(= (inc \$n) (+ \$n 1))` emits.
+    So `call_in_body` and `mixed_arithmetic` are ONE wall reported from two sides, and the
+    A/B/C shape split in the corpus measures composition, not difficulty.
+
+ 3. `_ARITH_I64` IS A TYPED ADMISSION GATE, NOT A LIST — and this is the one that would have shipped
+    a silent defect. Adding `:< => "lt_i64"` at runtime makes the clause EMIT:
+        (exec 0 (, (m \$x)) (O (pure \$__r \$__r (i64_to_string (lt_i64 ...)))))
+    …and then it RUNS, consumes the redex, and WRITES NOTHING. steps=1, trie still holds `(m 1)`,
+    interpreter says `True`. No error. `lt_i64` returns the raw byte `\x01` (vendored note,
+    `PureOpArity.jl:520`) and the emitter hardcodes `i64_to_string`, which cannot render it.
+    🔴 `PURE_OPS` HAS NO BOOL RENDERER AT ALL — only `i8/i16/i32/i64/i128/f32/f64_to_string`. So a
+    predicate's result cannot round-trip through the `pure` sink, and THAT is why exactly five ops
+    are in this table: they are the ones whose results the sink can render.
+    ⇒ comparisons are a DESIGN question (a Bool cast that yields the SYMBOL `True`, matchable by a
+    `GUnify`), not a missing dictionary row. The table should carry name -> (op, result cast) so a
+    row without a cast fails AT EMISSION rather than dropping an answer at runtime.
 """
-function decline_histogram(clauses::Vector{ANClause})::Dict{Base.Symbol,Int}
-    h = Dict{Base.Symbol,Int}()
+function decline_histogram(clauses::Vector{ANClause})
+    funs = Set{Base.Symbol}(c.name for c in clauses)   # hoisted: was rebuilt PER CLAUSE (O(n^2))
+    paths = Dict{Base.Symbol,Int}(); fully = Dict{Base.Symbol,Int}(); expanded = 0
     for cl in clauses
-        emit_clause(cl; funs = Set{Base.Symbol}(c.name for c in clauses)) === nothing || continue
-        r = decline_reason(cl)
-        h[r] = get(h, r, 0) + 1
+        emit_clause(cl; funs = funs) === nothing || continue
+        e = expand_control(cl)
+        if e === nothing                                # unexpandable — attribute the clause itself
+            r = decline_reason(cl)
+            paths[r] = get(paths, r, 0) + 1
+            fully[r] = get(fully, r, 0) + 1
+            continue
+        end
+        expanded += 1
+        reasons = Base.Symbol[]
+        for p in e
+            emit_clause(p; funs = funs) === nothing || continue
+            push!(reasons, decline_reason(p))
+        end
+        isempty(reasons) && continue                    # every path emits after expansion
+        for r in reasons
+            paths[r] = get(paths, r, 0) + 1
+        end
+        u = unique(reasons)
+        length(u) == 1 && (fully[u[1]] = get(fully, u[1], 0) + 1)
     end
-    h
+    (; paths, fully, expanded)
 end
 
 export render, render_goal, emit_clause, emit_clause_staged, emit_program, decline_reason, decline_histogram
