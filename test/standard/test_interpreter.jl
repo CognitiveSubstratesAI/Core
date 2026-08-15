@@ -345,6 +345,22 @@ end
         # the bump is the only shape left. OPEN Morphisms.jl AND CHECK before deciding the struct —
         # this determines whether the store owns a COUNTER or observes a HASH, and they are
         # different structs, so discovering it during the seam means discovering it by rewriting.
+        # ✅ CHECKED 2026-08-15: `map_hash` (Morphisms.jl:420) is an ON-DEMAND `cata_cached` fold —
+        # no maintained root, no cached-hash field, no dirty flag in PathMapCore.jl or Morphisms.jl.
+        # So the derived stamp IS circular and MORK.Space carrying the bump is the only shape left.
+        # ⚠️ NOT EXHAUSTIVE — two files, four synonyms. Run `capability_search.sh` over PathMap with
+        # a few more before building on it; an incremental digest under another name flips this.
+        #
+        # TWO THINGS TO SETTLE WHEN THE WORK STARTS, both cheap and both easy to get wrong late:
+        #  1. HOW MANY SITES? `space_metta_calculus!` may already funnel writes through the SINKS
+        #     (AddSink/RemoveSink, Sinks.jl) rather than calling set_val_at! scattered through the
+        #     calculus. If it does, the bump is one or two sites in MORK.Space, not a sweep — and
+        #     the "a Core concern living in MORK" objection shrinks to one counter field plus a
+        #     comment naming who reads it.
+        #  2. WHO OWNS THE COUNTER? If MORK.Space bumps, does Core's add_atom! STOP bumping, or do
+        #     both and the counter merely moves faster? Double-bumping is HARMLESS under
+        #     equality-only semantics — but two writers to one counter with unclear ownership is
+        #     what reads as a bug six months later. Decide it explicitly, in a comment, either way.
     finally
         Eval.untable_all!()                            # _TABLED_HEADS is PROCESS-GLOBAL — never leak it
     end
