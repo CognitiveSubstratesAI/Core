@@ -326,6 +326,16 @@ end
         for (_, a) in parse_program("(= (r) 2)"); Eval.add_atom!(s2, a); end
         @test s2.revision > rev1                       # the API DID bump
         @test occursin("2", string(metta_run(q2, s2))) # so the table invalidated and recomputed
+        # ⚠️ DO NOT DECLARE THIS FIXED ON THE STRENGTH OF THIS TEST. A hand `push!` into
+        # store.atoms bypasses EVERY layer, so it keeps failing to bump no matter where the bump is
+        # relocated — this assertion can pass for the wrong reason forever. The measurement that
+        # matters is a CALCULUS write (space_metta_calculus! mutating the trie underneath), and it
+        # cannot be written until a trie-backed store exists.
+        # ⚠️ THE RELOCATION IS ALSO NOT A LAYER-DOWN MOVE: set_val_at!/remove_val_at! belong to
+        # PathMap (WriteZipper.jl:595-639), and the calculus calls them DIRECTLY on s.btm
+        # (MORK Space.jl:232-234, 1771) — so a Core-side wrapper is bypassed by the very writer that
+        # motivates it. Either MORK.Space carries the bump, or the store DERIVES a stamp from a cheap
+        # trie identity; the latter works only because SLG tests EQUALITY and never counts.
     finally
         Eval.untable_all!()                            # _TABLED_HEADS is PROCESS-GLOBAL — never leak it
     end
