@@ -1,0 +1,72 @@
+; pattern_miner_mm2plus.mm2 — §9.2 of Notes on the Path to Scalable MeTTa Infrastructure
+; (Ben Goertzel, 2025-06-30). Extracted verbatim via docs/specs/Mork/scalable_metta_infrastructure_spec.md §9.2.
+;
+; ─── THE DIFFERENTIAL ────────────────────────────────────────────────────────────────────────────
+; Same 7 stages as pattern_miner_pure_mm2.mm2, but in MM2+ — so the PAIR is the experiment, not either
+; file alone. The two differences that matter to us:
+;
+;   stage 4  pure MM2:  (, (count ?C ?Pat ?Minsup))          <- exact-value match, no comparison
+;            MM2+:      :guard (>= ?N ?M)                    <- a real comparison
+;   stage 7  same shape, on (>= ?I ?H)
+;
+; Those two guards are EXACTLY our open Bool-cast question (CODEMAP row 223): MORK's PURE_OPS holds
+; `lt_i64`, so the clause EMITS and RUNS — but PURE_OPS has no BOOL RENDERER, so the raw \x01 cannot
+; round-trip the sink and the answer is dropped SILENTLY, with no error at any point. This file is the
+; upstream-authored case that makes that failure observable on a real algorithm rather than a probe.
+;
+; ⚠️ §5: MM2+ is NOT a separate runtime. `defreact` macro-expands OFFLINE into ground MM2 `exec` rules,
+; `:guard` built-ins become host guard-atoms, state cells become state atoms. So this file is a
+; SOURCE for expansion, not a second engine — and expanding it is the honest way to compare against
+; the §9.3 sibling.
+;
+; ⚠️ §9.2.1 lists MM2+'s own costs vs MeTTa-IL (boilerplate per rule; loops/accumulators only via
+; dynamic emit + state cells; one pipeline stage touching several exec rules; anonymous exec@loc
+; failures). Do not read MM2+ as strictly better — the paper does not.
+;
+; allow-new-artifact: vendored upstream corpus; source spec read this session (§9.2)
+
+(defreact extract-skeleton ()
+  (exec 1
+    (, (eval (pred ?P) (list ?A1 ?A2)))
+    (, (skeleton ?L (eval (pred ?P) (list (var "$X") ?A2)))
+       (skeleton ?L (eval (pred ?P) (list ?A1 (var "$X")))))))
+
+(defreact specialize ()
+  (exec 2
+    (, (skeleton ?L ?Tpl)
+       (eval (pred ?P) (list ?A1 ?A2)))
+    (, (candidate ?C (instantiate ?Tpl ?A1 ?A2)))))
+
+(defreact increment-count ()
+  (exec 3
+    (, (candidate ?C ?Pat)
+       (count ?C ?Pat ?N))
+    (, (count ?C ?Pat (+ ?N 1)))))
+
+(defreact mark-kept ()
+  (exec 4
+    (, (count ?C ?Pat ?N)
+       (minsup ?M))
+    :guard (>= ?N ?M)
+    (, (kept ?C ?Pat))))
+
+(defreact combine-patterns ()
+  (exec 5
+    (, (kept ?C1 ?P1)
+       (kept ?C2 ?P2))
+    (, (conj ?C1 ?C2 (and ?P1 ?P2)))))
+
+(defreact compute-surprise ()
+  (exec 6
+    (, (conj  ?C1 ?C2 ?And)
+       (count ?C1 ?P1 ?N1)
+       (count ?C2 ?P2 ?N2)
+       (universe ?U))
+    (, (score ?And (compute-I-surp ?N1 ?N2 ?U)))))
+
+(defreact select-output ()
+  (exec 7
+    (, (score ?Pat ?I)
+       (highsurp ?H))
+    :guard (>= ?I ?H)
+    (, (output ?Pat ?I))))

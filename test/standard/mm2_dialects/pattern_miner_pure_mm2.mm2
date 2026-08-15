@@ -1,0 +1,70 @@
+; pattern_miner_pure_mm2.mm2 — §9.3 of Notes on the Path to Scalable MeTTa Infrastructure
+; (Ben Goertzel, 2025-06-30). Extracted verbatim via docs/specs/Mork/scalable_metta_infrastructure_spec.md §9.3.
+;
+; ─── WHY THIS IS VENDORED ────────────────────────────────────────────────────────────────────────
+; Our arrow-6 corpus is ARITHMETIC AND IDENTITY ONLY. This is the Hyperon greedy Pattern Miner, the
+; same 7 stages, written by the person who defined the target — and it exercises precisely the
+; classes our emitter DECLINES:
+;   * multi-stage `exec` chaining with explicit `loc` staging (1..7) — our staging invariant
+;   * threshold comparisons (here forced into exact-value matching, see stages 4 and 7)
+;   * accumulators (stage 3 increments a count)
+;
+; ⚠️ READ §9.3.1 BEFORE TREATING A DECLINE HERE AS OUR DEFECT. Pure MM2 has NO built-in guards or
+; arithmetic: "comparisons (>=,<) and arithmetic (+,-) can't be expressed directly; thresholds/counts
+; need exhaustive rule enumeration or external primitives." That is why stages 4 and 7 below match an
+; EXACT value (`?Minsup`, `?HighSurp`) instead of comparing — the paper's own workaround. The MM2+
+; sibling (§9.2, pattern_miner_mm2plus.mm2) uses `:guard (>= ?N ?M)` for the same two stages, which is
+; the exact difference to test.
+;
+; ⚠️ `loc` HERE IS A PLAIN INTEGER, "lower fires first" (§3.2). Our measured implementation orders by
+; expression-preferring shortlex (d588832). The paper self-caveats as "a design sketch, not an
+; implementation report", so OUR ordering is authoritative — do not "fix" toward this file.
+;
+; ⚠️ `(+ ?N 1)` in stage 3 and `(compute-I …)` in stage 6 are NOT pure-MM2 primitives; they are the
+; paper's shorthand for the host-primitive layer (§8 `guard:<op>`). Ours is MORK's PURE_OPS. Stage 6's
+; `compute-I` has no PURE_OPS equivalent at all. Expect declines here — record which, do not patch.
+;
+; allow-new-artifact: vendored upstream corpus; source spec read this session (§9.3)
+
+; 1. Extract skeletons
+(exec 1
+  (, (eval (pred ?P) (list ?A1 ?A2)))
+  (, (skeleton (eval (pred ?P) (list (var "$X") ?A2)))
+     (skeleton (eval (pred ?P) (list ?A1 (var "$X"))))))
+
+; 2. Instantiate candidates
+(exec 2
+  (, (skeleton ?Tpl)
+     (eval (pred ?P) (list ?A1 ?A2)))
+  (, (candidate (instantiate ?Tpl ?A1 ?A2))))
+
+; 3. Increment support count
+(exec 3
+  (, (candidate ?C ?Pat)
+     (count ?C ?Pat ?N))
+  (, (count ?C ?Pat (+ ?N 1))))
+
+; 4. Mark kept patterns when count equals minsup
+(exec 4
+  (, (count ?C ?Pat ?Minsup))
+  (, (kept ?C ?Pat)))
+
+; 5. Combine kept patterns into conjunctions
+(exec 5
+  (, (kept ?C1 ?P1)
+     (kept ?C2 ?P2))
+  (, (conj ?C1 ?C2 (and ?P1 ?P2))))
+
+; 6. Compute surprisingness score
+(exec 6
+  (, (conj  ?C1 ?C2 ?And)
+     (count ?C1 ?P1 ?N1)
+     (count ?C2 ?P2 ?N2)
+     (universe ?U))
+  (, (score ?And (compute-I ?N1 ?N2 ?U))))
+
+; 7. Select final outputs when score equals highsurp
+(exec 7
+  (, (score ?Pat ?I)
+     (highsurp ?HighSurp))
+  (, (output ?Pat ?I)))
