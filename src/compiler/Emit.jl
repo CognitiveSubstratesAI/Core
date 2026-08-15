@@ -92,8 +92,36 @@ neither corpus did, because no corpus script contains a quote or a backslash ins
 
 Newline/tab are escaped too, though a raw one happens to survive our lexer: IL clauses are LINE-ORIENTED
 on the wire, so a literal newline inside a clause would split it for any line-based consumer."""
-_escape_il_string(s::AbstractString)::String = replace(String(s),
-    "\\" => "\\\\", "\"" => "\\\"", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t")
+#
+# 🔴 STREAMED 2026-08-15 — the LAST of PeTTa PR #167's three changes. Their table:
+#     entry point  phrase/2         -> with_output_to/2        (ours: `sprint`)          ✅ 4076652
+#     writers      one DCG rule     -> term_type + dispatch    (ours: the `isa` chain)   ✅ 4076652
+#     escaping     BUILDS FULL LIST -> streams char-by-char    (ours: this)              ← was missing
+# The old body was `replace(String(s), 5 pairs…)`: one allocation to copy the input, another for the
+# result, per string — then `il_text` wrote that temporary into its buffer and threw it away.
+#
+# 🔑 ONE IMPLEMENTATION, TWO ENTRY POINTS — deliberately not a second escaper. `_escape_il_string`
+# is SHARED with `render(::IRGrounded)` and `test_emit_il.jl` asserts the two producers agree on the
+# wire form; adding a parallel streaming copy is exactly how that assertion starts passing while the
+# two drift. So the STREAMING writer is now the source of truth and the String version is derived
+# from it — they cannot disagree, because there is only one escape table.
+#
+# ⚠️ The escape set is load-bearing and unchanged. Per the docstring above: an unescaped `\` comes
+# back "a plausible-looking string with a character silently removed, so nothing downstream can tell",
+# and it was a randomized `parse(il_text(a)) == a` property — not any corpus — that caught it.
+function _write_escaped!(io::IO, s::AbstractString)::IO
+    for c in s
+        if     c == '\\'; write(io, "\\\\")
+        elseif c == '"' ; write(io, "\\\"")
+        elseif c == '\n'; write(io, "\\n")
+        elseif c == '\r'; write(io, "\\r")
+        elseif c == '\t'; write(io, "\\t")
+        else            ; write(io, c)
+        end
+    end
+    io
+end
+_escape_il_string(s::AbstractString)::String = sprint(_write_escaped!, s)
 
 function render(a::IRGrounded)::String
     # Escaped via the shared `_escape_il_string` — the two producers must agree on the wire form,

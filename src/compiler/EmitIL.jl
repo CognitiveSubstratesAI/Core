@@ -167,7 +167,10 @@ function _il_text!(io::IO, a::Atom)::IO
         end
         write(io, ')')
     elseif a isa Grounded && a.value isa AbstractString
-        write(io, '"'); write(io, _escape_il_string(a.value)); write(io, '"')
+        # `_write_escaped!`, NOT `write(io, _escape_il_string(…))` — the latter materialized the whole
+        # escaped string just to copy it in and discard it. PR #167's third change; same escape table,
+        # same bytes, one fewer allocation per string literal.
+        write(io, '"'); CompilerEmit._write_escaped!(io, a.value); write(io, '"')
     else
         print(io, a)   # NOT `write(io, string(a))` — that materializes a String per LEAF just to copy
     end                #   it into the buffer. `print` goes through the same `show` and writes direct.
