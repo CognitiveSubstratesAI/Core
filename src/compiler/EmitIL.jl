@@ -577,7 +577,24 @@ _var_headed_call(n::IRAtom)::Bool =
 # ⚠️ This also explains `[[feedback_is_fun_static_half_alone_is_harmful]]` ("whole-program `is_fun`
 # ALONE makes the corpus WORSE, 3× reverted"): `fun/1` is only the FIRST of the three clauses. Alone
 # it forces every non-fun head into one bucket; the list-head case needs `eval_data_term` as its own arm.
-# 🔬 NOT YET IMPLEMENTED OR MEASURED HERE — this is a READ of upstream, not a result. Port the THREE
+# 🔴🔴 TRIED 2026-08-15. **FAILED — AND THE FAILURE IS THE USEFUL PART.** Implemented exactly the
+# middle clause: predicate `head isa IRExpression` → lower `nd` VERBATIM AS DATA (not a `metta` call),
+# added as a 4th arm in `_instr(::GResidual, …)` after `_var_headed_call`. Result on the LeaTTa PROVED
+# corpus: **`test_stdlib.metta: extra 1 (known 0)` — the IDENTICAL signature the 08-11 attempt
+# produced.** Reverted; corpus back to 3/3 exit 0.
+#
+# ⇒ **TWO OPPOSITE TREATMENTS FAIL IN THE SAME PLACE, WITH THE SAME COUNT.** 08-11 lowered expression
+# heads as CALLS; this lowered them as DATA. If the data-vs-call distinction were the cause, one of
+# them would have worked. **It is not the cause.** Something UPSTREAM of the choice breaks as soon as
+# these clauses stop being declined — which is precisely what the `()` → `(Nil)` note below predicts,
+# and this is now empirical support for it rather than a caveat.
+# ⇒ DO NOT RE-TRY THE ARM ALONE — that is now 2 measured failures (08-11 call-form, 08-15 data-form)
+# plus 3 for `is_fun`. **Fix the IR-layer `()` FIRST, then re-run this exact change**; the diff is
+# small (one predicate + one line in the `_instr` chain) and is recorded above, so the retry is cheap.
+# NEXT DIAGNOSTIC, before any further code: find WHICH `test_stdlib.metta` directive gains the extra
+# result and what its IL renders as — the corpus prints the delta, and nobody has looked at the atom.
+#
+# 🔬 UPSTREAM READ (still valid, still the intended shape) — port the THREE
 # arms together, re-run the LeaTTa PROVED corpus (that is what caught the last attempt), and check the
 # `(() () $l2)` case explicitly.
 #
