@@ -119,10 +119,42 @@ into a `Sym` before lowering, so no name lookup is needed here.
 
 ⇒ `clauses = il_text.(atoms)`: ONE emission, two views, and the wire form is produced by a serializer
 that knows the quoting rule rather than by a display method that does not."""
-function il_text(a::Atom)::String
-    a isa Expression && return "(" * join(String[il_text(c) for c in a.children], " ") * ")"
-    a isa Grounded && a.value isa AbstractString && return "\"" * _escape_il_string(a.value) * "\""
-    string(a)
+# 🔴 STREAMED, NOT BUILT — 2026-08-15. The previous body allocated a fresh `String[]` AND a fresh
+# `String` at EVERY expression node:
+#     "(" * join(String[il_text(c) for c in a.children], " ") * ")"
+# MEASURED with BenchmarkTools on a balanced tree (median of 30):
+#     depth  output      allocs   memory
+#       4      169 ch       288    12.7 KiB
+#       8    2 809 ch     4 848   237.6 KiB
+#      10   11 257 ch    19 440   999.1 KiB     ⇐ ~1 MB to produce an 11 KB string (89x), ~4 allocs/node
+#
+# ADOPTED FROM UPSTREAM: PeTTa PR #167 replaced its DCG `swrite/2` — which likewise built the full
+# code list before writing — with stream-based `with_output_to/2`, and measured **20-77x less peak
+# memory and 1.4-3.3x faster**, with the DCG version killed at 50 rules after 20 min while the
+# streaming one completed. Same defect, same fix, different language: ONE buffer, write as you walk,
+# no intermediate arrays or concatenations.
+#
+# ⚠️ NOT behind the eval-core guardrail (`docs/interpreter_perf_findings.md`): that guards `Bindings`
+# COW and Frame pooling, which touch MUTATION SEMANTICS. This is a pure serializer — same bytes out,
+# no aliasing surface. Output is byte-identical by construction (same order, same separators, same
+# quoting rule); the `_escape_il_string` call is unchanged.
+il_text(a::Atom)::String = String(take!(_il_text!(IOBuffer(), a)))
+
+function _il_text!(io::IOBuffer, a::Atom)::IOBuffer
+    if a isa Expression
+        write(io, '(')
+        firstc = true
+        for c in a.children
+            firstc ? (firstc = false) : write(io, ' ')
+            _il_text!(io, c)
+        end
+        write(io, ')')
+    elseif a isa Grounded && a.value isa AbstractString
+        write(io, '"'); write(io, _escape_il_string(a.value)); write(io, '"')
+    else
+        print(io, a)   # NOT `write(io, string(a))` — that materializes a String per LEAF just to copy
+    end                #   it into the buffer. `print` goes through the same `show` and writes direct.
+    io
 end
 const _RET_EMPTY = Expression(Atom[_A_RETURN, _A_EMPTY])
 # ⚠️ THIS `Empty` IS WRONG AND SWAPPING IT FOR `NotReducible` DOES NOT FIX IT — tried and reverted
