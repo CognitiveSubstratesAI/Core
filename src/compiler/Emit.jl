@@ -981,6 +981,20 @@ Read these before citing any row above; each retired a ranking this histogram ha
 function decline_histogram(clauses::Vector{ANClause})
     funs = Set{Base.Symbol}(c.name for c in clauses)   # hoisted: was rebuilt PER CLAUSE (O(n^2))
     paths = Dict{Base.Symbol,Int}(); fully = Dict{Base.Symbol,Int}(); expanded = 0
+    # 🔴 `declining` ADDED 2026-08-15 — the counter whose ABSENCE invited a wrong number.
+    # Neither `paths` nor `fully` answers "how many clauses decline AT ALL": `paths` counts blocked
+    # PATHS (expansion multiplies them), and `fully` counts only clauses whose every blocked path
+    # shares ONE reason — a clause blocked TWO ways is in NEITHER row. So the tempting
+    # `length(clauses) - sum(values(fully))` OVERCOUNTS coverage, and it WAS quoted once
+    # (`4e8b0ca`, "55 and 173 COMPILING") before being caught. Return the counter rather than
+    # warn about the subtraction.
+    # ⚠️ NOTE THE SUBTLETY AT `isempty(reasons)` BELOW: a clause that declines RAW but whose every
+    # EXPANDED path emits is NOT declining — expansion fixed it. Counting at the top would be wrong.
+    # LAYER: this function implements NO Figure-2 arrow. It is DIAGNOSTIC — it re-runs `emit_clause`
+    # to report WHY clauses declined and emits nothing. Per §3.6 + MeTTaIL §5 ("strictly addition to
+    # MORKL and MM2"; "MORK is an optimal reduction kernel"), the emitter it observes serves arrow 6
+    # (IL→MORK routing we own), not a MeTTa→MM2 compile arrow, which does not exist.
+    declining = 0
     for cl in clauses
         emit_clause(cl; funs = funs) === nothing || continue
         e = expand_control(cl)
@@ -988,6 +1002,7 @@ function decline_histogram(clauses::Vector{ANClause})
             r = decline_reason(cl)
             paths[r] = get(paths, r, 0) + 1
             fully[r] = get(fully, r, 0) + 1
+            declining += 1
             continue
         end
         expanded += 1
@@ -997,13 +1012,14 @@ function decline_histogram(clauses::Vector{ANClause})
             push!(reasons, decline_reason(p))
         end
         isempty(reasons) && continue                    # every path emits after expansion
+        declining += 1                                  # ← only AFTER that guard: expansion may have fixed it
         for r in reasons
             paths[r] = get(paths, r, 0) + 1
         end
         u = unique(reasons)
         length(u) == 1 && (fully[u[1]] = get(fully, u[1], 0) + 1)
     end
-    (; paths, fully, expanded)
+    (; paths, fully, expanded, declining, total = length(clauses))
 end
 
 export render, render_goal, emit_clause, emit_clause_staged, emit_program, decline_reason, decline_histogram
