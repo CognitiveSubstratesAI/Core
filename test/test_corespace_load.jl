@@ -126,4 +126,55 @@ const MC = MeTTaCore
         # … the real assertion: loading a lib into the CoreSpace added NOTHING to the interpreter.
         @test MC.Eval.atom_count(isp) == before
     end
+
+    # ── THE STORAGE-FORM / READ-PATH PAIR ────────────────────────────────────────────────────────
+    # Two defects hold each other up, and fixing either ALONE breaks the pair silently. Measured
+    # 2026-08-15 (`tools/varstore_ab.jl`); this testset is the loud version of that measurement.
+    #
+    #   (1) `to_sexpr` maps `$x` to the GROUND symbol `__var_x`, so a rule written through
+    #       `core_add!` cannot unify with a ground argument — it is INERT to MORK's own matcher for
+    #       the rule-APPLICATION case. Named BLOCKER 2 in 103fe4e (07-29) and fixed ADDITIVELY:
+    #       `mork_native_vars` converts on the READ path, storage left unchanged. That converter has
+    #       one live call site (MorkBridge.jl:161) and `core_match`/`core_match_bind` are not it.
+    #
+    #   (2) `expr_serialize` is LOSSY for variables (bare `$` = name-discarded NewVar, `_N` = VarRef
+    #       rendered as a ground symbol — a350007's corruption signature). `core_match_bind`
+    #       (2f7e0f1) reads through it, so it is correct TODAY ONLY BECAUSE storage is `__var_x`.
+    #
+    # ⇒ Read paths must move to `expr_to_atom` (6627a45, byte-level, de-Bruijn co-reference) BEFORE
+    #   the storage form changes. If someone flips storage to real variables first, (2) starts
+    #   handing back `_1` as a ground symbol. THESE ASSERTIONS FAIL AT THAT MOMENT, by design.
+    @testset "storage form: core_add! rules are INERT to a ground query (pins the fix ORDER)" begin
+        ask(cs, q) = MC.space_query_multi(cs.inner.btm, MC.sexpr_to_expr(q), (_b, _loc) -> true)
+        ground, wild = "(, (= (f 5) \$r))", "(, (= (f \$y) \$r))"
+
+        # A — the CoreSpace write path.
+        csA = MC.new_core_space()
+        MC.core_add!(csA, [:(=), [:f, Symbol("\$x")], Symbol("\$x")])
+        @test strip(MC.space_dump_all_sexpr(csA.inner)) == "(= (f __var_x) __var_x)"
+        @test ask(csA, ground) == 0        # INERT: `5` cannot unify with the ground symbol __var_x
+        @test ask(csA, wild)   == 1        # control — the atom IS there; only ground queries miss it
+
+        # B — the same rule with REAL MORK variables. Identical trie, identical matcher.
+        csB = MC.new_core_space()
+        MC.space_add_all_sexpr!(csB.inner, "(= (f \$x) \$x)")
+        @test ask(csB, ground) == 1        # FIRES ⇒ the STORAGE FORM is the whole cause
+        @test ask(csB, wild)   == 1
+
+        # The read-path tripwire: two serializers disagree on the SAME trie.
+        @test strip(MC.space_dump_all_sexpr(csB.inner)) == "(= (f \$a) \$a)"   # faithful: co-reference kept
+        lossy = String[]
+        MC.space_query_multi(csB.inner.btm, MC.sexpr_to_expr(wild),
+                             (_b, loc) -> (push!(lossy, strip(MC.expr_serialize(loc))); true))
+        @test length(lossy) == 1
+        @test occursin("_1", lossy[1])     # VarRef rendered as a GROUND symbol — what core_match_bind reads
+        @test !occursin("\$a", lossy[1])   # the faithful form is NOT what the query callback sees
+
+        # And the decode that makes core_match_bind correct today — the `__var_x` LEAK IS ABSENT.
+        # ⚠️ NOTE FOR Λ: the value is itself a VARIABLE, so a caller cannot distinguish "the rule's
+        # variable" from "a value that happens to be a variable". Not a defect today; a trap.
+        b = MC.core_match_bind(csA, [:(=), [:f, Symbol("\$y")], Symbol("\$r")])
+        @test length(b) == 1
+        @test b[1][Symbol("\$y")] === Symbol("\$x")     # decoded name, NOT :__var_x
+    end
 end
