@@ -23,17 +23,46 @@ For query patterns, call `to_sexpr_query` which uses dollar-variables directly.
 # `string(x)` fallback that silently mis-serialised it). GUARANTEE not CONVENTION.
 const SExprConvertible = Union{AbstractString, Symbol, Bool, Number, Tuple, AbstractVector}
 
-function to_sexpr(x::SExprConvertible) :: String
+# 🔴 STREAMED — 2026-08-15, same fix as `EmitIL.il_text` (`4076652`/`86df565`), applied to the HOTTER
+# path: this runs on every atom written to a MORK-backed space, not just on IL serialization.
+# The old body built `to_sexpr.(x)` — a full Array of Strings — then `join`ed it, then interpolated
+# into a THIRD String, recursively, at every node. Measured on `il_text`'s identical shape: 19 440
+# allocations and 999 KiB to produce an 11 KB string; streaming took it to 16 allocs / 25.5 KiB.
+# Adopted from PeTTa PR #167 (DCG `swrite/2` → `with_output_to/2`, 20-77x less peak memory).
+# `sprint(f, args…)` is Julia's `with_output_to(string(S), Goal)`; the writer takes `::IO` so a
+# caller holding a stream can serialize straight into it without materializing the String.
+#
+# ⚠️ SEMANTICS PRESERVED EXACTLY — this is the STORAGE encoder, and its every branch is load-bearing:
+#   * `$x` → `__var_x` is the storage form (see the header above and `from_sexpr`'s decode).
+#   * `AbstractString` passes through RAW (a raw S-expr fragment), NOT quoted — `to_sexpr_atom` is
+#     the quoting variant. Getting this backwards silently changes what lands in the trie.
+#   * `Bool` MUST be tested before `Number` (`Bool <: Integer`), preserved by the if/elseif order.
+to_sexpr(x::SExprConvertible)::String = sprint(_to_sexpr!, x)
+
+function _to_sexpr!(io::IO, x::SExprConvertible)::IO
     if x isa Symbol
         s = string(x)
-        startswith(s, "\$") && return "__var_" * s[2:end]
-        return s
+        if startswith(s, "\$")
+            write(io, "__var_"); write(io, SubString(s, 2))
+        else
+            write(io, s)
+        end
+    elseif x isa AbstractString
+        write(io, x)                       # passthrough: raw S-expr for core_add!/core_remove!
+    elseif x isa Bool
+        write(io, x ? "True" : "False")    # must precede Number (Bool <: Integer)
+    elseif x isa Number
+        print(io, x)
+    else                                   # Tuple or AbstractVector — same rendering
+        write(io, '(')
+        firstc = true
+        for e in x
+            firstc ? (firstc = false) : write(io, ' ')
+            _to_sexpr!(io, e)
+        end
+        write(io, ')')
     end
-    x isa AbstractString && return String(x)   # passthrough: treated as raw S-expr by core_add!/core_remove!
-    x isa Bool           && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
-    x isa Number         && return string(x)
-    x isa Tuple          && return "($(join(to_sexpr.(x), " ")))"        # Tuple same as Vector
-    "($(join(to_sexpr.(x), " ")))"                                        # x::AbstractVector (all other cases)
+    io
 end
 
 """
