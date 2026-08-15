@@ -639,6 +639,13 @@ atom_count(s::Space) = length(s.store.atoms)
 own_atom_count(s::Space) = length(s.store.atoms) - s.store.lib_count
 contains_atom(s::Space, a::Atom) = any(==(a), s.store.atoms)
 clone_store(s::Space) = (f = Space(copy(s.store.atoms)); f.store.lib_count = s.store.lib_count; f)
+# 🔴 THE 10th CONTRACT OP, added 2026-08-15. `own_atoms`/`own_atom_count` READ `lib_count`, but
+# nothing SET it — `load_metta!` wrote `space.store.lib_count` directly, the only store-field write
+# outside this block. A trie-backed store cannot be dropped in while sealing the library boundary
+# is inexpressible, so the seam needs this op regardless of which store implements it.
+# Precedent for why field-reaching is not harmless: MettaJam reached for `Space.atoms` after the
+# store seam landed and silently died, staying dead until `af05996`.
+seal_library!(s::Space) = (s.store.lib_count = length(s.store.atoms); s)
 
 const _VAR_COUNTER = Ref(UInt64(0))
 freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
@@ -825,7 +832,7 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     @inline prep(stored::Atom) = (gg && _is_closed_rule(stored)) ? stored : rename_fresh(stored)
     k = _index_key(pattern)
     if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
-        for stored in space.store.atoms
+        for stored in all_atoms(space)                 # contract, not the field (see MettaJam af05996)
             append!(out, match_atoms(pattern, prep(stored)))
         end
         return out
@@ -2768,7 +2775,7 @@ function load_metta!(space::Space, text::AbstractString; as_library::Bool=false,
     end
     # mark everything loaded so far as imported-library content, hidden from `get-atoms` (hyperon: a
     # dependency lives in a child space and is not returned by get-atoms of the importing space).
-    as_library && (space.store.lib_count = atom_count(space))
+    as_library && seal_library!(space)
     auto_table && !as_library && auto_table!(space)   # opt-in: auto-table the just-loaded user program's pure fns
     results
 end
