@@ -207,6 +207,39 @@ end
 # float literal forces f64 and propagates up. `%` is int-only and `/` is float-only in MeTTa's own
 # semantics, so a tree mixing them is un-typeable and REJECTED rather than guessed.
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# 🛑 ABOUT TO WIDEN THIS TABLE, OR ADD A GOAL TYPE TO THIS FILE? READ THIS FIRST. (2026-08-15)
+#
+# THE QUESTION "should we widen Emit.jl" HAS BEEN ANSWERED BY MOMENTUM FOR WEEKS, AND MOMENTUM
+# ANSWERS IT THE EXPENSIVE WAY EVERY TIME. The goal, written down so it intercepts you here:
+#
+#   MeTTa-IL's value is PROVABLE PROPERTIES, NOT SPEED. §3.5 (whitepaper): it exists for "stating and
+#   proving semantic-preservation and selected safety properties … where mechanically checkable
+#   properties matter", and it says outright: "Alternative MeTTa compilers may be more convenient
+#   when these properties are not central." This tree has FIVE verification oracles wired (LeaTTa
+#   Lean-4 CI gate · alloy-mork · swipl WFS differential · 277-probe MORK conformance · byte-exact
+#   upstream differentials). Nobody builds five oracles to go fast. The posture is already chosen.
+#
+# ⇒ **COVERAGE % IS NOT THE METRIC, AND NEITHER IS "every clause that could reach MM2".**
+#   THE METRIC IS: **which CONTROL PATHS do we want properties over, and does the IL cover THOSE?**
+#   That is a small nameable set — PLN inference steps, MetaMo safety constraints, whatever OmegaSelf
+#   governs — plausibly a few DOZEN definitions, not the 398 in lib/. Everything else FALLS BACK,
+#   and a fallback outside that set is NOT A DECLINE. It is the design working.
+#
+# MEASURED, so you do not re-derive it (`Core/tools/lib_decline_survey.jl`, CODEMAP arrow-6 row):
+#   * `GFindall`+`GUnify` = 73 of 279 blocked paths on ECAN+PLN. Both are FREE on `Eval` and ABSENT
+#     from MM2 BY CONSTRUCTION. §3.6 scopes MM2 to hot loops (factor-graph passing, ECAN sweeps,
+#     pattern-mining, kernelized tensor ops) — not to general symbolic code.
+#   * THREE capabilities are lost at this boundary, not one: `findall`, `unify`, and TABLING
+#     (`space_metta_calculus!` has no answer-table concept — which is also why RECURSION is declined).
+#   * `GFindall` clauses ALREADY EMIT from `EmitIL` (ECAN 32/32, PLN 7/9). Blocked at this stage only.
+#     That makes widening TEMPTING and still usually WRONG: they belong on the resolution engine.
+#   * Compiled IL does NOT bypass SLG — `compile_run` builds `Eval.Space()` (`CompileLane.jl:43,395,459`),
+#     so arrow-5 output inherits tabling. SLG is not missing from the compiler; it is missing from MORK.
+#
+# SO: widen this table ONLY when a NAMED control path that needs a PROPERTY is blocked by it. Name the
+# path in the commit message. "It raises coverage" is not a reason — that exam was the wrong one.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
 const _ARITH_I64 = Dict{Base.Symbol,String}(
     :+ => "sum_i64", :- => "sub_i64", :* => "product_i64", :% => "mod_i64", :/ => "div_i64")
 const _ARITH_F64 = Dict{Base.Symbol,String}(
