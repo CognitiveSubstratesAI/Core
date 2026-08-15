@@ -2825,6 +2825,26 @@ using PrecompileTools: @setup_workload, @compile_workload
             # type-checking → BadArgType, and nondeterminism → superpose/collapse
             load_metta!(sp, "!(+ 1 foo)")
             load_metta!(sp, "!(collapse (superpose (1 2 3)))")
+            # 🔴 THE ASSERT FAMILY — added 2026-08-15 after MEASURING where the cold start goes.
+            # Phase breakdown of a cold `a1_symbols.metta` run (`julia --project=Core`, 2 runs):
+            #     using MeTTaCore 2653 ms · Space() 1 ms · load_core_stdlib! 23 ms
+            #     **run the file 3968 ms**  ⇒ TOTAL 6645 ms
+            # The same file evaluates in 21-60 ms on the warm server, so those ~4 s are FIRST-CALL
+            # JIT, not work — 60% of the cold start, and the largest single item.
+            # ⚠️ THE WORKLOAD ABOVE MISSES THE PATH REAL FILES TAKE. It exercises the primitives
+            # (arith, let*, map/filter/foldl, match, get-type, collapse) but NOT the assert family —
+            # and `assertEqual` (127 uses) + `assertEqualToResult` (92) are what essentially every
+            # conformance script and library test is BUILT from. `assertEqualToResult` reduces via
+            # `collapse` + `subtraction-atom`/`union-atom` (stdlib.metta:39-47), a distinct chain
+            # from anything above, so none of its specializations were being traced into the image.
+            load_metta!(sp, "!(assertEqual (+ 1 2) 3)")
+            load_metta!(sp, "!(assertEqualToResult (superpose (1 2)) (1 2))")
+            load_metta!(sp, "!(assertAlphaEqual (foo \$x) (foo \$y))")
+            # `match` against a populated space returning MULTIPLE results — the conformance corpus's
+            # dominant shape (a1_symbols.metta is exactly this), distinct from the single-result
+            # `(rel a b)` match above.
+            load_metta!(sp, "(colour red) (colour green) (colour blue)")
+            load_metta!(sp, "!(match &self (colour \$c) \$c)")
         catch
         end
     end
