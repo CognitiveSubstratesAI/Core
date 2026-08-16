@@ -1044,6 +1044,7 @@ include("Tabling.jl")
 # `Continuation` (§1.0 step 1) still live in Tabling.jl. Step 4 needs the reverse order — the
 # completion loop consumes the worklist — so those two structs move into the subfolder then.
 include("tabling/Worklists.jl")
+include("tabling/AnswerTrie.jl")
 
 function metta_instr(f::Frame, b::Bindings, space)
     a = f.atom

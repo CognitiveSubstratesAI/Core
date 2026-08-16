@@ -138,6 +138,11 @@ module StandardMeTTaTests
     # iff they have not been combined, so combining is recorded by SWAPPING the pair and there is no
     # "done" flag anywhere. NOT wired: the completion loop still recomputes via `_leader_pass`.
     Main.@suite("standard/tabling/test_worklist.jl")
+    # The ANSWER TRIE — roadmap §1.0 step 4 (structure half). Structural duplicate detection and
+    # VARIANT identity, which a Dict{Atom,Vector{Atom}} cannot give: two answers equal up to variable
+    # renaming reach ONE node. Prerequisite for §7.11.1/2 abstraction and the insertion-time mode
+    # merge. NOT wired: tabled_eval still stores into _ANSWER_TABLE.
+    Main.@suite("standard/tabling/test_answer_trie.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
