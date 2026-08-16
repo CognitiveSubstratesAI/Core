@@ -1038,6 +1038,7 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 # min/max are defined on `@<`/`@>`, not numeric comparison.
 include("tabling/StandardOrder.jl")
 include("tabling/Aggregation.jl")
+include("tabling/Restraints.jl")
 include("Tabling.jl")
 
 function metta_instr(f::Frame, b::Bindings, space)
