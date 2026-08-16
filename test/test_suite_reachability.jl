@@ -31,17 +31,24 @@ using Test
         "health.jl"       => "the health GATE itself — run by `bin/health`, not by runtests.jl",
         "assert_guard.jl" => "shared helper, included via joinpath by its consumers (not a suite entry)",
         "runtests.jl"     => "the root",
-        # 🔴 EXEMPT BECAUSE IT HANGS, AND THE HANG IS NOT ITS FAULT — remove this the moment the
-        # completion loop consults `max_answers`. It is a correct test of §1.0 step 2, but its
-        # program `(= (q) 1)  (= (q) (S (q)))` has an INFINITE tabled answer set (1, (S 1), …).
-        # MEASURED: it hangs with dependency recording OFF and a 20k step cap, i.e. on the
-        # pre-existing engine — `interpret` is capped but the `while grew` fixpoint in
-        # `_leader_pass` is UNBOUNDED. That is exactly the case SWI's §7.11.3 restraint stops;
-        # `tabling/Tripwires.jl` has it, ported and differentialled, and nothing consults it yet.
-        # Registering it as-is would hang the whole suite, which is a worse failure than this one.
+        # 🔴 EXEMPT BECAUSE ITS PROGRAM DOES NOT TERMINATE — and that is CONFORMANT, not a defect.
+        # Its program `(= (q) 1)  (= (q) (S (q)))` has an INFINITE tabled answer set (1, (S 1), …).
+        #
+        # ⚠️ AN EARLIER VERSION OF THIS NOTE BLAMED OUR ENGINE, saying `interpret` is capped while
+        # the `while grew` fixpoint is UNBOUNDED. That framing was WRONG — CROSS-CHECKED AGAINST
+        # UPSTREAM 2026-08-16: the equivalent SWI program
+        #     :- table q/1.  q(1).  q(s(X)) :- q(X).
+        # ALSO fails to terminate (killed at 30s). A tabled predicate with an infinite answer set
+        # does not terminate in SWI either; there is no cap because upstream has none by default.
+        # `max_answers` (§7.11.3) is exactly the feature that makes such a program terminable, which
+        # is why upstream has it — and `tabling/Tripwires.jl` has it ported and differentialled, not
+        # yet consulted by the completion loop.
+        #
+        # ⇒ REMOVE THIS EXEMPTION by giving the test a BOUND (once max_answers is consulted) or a
+        # FINITE program — not by "fixing" a fixpoint that behaves as upstream's does.
         "test_dependency_firing.jl" =>
-            "hangs on an UNBOUNDED completion fixpoint (infinite answer set); re-register once " *
-            "the completion loop consults max_answers — see tabling/Tripwires.jl",
+            "its program has an INFINITE tabled answer set, which does not terminate in SWI " *
+            "either (verified); needs a max_answers bound or a finite program, not an engine fix",
     )
 
     # THREE FILTERS, each for a FALSE POSITIVE this scan actually produced when first run:

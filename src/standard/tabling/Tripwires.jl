@@ -47,6 +47,19 @@
 # answer trie makes the general answer a single node by construction; our Vector needs it explicitly
 # (fresh variables make two general answers structurally unequal — measured 4 vs the oracle's 3).
 
+# ─── WHY THIS FEATURE MATTERS MORE THAN ITS SIZE SUGGESTS ────────────────────────────────────────
+# CROSS-CHECKED AGAINST UPSTREAM 2026-08-16. A tabled predicate whose answer set is INFINITE does not
+# terminate — verified on live swipl:
+#
+#     :- table q/1.   q(1).   q(s(X)) :- q(X).        ⇒ killed at 30s, no answer
+#
+# Ours behaves identically, which is CONFORMANT rather than defective — there is no cap because
+# upstream has none by default. `max_answers` IS the feature that makes such a program terminable,
+# and it is the reason to prioritise the completion loop consulting this file over adding more §7
+# leaves: until it does, an unbounded tabled predicate is unbounded, exactly as in SWI.
+# (`test/standard/tabling/test_dependency_firing.jl` is exempted from the suite for precisely this
+# reason — its program is unbounded, not broken.)
+
 "Upstream's `(size_t)-1` / `restraint/4`'s negative value: this restraint is not in force."
 const NO_RESTRAINT = -1
 
