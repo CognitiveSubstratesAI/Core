@@ -683,6 +683,8 @@ end
 # recording on by default would be a memory leak in the engine's hottest loop.
 const _CURRENT_TARGET = Ref{Union{Atom,Nothing}}(nothing)   # variant key whose worker is running, or nothing
 const _DEPS_RECORD    = Ref(false)                          # opt-in: record dependencies at consumers
+                                                            # (on together with _RESUME_COMPLETION — resumption
+                                                            #  without recording silently completes nothing)
 
 "Record `dependency(source, cont, target)` in the SOURCE's table (§4.2). No-op unless enabled."
 function record_dependency!(source::Atom, b::Bindings, prev, red::Atom)
@@ -738,7 +740,26 @@ end
 # `record_dependency!` at the consumer branch, so `_DEPS_RECORD[]` must be on for the initial pass.
 # `_complete_resume!` turns both on together and restores them, rather than leaving a caller to
 # discover that one without the other silently completes nothing.
+# ⚠️ ENV OVERRIDE so the WHOLE SUITE can be run under resumption as a differential —
+# `CORE_TABLING_RESUME=1 tools/run_tests.sh`. That is the real agreement oracle: the suite carries
+# the §7.1/§7.2 and WFS swipl differentials, which are the only gates that exercise tabling at
+# breadth. A handful of hand-written cases is not corpus coverage, and the flip must not rest on one.
+# Same shape as `CORE_TEST_CETTA` for the opt-in CeTTa scan.
 const _RESUME_COMPLETION = Ref(false)
+
+"""Read `CORE_TABLING_RESUME` at LOAD time.
+
+⚠️ MUST be `__init__`, not a `const Ref(get(ENV,…))` initialiser. A const is evaluated during
+PRECOMPILATION and baked into the image, so the env var is read when the package is compiled rather
+than when it is run — measured: `CORE_TABLING_RESUME=1 julia -e 'using MeTTaCore'` reported the flag
+still FALSE. Both flags move together, because resumption without recording silently completes
+nothing."""
+function __init__()
+    if get(ENV, "CORE_TABLING_RESUME", "") == "1"
+        _RESUME_COMPLETION[] = true
+        _DEPS_RECORD[]       = true
+    end
+end
 
 """
     _complete_resume!(members, typ, space, key) -> Bool
