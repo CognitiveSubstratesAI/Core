@@ -27,7 +27,9 @@ collapses multiplicity. **The multiplicity defect is a CONSEQUENCE of the engine
 independent bug.** Under continuation capture each answer is produced once, no dedup is needed, and
 multiplicity survives with no guard at all.
 
-⇒ **Decide the engine question BEFORE building §1.** The gap to their design is TWO STRUCTURES and
+⇒ **DECIDED 2026-08-16: the target is ALL of SWI §7, and the BASE MOVES FIRST** (§1.0). Building 7.7/7.8/7.11 on the recomputation base means building them twice.
+>
+> Original wording, kept because the reasoning still holds: **decide the engine question before building §1.** The gap to their design is TWO STRUCTURES and
 ONE PRIMITIVE (`dependency(Source, Cont, Target)`, a worklist dequeue, and `shift`/`reset`) — and
 `Eval.jl` is already a *"continuation-passing stack machine"*, which is the substrate delimited
 control needs. Adding SWI's nine attributes to a recomputation engine may cost more than moving the
@@ -45,27 +47,59 @@ base and getting 2.0 for free.
 
 ---
 
-## 1. FROM SWI-PROLOG — `boot/tabling.pl`, `src/pl-tabling.c`
+## 1. THE TARGET IS ALL OF SWI §7 — DECIDED 2026-08-16
 
-We implement **one of four modes and zero of nine attributes**: ~250 lines of code against ~8 600.
+**Build the complete tabling solution whether or not it is used immediately, so the solution is
+FIXED.** User decision, taken after the measured-need objection was raised and reaffirmed. Nothing is
+scoped out: 7.9 (shared) and 7.10 (constraints) are IN, on the basis that threading arrives later.
 
-| # | item | upstream | notes / verify |
+### 1.0 BASE FIRST — continuation capture, not recomputation
+
+**This is not an optional refactor; it is what makes the rest ONE build instead of two.** See
+`Core/docs/tabling_delimited_control_spec.md`. Our engine recomputes (`_leader_pass` re-run per
+fixpoint round) — the "extension table" design the literature rejects. Three later items want
+structures that base simply does not have:
+
+* **7.7 incremental** and **7.8 monotonic** need to know WHICH ANSWERS ARE NEW. A
+  recompute-until-no-growth loop has no notion of a new answer, only "the table got bigger".
+  7.8's eager/lazy split is precisely about WHEN to propagate one.
+* **7.11 restraints** — `subgoal_abstract`/`answer_abstract` operate on TRIE TERMS; we use a `Dict`.
+* **7.3 mode-directed** needs the merge point AND a value-based fixpoint test.
+
+Build: `shift`/`reset` over the CPS frame stack · `dependency(Source, Cont, Target)` · the worklist
+dequeue with the left/right invariant · an answer TRIE. ⇒ **roadmap 2.0's multivalued guard becomes
+unnecessary rather than carried forward** — the clearest signal the order is right.
+
+### 1.1–1.13 the §7 surface, in dependency order
+
+| § | feature | status | notes |
 |---|---|---|---|
-| **1.1** | **Mode-directed tabling** — `lattice(F/3)`, `po(F/2)` answer aggregation | `boot/tabling.pl:1455-1491`, `start_moded_tabling/5` | **THE FIRST TARGET.** §3.6.1 names the consumer in our vocabulary: *"local potentials … through a **product quantale structure** … orchestration layer manages **convergence**"* — a quantale IS a lattice, and we carry `Core/lib/quantale/`. SWI's own tests: `lattice(prob_sum_e/3)`, `lattice(shortest/3)`. **Hook is 2 sites**: `Tabling.jl` `_leader_pass` entry + the fixpoint merge (`unique(vcat(…))` = set union → lattice join). 🔴 **THE CATCH: the fixpoint test is CARDINALITY-based** (`length(_PARTIAL[m]) != n0`). Under a lattice a table keeps its SIZE while its VALUE improves (`shortest: 5→3`) ⇒ declares convergence early and returns a **wrong answer with no error**. Termination must become "did the join change the value". **Verify against a swipl oracle running the same `lattice(shortest/3)` program** — not pinned literals. |
-| **1.2** | **`max_answers`** — cap answers per subgoal | `pl-tabling.c:3659` (tripwire) | The `bounds` half of the ordering rule. Cheapest real bound. |
-| **1.3** | **`subgoal_abstract(N)` / `answer_abstract(N)`** — bound term depth by abstraction | `pl-tabling.c:2452`, `:3568` | Structural bound, not a memory cap. Needs the trie-side story we do not have (we use a `Dict`). |
-| **1.4** | **`subsumptive` tabling** — a GENERAL call's table answers a SPECIFIC one | `boot/tabling.pl:59`, `start_subsumptive_tabling/3` | Lands in `Variant.jl`. ⚠️ upstream notes it does not combine with incremental/shared tabling. |
-| **1.5** | **`incremental`** — per-table dependency invalidation | `pl-tabling.c:118` `idg_add_edge`, `:199` `idg_propagate_change`, `:3233` `falsecount` | ⚠️ **LAST, per the ordering rule.** Their trigger is the SAME as ours (lazy, checked on lookup); only GRANULARITY differs — per-table via the IDG vs our per-space `(objectid, revision)`. **What adoption buys is the dependency GRAPH, not a new strategy.** |
-| **1.6** | **Mid-evaluation guard** — `permission_error` when a change hits an incomplete table | `pl-tabling.c` `state.incomplete` → `change_incomplete_error` | A soundness guard we have **no equivalent of**. Small, and independent of 1.5. |
-| **1.7** | `tshared`, `monotonic`, `lazy`, `dynamic`, `opaque` | `boot/tabling.pl:338-346` | Low priority; several presuppose Prolog's dynamic-predicate model. |
+| **7.1** | memoizing | ✅ **HAVE** | variant tabling |
+| **7.2** | avoiding non-termination | ✅ **HAVE** | suspend-on-variant (`a13af09`) |
+| **7.6** | Well-Founded Semantics | ✅ **HAVE** | Van Gelder alternating fixpoint; swipl differential 13/13 |
+| **7.6.1** | WFS and the toplevel | ❓ | how `undefined` surfaces to a MeTTa caller — ours returns `UNDEFINED`; confirm against SWI's toplevel residual-program printing |
+| **7.5** | subsumptive tabling | ❌ | a second LOOKUP MODE over the same tables — first feature after the base. ⚠️ upstream: does not combine with incremental/shared |
+| **7.11.3** | restraint: answer **count** (`max_answers`) | ❌ | `pl-tabling.c:3659` tripwire — the one restraint that ports to a `Dict` today |
+| **7.11.1/2** | restraint: subgoal / answer **size** | ❌ | abstraction over trie terms ⇒ needs the base's answer trie |
+| **7.3** | answer subsumption / mode-directed | ❌ | `lattice(F/3)`, `po(F/2)`. Consumer named by §3.6 in our vocabulary ("product quantale structure"); `Core/lib/quantale/` exists. 🔴 CATCH: the fixpoint test is CARDINALITY-based and a lattice breaks it silently |
+| **7.7** | incremental | ❌ | IDG + `falsecount`, lazy like ours; buys per-table GRANULARITY. Consumes the base's dependency graph |
+| **7.8** | monotonic (+ eager/lazy, tracking, external data) | ❌ | same graph, monotone-update variant |
+| **7.4** | tabling for impure programs | ❌ | the interaction rules once the above exist. NOT our purity gate — that decides WHAT to table, this is how tabling behaves WITH impurity |
+| **7.9** | shared tabling (+ abolishing) | ❌ | **IN SCOPE — threading later.** Prereq: a threading model. Julia has `Threads.@spawn`; MettaJam is the natural first consumer. Upstream's `tshared` + `abolish_shared_tables/0`. ⚠️ the paper flags NON-BACKTRACKABLE MUTATION as essential to retain answers across disjunctions — the concurrency story starts there |
+| **7.10** | tabling and constraints | ❌ | **IN SCOPE.** Prereq we do not yet have: a CONSTRAINT STORE for tabling to interact with. Possible substrate — MORK's optional `z3` source (see the MM2 capability-boundary row in CODEMAP). Scope this only after a constraint story exists |
+| **7.12** | predicate reference | ❌ | the API surface: per-head `untable!`, `is_tabled`, stats, `abolish_*`. Also roadmap 0.3 and 3.2 |
+| **7.13** | about the implementation / status | — | our equivalent is `Core/docs/tabling_delimited_control_spec.md` + this file |
 
----
+**Mid-evaluation guard** (`permission_error` when a change hits an incomplete table —
+`pl-tabling.c` `state.incomplete` → `change_incomplete_error`) has no § of its own but is a soundness
+guard we lack; it belongs with 7.7.
+
 
 ## 2. FROM JeTTa — `jetta/backend/.../Generator.kt`, `compiler/Compiler.kt`
 
 | # | item | upstream | notes |
 |---|---|---|---|
-| **2.0** | 🔴🔴 **BLOCKS 2.2 — TABLING COLLAPSES MULTIPLICITY.** `_leader_pass` merges answers with `unique(vcat(…))` — a SET — while MeTTa is MULTISET. MEASURED 2026-08-16: `(= (h) 1)` twice, `(= (k) (h))` ⇒ `!(k)` untabled `[1,1]`, tabled `[1]`. **NOT introduced by auto-tabling — explicit `table!` has always had it**; auto-tabling made it reachable on 5 corpus scripts at once (b1_equal_chain +1, b2_backchain +2, d3_deptypes +1, d4_type_prop +1, e1_kb_write +1; the PROVED corpus caught every one). ⚠️ **THE TENSION IS FUNDAMENTAL:** tabling REQUIRES set semantics to reach a fixpoint — dropping `unique` never converges. So this constrains WHICH HEADS MAY BE TABLED; it is not a merge to fix. **Upstream already guards it and we dismissed the guard:** JeTTa requires `!f.isMultivalued()` (`Generator.kt:166`), called "a downgrade" on 08-15 — wrongly, since handling multi-answer as a SET is not preserving MULTIPLICITY. PINNED by a test that asserts the DEFECT and must be UPDATED (not deleted) when a guard lands. | `Generator.kt:166` | **Decide the guard before 2.2.** Candidate signal: `length(rules[h]) > 1`, which is conservative-but-safe — it would also exclude ordinary disjoint-pattern definitions like `(= (fact 0) 1)` + `(= (fact $n) …)`, so it may be too blunt. Needs its own measurement. |
+| **2.0** | 🔴🔴 **BLOCKS 2.2 — TABLING COLLAPSES MULTIPLICITY.** `_leader_pass` merges answers with `unique(vcat(…))` — a SET — while MeTTa is MULTISET. MEASURED 2026-08-16: `(= (h) 1)` twice, `(= (k) (h))` ⇒ `!(k)` untabled `[1,1]`, tabled `[1]`. **NOT introduced by auto-tabling — explicit `table!` has always had it**; auto-tabling made it reachable on 5 corpus scripts at once (b1_equal_chain +1, b2_backchain +2, d3_deptypes +1, d4_type_prop +1, e1_kb_write +1; the PROVED corpus caught every one). ⚠️ **THE TENSION IS FUNDAMENTAL:** tabling REQUIRES set semantics to reach a fixpoint — dropping `unique` never converges. So this constrains WHICH HEADS MAY BE TABLED; it is not a merge to fix. **Upstream already guards it and we dismissed the guard:** JeTTa requires `!f.isMultivalued()` (`Generator.kt:166`), called "a downgrade" on 08-15 — wrongly, since handling multi-answer as a SET is not preserving MULTIPLICITY. PINNED by a test that asserts the DEFECT and must be UPDATED (not deleted) when a guard lands. 🔴 **SUPERSEDED BY §1.0:** the dedup is STRUCTURALLY REQUIRED only by recomputation — under continuation capture each answer is produced once, so multiplicity survives and this guard becomes UNNECESSARY rather than something to carry forward. Do not build the guard if the base move is imminent; build it only as a stopgap. | `Generator.kt:166` | **Decide the guard before 2.2.** Candidate signal: `length(rules[h]) > 1`, which is conservative-but-safe — it would also exclude ordinary disjoint-pattern definitions like `(= (fact 0) 1)` + `(= (fact $n) …)`, so it may be too blunt. Needs its own measurement. |
 | **2.1** | **RECURSIVE requirement in `auto_table!`** ⚠️ *and see 2.0 — the multivalued guard is the harder sibling of this one* — table only heads that transitively call themselves | `Generator.kt:164-169`: *"Recursive ⇔ transitively calls itself — **bounds the cache and is where memoization pays**"* | We currently table EVERY pure user head. Memoizing a non-recursive function is pure overhead. **Independently corroborated by PeTTa #165** (*"avoid memoization for trivial functions called <20 times"*). Cheap; lands in `Purity.jl`. |
 | **2.2** | **The lane split, ENFORCED BY TEST** — auto-table on the closed-world path, OFF on the open-world one | `MemoTablingTest.kt:39-41`: `tabling is off without autoTable (the REPL or JIT path)`, asserting `fib must NOT be tabled when autoTable is off` | Maps exactly onto `compile_run` (fixed program, bounded lifetime) vs the MettaJam server (`add-atom` any time, runs for days). Their justification, `Compiler.kt:184`: *"AOT is a closed world (rules fixed at compile), so memoizing … is sound **without cache invalidation**"*. Depends on **0.1** — an auto-table call on the compiled lane is INERT until `_pure_heads` learns the IL ops (tried 2026-08-15, did nothing). |
 
