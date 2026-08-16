@@ -1033,6 +1033,11 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 # (`boot/tabling.pl` + `pl-tabling.c`) and CeTTa (`table_store.c`) separate it. Included
 # INSIDE `module Eval`, so every name resolves exactly as before. Future SLG work lands there.
 # ═══════════════════════════════════════════════════════════════════════════════
+# tabling/ mirrors swipl-devel's own section boundaries (boot/tabling.pl + src/pl-tabling.c) so each
+# §7 feature ports into the file its upstream section lives in. StandardOrder first: Aggregation's
+# min/max are defined on `@<`/`@>`, not numeric comparison.
+include("tabling/StandardOrder.jl")
+include("tabling/Aggregation.jl")
 include("Tabling.jl")
 
 function metta_instr(f::Frame, b::Bindings, space)

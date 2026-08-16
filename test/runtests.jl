@@ -67,6 +67,11 @@ module StandardMeTTaTests
     # `tabled_eval`: this gates the primitives standalone, so a green run means capture-and-resume is
     # sound on this machine, not that tabling uses it.
     include("standard/test_delimited_control.jl")
+    # Mode-directed tabling / answer subsumption — SWI §7.3, ported into `src/standard/tabling/`
+    # (the subfolder mirrors swipl-devel's own section boundaries). Differentialled against live
+    # swipl on lattice(min/max/sum) and po/2. Compares AGGREGATION SEMANTICS, not an end-to-end
+    # tabled query — the merge point is §1.0's `tabled_eval` rewire and is not landed yet.
+    include("standard/tabling/test_aggregation.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
