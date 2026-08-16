@@ -143,6 +143,11 @@ module StandardMeTTaTests
     # renaming reach ONE node. Prerequisite for §7.11.1/2 abstraction and the insertion-time mode
     # merge. NOT wired: tabled_eval still stores into _ANSWER_TABLE.
     Main.@suite("standard/tabling/test_answer_trie.jl")
+    # Completion by RESUMPTION vs RECOMPUTATION — §1.0 step 4 (loop half). `_complete_resume!` is
+    # OFF by default and this file is why it stays off: the oracle for a rewrite of the engine core
+    # is agreement with the engine it replaces. Every case asserts whether it ACTUALLY exercised
+    # resumption before comparing — most programs do not (fib is a plain memo, no suspension).
+    Main.@suite("standard/tabling/test_completion_resume.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

@@ -717,6 +717,78 @@ function fire_dependencies!(source::Atom, answers::Vector{Atom}, space)::Dict{At
     out
 end
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPLETION BY RESUMPTION — roadmap §1.0 step 4 (the loop half).
+#
+# Desouter et al. §4.3 `completion/0`: a worklist-driven LEAST FIXPOINT. Pop a table with work,
+# take an (answers x dependencies) batch, RESUME each suspended continuation with each answer, and
+# route the results into the TARGET table — repeating until no table has uncombined work.
+#
+# This is the alternative to `_leader_pass` RECOMPUTATION, which the literature names and rejects:
+# *"the approach cannot achieve satisfactory performance as suspended goals are always
+# re-evaluated"*. Here a worker runs ONCE; its remainder is fed answers instead of being re-run.
+#
+# 🔴 OFF BY DEFAULT AND THAT IS THE POINT. `_RESUME_COMPLETION[]` gates it, so the shipped engine is
+# byte-identical until the two are PROVEN to agree — the disable-to-prove pattern this file already
+# uses for tabling itself. Flipping the default before the agreement oracle is green would be a
+# rewrite of the engine core with nothing to check it against, which is exactly how the earlier
+# `_instr` attempts failed three times.
+#
+# ⚠️ IT NEEDS DEPENDENCY RECORDING. The continuations it resumes are captured by
+# `record_dependency!` at the consumer branch, so `_DEPS_RECORD[]` must be on for the initial pass.
+# `_complete_resume!` turns both on together and restores them, rather than leaving a caller to
+# discover that one without the other silently completes nothing.
+const _RESUME_COMPLETION = Ref(false)
+
+"""
+    _complete_resume!(members, typ, space, key) -> Bool
+
+Drive `members` to a fixpoint by RESUMPTION. Returns `true` if it ran (i.e. the flag is on).
+
+Seeds each member's worklist with the answers its initial `_leader_pass` produced and the
+dependencies that pass recorded, then repeatedly takes a work batch and resumes. `wkl_get_work!`
+SWAPS the pair it returns, so a batch is combined exactly once and the loop terminates when no new
+answer arrives — the trie/`_merge_partial` decides "new" structurally, not by count.
+"""
+function _complete_resume!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom)::Bool
+    _RESUME_COMPLETION[] || return false
+    for m in members                                   # seed from the initial pass
+        wl = worklist_for(m)
+        for a in get(_PARTIAL, m, Atom[]); wkl_add_answer!(wl, a); end
+        for d in get(_DEPS, m, Dependency[]); wkl_add_suspension!(wl, d); end
+    end
+    guard = 0
+    while true
+        did = false
+        for m in members
+            w = wkl_get_work!(worklist_for(m))
+            w === nothing && continue
+            did = true
+            ansbatch, deps = w
+            for d in deps, a in _project(ansbatch, d.cont.goal)
+                for (at, bnd) in resume_continuation(d.cont, a, space)
+                    is_empty_atom(at) && continue
+                    newa = subst(at, bnd)
+                    tgt = d.target
+                    _PARTIAL[tgt], ch = _merge_partial(get(_PARTIAL, tgt, Atom[]), Atom[newa], tgt)
+                    ch && wkl_add_answer!(worklist_for(tgt), newa)   # only a NEW answer is new work
+                end
+            end
+        end
+        did || break
+        # ⚠️ A guard, not a bound: each `wkl_get_work!` SWAPS its pair, so work is finite unless new
+        # answers keep arriving — and a program whose answer set is genuinely infinite does not
+        # terminate in SWI either (verified). This catches a BROKEN INVARIANT (a swap that failed to
+        # mark a pair combined would re-offer it forever) rather than an unbounded program, and says
+        # so rather than looping silently.
+        guard += 1
+        guard > 1_000_000 && error("completion-by-resumption exceeded 1e6 work batches for " *
+                                   "$(key) — the worklist invariant is broken (a pair is being " *
+                                   "re-offered), not merely a large program")
+    end
+    true
+end
+
 # ── WFS Stage B (Prolog-parity precision on dynamically-stratified programs) ──────────────────────────
 # Which SCCs need the alternating-fixpoint WFS completion? EXACTLY those with recursion-through-negation — a
 # positive edge that closes a cycle back through a `tnot` barrier. That is DETECTED DYNAMICALLY, at the source,
@@ -849,7 +921,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         if !(length(members) == 1 && !(key in _PARTIAL_READ))                    # singleton+no self-rec ⇒ 1 pass
             if any(m -> m in _SCC_NEG, members)                                  # WFS Stage B: recursion-thru-negation
                 _wfs_complete!(members, typ, space, key)                         #   ⇒ alternating-fixpoint completion
-            else
+            elseif !_complete_resume!(members, typ, space, key)                  # §1.0 step 4, if enabled
                 while true                                                       # positive SCC: joint naive fixpoint
                     grew = false
                     for m in members
