@@ -55,6 +55,12 @@ module StandardMeTTaTests
     # assertions are pinned literals and it never invokes swipl (measured 2026-08-06); this is the
     # file that actually runs the oracle. Skips LOUDLY if swipl is absent — never silently passes.
     include("standard/test_wfs_swipl_differential.jl")
+    # SWI manual §7.1 (memoizing) + §7.2 (avoiding non-termination) — the two areas of §7 the
+    # roadmap records us as HAVING. That claim previously rested on "fib returns 832040", which is
+    # one number matching one expectation, not a comparison. This runs the manual's own examples
+    # under swipl and asserts Core agrees value-for-value. Same two guards as the WFS differential:
+    # loud skip if swipl is absent, and a positive control before any comparison.
+    include("standard/test_tabling_swipl_differential.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
