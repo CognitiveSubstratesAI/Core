@@ -421,6 +421,34 @@ end
 "Special forms kept WHOLE because a BINDER makes it mandatory — see the note in `translate_expr`."
 const _KEEP_WHOLE = (SPECIAL_CHAIN,)
 
+# 🔴🔴 THE BINDER GAP — DIAGNOSED 2026-08-16, NOT YET FIXED. `_KEEP_WHOLE` covers `chain` because
+# "hoisting out of a binder's scope is a wrong answer". **THE STDLIB HAS OTHER BINDERS AND THIS STAGE
+# DOES NOT KNOW ABOUT THEM.** They are ordinary calls, not `IRSpecial`, so they never reach this tuple:
+#
+#     (foldl-atom $list (() () $l) $accum $elem <template>)   ← $accum, $elem BOUND BY foldl-atom
+#     (map-atom    (1 2 3) $v <template>)                     ← $v      BOUND BY map-atom
+#     (filter-atom (1 2 3) $v <template>)                     ← $v      BOUND BY filter-atom
+#
+# HOW IT SURFACED, and it is the same shape as the tabling-multiplicity find the same day: a CORRECT
+# change EXPOSED a MASKED defect. Adding PeTTa's missing middle clause here (an EXPRESSION-headed
+# expression is DATA, not a residual — `translator.pl`'s `is_list(HV) -> eval_data_term`) is right on
+# its own terms and fixes the `(() () $list2)` hoist. But that hoist was CAUSING A DECLINE, and the
+# decline was masking the binder bug underneath: with the tuple no longer hoisted, `overlap-857`
+# compiles far enough to emit
+#
+#     (= (overlap-857 $list1 $list2) (function (unify ($left $intersection $right) $accum …)))
+#
+# — the `foldl-atom` CALL IS GONE and `$accum`/`$elem` are FREE. `test_stdlib.metta: extra 1`.
+#
+# ⇒ **`overlap-857` is currently DECLINED, WHICH IS SAFE.** Do not "fix" the middle clause alone: it
+# converts a safe decline into a wrong answer. The binder concept has to exist first — this stage
+# needs to know that certain call ARGUMENTS are templates whose variables are bound by the callee,
+# and not translate inside them.
+# ⚠️ Widening `_KEEP_WHOLE` naively already has a recorded cost: it "cost MM2 four clauses, which the
+# coverage ratchet caught" (`EmitIL.jl:735`). Binders are a per-ARGUMENT property, not a per-form one,
+# so the mechanism is probably a binder-arity table (head ⇒ which arg indices are templates), not
+# another entry in this tuple.
+
 """
 Remaining special forms. `collapse` is PeTTa's `findall` (translator.pl:116); anything without a
 reference lowering becomes a residual rather than a guess.
