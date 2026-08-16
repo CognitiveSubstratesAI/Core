@@ -11,6 +11,30 @@ Every item cites the upstream file:line it came from and the check that decides 
 
 ---
 
+## ⚠️ READ FIRST — THE ENGINE QUESTION IS OPEN (added 2026-08-16)
+
+`Core/docs/tabling_delimited_control_spec.md` (Desouter et al., **tabling in under 600 lines
+of Prolog** via delimited control) shows this whole roadmap may be scoped against the wrong base.
+
+**OUR ENGINE IS THE "EXTENSION TABLE" DESIGN, WHICH THAT PAPER NAMES AND REJECTS:** `_leader_pass` is
+RE-RUN each fixpoint round (`Tabling.jl:374-380, :467-473`), i.e. we recompute suspended goals rather
+than resuming them. *"The approach cannot achieve satisfactory performance as suspended goals are
+always re-evaluated."*
+
+🔴 **AND THAT EXPLAINS 2.0.** Recomputation reproduces every earlier answer each pass, so
+`unique(vcat(…))` is STRUCTURALLY REQUIRED to detect the fixpoint — and `unique` is exactly what
+collapses multiplicity. **The multiplicity defect is a CONSEQUENCE of the engine design, not an
+independent bug.** Under continuation capture each answer is produced once, no dedup is needed, and
+multiplicity survives with no guard at all.
+
+⇒ **Decide the engine question BEFORE building §1.** The gap to their design is TWO STRUCTURES and
+ONE PRIMITIVE (`dependency(Source, Cont, Target)`, a worklist dequeue, and `shift`/`reset`) — and
+`Eval.jl` is already a *"continuation-passing stack machine"*, which is the substrate delimited
+control needs. Adding SWI's nine attributes to a recomputation engine may cost more than moving the
+base and getting 2.0 for free.
+
+---
+
 ## 0. BLOCKERS — these gate other work, and two are live defects
 
 | # | item | why it blocks | verify |
