@@ -662,17 +662,34 @@ _var_headed_call(n::IRAtom)::Bool =
 # arms together, re-run the LeaTTa PROVED corpus (that is what caught the last attempt), and check the
 # `(() () $l2)` case explicitly.
 #
-# 🛑 PREREQUISITE, AND IT IS STATED BELOW IN THIS FILE — the `()` → `(Nil)` rendering defect
-# ("Any future work here must fix that first"). ⚠️ PARTIALLY PROBED 2026-08-15 and it is NARROWER
-# than the note implies: `()` DOES round-trip at parse/render (`parse "()" → () → "()"`; likewise
-# `(() () $l2)`), and `(= (f) ())` compiles cleanly to `(= (f) (function (return ())))`. So the defect
-# is at the **IR layer** (`IRExpression(IRSymbol(:Nil), [])`) and is MASKED precisely because these
-# clauses are declined — it CANNOT be confirmed or refuted from outside without enabling the very path
-# being changed. ⇒ **the port and the `()` fix are ONE piece of work, not two**, and the first run must
-# be against the LeaTTa PROVED corpus with `(() () $l2)` as an explicit case. Budget the diagnosis
-# time BEFORE starting: the 08-11 attempt failed by raising coverage and breaking that corpus, and
-# starting this without room to diagnose reproduces that failure exactly. More upstream if needed: `dev-zone/MeTTapedia/papers` (CeTTa.tex,
-# ch_bridges.tex) and CeTTa's own `compile.c`.
+# ✅ THE `()` PREREQUISITE IS VOID — RETRACTED 2026-08-16. The note below ("Any future work here must
+# fix that first") describes the `:Nil` sentinel, which was ALREADY FIXED: `IR.jl:133` is now
+#     const UNIT_HEAD = Symbol("()")
+# and its own docstring records the old bug — *"The previous sentinel `:Nil` COULD and did: `()` and
+# `(Nil)` lowered to the same node and `()` was silently rewritten to `(Nil)`."* VERIFIED 2026-08-16:
+# `()` round-trips both ways, and `(= (f) ())` compiles to `(= (f) (function (return ())))`.
+# ⇒ two attempts were blocked on a defect that no longer existed. Read `IR.jl:129-133` before
+# treating `()` as an obstacle again.
+#
+# 🔴🔴 THE REAL CAUSE, DIAGNOSED 2026-08-16 — AND IT IS NOT IN THIS FILE. Re-ran the middle-clause arm
+# with the `()` fear removed; SAME failure, `test_stdlib.metta: extra 1`, with `compiled 71 → 73`.
+# The emitted IL names the defect:
+#
+#     remove-857:   (chain (metta ($head $tail) %Undefined% &self) $__t1 …)   ✓ wrapped
+#     overlap-857:  (chain (() () $list2) $__t1 …)                            ✗ BARE DATA
+#
+# `chain`'s FIRST ARGUMENT IS THE EVALUATED POSITION — it must be an instruction. `($head $tail)` is
+# variable-headed so `_var_headed_call` wraps it in `metta`; `(() () $list2)` is expression-headed, so
+# the arm emitted it BARE and `chain` tried to evaluate raw data.
+# ⚠️ AND WRAPPING IT IN `metta` IS WHAT THE 08-11 ATTEMPT DID — it failed identically, because `metta`
+# would then try to APPLY `()` to arguments. **Neither treatment available in `_instr` can work.**
+#
+# ⇒ **THE DEFECT IS UPSTREAM, IN A-NORMALIZATION:** `(() () $list2)` is `foldl-atom`'s ACCUMULATOR — an
+# ARGUMENT, not a subexpression to evaluate — and A-normal hoisted it into a `chain` as if it were a
+# call. No lowering here can repair a hoist that should not have happened. **THREE attempts at
+# `_instr` (08-11 call-form, 08-15 data-form, 08-16 re-run) all failed for this one reason.**
+# NEXT: fix the hoist in `ANormal.jl` so an expression-headed data tuple in argument position stays
+# in place; THEN the middle-clause arm here becomes a one-predicate change again.
 #
 # 🛑 DO NOT WIDEN THIS TO AN EXPRESSION HEAD. Tried 2026-08-11, MEASURED, REVERTED.
 #
