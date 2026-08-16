@@ -195,7 +195,10 @@ suspension creation**" — with "significantly better SPACE performance, but a w
         vars::Set{Var}
         prev::Union{Frame,Nothing}   # ← the continuation CHAIN
         ret::Function                # ← the per-frame continuation, called when a child finishes
-        finished::Bool               # ← MUTATED IN PLACE
+        finished::Bool               # ← ⚠️ ANNOTATED "MUTATED IN PLACE" HERE, AND THAT WAS WRONG.
+                                     #   Set at construction, NEVER reassigned. This annotation is
+                                     #   what sent two sessions hunting a copy hazard that does not
+                                     #   exist. Corrected 2026-08-16 — see CORRECTION 1.
         depth::Int
         tco::Bool
     end
@@ -239,6 +242,15 @@ construction. A `prev` frame is only ever read (`f.prev.ret(f.prev, …)`, `f.pr
 re-entered into the plan as an `f`. ⇒ **the frame chain needs NO copy at all** — not the paper's
 `copy_term/2`, and not the specialised `copy_continuation/2` this document called "our starting point".
 The advantage over the reference implementation is larger than claimed, not smaller.
+
+⚠️ **THE WRITE COUNT IS THE SYMPTOM; THE GUARANTEE IS THAT `ret` IS FRAME-AGNOSTIC.** Raised by a peer
+session and re-verified here from the bodies: all three `ret` forms take `self::Frame` as a PARAMETER
+and close over immutables only — `cont` (`Eval.jl:952`) over var/templ/depth/propagate, `fret` (`:968`)
+over atom/depth, `no_handler` (`:190`) over nothing. None holds a Frame, so re-running a chain cannot
+observe state from an earlier run. **A new `Frame(` site whose closure captured an outer frame would
+break this while adding ZERO field writes**, and a write-counting check would stay green — so
+"one write in the tree" must not be quoted as the safety argument. Not pinned by a test yet;
+`test_delimited_control.jl` gates capture/resume behaviour, which a frame-capturing closure could pass.
 
 **🔴 CORRECTION 2 — the `Bindings` copy is NOT load-bearing today, and the reason matters.** Two
 mutation checks (drop the copy at capture AND at resume) both PASSED — v1 with symbol answers, v2 with

@@ -298,6 +298,25 @@ _replay(answers::Vector{Atom}, b::Bindings, prev) =
 #   ⇒ NO frame copy, so not even the `copy_continuation/2` the paper lists as future work (§5.2).
 #   Their future-work item #1 is not our starting point; it is already unnecessary here.
 #
+#   🔴 BUT THE WRITE COUNT IS THE SYMPTOM, NOT THE GUARANTEE — and the distinction is load-bearing
+#   for whoever wires step 2. Verified 2026-08-16 (independently raised by a peer session, then
+#   re-checked here against the bodies): what makes a captured chain safe to ALIAS is that every
+#   `ret` closure is FRAME-AGNOSTIC — it takes `self::Frame` as a PARAMETER and closes over nothing
+#   but immutables. All three forms:
+#       `cont`       (`Eval.jl:952`, setup_chain)    closes over var/templ/depth/propagate; uses self.prev
+#       `fret`       (`Eval.jl:968`, setup_function) closes over atom/depth;                 uses self/self.prev
+#       `no_handler` (`Eval.jl:190`)                 ignores all three arguments
+#   None holds a reference to a particular Frame, so re-running a chain cannot observe state left
+#   behind by an earlier run.
+#
+#   ⚠️ ⇒ "there is only one Frame field write" DOES NOT PROTECT THIS. An 8th `Frame(` site whose
+#   closure captured an OUTER frame (`f -> … outer_frame …` — a natural reach when wiring
+#   `dependency/3` firing) would break continuation safety while adding ZERO field writes, and a
+#   write-counting check would stay green. The invariant to guard is frame-agnosticism of `ret`.
+#   NOT PINNED BY ANY TEST YET — `test_delimited_control.jl` gates capture/resume BEHAVIOUR, which a
+#   frame-capturing closure could pass. A mechanical guard is owed; a peer session claimed it, so it
+#   is deliberately not built here rather than built twice.
+#
 # * THE `Bindings` COPY BELOW IS NOT LOAD-BEARING TODAY — and is kept deliberately, with the reason
 #   stated so nobody deletes it as cargo. Two mutation checks (drop the copy at capture AND at resume)
 #   both PASSED, which means those probes were BLIND to the class, not that the class is absent
