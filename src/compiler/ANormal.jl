@@ -262,6 +262,40 @@ translate_expr(::ANCtx, a::IRGrounded)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
 translate_expr(::ANCtx, a::IRResolvedSymbol)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
 translate_expr(::ANCtx, a::IRPredefined)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
 
+"""Head ⇒ the 1-based ARGUMENT INDEX from which arguments are kept VERBATIM, because the callee BINDS
+variables there.
+
+🔴 DERIVED FROM THE DECLARED TYPES, not invented — `Variable` in an argument position IS the binder
+marker, and `stdlib.metta` declares exactly four such ops:
+
+    (: foldl-atom     (-> Expression Atom **Variable Variable** Atom %Undefined%))   ⇒ keep from 3
+    (: map-atom       (-> Expression **Variable** Atom Expression))                  ⇒ keep from 2
+    (: filter-atom    (-> Expression **Variable** Atom Expression))                  ⇒ keep from 2
+    (: if-decons-expr (-> Expression **Variable Variable** Atom Atom %Undefined%))   ⇒ keep from 2
+
+Everything from the first `Variable` onward is either a BOUND VARIABLE (a pattern, not an expression
+to evaluate) or a TEMPLATE that mentions it. Translating either is a scope violation.
+
+WHY A TABLE AND NOT `_KEEP_WHOLE`: binding is a per-ARGUMENT property, and these are ordinary calls
+rather than `IRSpecial`, so they never reach that tuple. Naive widening of `_KEEP_WHOLE` already
+"cost MM2 four clauses, which the coverage ratchet caught" (`EmitIL.jl:735`).
+
+⚠️ THE TYPES ARE THE SOURCE OF TRUTH AND THIS TABLE IS A COPY. A stage that works on IR cannot read
+the space's `(: …)` declarations, so if a fifth binder is declared in `stdlib.metta` it must be added
+here too. The check is one grep:
+    grep -nE '^\\(: [^ ]+ \\(->[^)]*Variable' src/standard/stdlib.metta"""
+const _BINDER_KEEP_FROM = Dict{Base.Symbol,Int}(
+    Base.Symbol("foldl-atom")     => 3,
+    Base.Symbol("map-atom")       => 2,
+    Base.Symbol("filter-atom")    => 2,
+    Base.Symbol("if-decons-expr") => 2,
+)
+
+_binder_keep_from(h::IRAtom)::Int =
+    h isa IRSymbol     ? get(_BINDER_KEEP_FROM, (h::IRSymbol).name, typemax(Int)) :
+    h isa IRPredefined ? get(_BINDER_KEEP_FROM, (h::IRPredefined).name, typemax(Int)) :
+                         typemax(Int)
+
 """
 An application. Arguments are flattened FIRST (their goals precede the call), then the call itself
 produces a fresh output — PeTTa's `translate_args` followed by `Goal =.. [F|CallArgs]`.
@@ -274,7 +308,17 @@ this file avoids.
 function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
     goals = Goal[]
     args = IRAtom[]
-    for x in a.args
+    # 🔴 BINDER SCOPES — added 2026-08-16. Arguments at or after `keep` are a bound VARIABLE or a
+    # TEMPLATE mentioning one; A-normalizing them hoists computation OUT OF THE BINDER'S SCOPE, which
+    # is the same wrong answer `_KEEP_WHOLE` exists to prevent for `chain`. MEASURED before this:
+    # `overlap-857`'s `foldl-atom` template was flattened into the clause body and the `foldl-atom`
+    # CALL DISAPPEARED, leaving `$accum`/`$elem` FREE.
+    keep = _binder_keep_from(a.head)
+    for (i, x) in enumerate(a.args)
+        if i >= keep
+            push!(args, x)                   # verbatim: a bound variable, or a template in its scope
+            continue
+        end
         g, v = translate_expr(c, x)
         append!(goals, g); push!(args, v)
     end
@@ -303,6 +347,28 @@ function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
         out = fresh_var(c)
         push!(goals, GCall((a.head::IRPredefined).name, args, out))
         return (goals, out)
+    elseif a.head isa IRExpression
+        # 🔴 PeTTa's MIDDLE CLAUSE — added 2026-08-16, AFTER the binder table above made it safe.
+        # `translator.pl`'s `translate_expr` splits the head THREE ways; we had only two:
+        #     atom-but-not-`fun`  -> DATA                        (the `IRSymbol` branch above)
+        #     `is_list(HV)`       -> `eval_data_term` — KEEP THE TUPLE, hoist function sub-calls ← THIS
+        #     var / compound      -> `reduce/2` dispatch          (the `GResidual` fall-through below)
+        #
+        # AN EXPRESSION HEAD CANNOT NAME A FUNCTION — there is no symbol to look up — so it is DATA,
+        # exactly like a non-`fun` symbol head. `args` are already translated above, which IS
+        # `eval_data_term`: function sub-calls inside the tuple are hoisted into `goals` while the
+        # tuple structure survives.
+        #
+        # ⚠️ ORDER MATTERS AND IS THE WHOLE STORY. Applied ALONE on 2026-08-16 this produced a WRONG
+        # ANSWER: it stopped `(() () $list2)` being hoisted, which let `overlap-857` compile far
+        # enough to expose a MASKED defect — `foldl-atom`'s template was flattened into the clause
+        # body and the `foldl-atom` CALL DISAPPEARED, leaving `$accum`/`$elem` free. The bad hoist had
+        # been causing a DECLINE, and the decline was SAFE. `_BINDER_KEEP_FROM` had to land FIRST.
+        # Three earlier attempts in `EmitIL._instr` (08-11 call-form, 08-15 data-form, 08-16 re-run)
+        # failed because no LOWERING can repair a hoist that should not have happened.
+        hg, hv = translate_expr(c, a.head)
+        append!(goals, hg)
+        return (goals, IRExpression(hv, args, a.id, a.src))          # data term
     end
     hg, _ = translate_expr(c, a.head)
     append!(goals, hg)
