@@ -85,17 +85,38 @@ disjunctions."*
 
 `_leader_pass` is **RE-RUN every round**. We reach the fixpoint by RECOMPUTING, not by resuming.
 
-### The consequence nobody had connected: this IS roadmap 2.0
+### ⚠️ A CLAIM I MADE HERE WAS WRONG — RETRACTED 2026-08-16, SAME DAY
 
-Recomputation reproduces every earlier answer on each pass, so `unique` is **structurally required**
-to detect the fixpoint. And `unique` is exactly what collapses multiplicity — MEASURED 2026-08-16:
-`(= (h) 1)` twice ⇒ `!(k)` untabled `[1,1]`, tabled `[1]`.
+This section first argued: *"recomputation forces `unique`, and `unique` is what collapses
+multiplicity, therefore continuation capture would preserve multiplicity and roadmap 2.0 dissolves."*
+**The first half is true and the conclusion is FALSE.** Checked against upstream on the user's
+"I do not know the quality you adopted" prompt:
 
-⇒ **THE MULTIPLICITY DEFECT IS NOT INDEPENDENT OF THE ENGINE DESIGN. It is a consequence of it.**
-Under continuation capture each answer is produced ONCE, no dedup is needed to detect the fixpoint,
-and multiplicity survives without a guard. The three converging sources for a multivalued guard
-(JeTTa `!isMultivalued()`, Triska's `once/1`, our measurement) all describe how to LIVE WITH
-recomputation-style memoization — not the only possible design.
+* **This paper dedups deliberately** (§4.4): *"the trie allows `store_answer/2` to quickly check
+  whether a newly produced answer has already been computed before, and **to only store it in case it
+  has not**."*
+* **SWI dedups structurally.** `wkl_add_answer(worklist*, trie_node *an)` (`pl-tabling.c`) takes an
+  answer ALREADY INSERTED INTO THE ANSWER TRIE — and a trie is a set: the same term maps to the same
+  node.
+
+⇒ **TABLING IS SET-SEMANTICS BY DESIGN IN EVERY IMPLEMENTATION.** Our `unique(vcat(…))` reaches the
+same semantics by a different mechanism; it is not a defect of the recomputation base.
+
+**SO ROADMAP 2.0 IS A LANGUAGE-LEVEL SEMANTIC MISMATCH, NOT AN ENGINE ARTIFACT:** Prolog programmers
+EXPECT tabled predicates to return each answer once (it is documented behaviour); MeTTa is MULTISET.
+Moving to continuation capture would NOT fix it. The multivalued guard is the RIGHT answer, and the
+three converging sources are all the correct response to that mismatch, not workarounds for a weak
+base:
+
+| source | the guard |
+|---|---|
+| JeTTa `Generator.kt:166` | `!f.isMultivalued()` |
+| Triska `memo/1` | `once(Goal)` |
+| our measurement | tabling turns `[1,1]` into `[1]` |
+
+**What recomputation DOES cost is performance, which is the paper's actual complaint** — *"suspended
+goals are always re-evaluated"* — plus the absence of the structures 7.7/7.8/7.11 need. Those remain
+the reasons to move the base. Multiplicity is not one of them.
 
 ### What we already have that maps onto theirs
 

@@ -21,11 +21,13 @@ RE-RUN each fixpoint round (`Tabling.jl:374-380, :467-473`), i.e. we recompute s
 than resuming them. *"The approach cannot achieve satisfactory performance as suspended goals are
 always re-evaluated."*
 
-🔴 **AND THAT EXPLAINS 2.0.** Recomputation reproduces every earlier answer each pass, so
-`unique(vcat(…))` is STRUCTURALLY REQUIRED to detect the fixpoint — and `unique` is exactly what
-collapses multiplicity. **The multiplicity defect is a CONSEQUENCE of the engine design, not an
-independent bug.** Under continuation capture each answer is produced once, no dedup is needed, and
-multiplicity survives with no guard at all.
+⚠️ **AN EARLIER VERSION OF THIS PREAMBLE CLAIMED THIS ALSO EXPLAINS 2.0. IT DOES NOT — RETRACTED
+2026-08-16.** Recomputation does force `unique`, but **tabling is SET-SEMANTICS BY DESIGN in every
+implementation**: the delimited-control paper dedups deliberately (§4.4 `store_answer/2` *"only
+store it in case it has not"*) and SWI dedups structurally (`wkl_add_answer` takes a `trie_node*`
+— a trie IS a set). ⇒ **2.0 is a LANGUAGE-LEVEL mismatch — tabling is set, MeTTa is multiset —
+and moving the base would NOT fix it.** What recomputation actually costs is PERFORMANCE (*"suspended
+goals are always re-evaluated"*) and the missing structures below.
 
 ⇒ **DECIDED 2026-08-16: the target is ALL of SWI §7, and the BASE MOVES FIRST** (§1.0). Building 7.7/7.8/7.11 on the recomputation base means building them twice.
 >
@@ -67,8 +69,9 @@ structures that base simply does not have:
 * **7.3 mode-directed** needs the merge point AND a value-based fixpoint test.
 
 Build: `shift`/`reset` over the CPS frame stack · `dependency(Source, Cont, Target)` · the worklist
-dequeue with the left/right invariant · an answer TRIE. ⇒ **roadmap 2.0's multivalued guard becomes
-unnecessary rather than carried forward** — the clearest signal the order is right.
+dequeue with the left/right invariant · an answer TRIE. ⚠️ **NOT a reason to move the base: roadmap 2.0.** Retracted 2026-08-16 — tabling is set-semantics
+by design everywhere, so the guard is still needed after the move. The reasons are PERFORMANCE and
+the three structures above.
 
 ### 1.1–1.13 the §7 surface, in dependency order
 
@@ -99,7 +102,7 @@ guard we lack; it belongs with 7.7.
 
 | # | item | upstream | notes |
 |---|---|---|---|
-| **2.0** | 🔴🔴 **BLOCKS 2.2 — TABLING COLLAPSES MULTIPLICITY.** `_leader_pass` merges answers with `unique(vcat(…))` — a SET — while MeTTa is MULTISET. MEASURED 2026-08-16: `(= (h) 1)` twice, `(= (k) (h))` ⇒ `!(k)` untabled `[1,1]`, tabled `[1]`. **NOT introduced by auto-tabling — explicit `table!` has always had it**; auto-tabling made it reachable on 5 corpus scripts at once (b1_equal_chain +1, b2_backchain +2, d3_deptypes +1, d4_type_prop +1, e1_kb_write +1; the PROVED corpus caught every one). ⚠️ **THE TENSION IS FUNDAMENTAL:** tabling REQUIRES set semantics to reach a fixpoint — dropping `unique` never converges. So this constrains WHICH HEADS MAY BE TABLED; it is not a merge to fix. **Upstream already guards it and we dismissed the guard:** JeTTa requires `!f.isMultivalued()` (`Generator.kt:166`), called "a downgrade" on 08-15 — wrongly, since handling multi-answer as a SET is not preserving MULTIPLICITY. PINNED by a test that asserts the DEFECT and must be UPDATED (not deleted) when a guard lands. 🔴 **SUPERSEDED BY §1.0:** the dedup is STRUCTURALLY REQUIRED only by recomputation — under continuation capture each answer is produced once, so multiplicity survives and this guard becomes UNNECESSARY rather than something to carry forward. Do not build the guard if the base move is imminent; build it only as a stopgap. | `Generator.kt:166` | **Decide the guard before 2.2.** Candidate signal: `length(rules[h]) > 1`, which is conservative-but-safe — it would also exclude ordinary disjoint-pattern definitions like `(= (fact 0) 1)` + `(= (fact $n) …)`, so it may be too blunt. Needs its own measurement. |
+| **2.0** | 🔴🔴 **BLOCKS 2.2 — TABLING COLLAPSES MULTIPLICITY.** `_leader_pass` merges answers with `unique(vcat(…))` — a SET — while MeTTa is MULTISET. MEASURED 2026-08-16: `(= (h) 1)` twice, `(= (k) (h))` ⇒ `!(k)` untabled `[1,1]`, tabled `[1]`. **NOT introduced by auto-tabling — explicit `table!` has always had it**; auto-tabling made it reachable on 5 corpus scripts at once (b1_equal_chain +1, b2_backchain +2, d3_deptypes +1, d4_type_prop +1, e1_kb_write +1; the PROVED corpus caught every one). ⚠️ **THE TENSION IS FUNDAMENTAL:** tabling REQUIRES set semantics to reach a fixpoint — dropping `unique` never converges. So this constrains WHICH HEADS MAY BE TABLED; it is not a merge to fix. **Upstream already guards it and we dismissed the guard:** JeTTa requires `!f.isMultivalued()` (`Generator.kt:166`), called "a downgrade" on 08-15 — wrongly, since handling multi-answer as a SET is not preserving MULTIPLICITY. PINNED by a test that asserts the DEFECT and must be UPDATED (not deleted) when a guard lands. 🔴 **NOT SUPERSEDED — that claim was RETRACTED 2026-08-16.** Tabling is SET-SEMANTICS BY DESIGN in every implementation (the delimited-control paper dedups in `store_answer/2`; SWI dedups structurally via the answer trie), so the base move does NOT fix this. **2.0 is a LANGUAGE-LEVEL mismatch — tabling is set, MeTTa is multiset — and the guard is the RIGHT answer, independent of the engine.** The three converging sources are the correct response to that mismatch, not workarounds for a weak base. | `Generator.kt:166` | **Decide the guard before 2.2.** Candidate signal: `length(rules[h]) > 1`, which is conservative-but-safe — it would also exclude ordinary disjoint-pattern definitions like `(= (fact 0) 1)` + `(= (fact $n) …)`, so it may be too blunt. Needs its own measurement. |
 | **2.1** | **RECURSIVE requirement in `auto_table!`** ⚠️ *and see 2.0 — the multivalued guard is the harder sibling of this one* — table only heads that transitively call themselves | `Generator.kt:164-169`: *"Recursive ⇔ transitively calls itself — **bounds the cache and is where memoization pays**"* | We currently table EVERY pure user head. Memoizing a non-recursive function is pure overhead. **Independently corroborated by PeTTa #165** (*"avoid memoization for trivial functions called <20 times"*). Cheap; lands in `Purity.jl`. |
 | **2.2** | **The lane split, ENFORCED BY TEST** — auto-table on the closed-world path, OFF on the open-world one | `MemoTablingTest.kt:39-41`: `tabling is off without autoTable (the REPL or JIT path)`, asserting `fib must NOT be tabled when autoTable is off` | Maps exactly onto `compile_run` (fixed program, bounded lifetime) vs the MettaJam server (`add-atom` any time, runs for days). Their justification, `Compiler.kt:184`: *"AOT is a closed world (rules fixed at compile), so memoizing … is sound **without cache invalidation**"*. Depends on **0.1** — an auto-table call on the compiled lane is INERT until `_pure_heads` learns the IL ops (tried 2026-08-15, did nothing). |
 
