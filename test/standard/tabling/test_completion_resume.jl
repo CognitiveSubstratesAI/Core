@@ -55,21 +55,16 @@ const _CR_FIB   = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2
 
 @testset "completion by resumption agrees with recomputation (§1.0 step 4)" begin
 
-    @testset "the DEFAULT is unchanged — recomputation, no recording" begin
-        # If this fails, every other gate's meaning changes: the shipped engine must be untouched
-        # until agreement is proven. Disable-to-prove.
-        #
-        # ⚠️ SKIPPED — NOT ASSERTED-AS-TRUE — under `CORE_TABLING_RESUME=1`, which is the whole-suite
-        # differential mode. Asserting the default while deliberately overriding it would make the
-        # differential run report a failure that means nothing, and a gate whose failures are noise
-        # gets switched off. The skip is LOUD so the override cannot hide a genuine regression here.
-        if get(ENV, "CORE_TABLING_RESUME", "") == "1"
-            @test_skip "CORE_TABLING_RESUME=1 — default-off assertion intentionally not run"
-            @test _CR._RESUME_COMPLETION[]      # …but the override MUST actually be in effect
-            @test _CR._DEPS_RECORD[]            #    (both, or resumption completes nothing)
-        else
+    @testset "the DEFAULT is RESUMPTION, and the reverse override works" begin
+        # 🟢 FLIPPED 2026-08-16 after corpus-scale agreement AND a measured allocation win. This now
+        # asserts the NEW default, and that `CORE_TABLING_RECOMPUTE=1` still reaches the old engine —
+        # a differential you can only run one way has stopped being a differential.
+        if get(ENV, "CORE_TABLING_RECOMPUTE", "") == "1"
             @test !_CR._RESUME_COMPLETION[]
             @test !_CR._DEPS_RECORD[]
+        else
+            @test _CR._RESUME_COMPLETION[]
+            @test _CR._DEPS_RECORD[]      # both, or resumption silently completes nothing
         end
     end
 

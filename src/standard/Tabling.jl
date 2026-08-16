@@ -730,11 +730,22 @@ end
 # *"the approach cannot achieve satisfactory performance as suspended goals are always
 # re-evaluated"*. Here a worker runs ONCE; its remainder is fed answers instead of being re-run.
 #
-# 🔴 OFF BY DEFAULT AND THAT IS THE POINT. `_RESUME_COMPLETION[]` gates it, so the shipped engine is
-# byte-identical until the two are PROVEN to agree — the disable-to-prove pattern this file already
-# uses for tabling itself. Flipping the default before the agreement oracle is green would be a
-# rewrite of the engine core with nothing to check it against, which is exactly how the earlier
-# `_instr` attempts failed three times.
+# 🟢 ON BY DEFAULT SINCE 2026-08-16, on two pieces of evidence and not before:
+#
+#  1. AGREEMENT AT CORPUS SCALE. The whole suite runs green under resumption — 81 files, the only
+#     failure being the differential test's own "default is off" assertion. That includes the
+#     §7.1/§7.2 tabling differential and the WFS differential, the gates that exercise tabling.
+#  2. MEASURED, 3 STABLE RUNS. Allocations are byte-identical run to run, so they are the signal:
+#       symmetric conn  1305 -> 815 KiB (-38%)    time 0.56-0.71x
+#       mutual left-rec  186 ->  70 KiB (-62%)    time 0.59-0.63x
+#       cycle 3          354 ->  98 KiB (-72%)    time 0.31-0.37x
+#       fib 15          6919 -> 6919 KiB ( 0%)    time 0.94-1.02x   <- never resumes: UNTOUCHED
+#     That last row is the important one: a program with no variant re-entry allocates the SAME
+#     bytes, so the non-resuming path is unaffected rather than merely "about as fast".
+#
+# ⚠️ The paper's own number is a caution kept deliberately: their library is 8-38x SLOWER than XSB,
+# so "resumption beats recomputation" is a property of a specific implementation, not a theorem. Ours
+# was measured, not assumed. `CORE_TABLING_RECOMPUTE=1` restores the old engine for differentials.
 #
 # ⚠️ IT NEEDS DEPENDENCY RECORDING. The continuations it resumes are captured by
 # `record_dependency!` at the consumer branch, so `_DEPS_RECORD[]` must be on for the initial pass.
@@ -755,10 +766,13 @@ than when it is run — measured: `CORE_TABLING_RESUME=1 julia -e 'using MeTTaCo
 still FALSE. Both flags move together, because resumption without recording silently completes
 nothing."""
 function __init__()
-    if get(ENV, "CORE_TABLING_RESUME", "") == "1"
-        _RESUME_COMPLETION[] = true
-        _DEPS_RECORD[]       = true
-    end
+    # DEFAULT: resumption. `CORE_TABLING_RECOMPUTE=1` forces the old recomputation engine, which is
+    # what keeps the differential runnable IN BOTH DIRECTIONS after the flip — a comparison you can
+    # only run one way stops being a comparison. `CORE_TABLING_RESUME=1` is still honoured so the
+    # pre-flip invocation in any script or note does not silently mean something else.
+    recompute = get(ENV, "CORE_TABLING_RECOMPUTE", "") == "1"
+    _RESUME_COMPLETION[] = !recompute
+    _DEPS_RECORD[]       = !recompute
 end
 
 """

@@ -101,35 +101,44 @@ lets the trie decide duplicate-ness without a separate rename pass.
 """
 function trie_keys(a::Atom)::Vector{TrieKey}
     out = TrieKey[]
-    seen = Dict{Var,Int}()
-    walk(x::Atom) =
-        if x isa Var
-            push!(out, VarKey(get!(seen, x, length(seen) + 1)))
-        elseif x isa Sym
-            push!(out, SymKey(x.name))
-        elseif x isa Expression
-            push!(out, ExprKey(length(x.children)))
-            for c in x.children; walk(c); end
-        elseif x isa Grounded
-            push!(out, GroundKey(x.value))
-        else
-            push!(out, SymKey(Symbol(string(x))))     # unreachable today; keyed rather than dropped
-        end
-    walk(a)
+    _trie_walk!(out, Dict{Var,Int}(), a)
     out
+end
+
+# ⚠️ A TOP-LEVEL RECURSIVE FUNCTION, NOT AN INNER CLOSURE. Written first as a `walk(x) = …` closure
+# inside `trie_keys`, which JET reported as "captured variable `walk` detected" plus a runtime
+# dispatch: a SELF-RECURSIVE inner closure is boxed (`Core.Box`) because the name is assigned in the
+# same scope it is called from, so Julia cannot infer it. Hoisting it costs nothing and removes both.
+function _trie_walk!(out::Vector{TrieKey}, seen::Dict{Var,Int}, x::Atom)
+    if x isa Var
+        push!(out, VarKey(get!(seen, x, length(seen) + 1)))
+    elseif x isa Sym
+        push!(out, SymKey(x.name))
+    elseif x isa Expression
+        ch = (x::Expression).children
+        push!(out, ExprKey(length(ch)))
+        for c in ch; _trie_walk!(out, seen, c); end
+    elseif x isa Grounded
+        push!(out, GroundKey((x::Grounded).value))
+    else
+        push!(out, SymKey(Symbol(string(x))))         # unreachable today; keyed rather than dropped
+    end
+    nothing
 end
 
 """
     trie_lookup!(t, a; add) -> Union{TrieNode,Nothing}
 
-`trie_lookup` (`pl-trie.h:229`). Walk `a`'s path; with `add=true` create missing nodes and return the
+`trie_lookup` (`pl-trie.h:229`). Walk `a`'s path; with `add` true create missing nodes and return the
 terminal node, else return it only if the path already exists.
 
 Does NOT mark the node an answer — that is `trie_insert!`'s job, because upstream separates lookup
 from `set_trie_value_word` so a restraint can inspect the node and DELETE it before it becomes an
 answer (`pl-tabling.c:3613 trie_delete`).
 """
-function trie_lookup!(t::AnswerTrie, a::Atom; add::Bool=false)::Union{TrieNode,Nothing}
+# ⚠️ `add` is POSITIONAL, not a keyword. As `; add::Bool=false` it compiled to a `Core.kwcall`, which
+# JET reported as a runtime dispatch at EVERY call site (trie_insert!, trie_contains, trie_delete!).
+function trie_lookup!(t::AnswerTrie, a::Atom, add::Bool=false)::Union{TrieNode,Nothing}
     node = t.root
     for k in trie_keys(a)
         nxt = get(node.children, k, nothing)
@@ -151,7 +160,7 @@ a second insert of the same answer (up to variable renaming) finds the node alre
 returns `false` — no scan, no `unique`, no separate variant check.
 """
 function trie_insert!(t::AnswerTrie, a::Atom)::Bool
-    node = trie_lookup!(t, a; add=true)::TrieNode
+    node = trie_lookup!(t, a, true)::TrieNode
     node.answer === nothing || return false          # already an answer ⇒ duplicate
     node.answer = a
     t.inserts += 1; node.seq = t.inserts             # stamp AT INSERT — see `trie_answers`
@@ -161,7 +170,7 @@ end
 
 "Is `a` already stored? Structural, so variants of a stored answer count as present."
 trie_contains(t::AnswerTrie, a::Atom)::Bool =
-    (n = trie_lookup!(t, a; add=false); n !== nothing && n.answer !== nothing)
+    (n = trie_lookup!(t, a, false); n !== nothing && n.answer !== nothing)
 
 """
     trie_delete!(t, a) -> Bool
@@ -170,7 +179,7 @@ trie_contains(t::AnswerTrie, a::Atom)::Bool =
 which unlinks the value rather than pruning the spine.
 """
 function trie_delete!(t::AnswerTrie, a::Atom)::Bool
-    n = trie_lookup!(t, a; add=false)
+    n = trie_lookup!(t, a, false)
     (n === nothing || n.answer === nothing) && return false
     n.answer = nothing
     t.count -= 1

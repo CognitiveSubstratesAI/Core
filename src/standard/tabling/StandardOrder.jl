@@ -41,6 +41,9 @@
 #   standard_lt        ←  `@</2`                   used by min/3, boot/tabling.pl:1529
 #   standard_gt        ←  `@>/2`                   used by max/3, boot/tabling.pl:1530
 
+"NaN test that does not allocate a closure — see the note in `compare_standard`."
+_is_nan(v)::Bool = v isa AbstractFloat && isnan(v)
+
 "Rank of an atom in the standard order. Lower sorts first. `pl-prims.c:1788`'s ladder."
 function std_rank(a::Atom)::Int
     a isa Var        && return 0
@@ -76,9 +79,10 @@ function compare_standard(x::Atom, y::Atom)::Int
         xv, yv = (x::Grounded).value, (y::Grounded).value
         if xv isa Real && yv isa Real
             # NaN sorts lowest, mirroring pl-prims.c:1765-1768 before any value comparison.
-            isnanv(v) = v isa AbstractFloat && isnan(v)
-            isnanv(xv) && return isnanv(yv) ? 0 : -1
-            isnanv(yv) && return 1
+            # ⚠️ `_is_nan` is TOP-LEVEL, not an inner closure. As `isnanv(v) = …` inside this function
+            # JET reported three runtime dispatches on it — an inner closure is captured and boxed.
+            _is_nan(xv) && return _is_nan(yv) ? 0 : -1
+            _is_nan(yv) && return 1
             xv < yv && return -1
             xv > yv && return 1
             # EQUAL VALUE ⇒ Float BEFORE Integer (pl-prims.c:1777).
