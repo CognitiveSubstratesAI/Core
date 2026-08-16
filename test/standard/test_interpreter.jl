@@ -152,18 +152,47 @@ end
     # primitive args + result"). On 2026-08-15 that was called "a downgrade — our SLG handles
     # multi-answer". Handling multi-answer as a SET is not preserving MULTIPLICITY. See roadmap 2.1.
     #
-    # 🛑 THIS TEST ASSERTS THE DEFECT, NOT THE DESIRED BEHAVIOUR. When a multivalued guard lands,
-    # `TABLED` should equal `UNTABLED` and this test must be UPDATED to assert that — not deleted.
+    # 🟢 UPDATED 2026-08-16 — THE MULTIVALUED GUARD LANDED (roadmap 2.0). This no longer asserts only
+    # the defect. It now pins BOTH entry points, which behave differently ON PURPOSE:
+    #
+    #   auto_table!  — AUTOMATIC, so it must be conservative: it refuses any head whose multiplicity
+    #                  would be observable, and `!(k)` keeps [1,1].
+    #   table!       — the EXPLICIT user directive, the analogue of `:- table h/0`. Upstream does not
+    #                  second-guess a declaration, and neither do we, so this STILL collapses. That is
+    #                  the user's call, not a silent automatic decision.
+    #
+    # The distinction matters: the original defect was that the AUTOMATIC path made the collapse
+    # reachable on five corpus scripts at once. Making `table!` refuse would instead make a documented
+    # Prolog directive fail, and tabling IS set-semantics by design everywhere.
     Eval.untable_all!()
     try
         prog = "(= (h) 1)\n(= (h) 1)\n(= (k) (h))\n"          # two IDENTICAL rules ⇒ two answers
         s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
         @test length(load_metta!(s, "!(k)\n")) == 2            # UNTABLED: multiset preserved, [1, 1]
 
+        # ── AUTOMATIC: the guard refuses, and multiplicity SURVIVES. `k` is caught by PROPAGATION —
+        # its single rule cannot overlap anything, but it CALLS `h`, so it inherits multivaluedness.
+        # The head-local overlap test alone left `k` tabled and `!(k)` still collapsed; measured.
         Eval.untable_all!()
         s2 = Space(); load_core_stdlib!(s2); load_metta!(s2, prog)
+        r = Eval.auto_table!(s2)
+        @test :h in r.multivalued
+        @test :k in r.multivalued                              # inherited through the call graph
+        @test isempty(intersect(Symbol[:h, :k], r.tabled))
+        @test length(load_metta!(s2, "!(k)\n")) == 2           # TABLED-BY-AUTO: [1, 1] preserved
+
+        # ── EXPLICIT: still collapses, by design. Kept so the semantic mismatch stays visible.
+        Eval.untable_all!()
+        s3 = Space(); load_core_stdlib!(s3); load_metta!(s3, prog)
         Eval.table!(:k); Eval.table!(:h)
-        @test length(load_metta!(s2, "!(k)\n")) == 1           # TABLED: collapsed to [1] — THE DEFECT
+        @test length(load_metta!(s3, "!(k)\n")) == 1           # the user asked for set semantics
+
+        # ── a DISJOINT-pattern head is NOT refused: `length(rules) > 1` would have excluded it, which
+        # is why the guard tests UNIFIABILITY instead. This is the case that signal got wrong.
+        Eval.untable_all!()
+        s4 = Space(); load_core_stdlib!(s4)
+        load_metta!(s4, "(= (f a) 1)\n(= (f b) 2)\n")
+        @test !(:f in Eval.auto_table!(s4).multivalued)
     finally
         Eval.untable_all!()
     end

@@ -139,6 +139,73 @@ _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
 untable_all!() = (empty!(_TABLED_HEADS); _table_reset!(); nothing)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROADMAP 0.3 — PER-HEAD `untable!`, so tabling state is SCOPED instead of process-global.
+#
+# `untable/1` (`boot/tabling.pl:250-286`). Upstream does FIVE things per predicate, and doing fewer
+# leaves state that outlives the declaration it belonged to:
+#   1. only acts if the predicate IS tabled (`; true` otherwise — a no-op, never an error)
+#   2. `abolish_table_subgoals/1` — drops the predicate's TABLES
+#   3. `retractall('$tabled'/2)` — drops the declaration
+#   4. `retractall('$table_mode'/3)` — drops the MODE (our `tabling/Aggregation.jl` registry)
+#   5. clears the attributes: tabled / opaque / incremental / monotonic / lazy
+#      (our only landed attribute-shaped state is the §7.11 restraint, in `tabling/Tripwires.jl`)
+#
+# ⚠️ WHY THIS IS NOT `delete!(_TABLED_HEADS, head)`. Every other container is keyed by the VARIANT
+# KEY (an `Atom`), not by the head symbol, so a head's rows have to be filtered out of eight of them.
+# Left behind, they are worse than stale: `_ANSWER_TABLE` would serve answers for a predicate that is
+# no longer tabled, and `_DEPS` would fire resumptions into a table that no longer exists.
+#
+# ⚠️ AND THE MID-EVALUATION GUARD IS NOT OPTIONAL. Upstream raises `permission_error` when a change
+# hits an INCOMPLETE table (`pl-tabling.c` `state.incomplete` → `change_incomplete_error`). Pulling a
+# head out from under an in-progress fixpoint would leave `_GEN_STACK`/`_COMPONENT` referring to a
+# table whose answers were just deleted. We refuse the same way rather than corrupting the run.
+"""
+    untable!(head) -> Bool
+
+Undo `table!` for ONE head: drop the declaration, abolish its tables, and clear its mode and
+restraints. Returns `false` (a no-op) if `head` was not tabled, mirroring upstream's `; true`.
+
+Throws if `head` has an INCOMPLETE table — upstream's `change_incomplete_error`.
+"""
+function untable!(head::Symbol)::Bool
+    head in _TABLED_HEADS || return false
+    any(k -> head_name(k) === head, _TABLE_INPROG) && throw(ErrorException(
+        "permission_error(modify, incomplete_table, $(head)) — untable! during an active " *
+        "completion would delete answers the running fixpoint still refers to"))
+    delete!(_TABLED_HEADS, head)
+    abolish_table_subgoals!(head)
+    untable_modes!(head)        # '$table_mode' — tabling/Aggregation.jl
+    restraint!(head, :max_answers, -1)   # the attribute-shaped state — tabling/Tripwires.jl
+    true
+end
+
+"""
+    abolish_table_subgoals!(head)
+
+`abolish_table_subgoals/1` (`library/tables.pl`) at head granularity — the middle of upstream's three
+levels (all / module / subgoal); we previously had only `abolish_all_tables` as `untable_all!`.
+
+Drops every row keyed by a variant of `head` from ALL the per-key containers. `_DEPS` needs both
+directions: a dependency is dropped when its SOURCE is this head (its table is going away) and when
+its TARGET is (resuming into a deleted table is what leaves a dangling continuation).
+"""
+function abolish_table_subgoals!(head::Symbol)
+    _ishead(k::Atom) = head_name(k) === head
+    for d in (_ANSWER_TABLE, _ANSWER_STAMP, _PARTIAL, _COMPONENT, _DEPS)
+        for k in collect(keys(d)); _ishead(k) && delete!(d, k); end
+    end
+    for s in (_TABLE_INPROG, _PARTIAL_READ, _NEG_BARRIER, _SCC_NEG)
+        for k in collect(s); _ishead(k) && delete!(s, k); end
+    end
+    for (src, deps) in _DEPS                       # …and dependencies TARGETING this head
+        filter!(dep -> !_ishead(dep.target), deps)
+        isempty(deps) && delete!(_DEPS, src)
+    end
+    filter!(!_ishead, _GEN_STACK)
+    nothing
+end
 @inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
 # MeTTa surface for the directive (the analog of SWI `:- table fib/1`): `!(table! fib)` marks the `fib`
 # predicate tabled, so a program/server enables tabling without a Julia call. Registered in TOKEN_REGISTRY.
@@ -248,12 +315,127 @@ Analyze `space`'s `(=)` rules and mark every USER-defined PURE function head tab
 an impurity-propagation fixpoint over a conservative pure-primitive whitelist, so anything touching an
 unknown/impure op is left untabled — result-preserving, only faster. Returns the heads it tabled/skipped.
 """
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROADMAP 2.0 — THE MULTIVALUED GUARD.
+#
+# Tabling COLLAPSES MULTIPLICITY: `(= (h) 1)` twice gives untabled `[1,1]` and tabled `[1]`. That is
+# not a bug in our merge — TABLING IS SET-SEMANTICS BY DESIGN in every implementation (the
+# delimited-control paper dedups in `store_answer/2`; SWI structurally, via the answer trie), while
+# MeTTa is MULTISET. It is a LANGUAGE-LEVEL mismatch, so the fix is not a better merge — it is
+# REFUSING TO TABLE heads whose multiplicity would be observable. Three upstreams agree that this is
+# the right response: JeTTa's `!f.isMultivalued()` (`Generator.kt:166`), Triska's `once/1`, and our
+# own measurement.
+#
+# 🔴 THE SIGNAL, and why `length(rules[h]) > 1` — the roadmap's candidate — is the WRONG one.
+# It is too blunt in the way the roadmap suspected: it refuses `(= (f a) 1)` + `(= (f b) 2)`, whose
+# patterns are DISJOINT, so no call can ever match both and tabling is perfectly safe.
+#
+# The precise question is not "how many rules" but "CAN TWO RULES FIRE ON ONE CALL", i.e. are any two
+# rule-head patterns UNIFIABLE. That admits the disjoint case and still refuses the real ones:
+#
+#     (= (h) 1)   (= (h) 2)          heads identical        → unifiable  → NOT tabled ✓
+#     (= (fact 0) 1) (= (fact $n) …) `0` unifies with `$n`  → unifiable  → NOT tabled ✓
+#     (= (f a) 1) (= (f b) 2)        `a` vs `b`             → disjoint   → TABLED     ✓
+#
+# The `fact` row is the one worth dwelling on: MeTTa really does answer `(fact 0)` from BOTH clauses,
+# so it IS multivalued there and refusing it is correct, not conservative. Prolog's first-match cut
+# does not apply — `[[feedback_reference_shape_vs_primitive_semantics]]`.
+#
+# ⚠️ FAILS SAFE. Variables are standardised apart before the test, and anything we cannot decide is
+# treated as MULTIVALUED (not tabled). The unsafe direction is tabling something multivalued, which
+# silently drops answers; declining to table costs only speed.
+
+"LHS patterns per head — `_rules_of` keeps only RHS bodies, and the guard needs the heads."
+function _rule_heads_of(atoms)::Dict{Symbol,Vector{Atom}}
+    d = Dict{Symbol,Vector{Atom}}(); EQ = Symbol("=")
+    for a in atoms
+        (a isa Expression && length(a.children) == 3 && head_name(a) == EQ) || continue
+        lhs = a.children[2]
+        (lhs isa Expression && !isempty(lhs.children) && lhs.children[1] isa Sym) || continue
+        push!(get!(d, head_name(lhs), Atom[]), lhs)
+    end
+    d
+end
+
+"Rename every variable in `a` to a fresh id, so two patterns share no variable (standardise apart)."
+function _standardise_apart(a::Atom, tag::UInt64)::Atom
+    seen = Dict{Var,Var}(); n = Ref(0)
+    rn(x::Atom) = x isa Var ? get!(() -> (n[] += 1; Var("_sa$(tag)", UInt64(n[]))), seen, x) :
+                  (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
+    rn(a)
+end
+
+"""
+    is_multivalued(heads) -> Bool
+
+Can two of these rule-head patterns fire on ONE call? True ⇒ tabling would collapse multiplicity.
+
+Uses `match_atoms` for unifiability after standardising apart. Any pair we cannot decide counts as
+multivalued: the unsafe direction is tabling something multivalued, which drops answers silently.
+"""
+function is_multivalued(heads::Vector{Atom})::Bool
+    length(heads) <= 1 && return false
+    for i in 1:length(heads)-1, j in i+1:length(heads)
+        li = _standardise_apart(heads[i], UInt64(1))
+        lj = _standardise_apart(heads[j], UInt64(2))
+        unifiable = try
+            !isempty(match_atoms(li, lj)) || !isempty(match_atoms(lj, li))
+        catch
+            true                      # undecidable ⇒ treat as multivalued (fail safe)
+        end
+        unifiable && return true
+    end
+    false
+end
+
+"""
+    _multivalued_heads(atoms) -> Set{Symbol}
+
+Every head whose answers can be a genuine MULTISET, as a least fixpoint over the call graph.
+
+🔴 THE PROPAGATION IS THE POINT, and the head-local test alone does NOT fix the measured defect.
+Found by running the case rather than reasoning about it: with only the overlap test,
+
+    (= (h) 1)  (= (h) 1)  (= (k) (h))
+
+correctly refuses to table `h` — and then TABLES `k`, whose single rule cannot overlap anything, so
+`!(k)` still collapsed `[1,1]` to `[1]`. Multivaluedness is INHERITED: a head that calls a
+multivalued head returns its multiplicity. Seeded by the head-local overlap test and closed under
+`_callees!`, the same shape as `_pure_heads`'s purity fixpoint.
+
+Analyses ALL rules, stdlib included, because the call chain that carries multiplicity into a user
+head can run through library code.
+"""
+function _multivalued_heads(atoms)::Set{Symbol}
+    rh    = _rule_heads_of(atoms)
+    rules = _rules_of(atoms)
+    multi = Set{Symbol}(h for (h, pats) in rh if is_multivalued(pats))   # seed: overlapping clauses
+    changed = true
+    while changed                                                        # close over calls
+        changed = false
+        for (h, bodies) in rules
+            h in multi && continue
+            for b in bodies
+                cs = Set{Symbol}(); _callees!(b, cs)
+                if !isdisjoint(cs, multi)
+                    push!(multi, h); changed = true; break
+                end
+            end
+        end
+    end
+    multi
+end
+
 function auto_table!(space::Space)
     pure = _pure_heads(_rules_of(all_atoms(space)))                         # analyze ALL rules (stdlib deps too)
     user = keys(_rules_of(own_atoms(space)))                               # but only TABLE the user's own heads
-    up = intersect(pure, user)
+    # ROADMAP 2.0: refuse heads whose rules can BOTH fire on one call — tabling is set-semantics and
+    # would silently drop the duplicate answers MeTTa's multiset semantics requires.
+    multi = _multivalued_heads(all_atoms(space))
+    up = setdiff(intersect(pure, user), multi)
     for h in up; table!(h); end
-    (tabled = sort!(collect(up)), skipped = sort!(collect(setdiff(user, up))))
+    (tabled = sort!(collect(up)), skipped = sort!(collect(setdiff(user, up))),
+     multivalued = sort!(collect(multi)))
 end
 
 # `!(auto-table!)` — the MeTTa surface for the auto-tabler (the analog of MeTTa-TS's automatic tabling; cf.
