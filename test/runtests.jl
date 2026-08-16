@@ -80,9 +80,9 @@ module StandardMeTTaTests
     include("standard/tabling/test_completion_merge.jl")
     # SWI §7.11.3 max_answers — the one restraint that ports to a Dict today (no answer trie needed:
     # `bounded_rationality` does not TRUNCATE, it adds one maximally-general answer subsuming what the
-    # bound stopped computing). Landed in `tabling/Restraints.jl`; registered here because it shipped
-    # unregistered and an unregistered test is a test that does not run.
-    include("standard/tabling/test_restraints.jl")
+    # bound stopped computing). Landed in `tabling/Tripwires.jl` — named for upstream's own section
+    # header (boot/tabling.pl:2263), like every file in that subfolder.
+    include("standard/tabling/test_tripwires.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

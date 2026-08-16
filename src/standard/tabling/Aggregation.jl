@@ -52,6 +52,35 @@
 # trie is the table. These are the seam where our Vector-backed tables meet upstream's semantics,
 # and they disappear into the trie when §1.0's rewire lands.
 
+# 🔴🔴 SOUNDNESS: NON-IDEMPOTENT AGGREGATES ARE UNSOUND ON THE RECOMPUTATION BASE.
+# Found 2026-08-16 while writing the negative control for the `_merge_partial` change, NOT by this
+# file's differential — which compares `merge_answers` directly and never through a fixpoint.
+#
+# `_leader_pass` RE-RUNS every fixpoint round (the "extension table" design; see
+# `Core/docs/tabling_delimited_control_spec.md`), so the same answers are re-derived and MERGED AGAIN
+# each round. Measured:
+#
+#     _merge_partial([(p k 3)], [(p k 3)])  ->  (p k 6), changed=true
+#     _merge_partial([(p k 6)], [(p k 3)])  ->  (p k 9), changed=true
+#
+# `min`/`max`/`first`/`last` are IDEMPOTENT — re-merging is a no-op and the loop converges. `sum` is
+# NOT, and it does not converge; worse, every intermediate table is a WRONG NUMBER rather than a
+# missing answer, so nothing downstream can detect it.
+#
+# ⇒ **`sum` (and any future non-idempotent lattice) MUST NOT BE ADVERTISED AS WORKING END TO END
+# until §1.0's dependency-driven resumption lands**, which feeds each answer forward exactly once.
+# This is an ordering constraint the roadmap did not list, and A REASON TO MOVE THE BASE IN ITS OWN
+# RIGHT. ⚠️ It is NOT roadmap 2.0 — that is tabling-is-set vs MeTTa-is-multiset, which the base move
+# does NOT fix. This one it does. Pinned as a hazard test in `test/standard/tabling/test_completion_merge.jl`,
+# to be REWRITTEN to assert convergence when the rewire lands, not deleted.
+#
+# ⚠️ OPEN, AND DELIBERATELY NOT DECIDED HERE: what a mode KEYS OFF in MeTTa. Upstream can identify
+# the TABLE head with the ANSWER head because an answer to `p(K,V)` IS a `p/2` term. MeTTa breaks
+# that identity: `(= (fib 5) 5)` answers a fib goal with `5` — no argument structure, so `mode_key`
+# returns the answer itself and no aggregation is expressible; and `(= (agg k) (P k 1))` answers with
+# a term whose head is not the tabled head, so a table-head lookup and an answer-head lookup select
+# DIFFERENT modes. That choice is §7.3 semantics, not an implementation detail.
+
 # ── the mode ladder (boot/tabling.pl:1451-1513) ──────────────────────────────────────────────────
 abstract type TableMode end
 

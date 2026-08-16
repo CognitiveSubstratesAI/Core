@@ -27,6 +27,25 @@
 #
 # `restraint/4` (`boot/tabling.pl:1337-1342`): a NEGATIVE value means NO RESTRAINT — the option is
 # dropped rather than stored. `NO_RESTRAINT` is our `(size_t)-1`.
+#
+# ─── UPSTREAM TRACE ──────────────────────────────────────────────────────────────────────────────
+# File named for upstream's own section header (`boot/tabling.pl:2263` TRIPWIRES). Ours ← theirs:
+#
+#   restraint!                        ←  restraint/4                  boot/tabling.pl:1337
+#                                        table_options/3 (:1325-1333) dispatches into it
+#   TripwireAction / TW_*             ←  tripwire_action/2            boot/tabling.pl:2282-2288
+#                                        + ATOM_bounded_rationality   pl-tabling.c:3608,3636
+#   tripwire_answers_for_subgoal      ←  tripwire_answers_for_subgoal src/pl-tabling.c
+#   tbl_wkl_add_answer                ←  '$tbl_wkl_add_answer'/4      src/pl-tabling.c:3577
+#                                        (the enforcement site is :3633-3668 inside it)
+#   generalise_answer_substitution    ←  generalise_answer_substitution   src/pl-tabling.c:3642
+#   add_answer_count_restraint!       ←  add_answer_count_restraint   src/pl-tabling.c:3643
+#   answer_count_restraint            ←  system:answer_count_restraint/0  boot/tabling.pl:2297
+#   NO_RESTRAINT                      ←  (size_t)-1                   src/pl-tabling.c:8649
+#
+# ⚠️ NO DIRECT UPSTREAM ANALOGUE: `_is_general_variant`. Upstream needs no variant dedup because the
+# answer trie makes the general answer a single node by construction; our Vector needs it explicitly
+# (fresh variables make two general answers structurally unequal — measured 4 vs the oracle's 3).
 
 "Upstream's `(size_t)-1` / `restraint/4`'s negative value: this restraint is not in force."
 const NO_RESTRAINT = -1
