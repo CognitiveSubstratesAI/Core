@@ -5,6 +5,11 @@ using MeTTaCore
 # CoreSpace + MORK-substrate regression tests (extracted to test_corespace.jl when the legacy
 # Eval_obsolete.jl tree-walker was retired; the modern engine's builtins are validated by
 # StandardMeTTaTests / test_conformance / the LeaTTa oracle).
+# EVERY test file must be reachable from here, or exempted by name with a reason. "A test exists and
+# does not run" cost work three times on 2026-08-16: test_tripwires.jl shipped unregistered, its
+# registration then broke on a rename, and test/standard/test_unit.jl had NEVER run — six conformance
+# gaps closed under a stale baseline with no attributable commit. First, so the suite says so early.
+include("test_suite_reachability.jl")
 include("test_corespace.jl")
 include("test_corespace_load.jl")   # load_metta!(::CoreSpace) — libs into the shared MORK trie
 # Space constructor REGISTRY + capability ledger. Every declared capability is exercised, so the ledger
@@ -117,6 +122,15 @@ module StandardMeTTaTests
     include("standard/test_stdlib.jl")
     include("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
     include("standard/test_conformance.jl")
+    # UNIT conformance — hyperon's OWN stdlib `#[test]` corpus over ten `unit/*.metta` modules, with a
+    # per-module expected-failure baseline. ⚠️ REGISTERED 2026-08-16 AFTER NEVER HAVING RUN: adopted at
+    # `0c51e87`, then touched only by mechanical renames, so `core.metta` sat at baseline 8 while only 2
+    # still failed. Wrapped in its own module because it defines generic names (`SM`, `BASELINE`,
+    # `UNIT_DIR`) that would otherwise land in StandardMeTTaTests' namespace — the same reason the
+    # pln/ loop wraps each of its files.
+    @eval module $(gensym("UnitConformance"))
+        include(joinpath(@__DIR__, "standard", "test_unit.jl"))
+    end
     include("oracle/leatta/test_leatta_oracle.jl")   # differential vs the Lean-4 machine-proved MeTTa
     include("oracle/mettaref/test_mettaref_oracle.jl")  # MeTTapedia metta-ref: HOL4-specified M1
                                                         # goldens + a nondeterminism/bag corpus.

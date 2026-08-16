@@ -24,8 +24,21 @@ const BASELINE = Dict(
     #   sqrt/pow/log/trig always Float, abs/trunc/ceil/floor/round preserve type, isnan/isinf → Bool.
     #   48/48 green. (Was 48 missing.)
     "math.metta" => 0,
-    # core: pragma! unimplemented (~5) + case-on-Empty / unify-in-case divergence (~3).
-    "core.metta" => 8,
+    # core: 8 → 2, LOWERED 2026-08-16, and the old comment ("pragma! unimplemented (~5) +
+    # case-on-Empty / unify-in-case divergence (~3)") was ALREADY WRONG when it was lowered.
+    # ⚠️ THIS FILE HAD NEVER RUN. It is reached by no `include` in the suite and by nothing in `bin/`
+    # or `tools/` — adopted at `0c51e87`, then touched only by three mechanical module renames. So six
+    # gaps closed and the ratchet never noticed. `test_suite_reachability.jl` now exists so that a test
+    # nothing runs fails the suite. The 6 fixes are UNATTRIBUTED — nothing recorded which commits
+    # earned them, which is the cost of a gate that does not run.
+    # THE 2 THAT REMAIN, measured (`unit/core.metta` unchanged since adoption, 24 directives, 22 pass):
+    #   1. `(pragma! max-stack-depth -12)` — and pragma! is NOT "unimplemented": the file has ELEVEN
+    #      pragma! directives and only this one fails, i.e. only the negative-value case.
+    #   2. `(case (fac 6) ((Error $a StackOverflow) …))` — expects a StackOverflow error we never raise.
+    # Both are the SAME cause class — depth/stack limits. `_METTA_MAX` defaults to 0 = unlimited
+    # (deliberately, mirroring hyperon's `max_stack_depth` default), so there is no depth to exceed and
+    # no StackOverflow to report. Sibling of interpreter.metta's recorded "1 step-limit" entry.
+    "core.metta" => 2,
     # space: state-op behaviour (change-state! / get-state).
     "space.metta" => 1,
     "text.metta" => 0,        # clean — comment-handling cases all pass
