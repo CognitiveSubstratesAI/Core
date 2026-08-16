@@ -87,16 +87,21 @@ abstract type TableMode end
 "An ordinary argument: part of the variant KEY, not aggregated. Upstream's default / `index`."
 struct ModeIndex <: TableMode end
 
-"`lattice(F/3)` — `f(stored, new) -> merged`. `boot/tabling.pl:1459`."
-struct ModeLattice <: TableMode
+"""`lattice(F/3)` — `f(stored, new) -> merged`. `boot/tabling.pl:1459`.
+
+Parameterised on the function type so `f` is a CONCRETE field: `f::Function` would make every
+`update_body` call a dynamic dispatch through an abstract field, in the completion loop's hot path.
+`[[feedback_no_any_typed_containers]]` / `[[feedback_perf_diagnosis_typeinstability_first]]`"""
+struct ModeLattice{F} <: TableMode
     name::Symbol
-    f::Function
+    f::F
 end
 
-"`po(F/2)` — `f(stored, new) -> Bool`; TRUE keeps `stored`. `boot/tabling.pl:1474`."
-struct ModePO <: TableMode
+"`po(F/2)` — `f(stored, new) -> Bool`; TRUE keeps `stored`. `boot/tabling.pl:1474`. Parameterised
+on the function type for the same reason as `ModeLattice` — a concrete `f`, not a dynamic dispatch."
+struct ModePO{F} <: TableMode
     name::Symbol
-    f::Function
+    f::F
 end
 
 # ── the built-in lattice operations (boot/tabling.pl:1526-1531), ported line for line ────────────
@@ -201,12 +206,18 @@ function mode_key(goal::Atom, modes::Vector{<:TableMode})::Atom
     Expression(out)
 end
 
-"Apply one mode to a stored/new value pair. `lattice` merges; `po` KEEPS `s0` when the test holds."
-function update_body(m::TableMode, s0::Atom, s1::Atom)::Atom
-    m isa ModeLattice && return (m::ModeLattice).f(s0, s1)
-    m isa ModePO      && return (m::ModePO).f(s0, s1) ? s0 : s1   # boot/tabling.pl:1478
-    s1
-end
+"""Apply one mode to a stored/new value pair. `lattice` merges; `po` KEEPS `s0` when the test holds
+(`boot/tabling.pl:1478`).
+
+MULTIPLE DISPATCH, not an `isa` chain. Measured with JET: the chain emitted a runtime dispatch per
+branch with the callee inferred only as `%::Any`, because `m` arrives from a `Vector{TableMode}` and
+the `isa` test cannot narrow the FIELD type. Dispatching on the concrete mode types resolves `f` from
+the struct parameter instead — one method lookup rather than a lookup plus an unknown call, and it is
+the Julia idiom rather than a transliterated switch.
+`[[feedback_perf_diagnosis_typeinstability_first]]` / `[[feedback_native_julia_not_transliteration]]`"""
+update_body(::ModeIndex, ::Atom, s1::Atom)::Atom = s1
+update_body(m::ModeLattice, s0::Atom, s1::Atom)::Atom = m.f(s0, s1)
+update_body(m::ModePO, s0::Atom, s1::Atom)::Atom = m.f(s0, s1) ? s0 : s1
 
 """
     merge_answers(existing, incoming, modes) -> (answers, changed)
