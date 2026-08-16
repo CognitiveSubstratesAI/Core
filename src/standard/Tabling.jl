@@ -429,6 +429,25 @@ function _project(answers::Vector{Atom}, red::Atom)::Vector{Atom}
     Atom[_subst_vars(a, m) for a in answers]
 end
 
+# ── THE COMPLETION MERGE POINT — one function, and the growth signal is VALUE-based ──────────────
+# Every fixpoint round in this file merges a pass's answers into a table and asks "did anything
+# change?". That question had TWO hand-rolled answers, both `length(_PARTIAL[m]) != n0`.
+#
+# 🔴 CARDINALITY IS THE WRONG SIGNAL, AND IT FAILS SILENTLY. This file's own header has warned since
+# the extraction that "a table can keep its SIZE while its VALUE improves"; §7.3 mode-directed tabling
+# (landed 2026-08-16 in `tabling/Aggregation.jl`) is the consumer that makes it real. Folding
+# `(k,1)` and `(k,2)` into `(k,3)` under `lattice(sum)` leaves the COUNT fixed, so a length test
+# reports convergence and completes a HALF-AGGREGATED table — no error, no missing answer, just a
+# wrong number.
+#
+# ⚠️ THE SWITCH IS BEHAVIOUR-PRESERVING TODAY, AND THAT IS CHECKABLE, NOT ASSUMED. With no modes
+# declared, `merge_answers` is set-union with a value-based flag; since `_PARTIAL[m]` is always
+# dup-free and the merge only ever ADDS, "a new element appeared" and "the length grew" coincide
+# exactly. Order also coincides (existing first, then new in arrival order). ⇒ the gate set is a
+# real oracle for this change: identical answers, or the equivalence claim is wrong.
+_merge_partial(existing::Vector{Atom}, incoming::Vector{Atom}, key::Atom)::Tuple{Vector{Atom},Bool} =
+    merge_answers(existing, incoming, table_modes(head_name(key)))
+
 # Suspend-on-variant via NAIVE FIXPOINT — the simplification of SWI completion (boot/tabling.pl
 # run_leader/`completion` resumes a delimited continuation off a worklist; we re-run the leader pass instead:
 # correct for a single SCC, no continuation machinery). A tabled goal is the LEADER of its variant; a re-entry
@@ -485,9 +504,9 @@ function _S_P!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom,
             end
             grew = false
             for m in comp()
-                np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
-                _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
-                length(_PARTIAL[m]) != n0 && (grew = true)
+                np = _leader_pass(m, typ, space)
+                _PARTIAL[m], ch = _merge_partial(_PARTIAL[m], np, m)   # VALUE-based, not cardinality
+                ch && (grew = true)
             end
             grew || break
         end
@@ -565,7 +584,10 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     _PARTIAL[key] = Atom[]; _COMPONENT[key] = key; delete!(_PARTIAL_READ, key)
     local ans::Vector{Atom} = Atom[]
     try
-        _PARTIAL[key] = _leader_pass(key, typ, space)                           # initial pass (may merge me up)
+        _PARTIAL[key], _ = _merge_partial(Atom[], _leader_pass(key, typ, space), key)  # initial pass (may merge me up)
+                                        # ↑ through the SAME merge point: a non-recursive head takes the
+                                        # singleton fast path below and never enters a fixpoint round, so
+                                        # a merge point wired only into the loops would silently skip it.
         if _scc_root(key) != key                                                 # I became a FOLLOWER ⇒
             return _replay(_project(_PARTIAL[key], red), b, prev)              #   ancestor root finishes me
         end
@@ -578,9 +600,9 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
                 while true                                                       # positive SCC: joint naive fixpoint
                     grew = false
                     for m in members
-                        np = _leader_pass(m, typ, space); n0 = length(_PARTIAL[m])
-                        _PARTIAL[m] = unique(vcat(_PARTIAL[m], np))
-                        length(_PARTIAL[m]) != n0 && (grew = true)
+                        np = _leader_pass(m, typ, space)
+                        _PARTIAL[m], ch = _merge_partial(_PARTIAL[m], np, m)  # VALUE-based, not cardinality
+                        ch && (grew = true)
                     end
                     grew || break
                     members = comp()                                            # component may have grown

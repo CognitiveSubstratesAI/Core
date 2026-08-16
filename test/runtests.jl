@@ -72,6 +72,12 @@ module StandardMeTTaTests
     # swipl on lattice(min/max/sum) and po/2. Compares AGGREGATION SEMANTICS, not an end-to-end
     # tabled query — the merge point is §1.0's `tabled_eval` rewire and is not landed yet.
     include("standard/tabling/test_aggregation.jl")
+    # The COMPLETION MERGE POINT — `Tabling._merge_partial` and the growth signal it reports. The
+    # rest of the gate set CANNOT see this change: with no modes declared the value-based signal is
+    # behaviour-preserving by construction, so health/corpus/differentials stay green either way.
+    # This pins the case where cardinality and value DISAGREE, and the sum-under-recomputation hazard
+    # that makes non-idempotent §7.3 aggregates unsound until the §1.0 rewire lands.
+    include("standard/tabling/test_completion_merge.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
