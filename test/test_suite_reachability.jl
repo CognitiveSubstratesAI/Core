@@ -53,11 +53,14 @@ using Test
             p in reached && return
             push!(reached, p); isfile(p) && scan(p)
         end
-        for m in eachmatch(r"include\(\s*\"([^\"]+\.jl)\"", txt)
+        # BOTH entry forms: raw `include(...)` (used inside individual test files) and runtests.jl's
+        # `Main.@suite(...)` recording wrapper. Missing the second would report the ENTIRE suite as
+        # orphaned the moment runtests.jl switched to the macro.
+        for m in eachmatch(r"(?:include|@suite)\(\s*\"([^\"]+\.jl)\"", txt)
             take(joinpath(dir, m.captures[1]))
         end
         # include(joinpath(@__DIR__, "..", "x.jl")) — the form the first version of this scan missed
-        for m in eachmatch(r"include\(\s*joinpath\(([^)]*)\)\s*\)", txt)
+        for m in eachmatch(r"(?:include|@suite)\(\s*joinpath\(([^)]*)\)\s*\)", txt)
             parts = [x.captures[1] for x in eachmatch(r"\"([^\"]+)\"", m.captures[1])]
             isempty(parts) && continue
             take(joinpath(dir, parts...))
