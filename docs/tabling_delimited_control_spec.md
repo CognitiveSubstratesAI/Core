@@ -134,6 +134,96 @@ the reasons to move the base. Multiplicity is not one of them.
 
 ---
 
+## §5–§7 — READ 2026-08-16. THE SCOPING CHANGES, IN OUR FAVOUR
+
+### §5.1 Where the 577 lines actually go (Table 1)
+
+| category | LoC | share |
+|---|---|---|
+| **Control flow** | **60** | *"less than 11% of the overall effort"* |
+| Call and Answer Tries | 233 | 40% |
+| Completion Worklists | 259 | 45% |
+| Miscellaneous | 25 | |
+
+🔑 **THE DELIMITED-CONTROL PART IS 60 LINES.** *"The majority goes to the two kinds of data
+structures, the tries (40%) and the worklists (45%)."* Those 492 lines exist because **Prolog has no
+native trie and no native dequeue**. Julia does. ⇒ the port is NOT "577 lines of Julia": it is ~60
+lines of control flow plus data structures the language largely supplies. This is the concrete form
+of `[[feedback_native_julia_not_transliteration]]` — **adopt the SHAPE (leader/follower, dependency,
+worklist invariant), not their container implementations.**
+
+### §5.2 Performance — the honest cost, quote the number not the adjective
+
+*"XSB … is **8 to 38 times faster** than our implementation, but 45 to 78 times faster for two
+outliers"*, with *"maximum RSS that is up to **7 times as large**"*. Yap outperforms it on every
+benchmark; Ciao is 4–14× faster. The authors call this *"very reasonable"* — for a **pure-Prolog**
+implementation against a C engine. ⚠️ **We would NOT inherit that ratio**: their overhead is
+interpreted Prolog data structures, which is precisely the 85% we would not be porting.
+
+### §5.2 Future work they name — and ONE OF IT WE ALREADY HAVE
+
+1. *"continuations are copied with `copy_term/2`. A special-purpose `copy_continuation/2` could do
+   better by exploiting the known structure of these terms."*
+2. ⭐ *"we **don't statically identify strongly connected components** in the scheduling component.
+   Doing so would allow the specialisation of completion."* — **WE DO.** `Tabling.jl`'s `_COMPONENT`
+   union-find (`_scc_root`) merges leaders into SCCs already. A port must NOT throw that away; it is
+   an advantage over the reference implementation, not a thing to replace.
+3. *"our tries do not use substitution factoring."*
+
+### §7 Conclusion — bears directly on roadmap 7.3
+
+*"In the future we would also like to extend our approach with **mode-directed tabling** (Guo and
+Gupta 2008; Santos and Rocha 2013). Our initial exploration has shown that this would only require a
+**small change to the trie structure**."* ⇒ 7.3 lands on the trie, not on the control flow — which
+also means it wants the base's answer trie to exist first.
+
+### §6 Related work — our design class, named again
+
+*"**Linear Tabling** (Zhou et al. 2000) … there is no overhead for standard SLD-resolution, but **the
+need for recomputation of subgoals cannot always be avoided**."* Same family as ours. And *"**DRA**
+(Guo and Gupta) … postpones clauses containing variant calls at runtime, which is **similar to our
+suspension creation**" — with "significantly better SPACE performance, but a worse TIME performance"*.
+
+---
+
+## FEASIBILITY ON OUR MACHINE — assessed 2026-08-16
+
+`Eval.jl`'s frame IS a delimited continuation already:
+
+    mutable struct Frame
+        atom::Atom
+        vars::Set{Var}
+        prev::Union{Frame,Nothing}   # ← the continuation CHAIN
+        ret::Function                # ← the per-frame continuation, called when a child finishes
+        finished::Bool               # ← MUTATED IN PLACE
+        depth::Int
+        tco::Bool
+    end
+    const Plan = Vector{Tuple{Frame,Bindings}}
+
+* **`reset(Goal, Cont, Term1)`** ⇒ push a DELIMITER frame and run `Goal` beneath it.
+* **`shift(Term2)`** ⇒ walk `prev` from the current frame up to the nearest delimiter; that chain,
+  with its `ret` closures, is `Cont`.
+
+🔴 **THE ONE REAL CONSTRAINT: `Frame` IS MUTABLE and `finished` is written in place, so a captured
+continuation MUST BE COPIED, never aliased** — otherwise resuming it later would observe mutations
+made after capture. That is precisely what the paper does (`copy_term/2`) and precisely the
+optimization it names as future work: *"a special-purpose `copy_continuation/2` could do better by
+exploiting the known structure of these terms."*
+
+⭐ **AND THAT IS A JULIA-NATIVE ADVANTAGE AVAILABLE FROM DAY ONE.** They must copy generic Prolog
+terms; we KNOW the frame layout, so the specialised copy is writable immediately rather than as a
+later optimization. Their future-work item #1 is our starting point.
+
+⇒ **VERDICT: feasible, and the control-flow half is small** (their 60 LoC). The work is
+(a) `reset`/`shift` over the frame chain + a typed `copy_continuation`, (b) `dependency(Source, Cont,
+Target)`, (c) the worklist dequeue with the left/right invariant, (d) an answer trie. Items (c) and
+(d) are where 85% of THEIR effort went and where Julia's containers do most of it for us.
+⚠️ KEEP `_COMPONENT` — our union-find SCC detection is something the reference implementation
+explicitly lacks and lists as future work. A port must not discard it.
+
+---
+
 ## Bearing on `TABLING_ROADMAP.md`
 
 * **Reconsider the whole of §1 before building it.** The roadmap scoped SWI's four modes and nine
