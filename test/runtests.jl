@@ -67,6 +67,12 @@ module StandardMeTTaTests
     # `tabled_eval`: this gates the primitives standalone, so a green run means capture-and-resume is
     # sound on this machine, not that tabling uses it.
     include("standard/test_delimited_control.jl")
+    # CONTINUATION SAFETY — the invariant that makes §1.0's capture/resume sound: every `Frame.ret`
+    # closure is FRAME-AGNOSTIC (takes `self` as a parameter, closes over immutables only). A closure
+    # capturing an outer frame breaks it while adding ZERO Frame field writes, and
+    # test_delimited_control.jl would pass it — that gates BEHAVIOUR on one run, this gates the
+    # invariant. Includes a mutation battery proving the checker sees the defect class.
+    include("standard/test_frame_agnostic_ret.jl")
     # Mode-directed tabling / answer subsumption — SWI §7.3, ported into `src/standard/tabling/`
     # (the subfolder mirrors swipl-devel's own section boundaries). Differentialled against live
     # swipl on lattice(min/max/sum) and po/2. Compares AGGREGATION SEMANTICS, not an end-to-end
