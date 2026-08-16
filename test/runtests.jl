@@ -134,6 +134,10 @@ module StandardMeTTaTests
     # bound stopped computing). Landed in `tabling/Tripwires.jl` — named for upstream's own section
     # header (boot/tabling.pl:2263), like every file in that subfolder.
     Main.@suite("standard/tabling/test_tripwires.jl")
+    # The per-table WORKLIST — roadmap §1.0 step 3. ONE invariant: an answer is LEFT of a dependency
+    # iff they have not been combined, so combining is recorded by SWAPPING the pair and there is no
+    # "done" flag anywhere. NOT wired: the completion loop still recomputes via `_leader_pass`.
+    Main.@suite("standard/tabling/test_worklist.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
