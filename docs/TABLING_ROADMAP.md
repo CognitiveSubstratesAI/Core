@@ -69,6 +69,61 @@ We implement **one of four modes and zero of nine attributes**: ~250 lines of co
 
 ---
 
+## 3.5 EXPLICIT MEMOIZATION — a THIRD option, available TODAY with zero engine work
+
+Source: Markus Triska, *metalevel.at/prolog/memoization* (user-supplied 2026-08-16). O'Keefe's two
+rules for efficiency: **"Don't do it. Don't do it again."** Tabling is option 2 automated; explicit
+memoization is option 2 by hand.
+
+**MEASURED IN PURE MeTTa, no engine change** — the `assertz` pattern as `add-atom`:
+
+    (= (fib $n) (if (< $n 2) $n (fib-memo $n)))
+    (= (fib-memo $n)
+       (let $hit (collapse (match &self (fib-cache $n $v) $v))
+         (if (== $hit ())
+             (let $r (+ (fib (- $n 1)) (fib (- $n 2)))
+               (let $_ (add-atom &self (fib-cache $n $r)) $r))
+             (car-atom $hit))))
+
+    untabled          dies at n=18 (step limit)
+    EXPLICIT MEMO     fib(30) = 832040 in **571 ms**   ← works TODAY
+    SLG tabling       fib(30) = 832040 in **36 ms**    ← 16x faster
+
+The 16x is the lookup path: `match` is a space query, tabling hits a `Dict`.
+
+**WHAT IT BUYS** — the cache is ATOMS: inspectable by `match`, dumpable, persistable to `.act`,
+removable by `remove-atom`. No revision stamp, no IDG, no process-global state. `_ANSWER_TABLE` is a
+`Dict` nothing can see.
+
+🔴 **WHAT IT DOES NOT BUY, IN TRISKA'S OWN WORDS:** *"this rather ad hoc definition **does not help to
+improve termination properties** of your programs"* and *"it requires modifications of the original
+program… You have to manually wrap the goals"*. Tabling's suspend-on-variant is what makes
+left-recursive `adjacent(X,Y) :- adjacent(Y,X)` terminate; a memo check cannot. **They are not
+substitutes** — memo avoids recomputation, tabling ALSO fixes non-termination.
+
+🔴🔴 **AND IT CARRIES THE SAME MULTIVALUED CONSTRAINT — A THIRD INDEPENDENT SOURCE FOR 2.0.** Triska's
+`memo/1` wraps the goal in **`once(Goal)`**, with the condition stated explicitly: *"As long as Goal
+is **semi-deterministic or deterministic**, `memo(Goal)` is equivalent to `Goal`."* So:
+
+| source | the guard |
+|---|---|
+| JeTTa `Generator.kt:166` | `!f.isMultivalued()` |
+| our measurement 2026-08-16 | tabling turns `[1,1]` into `[1]` |
+| **Triska** | **`once(Goal)`, "semi-deterministic or deterministic"** |
+
+⇒ **memoization of ANY kind requires single-valuedness.** An earlier note here suggested explicit
+memo "gives you the choice to preserve multiplicity" — true in principle, but NOT of this pattern.
+
+⭐ **AND A POINTER WORTH FOLLOWING BEFORE ANY 1.x WORK:** *"Scryer Prolog implements tabling via
+**delimited continuations**. See **Tabling as a Library with Delimited Control**, Desouter et al."*
+**Tabling as a LIBRARY, not a 9 472-line C engine** — and `Eval.jl` is already a CPS stack machine
+("continuation-passing stack machine… a stack of frames… a `ret` continuation"), which is precisely
+the substrate delimited control needs. That is a far closer architectural match than SWI's approach,
+and it may make 1.1/1.4 much cheaper than the ~8 600-vs-250 line comparison suggests.
+⚠️ NOT IN dev-zone — no Scryer clone, no local copy of the paper. Fetch both before scoping 1.x.
+
+---
+
 ## 4. STRUCTURAL
 
 | # | item | notes |
