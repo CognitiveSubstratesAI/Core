@@ -61,6 +61,12 @@ module StandardMeTTaTests
     # under swipl and asserts Core agrees value-for-value. Same two guards as the WFS differential:
     # loud skip if swipl is absent, and a positive control before any comparison.
     include("standard/test_tabling_swipl_differential.jl")
+    # Delimited control over the CPS frame chain — tabling roadmap §1.0 step 1. The primitives
+    # (`Continuation`/`capture_continuation`/`resume_continuation`/`Dependency`) that replace
+    # `_leader_pass` RECOMPUTATION with dependency-driven RESUMPTION. NOT yet wired into
+    # `tabled_eval`: this gates the primitives standalone, so a green run means capture-and-resume is
+    # sound on this machine, not that tabling uses it.
+    include("standard/test_delimited_control.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

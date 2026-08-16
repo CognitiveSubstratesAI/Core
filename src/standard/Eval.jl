@@ -1282,9 +1282,19 @@ metta_run_sm(atom::Atom, space::Space, b::Bindings=Bindings()) =
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────
 const _DIAG_STEPS = Ref(0)   # diagnostic: cumulative interpret() reduction steps (reset/read externally)
 
-"Run the minimal-MeTTa machine on `atom`; returns the list of (result, bindings)."
-function interpret(atom::Atom, space=nothing, b::Bindings=Bindings())::Vector{Tuple{Atom,Bindings}}
-    plan = Tuple{Frame,Bindings}[(Frame(atom, collect_vars(atom), nothing, no_handler, false, 0), b)]
+"""
+    _run_plan(plan, space) -> Vector{Tuple{Atom,Bindings}}
+
+THE driver loop — run a plan of pending `(Frame,Bindings)` to exhaustion, collecting every frame that
+finishes at the root (`prev === nothing`).
+
+⚠️ EXTRACTED FROM `interpret` 2026-08-16 (tabling roadmap §1.0) SO THERE IS EXACTLY ONE DRIVER.
+`interpret` seeds a plan from a fresh root frame; `resume_continuation` (`Tabling.jl`) seeds one from a
+CAPTURED frame chain. Both must observe the same step cap, the same diagnostic counter and the same
+finished/root discipline — a second hand-rolled loop is how those silently diverge. This is a pure
+extraction: `interpret` below is the same function with its body moved here.
+"""
+function _run_plan(plan::Vector{Tuple{Frame,Bindings}}, space)::Vector{Tuple{Atom,Bindings}}
     out = Tuple{Atom,Bindings}[]
     steps = 0
     while !isempty(plan)
@@ -1306,6 +1316,10 @@ function interpret(atom::Atom, space=nothing, b::Bindings=Bindings())::Vector{Tu
     end
     out
 end
+
+"Run the minimal-MeTTa machine on `atom`; returns the list of (result, bindings)."
+interpret(atom::Atom, space=nothing, b::Bindings=Bindings())::Vector{Tuple{Atom,Bindings}} =
+    _run_plan(Tuple{Frame,Bindings}[(Frame(atom, collect_vars(atom), nothing, no_handler, false, 0), b)], space)
 
 "Convenience: run and return just the result atoms."
 bare_eval(atom::Atom, space=nothing) = first.(interpret(atom, space))

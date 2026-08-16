@@ -69,7 +69,31 @@ structures that base simply does not have:
 * **7.3 mode-directed** needs the merge point AND a value-based fixpoint test.
 
 Build: `shift`/`reset` over the CPS frame stack · `dependency(Source, Cont, Target)` · the worklist
-dequeue with the left/right invariant · an answer TRIE. ⚠️ **NOT a reason to move the base: roadmap 2.0.** Retracted 2026-08-16 — tabling is set-semantics
+dequeue with the left/right invariant · an answer TRIE.
+
+> **🟢 STEP 1 of 4 LANDED 2026-08-16 — the control-flow primitives, MEASURED, NOT YET WIRED.**
+> `Eval._run_plan` extracted from `interpret` (ONE driver, so `resume` cannot drift from `interpret`
+> on the step cap or the finished/root discipline) · `Continuation` · `capture_continuation` (`shift`)
+> · `resume_continuation` (the resume side of `delim/3`) · `Dependency(source,cont,target)` + `_DEPS`,
+> cleared by `_table_reset!`. Gate: `test/standard/test_delimited_control.jl` **19/19**, in
+> `runtests.jl`. Regression: health **5/5**, `test_tnot_wfs` 39/39, the swipl §7.1/§7.2 differential
+> green, full suite unchanged (still EXIT 1 at the pre-existing `test_eval_one_step` ratchet,
+> **57 violations before and after** — measured, not assumed).
+>
+> **TWO PLANNED PIECES TURNED OUT UNNECESSARY, both measured rather than argued:**
+> * **No `reset`.** `reset/3` exists to delimit where a captured chain STOPS. Ours already stops —
+>   `_run_plan` collects exactly the frames finishing at `prev === nothing`, so a nested `interpret`
+>   call IS the delimiter. `Continuation` is the `shift` half alone.
+> * **No continuation COPY.** The spec called `Frame`'s in-place mutation "THE ONE REAL CONSTRAINT";
+>   it is retracted there. The whole tree has ONE `Frame` field write (`evalc_op`'s `f.atom`,
+>   `Eval.jl:912`) and it is on the DISPATCHED frame, never a captured `prev`. So the paper's
+>   `copy_term/2` — and the `copy_continuation/2` it lists as future work — are both moot here.
+>   The `Bindings` copy IS kept, for a stated reason: `merge_bindings` trail-undoes its in-place fold
+>   on every exit path (`Atoms.jl:224-252`), which is safe only single-threaded, and **7.9 is in scope**.
+>
+> **REMAINING in §1.0:** (2) `dependency/3` FIRING on each new answer · (3) the worklist dequeue with
+> the left/right invariant · (4) the answer trie. Then the rewire of `tabled_eval` off `_leader_pass`,
+> with the proved corpus + `test_tnot_wfs` + both swipl differentials as the oracle. ⚠️ **NOT a reason to move the base: roadmap 2.0.** Retracted 2026-08-16 — tabling is set-semantics
 by design everywhere, so the guard is still needed after the move. The reasons are PERFORMANCE and
 the three structures above.
 

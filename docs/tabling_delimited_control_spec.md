@@ -205,8 +205,10 @@ suspension creation**" — with "significantly better SPACE performance, but a w
 * **`shift(Term2)`** ⇒ walk `prev` from the current frame up to the nearest delimiter; that chain,
   with its `ret` closures, is `Cont`.
 
-🔴 **THE ONE REAL CONSTRAINT: `Frame` IS MUTABLE and `finished` is written in place, so a captured
-continuation MUST BE COPIED, never aliased** — otherwise resuming it later would observe mutations
+🔴 ~~**THE ONE REAL CONSTRAINT: `Frame` IS MUTABLE and `finished` is written in place, so a captured
+continuation MUST BE COPIED, never aliased**~~ — ⚠️ **RETRACTED 2026-08-16, see CORRECTION 1 below:
+`finished` is never written in place; the whole tree has ONE `Frame` field write and it is on the
+DISPATCHED frame. Kept as written because the reasoning that follows is what the measurement tested.** — otherwise resuming it later would observe mutations
 made after capture. That is precisely what the paper does (`copy_term/2`) and precisely the
 optimization it names as future work: *"a special-purpose `copy_continuation/2` could do better by
 exploiting the known structure of these terms."*
@@ -214,6 +216,51 @@ exploiting the known structure of these terms."*
 ⭐ **AND THAT IS A JULIA-NATIVE ADVANTAGE AVAILABLE FROM DAY ONE.** They must copy generic Prolog
 terms; we KNOW the frame layout, so the specialised copy is writable immediately rather than as a
 later optimization. Their future-work item #1 is our starting point.
+
+### 🟢 MEASURED ON THE MACHINE 2026-08-16 — capture + multi-resume WORKS, and two stated constraints were wrong
+
+Probe: drive `interpret_stack` from OUTSIDE the engine (no source edit), re-implementing `interpret`'s
+plan loop; at the marker goal CAPTURE `(f.prev, bindings)` and DROP the frame — exactly `shift/1`
+(yields control, produces NO answer). Then resume that ONE continuation twice, once per answer.
+
+    program:   (= (g $x) (Result $x))   (= (mark) M1)   (= (mark) M2)
+    baseline (no interception)  = ["(Result M1)", "(Result M2)"]
+    captured continuations      = 1
+    resumed (same cont, ×2)     = ["(Result M1)", "(Result M2)"]      ⇒ IDENTICAL
+
+The captured `prev.atom` is the real pending chain, as expected:
+`(chain (metta (mark) %Undefined%) $rhead (return-on-error $rhead (chain (interpret-tuple ()) …)))`.
+
+**🔴 CORRECTION 1 — "`Frame` IS MUTABLE and `finished` is written in place" is FALSE.** Stated above as
+"THE ONE REAL CONSTRAINT". Measured: the ENTIRE tree (`src/` + `test/`) contains exactly ONE `Frame`
+field write — `evalc_op`'s `f.atom = Expression(EVAL, …)` (`Eval.jl:912`) — and it mutates the frame
+being DISPATCHED, never a captured `prev`. `finished`/`prev`/`ret`/`vars` are never written after
+construction. A `prev` frame is only ever read (`f.prev.ret(f.prev, …)`, `f.prev.vars`) and is never
+re-entered into the plan as an `f`. ⇒ **the frame chain needs NO copy at all** — not the paper's
+`copy_term/2`, and not the specialised `copy_continuation/2` this document called "our starting point".
+The advantage over the reference implementation is larger than claimed, not smaller.
+
+**🔴 CORRECTION 2 — the `Bindings` copy is NOT load-bearing today, and the reason matters.** Two
+mutation checks (drop the copy at capture AND at resume) both PASSED — v1 with symbol answers, v2 with
+answers that must UNIFY into a rule-head pattern `(= (g (F $x)) …)`. ⚠️ **Two green mutations mean the
+probes are BLIND to the class, not that the class is absent** — so this was settled from the CODE BODY,
+not from the probes. `merge_bindings` (`Atoms.jl:224-252`) folds into `left` IN PLACE via
+`_extend_bind_inplace!`/`_extend_eq_inplace!`, but **every exit path calls `resize!(left.entries,
+checkpoint)`** — append-only with an O(1) undo, and the survivor is a `copy(left)`. The fold is
+observationally PURE on `left`. ⇒ no probe COULD have discriminated; a captured `Bindings` cannot be
+permanently extended by anything downstream.
+⇒ **KEEP the copy anyway, for a reason now stated instead of assumed:** the undo is only safe because
+the transient window is closed before we resume, which holds on a SINGLE THREAD. Roadmap **7.9 shared
+tabling is IN SCOPE**, and under threading the trail window overlaps a live capture. The copy is cheap
+(`Bindings(copy(b.entries))`) insurance against exactly the item we have already committed to build.
+
+**🔴 CORRECTION 3 — "NOT YET READ: Appendices A–C" is not a satisfiable gate.** The local PDF is **15
+pages and ends at the references** (pp. 1–13 body, 14–15 refs); there are no appendices in it. The body
+cites them (`Appendix C` at §4.3, `Appendix B` at §4.4) — they are TPLP supplementary material, not in
+this artifact. §4.1–4.4 plus Figures 4–8 (`table/2`, `run_leader/4`, `run_follower/4`, `activate/3`,
+`delim/3`, `completion/0`, `completion_step/1`) give the COMPLETE control flow, and pp. 10–13 confirmed
+§5–§7 as already extracted. ⇒ **scoping §1.0 is not blocked on the appendices**; they would add "more
+code details" on completion and the mutable-term support, and the latter is moot given Correction 1.
 
 ⇒ **VERDICT: feasible, and the control-flow half is small** (their 60 LoC). The work is
 (a) `reset`/`shift` over the frame chain + a typed `copy_continuation`, (b) `dependency(Source, Cont,

@@ -132,7 +132,7 @@ Base.show(io::IO, ::WFSBottom) = print(io, "undefined")
 const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; NOT a program Sym
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
-                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG);
+                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
@@ -267,6 +267,99 @@ end))
 _replay(answers::Vector{Atom}, b::Bindings, prev) =
     isempty(answers) ? finished_result(EMPTY, b, prev) :
     reduce(vcat, (finished_result(ans, b, prev) for ans in answers))
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DELIMITED CONTROL — `shift`/`reset` over the CPS frame chain (roadmap §1.0, step 1 of 4)
+#
+# Desouter, van Dooren & Schrijvers, *Tabling as a Library with Delimited Control* (TPLP 2015), §2:
+#   `reset(Goal, Cont, Term1)` runs Goal; if Goal `shift(Term2)`s, its REMAINDER is captured in Cont.
+#   `shift(Term2)` yields control back to just after the reset, producing NO answer.
+# Their §5.1: the control-flow half of the whole library is **60 of 577 lines** — the other 85% is
+# tries and dequeues that exist only because Prolog lacks them. This is that 60.
+#
+# 🔑 WE DO NOT NEED `reset`. A `reset` delimits where a captured chain STOPS; ours already stops,
+# because `_run_plan` collects exactly the frames that finish at the root (`prev === nothing`) and a
+# nested `interpret` call IS the delimiter. So `Continuation` is the `shift` half alone: the pending
+# frame chain `prev` plus the bindings at the suspension point. `tabled_eval` is handed precisely
+# `(b, prev)` already — the consumer branch's existing `_replay(partials, b, prev)` is a resume that
+# happens to fire immediately.
+#
+# ─── MEASURED 2026-08-16, and it corrected TWO documented constraints ────────────────────────────
+# Probe: drive `interpret_stack` from outside the engine, capture `(f.prev, b)` at a marker goal, drop
+# the frame, then resume that ONE continuation twice with different answers.
+#     (= (g $x) (Result $x))  (= (mark) M1)  (= (mark) M2)
+#     baseline ["(Result M1)","(Result M2)"]  ==  resumed ["(Result M1)","(Result M2)"]   ✓
+#
+# * `Core/docs/tabling_delimited_control_spec.md` called it "THE ONE REAL CONSTRAINT" that `Frame` is
+#   mutable and `finished` is written in place, so a captured chain MUST be copied. **FALSE, and now
+#   retracted there.** The entire tree holds ONE `Frame` field write — `evalc_op`'s `f.atom`
+#   (`Eval.jl:912`) — on the frame being DISPATCHED, never on a captured `prev`. A `prev` is only ever
+#   read (`f.prev.ret(f.prev,…)`, `f.prev.vars`) and is never re-entered into a plan as an `f`.
+#   ⇒ NO frame copy, so not even the `copy_continuation/2` the paper lists as future work (§5.2).
+#   Their future-work item #1 is not our starting point; it is already unnecessary here.
+#
+# * THE `Bindings` COPY BELOW IS NOT LOAD-BEARING TODAY — and is kept deliberately, with the reason
+#   stated so nobody deletes it as cargo. Two mutation checks (drop the copy at capture AND at resume)
+#   both PASSED, which means those probes were BLIND to the class, not that the class is absent
+#   (`[[feedback_oracle_must_observe_the_defect_class]]`). Settled from the CODE BODY instead:
+#   `merge_bindings` (`Atoms.jl:224-252`) folds into `left` in place via `_extend_*_inplace!` but
+#   `resize!`s back to its checkpoint on EVERY exit path, returning `copy(left)` as the survivor — an
+#   append-only trail with an O(1) undo, observationally pure. No probe COULD have discriminated.
+#   ⚠️ THAT UNDO IS SAFE ONLY BECAUSE THE TRAIL WINDOW CLOSES BEFORE WE RESUME, which holds on ONE
+#   THREAD. Roadmap 7.9 (shared tabling) is IN SCOPE and puts a live capture inside that window.
+#   `Bindings(copy(b.entries))` is cheap insurance against an item we have already committed to build.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    Continuation
+
+A suspended computation captured at a tabled call — the `shift/1` half of delimited control.
+`prev` is the pending frame chain (NOT copied; see the header — frames are read-only in practice),
+`b` the bindings at the suspension point (copied), `goal` the SOURCE goal in its `_reduced_goal` form,
+retained because answers are stored in the canonical key's variables and must be `_project`ed back.
+"""
+struct Continuation
+    prev::Union{Frame,Nothing}
+    b::Bindings
+    goal::Atom
+end
+
+"""
+    capture_continuation(b, prev, goal) -> Continuation
+
+`shift/1`: capture the remainder of the current computation without producing an answer.
+"""
+capture_continuation(b::Bindings, prev::Union{Frame,Nothing}, goal::Atom) =
+    Continuation(prev, copy(b), goal)
+
+"""
+    resume_continuation(c, answer, space) -> Vector{Tuple{Atom,Bindings}}
+
+Feed one `answer` into a captured continuation and run it to completion — the paper's
+`delim(Wrapper, Continuation, TargetTable)` on the resume side (§4.3 `completion_step/1`).
+
+Runs on the SHARED driver (`Eval._run_plan`), so the step cap and diagnostics apply exactly as to a
+top-level `interpret`. RE-ENTRANT BY CONSTRUCTION: `c` is never consumed, so the same continuation may
+be resumed once per answer — which is the whole point, since a dependency fires on every new answer of
+its source table.
+"""
+resume_continuation(c::Continuation, answer::Atom, space)::Vector{Tuple{Atom,Bindings}} =
+    _run_plan(finished_result(answer, copy(c.b), c.prev), space)
+
+"""
+    Dependency(source, cont, target)
+
+*"Given an answer for the q/m call, one may obtain answers for the p/n call by resuming the suspended
+continuation."* (§4.2). Stored in the SOURCE call's table and fired whenever a new answer lands there;
+`target` names the table the resumed continuation's answers belong to.
+"""
+struct Dependency
+    source::Atom          # the variant key of the tabled goal that suspended us
+    cont::Continuation    # the captured remainder of the TARGET's worker
+    target::Atom          # the variant key whose answer set the resumption feeds
+end
+
+const _DEPS = Dict{Atom,Vector{Dependency}}()   # source key ↦ dependencies waiting on its answers
 
 # Canonicalize a tabled goal to its VARIANT KEY. Cross-checked vs SWI-Prolog boot/tabling.pl `start_tabling`
 # + the C `$tbl_variant_table`: SWI variant-matches the goal up to variable RENAMING and does NOT reduce
