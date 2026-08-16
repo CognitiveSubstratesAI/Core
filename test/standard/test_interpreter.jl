@@ -136,6 +136,39 @@ end
 # Borrow 2 — revision-stamped SLG table invalidation (CeTTa table_store.c:153). A tabled goal's cached answer set
 # is stamped with the space (objectid, revision); a mutation bumps `revision` so the stale entry auto-evicts on the
 # next lookup and recomputes — closing the "table goes silently stale on space mutation" hole (§7.7).
+@testset "🔴 TABLING COLLAPSES MULTIPLICITY — MeTTa is multiset, the answer table is a SET" begin
+    # PINS A REAL SOUNDNESS DEFECT, found 2026-08-16 while trying to auto-table the compiled lane
+    # (roadmap 2.2). This is NOT auto-tabling's bug — `_leader_pass` has always merged answers with
+    # `unique(vcat(…))`, so **explicit `table!(h)` has always had it**; auto-tabling merely made it
+    # reachable on five corpus scripts at once (b1_equal_chain +1, b2_backchain +2, d3_deptypes +1,
+    # d4_type_prop +1, e1_kb_write +1 — the LeaTTa PROVED corpus caught every one).
+    #
+    # THE TENSION IS FUNDAMENTAL, not a patch-in-waiting: tabling REQUIRES set semantics to reach a
+    # fixpoint. Dropping `unique` would make the answer set grow forever and never converge. So this
+    # is a constraint on WHICH HEADS MAY BE TABLED, not a merge to fix.
+    #
+    # ⚠️ UPSTREAM ALREADY GUARDS IT AND WE DISMISSED THE GUARD. JeTTa's gate requires
+    # `!f.isMultivalued()` (`jetta/backend/.../Generator.kt:166` — "Pure ⇔ **not multivalued**,
+    # primitive args + result"). On 2026-08-15 that was called "a downgrade — our SLG handles
+    # multi-answer". Handling multi-answer as a SET is not preserving MULTIPLICITY. See roadmap 2.1.
+    #
+    # 🛑 THIS TEST ASSERTS THE DEFECT, NOT THE DESIRED BEHAVIOUR. When a multivalued guard lands,
+    # `TABLED` should equal `UNTABLED` and this test must be UPDATED to assert that — not deleted.
+    Eval.untable_all!()
+    try
+        prog = "(= (h) 1)\n(= (h) 1)\n(= (k) (h))\n"          # two IDENTICAL rules ⇒ two answers
+        s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+        @test length(load_metta!(s, "!(k)\n")) == 2            # UNTABLED: multiset preserved, [1, 1]
+
+        Eval.untable_all!()
+        s2 = Space(); load_core_stdlib!(s2); load_metta!(s2, prog)
+        Eval.table!(:k); Eval.table!(:h)
+        @test length(load_metta!(s2, "!(k)\n")) == 1           # TABLED: collapsed to [1] — THE DEFECT
+    finally
+        Eval.untable_all!()
+    end
+end
+
 @testset "tabling: revision-stamped answer invalidation" begin
     Eval.untable_all!()
     Eval.table!(Symbol("mem"))
