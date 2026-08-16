@@ -162,6 +162,37 @@ const _PURE_PRIMS = Set{Symbol}(Symbol.([
     "car-atom","cdr-atom","cons-atom","size-atom","index-atom","min-atom","max-atom",  # pure list/tuple
     "get-type","get-metatype","match-types","is-function",                 # type queries (pure)
     "sqrt-math","pow-math","abs-math","log-math","exp-math","sin-math","cos-math",
+    # 🔴 THE MINIMAL-MeTTa CONTROL INSTRUCTIONS — added 2026-08-16 (roadmap item 0.1).
+    # THEIR ABSENCE WAS A SILENT NO-OP, NOT A MISSING FEATURE. `EmitIL` lowers every definition to
+    #     (= (fib $n) (function (chain (metta (< $n 2) %Undefined% &self) $__t1 …)))
+    # so a COMPILED body's callees are `function`/`chain`/`metta`/`return`. None was whitelisted, and
+    # `_pure_heads` is a WHITELIST fixpoint (unknown op ⇒ impure), so EVERY compiled head came back
+    # impure. MEASURED 2026-08-15:
+    #     `:fib` in `_pure_heads`, SOURCE form  ->  true
+    #     `:fib` in `_pure_heads`, IL form      ->  FALSE
+    # ⇒ every purity-gated consumer is inert on the compiled lane. `auto_table!` is the one we
+    # noticed — tabling `compile_run`'s output did LITERALLY NOTHING — and it is not necessarily the
+    # only one.
+    #
+    # THEY ARE PURE. `function`/`return` are a call boundary and its join point; `chain` binds an
+    # intermediate and continues; `metta`/`evalc` evaluate a sub-term; `decons-atom` destructures.
+    # None mutates, reads state, or does I/O. Purity of what they CONTAIN is still checked
+    # independently: `_callees!` recurses into every child, so `(metta (add-atom …) …)` still
+    # surfaces `add-atom` and fails the head.
+    #
+    # ⚠️ `collapse-bind`/`superpose-bind` DELIBERATELY OMITTED. The header above lists `superpose`
+    # among the impure ops; that conservative stance is kept. Their answer SET is well-defined so
+    # they are arguably tabl-able, but widening nondeterminism handling is its own decision with its
+    # own evidence, not a side effect of unblocking the compiled lane.
+    #
+    # ⚠️ BLAST RADIUS — `_pure_heads` ALSO FEEDS `purity_may_mutate` (`CompileLane.jl:40`), which
+    # drives REGION SPLITTING for Invariant 1: more pure heads ⇒ fewer forms flagged mutating ⇒ FEWER
+    # SPLITS. Mostly contained, because these heads appear in COMPILED bodies while
+    # `purity_may_mutate` analyses SOURCE forms — the exception is a user writing minimal MeTTa
+    # directly (legal since `d3e245f`), where the new classification is the CORRECT one and the old
+    # "impure" verdict was conservative-and-wrong rather than a deliberate guard.
+    # ⇒ THE PROVED CORPUS IS THE GATE FOR THIS CHANGE, not the unit tests.
+    "function","return","chain","metta","evalc","decons-atom",
 ]))
 
 # extract `(= (h …) body)` rules from a list of atoms → head Symbol ↦ [body atoms]

@@ -198,6 +198,33 @@ end
         Eval.untable_all!()
         s5 = Space(); load_core_stdlib!(s5); load_metta!(s5, fib; auto_table = true)
         @test Eval.is_tabled(parse_program("(fib 1)")[1][2])
+
+        # ── PURITY MUST SURVIVE COMPILATION (roadmap 0.1, fixed 2026-08-16) ──────────────────────
+        # `EmitIL` lowers a definition to `(= (fib $n) (function (chain (metta …) …)))`. Until the
+        # minimal-MeTTa control instructions were whitelisted in `_PURE_PRIMS`, `_pure_heads` — a
+        # WHITELIST fixpoint, so an unknown op means impure — classified EVERY COMPILED HEAD impure.
+        # MEASURED before the fix: `:fib` pure in SOURCE form = true, in IL form = FALSE.
+        # ⇒ every purity-gated consumer was SILENTLY INERT on the compiled lane; `auto_table!` on
+        # `compile_run`'s output did literally nothing, with no error and no observable difference.
+        # That is why this is pinned: a silent no-op leaves nothing to notice if it comes back.
+        Eval.untable_all!()
+        sIL = Space(); load_core_stdlib!(sIL)
+        il = MeTTaCore.compile_definition(sIL, fib)
+        @test il !== nothing                                    # guard: the corpus must still compile fib
+        for a in il.atoms; Eval.add_atom!(sIL, a); end
+        @test :fib in Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sIL)))   # ← the fix
+        @test Eval.auto_table!(sIL).tabled == [:fib]            # and it now actually TABLES
+
+        # 🔴 NEGATIVE CONTROL — the whitelist must not have opened a hole. `_callees!` recurses into
+        # every child, so a mutator nested INSIDE `(metta …)` must still surface and fail the head.
+        # Without this, whitelisting `metta` would silently make every compiled body look pure.
+        Eval.untable_all!()
+        sIM = Space(); load_core_stdlib!(sIM)
+        ilm = MeTTaCore.compile_definition(sIM, raw"(= (bump $x) (add-atom &self (seen $x)))")
+        if ilm !== nothing                                       # (if the compiler declines it, nothing to check)
+            for a in ilm.atoms; Eval.add_atom!(sIM, a); end
+            @test !(:bump in Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sIM))))
+        end
     finally
         Eval.untable_all!()
     end
