@@ -106,11 +106,67 @@ function _e1_head(f::AbstractString)
     m === nothing ? "" : m.captures[1]
 end
 
+# ── BINDER POSITIONS — the same knowledge `ANormal._BINDER_KEEP_FROM` holds, and the scan needs it.
+#
+# 🔴 WHY THIS EXISTS, MEASURED 2026-08-16. This gate sat RED at 57 violations, and ALL 57 WERE
+# `foldl-atom` — every one flagged on its TEMPLATE argument, which is exactly the argument that MUST
+# stay unreduced. They are not emission defects. They are this predicate not knowing what a binder is.
+#
+# `_E1_TEMPLATE` above is already a binder-exemption list in all but name — `match`, `case`, `if`,
+# `unify`, `collapse`, `quote` are there precisely because their arguments are TEMPLATES. It was
+# missing the four heads that take a template in a LATER position: the compiler's binder table.
+#
+# The history explains why it went unnoticed. Before `21bd63b` the compiler HOISTED binder templates
+# out and evaluated them eagerly — the mis-compilation that commit fixed — so `(eval (foldl-atom …
+# $hoisted))` had no parenthesised argument left to flag. Correcting the compiler made the templates
+# appear in place, and a predicate with no binder concept started counting correct output as wrong.
+#
+# ⚠️ EXEMPTING THE WHOLE HEAD WOULD BE TOO BROAD, which is why this is an INDEX and not a Set entry.
+# `foldl-atom` is `(foldl-atom LIST INIT $acc $item TEMPLATE)`: LIST and INIT are ordinary VALUE
+# arguments, and an unreduced call in either IS a real one-step violation this gate must keep
+# catching. Only positions at or after the binder's first `Variable` are templates.
+#
+# Kept deliberately in sync with `ANormal._BINDER_KEEP_FROM`; both are derived from the declared
+# types in `stdlib.metta`, where a `Variable` in an argument position IS the binder marker.
+const _E1_BINDER_KEEP_FROM = Dict{String,Int}(
+    "foldl-atom"      => 3,
+    "map-atom"        => 2,
+    "filter-atom"     => 2,
+    "if-decons-expr"  => 2,
+)
+
+"""Argument slices of `inner` (an `(head a1 a2 …)` string), in order, INCLUDING atoms and variables.
+
+`_e1_subforms` returns only the parenthesised ones, which loses position — and position is what
+decides whether an argument is a binder template. Needed by `_e1_violations`."""
+function _e1_args(inner::AbstractString)
+    body = inner[nextind(inner, 1):prevind(inner, lastindex(inner))]
+    out = String[]; depth = 0; instr = false; start = 0; seen_head = false
+    for (k, ch) in enumerate(body)
+        if ch == '"'
+            instr = !instr
+        elseif !instr
+            if ch == '('
+                depth == 0 && (start = k); depth += 1
+            elseif ch == ')'
+                depth -= 1
+                depth == 0 && start > 0 && (push!(out, body[start:k]); start = 0)
+            elseif depth == 0 && isspace(ch)
+                start > 0 && (push!(out, body[start:prevind(body, k)]); start = 0)
+            elseif depth == 0 && start == 0
+                start = k
+            end
+        end
+    end
+    start > 0 && push!(out, body[start:lastindex(body)])
+    isempty(out) ? out : out[2:end]          # drop the head
+end
+
 """Violating `(eval …)` forms in one emitted clause.
 
 A violation is an `(eval X)` where X is headed by a GROUNDED primitive and some parenthesised
 argument of X is headed by something that REDUCES (a grounded primitive, or a head defined anywhere
-in the corpus being scanned)."""
+in the corpus being scanned) — EXCLUDING binder template positions, which are unreduced by design."""
 function _e1_violations(clause::AbstractString, reducible::Set{String}, grounded::Set{String})
     bad = String[]
     for m in eachmatch(r"\(eval ", clause)
@@ -119,7 +175,10 @@ function _e1_violations(clause::AbstractString, reducible::Set{String}, grounded
         startswith(inner, "(") || continue          # (eval $v) / (eval sym) — already atomic
         h0 = _e1_head(inner)
         (h0 in _E1_TEMPLATE || !(h0 in grounded)) && continue
-        for a in _e1_subforms(inner[nextind(inner, 1):prevind(inner, lastindex(inner))])
+        keep = get(_E1_BINDER_KEEP_FROM, h0, typemax(Int))
+        for (i, a) in enumerate(_e1_args(inner))
+            i >= keep && break                      # binder template: unreduced BY DESIGN
+            startswith(a, "(") || continue          # only parenthesised args can be a call
             h = _e1_head(a)
             (isempty(h) || startswith(h, "\$") || !(h in reducible)) && continue
             push!(bad, form); break
@@ -215,6 +274,38 @@ end
         finally
             _E1_V._INTERPRET_MAX[] = prev
         end
+    end
+
+    # ── THE PREDICATE STILL SEES THE DEFECT CLASS. ───────────────────────────────────────────────
+    # The binder-position exemption took this gate from 57 violations to 0, so it MUST be shown that
+    # it did so by stopping false positives and not by going blind. Without this, "violations = 0"
+    # is indistinguishable from a predicate that returns nothing.
+    # `[[feedback_oracle_must_observe_the_defect_class]]`
+    @testset "binder exemption did not blind the predicate" begin
+        red = Set(["car-atom", "some-call", "_collapse-add-next"])
+        gnd = Set(["==", "foldl-atom", "map-atom", "car-atom"])
+
+        # ① the original shape, verified by EXECUTION in the first testset — must still be caught.
+        @test length(_e1_violations("(eval (== b (car-atom (b c))))", red, gnd)) == 1
+
+        # ② a binder's VALUE argument holding an unreduced call is a REAL violation and must still be
+        # caught. This is why the exemption is an INDEX, not a whole-head entry: `foldl-atom`'s LIST
+        # argument is position 1 and is not a template.
+        @test length(_e1_violations(
+            "(eval (foldl-atom (some-call x) () \$a \$i (_collapse-add-next \$a \$i)))", red, gnd)) == 1
+
+        # ③ …while the TEMPLATE argument alone being a call is CORRECT emission — the 57 false
+        # positives. Position 3+ for foldl-atom.
+        @test isempty(_e1_violations(
+            "(eval (foldl-atom \$xs () \$a \$i (_collapse-add-next \$a \$i)))", red, gnd))
+
+        # ④ map-atom binds from position 2, so a call in position 1 is still a violation.
+        @test length(_e1_violations("(eval (map-atom (some-call x) \$i (car-atom \$i)))", red, gnd)) == 1
+        @test isempty(_e1_violations("(eval (map-atom \$xs \$i (car-atom \$i)))", red, gnd))
+
+        # ⑤ the arg splitter must count ATOMS and VARIABLES, not only parenthesised forms — if it
+        # skipped them, every index would shift left and the exemption would cover the wrong slots.
+        @test _e1_args("(foldl-atom \$xs () \$a \$i (f \$a))") == ["\$xs", "()", "\$a", "\$i", "(f \$a)"]
     end
 
     # ── OUR OWN corpus — the ratchet. ────────────────────────────────────────────────────────────
