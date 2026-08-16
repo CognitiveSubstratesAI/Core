@@ -133,6 +133,7 @@ const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; N
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
+                   _CURRENT_TARGET[] = nothing;
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
@@ -642,13 +643,72 @@ _merge_partial(existing::Vector{Atom}, incoming::Vector{Atom}, key::Atom)::Tuple
 # sub-call to an in-progress variant hits the hook → consumer → reads partials. Returns this pass's answers.
 function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     out = Atom[]; X = freshvar("X")
-    for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
-        is_present(mb, X) || continue
-        for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
-            is_empty_atom(at) || push!(out, subst(at, bnd))
+    saved_target = _CURRENT_TARGET[]; _CURRENT_TARGET[] = key   # whose worker is running (dependency TARGET)
+    try
+        for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
+            is_present(mb, X) || continue
+            for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
+                is_empty_atom(at) || push!(out, subst(at, bnd))
+            end
         end
+    finally
+        _CURRENT_TARGET[] = saved_target                       # nest-safe (mirrors _WFS_BOUND save/restore)
     end
     unique(out)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# `dependency(Source, Cont, Target)` — RECORDING AND FIRING (roadmap §1.0, step 2 of 4)
+#
+# Desouter et al. §4.2: when a worker calls a tabled predicate it SHIFTs without producing an answer,
+# and the suspended remainder is stored as `dependency(SourceCall, Continuation, TargetCall)` IN THE
+# SOURCE CALL'S TABLE, fired whenever a new answer lands there — *"given an answer for the q/m call,
+# one may obtain answers for the p/n call by resuming the suspended continuation."*
+#
+# ⚠️ RECORDING IS OFF BY DEFAULT AND NOTHING CONSUMES IT YET. This step builds the mechanism and
+# proves it AGREES WITH RECOMPUTATION; the engine still reaches its fixpoint by re-running
+# `_leader_pass`. Switching the completion loop over is step 4, and doing it before the agreement is
+# demonstrated would be a rewrite with no oracle. `_DEPS_RECORD[]` is the gate, so the default path is
+# byte-identical by construction (the disable-to-prove pattern this file already uses for tabling).
+#
+# 🔴 WHY THE FLAG IS NOT MERELY CAUTION: `_leader_pass` RE-RUNS every fixpoint round, so a consumer
+# hit re-records its dependency each round and `_DEPS` grows without bound over a long completion.
+# Under the step-4 rewire that is moot — the worker runs ONCE and suspends — but until then, leaving
+# recording on by default would be a memory leak in the engine's hottest loop.
+const _CURRENT_TARGET = Ref{Union{Atom,Nothing}}(nothing)   # variant key whose worker is running, or nothing
+const _DEPS_RECORD    = Ref(false)                          # opt-in: record dependencies at consumers
+
+"Record `dependency(source, cont, target)` in the SOURCE's table (§4.2). No-op unless enabled."
+function record_dependency!(source::Atom, b::Bindings, prev, red::Atom)
+    _DEPS_RECORD[] || return nothing
+    tgt = _CURRENT_TARGET[]
+    tgt === nothing && return nothing            # not inside a worker ⇒ no target to feed
+    push!(get!(_DEPS, source, Dependency[]), Dependency(source, capture_continuation(b, prev, red), tgt))
+    nothing
+end
+
+"""
+    fire_dependencies!(source, answers, space) -> Dict{Atom,Vector{Atom}}
+
+Feed each of `answers` into every continuation waiting on `source`, and group the results by the
+TARGET table they belong to — the paper's `completion_step/1`, minus the worklist that decides WHICH
+pairs are still unprocessed (step 3).
+
+Answers are stored in the canonical key's variables, so each is `_project`ed into the continuation's
+own goal before resumption — the same mapping `_replay` does on the consumer path.
+"""
+function fire_dependencies!(source::Atom, answers::Vector{Atom}, space)::Dict{Atom,Vector{Atom}}
+    out = Dict{Atom,Vector{Atom}}()
+    for d in get(_DEPS, source, Dependency[])
+        for a in _project(answers, d.cont.goal)
+            for (at, bnd) in resume_continuation(d.cont, a, space)
+                is_empty_atom(at) && continue
+                push!(get!(out, d.target, Atom[]), subst(at, bnd))
+            end
+        end
+    end
+    for (k, v) in out; out[k] = unique(v); end
+    out
 end
 
 # ── WFS Stage B (Prolog-parity precision on dynamically-stratified programs) ──────────────────────────
@@ -760,6 +820,11 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
                 _COMPONENT[_scc_root(_GEN_STACK[j])] = root
             end
         end
+        record_dependency!(key, b, prev, red)                                    #   §4.2: THIS is the shift
+                                        # ↑ `(b, prev)` here IS the suspended remainder of the target's
+                                        # worker — the same pair `_replay` resumes immediately below.
+                                        # Recording is opt-in (`_DEPS_RECORD`), so this line is a no-op
+                                        # on the default path until the step-4 rewire consumes it.
         return _replay(_project(get(_PARTIAL, key, Atom[]), red), b, prev)       #   answer from partials (suspend)
     end
     push!(_TABLE_INPROG, key); push!(_GEN_STACK, key)                            # become a GENERATOR
