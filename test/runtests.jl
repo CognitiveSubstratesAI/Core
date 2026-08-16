@@ -78,6 +78,11 @@ module StandardMeTTaTests
     # This pins the case where cardinality and value DISAGREE, and the sum-under-recomputation hazard
     # that makes non-idempotent §7.3 aggregates unsound until the §1.0 rewire lands.
     include("standard/tabling/test_completion_merge.jl")
+    # SWI §7.11.3 max_answers — the one restraint that ports to a Dict today (no answer trie needed:
+    # `bounded_rationality` does not TRUNCATE, it adds one maximally-general answer subsuming what the
+    # bound stopped computing). Landed in `tabling/Restraints.jl`; registered here because it shipped
+    # unregistered and an unregistered test is a test that does not run.
+    include("standard/tabling/test_restraints.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

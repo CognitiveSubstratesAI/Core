@@ -42,11 +42,11 @@ _p(i) = Expression(Atom[Sym(:p), Grounded(i)])
 
 "Feed 1..4 through the restraint with a per-head bound of `n`, as the oracle's program does."
 function _run_bounded(head::Symbol, n::Int)
-    _RS.clear_all_restraints!(); _RS.clear_approximate!()
-    _RS.declare_restraint!(head, :max_answers, n)
+    _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+    _RS.restraint!(head, :max_answers, n)
     acc = Atom[]
     for i in 1:4
-        acc, _, _ = _RS.apply_answer_restraint(head, acc, _p(i))
+        acc, _, _ = _RS.tbl_wkl_add_answer(head, acc, _p(i))
     end
     acc
 end
@@ -72,7 +72,7 @@ end
         @test sort([string((a::Expression).children[2]) for a in ground]) ==
               sort([strip(s) for s in split(strip(oracle["ground"], ['[', ']']), ',')])
         # the table must be queryable as an APPROXIMATION, upstream's `answer_count_restraint`.
-        @test _RS.answers_are_approximate(:p)
+        @test _RS.answer_count_restraint(:p)
     end
 end
 
@@ -81,35 +81,35 @@ end
     # `>=` fires on the threshold answer AND every one after; `==` fires EXACTLY ONCE. Collapsing them
     # to one comparison changes how often the action runs and still passes a single-answer test.
     _RS.clear_all_restraints!()
-    _RS.declare_restraint!(:a, :max_answers, 2)
-    @test _RS.answer_count_tripwire(:a, 1) === nothing
-    @test _RS.answer_count_tripwire(:a, 2) == _RS.ACT_BOUNDED_RATIONALITY
-    @test _RS.answer_count_tripwire(:a, 3) == _RS.ACT_BOUNDED_RATIONALITY   # >= : again
+    _RS.restraint!(:a, :max_answers, 2)
+    @test _RS.tripwire_answers_for_subgoal(:a, 1) === nothing
+    @test _RS.tripwire_answers_for_subgoal(:a, 2) == _RS.TW_BOUNDED_RATIONALITY
+    @test _RS.tripwire_answers_for_subgoal(:a, 3) == _RS.TW_BOUNDED_RATIONALITY   # >= : again
 
     _RS.clear_all_restraints!()
-    _RS.set_global_max_answers!(2, _RS.ACT_FAIL)
-    @test _RS.answer_count_tripwire(:b, 1) === nothing
-    @test _RS.answer_count_tripwire(:b, 2) == _RS.ACT_FAIL
-    @test _RS.answer_count_tripwire(:b, 3) === nothing                       # == : NOT again
+    _RS.set_global_max_answers!(2, _RS.TW_FAIL)
+    @test _RS.tripwire_answers_for_subgoal(:b, 1) === nothing
+    @test _RS.tripwire_answers_for_subgoal(:b, 2) == _RS.TW_FAIL
+    @test _RS.tripwire_answers_for_subgoal(:b, 3) === nothing                       # == : NOT again
 
     # ── `warning` ADDS THE ANSWER ANYWAY (pl-tabling.c:3660 `goto add_anyway`). Easy to implement as
     # "warn and drop", which is the `fail` action wearing the wrong name.
-    _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.ACT_WARNING)
-    kept, added, act = (@test_logs (:warn,) match_mode=:any _RS.apply_answer_restraint(:w, Atom[_p(1)], _p(2)))
-    @test added && length(kept) == 2 && act == _RS.ACT_WARNING
+    _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.TW_WARNING)
+    kept, added, act = (@test_logs (:warn,) match_mode=:any _RS.tbl_wkl_add_answer(:w, Atom[_p(1)], _p(2)))
+    @test added && length(kept) == 2 && act == _RS.TW_WARNING
 
     # ── `fail` drops silently; `error` throws a resource error.
-    _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.ACT_FAIL)
-    kept2, added2, _ = _RS.apply_answer_restraint(:f, Atom[_p(1)], _p(2))
+    _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.TW_FAIL)
+    kept2, added2, _ = _RS.tbl_wkl_add_answer(:f, Atom[_p(1)], _p(2))
     @test !added2 && length(kept2) == 1
-    _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.ACT_ERROR)
-    @test_throws ErrorException _RS.apply_answer_restraint(:e, Atom[_p(1)], _p(2))
+    _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.TW_ERROR)
+    @test_throws ErrorException _RS.tbl_wkl_add_answer(:e, Atom[_p(1)], _p(2))
 
     # ── a NEGATIVE value REMOVES the restraint rather than storing it (boot/tabling.pl:1337-1342).
     _RS.clear_all_restraints!()
-    _RS.declare_restraint!(:n, :max_answers, 3)
+    _RS.restraint!(:n, :max_answers, 3)
     @test _RS.max_answers(:n) == 3
-    _RS.declare_restraint!(:n, :max_answers, -1)
+    _RS.restraint!(:n, :max_answers, -1)
     @test _RS.max_answers(:n) == _RS.NO_RESTRAINT
 
     # ── the generalised answer is added ONCE, deduped by VARIANT not by `==`. Fresh variables make
@@ -120,8 +120,8 @@ end
 
     # ── the two ABSTRACTION restraints are REFUSED, not silently accepted: they operate on trie terms
     # and need §1.0's answer trie. A no-op that appears to apply is the failure mode.
-    @test_throws ArgumentError _RS.declare_restraint!(:x, :subgoal_abstract, 3)
-    @test_throws ArgumentError _RS.declare_restraint!(:x, :answer_abstract, 3)
-    @test_throws ArgumentError _RS.declare_restraint!(:x, :no_such_option, 1)
-    _RS.clear_all_restraints!(); _RS.clear_approximate!()
+    @test_throws ArgumentError _RS.restraint!(:x, :subgoal_abstract, 3)
+    @test_throws ArgumentError _RS.restraint!(:x, :answer_abstract, 3)
+    @test_throws ArgumentError _RS.restraint!(:x, :no_such_option, 1)
+    _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
 end

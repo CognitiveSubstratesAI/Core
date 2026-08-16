@@ -31,10 +31,18 @@
 #
 # We have no AttVar, so the rank ladder collapses to four positions. `Grounded{T}` splits by its
 # payload: real numbers rank as Number, strings as String, and any OTHER grounded payload is ranked
-# after strings but before Sym — see `_std_rank`.
+# after strings but before Sym — see `std_rank`.
+#
+# ─── UPSTREAM TRACE ──────────────────────────────────────────────────────────────────────────────
+# Names here follow swipl-devel so a reader can grep upstream directly. Ours ← theirs:
+#
+#   compare_standard   ←  compareStandard          src/pl-prims.c:1783   (and Prolog `compare/3`)
+#   std_rank           ←  the tag ladder           src/pl-prims.c:1788
+#   standard_lt        ←  `@</2`                   used by min/3, boot/tabling.pl:1529
+#   standard_gt        ←  `@>/2`                   used by max/3, boot/tabling.pl:1530
 
 "Rank of an atom in the standard order. Lower sorts first. `pl-prims.c:1788`'s ladder."
-function _std_rank(a::Atom)::Int
+function std_rank(a::Atom)::Int
     a isa Var        && return 0
     if a isa Grounded
         v = a.value
@@ -48,15 +56,15 @@ function _std_rank(a::Atom)::Int
 end
 
 """
-    std_compare(x, y) -> Int
+    compare_standard(x, y) -> Int
 
 Prolog `compare/3` as -1 / 0 / 1. Ported from `compareStandard` (`pl-prims.c:1783`).
 
 Total and antisymmetric over every `Atom` we can construct, which is what `min`/`max` aggregation
 requires — an aggregation that can throw on an unexpected payload would abort a completing table.
 """
-function std_compare(x::Atom, y::Atom)::Int
-    rx, ry = _std_rank(x), _std_rank(y)
+function compare_standard(x::Atom, y::Atom)::Int
+    rx, ry = std_rank(x), std_rank(y)
     rx != ry && return rx < ry ? -1 : 1
 
     if x isa Var                      # OldVar < NewVar; upstream calls this "not reliable" but it
@@ -92,7 +100,7 @@ function std_compare(x::Atom, y::Atom)::Int
         isempty(xc) && return 0
         # then NAME (the head), then args recursively — the head is children[1] for us.
         for i in eachindex(xc)
-            c = std_compare(xc[i], yc[i])
+            c = compare_standard(xc[i], yc[i])
             c != 0 && return c
         end
         return 0
@@ -101,6 +109,6 @@ function std_compare(x::Atom, y::Atom)::Int
 end
 
 "`@<` — strictly precedes in the standard order (`boot/tabling.pl:1529` uses this for `min/3`)."
-std_lt(x::Atom, y::Atom)::Bool = std_compare(x, y) < 0
+standard_lt(x::Atom, y::Atom)::Bool = compare_standard(x, y) < 0
 "`@>` — strictly follows in the standard order (`boot/tabling.pl:1530` uses this for `max/3`)."
-std_gt(x::Atom, y::Atom)::Bool = std_compare(x, y) > 0
+standard_gt(x::Atom, y::Atom)::Bool = compare_standard(x, y) > 0

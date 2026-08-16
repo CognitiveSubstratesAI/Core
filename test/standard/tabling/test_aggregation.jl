@@ -21,7 +21,7 @@ const _AG = Eval
 
 "Parse `name(args) => value` lines from a swipl run. Empty dict on ANY failure — the positive
 control below turns that into a visible failure rather than a silent pass."
-function _agg_pairs(pl_file::AbstractString)::Dict{String,String}
+function agg_pairs(pl_file::AbstractString)::Dict{String,String}
     out = Dict{String,String}()
     swipl = Sys.which("swipl")
     swipl === nothing && return out
@@ -40,7 +40,7 @@ end
 
 const _AGG_ORACLE = normpath(joinpath(@__DIR__, "..", "..", "oracle", "tabling", "modes_73.pl"))
 
-_mode(spec::Atom) = _AG.parse_mode(spec)
+_mode(spec::Atom) = _AG.update_goal(spec)
 _idx()  = _mode(Sym(:index))
 _ans(head::Symbol, key::Symbol, v) = Expression(Atom[Sym(head), Sym(key), Grounded(v)])
 
@@ -63,7 +63,7 @@ end
     elseif !isfile(_AGG_ORACLE)
         @test_skip "oracle missing: $_AGG_ORACLE — the §7.3 differential did not run. NOT a pass."
     else
-        oracle = _agg_pairs(_AGG_ORACLE)
+        oracle = agg_pairs(_AGG_ORACLE)
 
         # ── POSITIVE CONTROL: every goal must be present before any agreement is claimed.
         want = ["path(a,b)", "path(a,c)", "path(a,d)", "tot(k)", "tot(m)", "best(k)", "keep(k)"]
@@ -118,11 +118,11 @@ end
 
     # ── the standard-order ladder itself: Var @< Number @< String @< Atom @< Term (pl-prims.c:1788).
     xs = Atom[Expression(Atom[Sym(:f), Sym(:a)]), Sym(:zed), Grounded("s"), Grounded(3), Var("x", UInt64(1))]
-    @test sort(xs, lt=_AG.std_lt) ==
+    @test sort(xs, lt=_AG.standard_lt) ==
           Atom[Var("x", UInt64(1)), Grounded(3), Grounded("s"), Sym(:zed), Expression(Atom[Sym(:f), Sym(:a)])]
-    @test _AG.std_lt(Grounded(1.0), Grounded(1))        # equal value ⇒ FLOAT first (pl-prims.c:1777)
+    @test _AG.standard_lt(Grounded(1.0), Grounded(1))        # equal value ⇒ FLOAT first (pl-prims.c:1777)
     # compounds compare on ARITY before name — a name-first implementation disagrees here.
-    @test _AG.std_lt(Expression(Atom[Sym(:z), Sym(:a)]), Expression(Atom[Sym(:a), Sym(:a), Sym(:b)]))
+    @test _AG.standard_lt(Expression(Atom[Sym(:z), Sym(:a)]), Expression(Atom[Sym(:a), Sym(:a), Sym(:b)]))
 
     # ── an all-`index` declaration must be a NO-OP, degrading to plain set semantics.
     noagg = _AG.TableMode[_idx(), _idx()]
@@ -132,6 +132,6 @@ end
 
     # ── an unknown mode is a DOMAIN ERROR (boot/tabling.pl:1512), never a silent fallback to index —
     # a mistyped mode that quietly becomes a key argument reads as "aggregation did nothing".
-    @test_throws ArgumentError _AG.parse_mode(Sym(:bogus))
-    @test_throws ArgumentError _AG.parse_mode(Expression(Atom[Sym(:lattice), Sym(:nosuch)]))
+    @test_throws ArgumentError _AG.update_goal(Sym(:bogus))
+    @test_throws ArgumentError _AG.update_goal(Expression(Atom[Sym(:lattice), Sym(:nosuch)]))
 end

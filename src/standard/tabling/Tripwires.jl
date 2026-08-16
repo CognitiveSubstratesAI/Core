@@ -13,7 +13,7 @@
 # The two abstraction restraints operate on trie terms; our answers live in a `Dict`/`Vector`, so
 # they need §1.0's answer trie and are NOT stubbed here. An empty stub that silently accepts the
 # declaration would be worse than its absence: `subgoal_abstract(3)` appearing to work while doing
-# nothing is the failure mode. `declare_restraint!` therefore THROWS on them, naming why.
+# nothing is the failure mode. `restraint!` therefore THROWS on them, naming why.
 #
 # ─── PORTED SEMANTICS, INCLUDING AN ASYMMETRY THAT LOOKS LIKE A TYPO AND IS NOT ──────────────────
 # `tripwire_answers_for_subgoal` (`pl-tabling.c`) has TWO paths with DIFFERENT comparisons:
@@ -41,17 +41,17 @@ const NO_RESTRAINT = -1
   FAIL                 — drop the answer silently (`trie_delete` + return false)
   BOUNDED_RATIONALITY  — drop it, generalise, and mark the table an APPROXIMATION (see below)
 """
-@enum RestraintAction ACT_ERROR ACT_WARNING ACT_SUSPEND ACT_FAIL ACT_BOUNDED_RATIONALITY
+@enum TripwireAction TW_ERROR TW_WARNING TW_SUSPEND TW_FAIL TW_BOUNDED_RATIONALITY
 
 "Default action for the global bound. Upstream's flag default is `error`."
-const DEFAULT_MAX_ANSWERS_ACTION = ACT_ERROR
+const DEFAULT_TRIPWIRE_ACTION = TW_ERROR
 
 const _MAX_ANSWERS        = Dict{Symbol,Int}()          # per-head bound (the `max_answers(N)` option)
 const _MAX_ANSWERS_GLOBAL = Ref{Int}(NO_RESTRAINT)      # the global flag
-const _MAX_ANSWERS_ACTION = Ref{RestraintAction}(DEFAULT_MAX_ANSWERS_ACTION)
+const _MAX_ANSWERS_ACTION = Ref{TripwireAction}(DEFAULT_TRIPWIRE_ACTION)
 
 """
-    declare_restraint!(head, name, value)
+    restraint!(head, name, value)
 
 `table_options/3` (`boot/tabling.pl:1325-1333`) for the restraint options.
 
@@ -59,7 +59,7 @@ Follows `restraint/4`: a NEGATIVE value REMOVES the restraint rather than storin
 `subgoal_abstract`/`answer_abstract` — they need the answer trie (§1.0) and a silent no-op would be
 indistinguishable from them working.
 """
-function declare_restraint!(head::Symbol, name::Symbol, value::Int)
+function restraint!(head::Symbol, name::Symbol, value::Int)
     if name === :max_answers
         value < 0 ? delete!(_MAX_ANSWERS, head) : (_MAX_ANSWERS[head] = value)
         return nothing
@@ -73,7 +73,7 @@ function declare_restraint!(head::Symbol, name::Symbol, value::Int)
 end
 
 "Global `max_answers_for_subgoal` flag + its action (`pl-tabling.c:8917-8923`)."
-function set_global_max_answers!(value::Int, action::RestraintAction = DEFAULT_MAX_ANSWERS_ACTION)
+function set_global_max_answers!(value::Int, action::TripwireAction = DEFAULT_TRIPWIRE_ACTION)
     _MAX_ANSWERS_GLOBAL[] = value < 0 ? NO_RESTRAINT : value
     _MAX_ANSWERS_ACTION[] = action
     nothing
@@ -82,20 +82,20 @@ end
 max_answers(head::Symbol)::Int = get(_MAX_ANSWERS, head, NO_RESTRAINT)
 clear_restraints!(head::Symbol) = (delete!(_MAX_ANSWERS, head); nothing)
 clear_all_restraints!() = (empty!(_MAX_ANSWERS); _MAX_ANSWERS_GLOBAL[] = NO_RESTRAINT;
-                           _MAX_ANSWERS_ACTION[] = DEFAULT_MAX_ANSWERS_ACTION; nothing)
+                           _MAX_ANSWERS_ACTION[] = DEFAULT_TRIPWIRE_ACTION; nothing)
 
 """
-    answer_count_tripwire(head, count) -> Union{RestraintAction,Nothing}
+    tripwire_answers_for_subgoal(head, count) -> Union{TripwireAction,Nothing}
 
 `tripwire_answers_for_subgoal` (`pl-tabling.c`), 1:1 including the two comparisons.
 
 `count` is the table's answer count BEFORE adding the candidate — upstream's `wl->table->value_count`
 at the same point. Returns `nothing` when no restraint fires.
 """
-function answer_count_tripwire(head::Symbol, count::Int)::Union{RestraintAction,Nothing}
+function tripwire_answers_for_subgoal(head::Symbol, count::Int)::Union{TripwireAction,Nothing}
     lim = max_answers(head)
     if lim != NO_RESTRAINT
-        count >= lim && return ACT_BOUNDED_RATIONALITY     # per-predicate path: `>=`
+        count >= lim && return TW_BOUNDED_RATIONALITY     # per-predicate path: `>=`
         return nothing                                     # …and it SHORT-CIRCUITS the global path
     end
     g = _MAX_ANSWERS_GLOBAL[]
@@ -106,15 +106,15 @@ function answer_count_tripwire(head::Symbol, count::Int)::Union{RestraintAction,
 end
 
 """
-    apply_answer_restraint(head, answers, candidate) -> (answers, added, action)
+    tbl_wkl_add_answer(head, answers, candidate) -> (answers, added, action)
 
 The enforcement site (`pl-tabling.c:3633-3668`) over our `Vector{Atom}` answer set.
 
   * no tripwire            → the candidate is added, `action === nothing`
-  * `ACT_WARNING`          → warn and ADD ANYWAY (upstream's `goto add_anyway`, :3660)
-  * `ACT_FAIL`             → drop silently
-  * `ACT_ERROR`/`SUSPEND`  → throw a resource error naming head and bound
-  * `ACT_BOUNDED_RATIONALITY` → drop, and the caller must mark the table an APPROXIMATION
+  * `TW_WARNING`          → warn and ADD ANYWAY (upstream's `goto add_anyway`, :3660)
+  * `TW_FAIL`             → drop silently
+  * `TW_ERROR`/`SUSPEND`  → throw a resource error naming head and bound
+  * `TW_BOUNDED_RATIONALITY` → drop, and the caller must mark the table an APPROXIMATION
 
 🔴 BOUNDED_RATIONALITY DOES NOT DROP THE EXCESS — IT GENERALISES IT. Measured against live swipl,
 because an earlier version of this file DID drop and documented the difference away as "needs the
@@ -129,19 +129,19 @@ computing, then marks the table with `answer_count_restraint`. That is what "bou
 means: the bound converts an exact answer set into a sound OVER-approximation. Dropping instead
 yields a silently INCOMPLETE table — the opposite direction, and unsound for any consumer that reads
 absence as failure. Generalisation needs no trie; only the *conditional/undefined* marking does, and
-that is what `answers_are_approximate` records for the caller.
+that is what `answer_count_restraint` records for the caller.
 """
-function apply_answer_restraint(head::Symbol, answers::Vector{Atom},
-                                candidate::Atom)::Tuple{Vector{Atom},Bool,Union{RestraintAction,Nothing}}
-    act = answer_count_tripwire(head, length(answers))
+function tbl_wkl_add_answer(head::Symbol, answers::Vector{Atom},
+                                candidate::Atom)::Tuple{Vector{Atom},Bool,Union{TripwireAction,Nothing}}
+    act = tripwire_answers_for_subgoal(head, length(answers))
     act === nothing              && return (push!(copy(answers), candidate), true, nothing)
-    if act == ACT_WARNING
+    if act == TW_WARNING
         @warn "tabling: max_answers exceeded for $(head) — answer added anyway (SWI `warning` action)" bound=max_answers(head)
         return (push!(copy(answers), candidate), true, act)      # add_anyway (pl-tabling.c:3660)
-    elseif act == ACT_FAIL
+    elseif act == TW_FAIL
         return (answers, false, act)
-    elseif act == ACT_ERROR || act == ACT_SUSPEND
-        act == ACT_SUSPEND &&
+    elseif act == TW_ERROR || act == TW_SUSPEND
+        act == TW_SUSPEND &&
             @warn "tabling: max_answers exceeded for $(head) — SWI would break to a debugger here"
         throw(ErrorException("resource_error(tripwire(max_answers_for_subgoal, $(head))) — " *
                              "bound $(max_answers(head) == NO_RESTRAINT ? _MAX_ANSWERS_GLOBAL[] : max_answers(head))"))
@@ -149,16 +149,16 @@ function apply_answer_restraint(head::Symbol, answers::Vector{Atom},
     # BOUNDED_RATIONALITY (pl-tabling.c:3636-3657): drop the candidate, then add ONE maximally
     # general answer that subsumes everything the bound stopped computing, and mark the table an
     # approximation. Added once — a second generalisation would be a duplicate of the same term.
-    mark_approximate!(head)
+    add_answer_count_restraint!(head)
     # ⚠️ Dedup by VARIANT, not by `==`. Each generalisation mints fresh variables, so `(p $_g1)` and
     # `(p $_g2)` are structurally UNEQUAL and a `==` check adds one general answer per excess answer
     # — measured 4 against the oracle's 3. Upstream adds it exactly once.
     any(x -> _is_general_variant(x, candidate), answers) && return (answers, false, act)
-    (push!(copy(answers), generalise_answer(candidate)), true, act)
+    (push!(copy(answers), generalise_answer_substitution(candidate)), true, act)
 end
 
 """
-    generalise_answer(a) -> Atom
+    generalise_answer_substitution(a) -> Atom
 
 `generalise_answer_substitution` (`pl-tabling.c:3642`): the most general term of `a`'s shape — every
 ARGUMENT position replaced by a fresh variable, the functor kept. `(p 3)` ⇒ `(p \$_g1)`.
@@ -166,7 +166,7 @@ ARGUMENT position replaced by a fresh variable, the functor kept. `(p 3)` ⇒ `(
 Subsumption, not erasure: the result matches every answer the restraint prevented us computing, so
 the table over-approximates instead of silently losing rows.
 """
-function generalise_answer(a::Atom)::Atom
+function generalise_answer_substitution(a::Atom)::Atom
     a isa Expression || return Var("_g", UInt64(_gen_counter[] += 1))
     ch = (a::Expression).children
     isempty(ch) && return a
@@ -188,7 +188,7 @@ end
 
 const _APPROXIMATE = Set{Symbol}()
 "Record that `head`'s table was truncated by a restraint — upstream's `answer_count_restraint`."
-mark_approximate!(head::Symbol) = (push!(_APPROXIMATE, head); nothing)
+add_answer_count_restraint!(head::Symbol) = (push!(_APPROXIMATE, head); nothing)
 "Was this table truncated? An approximate table must not be reported as a complete answer set."
-answers_are_approximate(head::Symbol)::Bool = head in _APPROXIMATE
-clear_approximate!() = (empty!(_APPROXIMATE); nothing)
+answer_count_restraint(head::Symbol)::Bool = head in _APPROXIMATE
+clear_answer_count_restraints!() = (empty!(_APPROXIMATE); nothing)

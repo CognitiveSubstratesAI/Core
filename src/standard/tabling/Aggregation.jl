@@ -32,6 +32,25 @@
 # the fixpoint terminates EARLY, silently, with a half-aggregated table. So `merge_answers` returns
 # an explicit `changed::Bool` computed from the VALUES, and any caller must use that instead of a
 # length comparison. This is the whole reason the function returns a tuple.
+#
+# ─── UPSTREAM TRACE ──────────────────────────────────────────────────────────────────────────────
+# Names here follow swipl-devel so a reader can grep upstream directly. Ours ← theirs:
+#
+#   update_goal        ←  update_goal/5            boot/tabling.pl:1451   (mode spec → mode)
+#   update_body        ←  update_body/6            boot/tabling.pl:1446   (apply per argument)
+#   UPDATE_ALIAS       ←  update_alias/2           boot/tabling.pl:1503
+#   LATTICE_OPS        ←  the public lattice preds boot/tabling.pl:1524
+#   agg_first/last/…   ←  first/3 last/3 min/3 max/3 sum/3   boot/tabling.pl:1526-1531
+#   ModeLattice        ←  lattice(F/3)             boot/tabling.pl:1459
+#   ModePO             ←  po(F/2)                  boot/tabling.pl:1474
+#   MODED_SLOT         ←  '$tbl_trienode'          the moded-argument placeholder in the answer trie
+#
+# ⚠️ NO DIRECT UPSTREAM ANALOGUE — do not go looking for these names in swipl-devel:
+#   merge_answers, mode_key, table_mode!, TableMode/ModeIndex, has_aggregation
+# Upstream performs the merge INSIDE the answer trie as part of `$tbl_wkl_add_answer`; it has no
+# standalone "fold a list of answers under a mode vector" entry point, because it has no list — the
+# trie is the table. These are the seam where our Vector-backed tables meet upstream's semantics,
+# and they disappear into the trie when §1.0's rewire lands.
 
 # ── the mode ladder (boot/tabling.pl:1451-1513) ──────────────────────────────────────────────────
 abstract type TableMode end
@@ -56,13 +75,13 @@ end
 #     min(S0,S1,S) :- (S0 @< S1 -> S = S0 ; S = S1).     max(S0,S1,S) :- (S0 @> S1 -> S = S0 ; S = S1).
 #     sum(S0,S1,S) :- S is S0+S1.
 # ⚠️ min/max are on the STANDARD ORDER (`@<`/`@>`), not numeric `<` — see StandardOrder.jl's header.
-_agg_first(s0::Atom, ::Atom)::Atom = s0
-_agg_last(::Atom, s1::Atom)::Atom  = s1
-_agg_min(s0::Atom, s1::Atom)::Atom = std_lt(s0, s1) ? s0 : s1
-_agg_max(s0::Atom, s1::Atom)::Atom = std_gt(s0, s1) ? s0 : s1
+agg_first(s0::Atom, ::Atom)::Atom = s0
+agg_last(::Atom, s1::Atom)::Atom  = s1
+agg_min(s0::Atom, s1::Atom)::Atom = standard_lt(s0, s1) ? s0 : s1
+agg_max(s0::Atom, s1::Atom)::Atom = standard_gt(s0, s1) ? s0 : s1
 
 "`sum/3` is `S is S0+S1` — defined only on numbers, and upstream raises a type error off them."
-function _agg_sum(s0::Atom, s1::Atom)::Atom
+function agg_sum(s0::Atom, s1::Atom)::Atom
     (s0 isa Grounded && (s0::Grounded).value isa Real) &&
     (s1 isa Grounded && (s1::Grounded).value isa Real) ||
         throw(ArgumentError("sum/3 aggregation expects numbers, got $(s0) and $(s1)"))
@@ -70,28 +89,28 @@ function _agg_sum(s0::Atom, s1::Atom)::Atom
 end
 
 "`update_alias/2` — boot/tabling.pl:1503-1508. Note `-` is a synonym for `first`, not for `last`."
-const LATTICE_ALIASES = Dict{Symbol,TableMode}(
-    :first  => ModeLattice(:first, _agg_first),
-    Symbol("-") => ModeLattice(:first, _agg_first),
-    :last   => ModeLattice(:last,  _agg_last),
-    :min    => ModeLattice(:min,   _agg_min),
-    :max    => ModeLattice(:max,   _agg_max),
-    :sum    => ModeLattice(:sum,   _agg_sum),
+const UPDATE_ALIAS = Dict{Symbol,TableMode}(
+    :first  => ModeLattice(:first, agg_first),
+    Symbol("-") => ModeLattice(:first, agg_first),
+    :last   => ModeLattice(:last,  agg_last),
+    :min    => ModeLattice(:min,   agg_min),
+    :max    => ModeLattice(:max,   agg_max),
+    :sum    => ModeLattice(:sum,   agg_sum),
 )
 
 "Modes a user may name in a `lattice(...)`/`po(...)` spec, beyond the aliases."
-const LATTICE_REGISTRY = Dict{Symbol,Function}(
-    :first => _agg_first, :last => _agg_last, :min => _agg_min, :max => _agg_max, :sum => _agg_sum,
+const LATTICE_OPS = Dict{Symbol,Function}(
+    :first => agg_first, :last => agg_last, :min => agg_min, :max => agg_max, :sum => agg_sum,
 )
-const PO_REGISTRY = Dict{Symbol,Function}(
-    :leq => (s0, s1) -> std_compare(s0, s1) <= 0,
-    :lt  => std_lt,
-    :geq => (s0, s1) -> std_compare(s0, s1) >= 0,
-    :gt  => std_gt,
+const PO_OPS = Dict{Symbol,Function}(
+    :leq => (s0, s1) -> compare_standard(s0, s1) <= 0,
+    :lt  => standard_lt,
+    :geq => (s0, s1) -> compare_standard(s0, s1) >= 0,
+    :gt  => standard_gt,
 )
 
 """
-    parse_mode(spec) -> TableMode
+    update_goal(spec) -> TableMode
 
 `update_goal/5` (`boot/tabling.pl:1451`). Accepts `index`/`_`, a bare alias (`min`, `sum`, `-`, …),
 `(lattice NAME)` and `(po NAME)`. Upstream raises `domain_error(tabled_mode, Mode)` on anything
@@ -99,25 +118,25 @@ else (`:1512`); we mirror that with a throw rather than silently defaulting to `
 mistyped mode that silently becomes a key argument is exactly the failure that reads as "aggregation
 did nothing".
 """
-function parse_mode(spec::Atom)::TableMode
+function update_goal(spec::Atom)::TableMode
     if spec isa Sym
         n = (spec::Sym).name
         (n === :index || n === :_) && return ModeIndex()
-        haskey(LATTICE_ALIASES, n) && return LATTICE_ALIASES[n]
+        haskey(UPDATE_ALIAS, n) && return UPDATE_ALIAS[n]
         throw(ArgumentError("domain_error(tabled_mode, $(n)) — known: index, " *
-                            join(sort(string.(collect(keys(LATTICE_ALIASES)))), ", ")))
+                            join(sort(string.(collect(keys(UPDATE_ALIAS)))), ", ")))
     elseif spec isa Expression
         ch = (spec::Expression).children
         length(ch) == 2 && ch[1] isa Sym && ch[2] isa Sym || throw(ArgumentError(
             "domain_error(tabled_mode, $(spec)) — expected (lattice NAME) or (po NAME)"))
         kind, nm = (ch[1]::Sym).name, (ch[2]::Sym).name
         if kind === :lattice
-            haskey(LATTICE_REGISTRY, nm) ||
+            haskey(LATTICE_OPS, nm) ||
                 throw(ArgumentError("unknown lattice/3: $(nm)"))
-            return ModeLattice(nm, LATTICE_REGISTRY[nm])
+            return ModeLattice(nm, LATTICE_OPS[nm])
         elseif kind === :po
-            haskey(PO_REGISTRY, nm) || throw(ArgumentError("unknown po/2: $(nm)"))
-            return ModePO(nm, PO_REGISTRY[nm])
+            haskey(PO_OPS, nm) || throw(ArgumentError("unknown po/2: $(nm)"))
+            return ModePO(nm, PO_OPS[nm])
         end
         throw(ArgumentError("domain_error(tabled_mode, $(spec))"))
     end
@@ -154,7 +173,7 @@ function mode_key(goal::Atom, modes::Vector{<:TableMode})::Atom
 end
 
 "Apply one mode to a stored/new value pair. `lattice` merges; `po` KEEPS `s0` when the test holds."
-function apply_mode(m::TableMode, s0::Atom, s1::Atom)::Atom
+function update_body(m::TableMode, s0::Atom, s1::Atom)::Atom
     m isa ModeLattice && return (m::ModeLattice).f(s0, s1)
     m isa ModePO      && return (m::ModePO).f(s0, s1) ? s0 : s1   # boot/tabling.pl:1478
     s1
@@ -207,7 +226,7 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
         for i in 2:length(cc)
             mi = i - 1
             push!(merged, (mi <= length(modes) && is_moded(modes[mi])) ?
-                          apply_mode(modes[mi], cc[i], ac[i]) : cc[i])
+                          update_body(modes[mi], cc[i], ac[i]) : cc[i])
         end
         new = Expression(merged)
         if new != cur                     # VALUE-based change detection, not cardinality
@@ -223,11 +242,11 @@ const _MODE_SPEC = Dict{Symbol,Vector{TableMode}}()
 """
     table_mode!(head, specs)
 
-Declare mode-directed tabling for `head`, one spec per argument. `specs` are parsed by `parse_mode`,
+Declare mode-directed tabling for `head`, one spec per argument. `specs` are parsed by `update_goal`,
 so `[Sym(:index), Sym(:min)]` and `[Sym(:_), Expression([Sym(:lattice), Sym(:sum)])]` are both valid.
 """
 function table_mode!(head::Symbol, specs::Vector{<:Atom})
-    _MODE_SPEC[head] = TableMode[parse_mode(s) for s in specs]
+    _MODE_SPEC[head] = TableMode[update_goal(s) for s in specs]
 end
 
 "Modes declared for `head`, or an empty vector — an undeclared head must behave as before."
