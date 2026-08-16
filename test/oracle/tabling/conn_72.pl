@@ -7,13 +7,26 @@
 %     connection(X, Y) :- connection(Y, X).            % symmetric  — infinite under SLD
 %     connection(X, Y) :- connection(X, Z), connection(Z, Y).   % LEFT-recursive — infinite under SLD
 %
-% Prints one line per reachable pair, sorted:
-%     conn(amsterdam,haarlem)
-% which the differential compares as a SET against Core's answers.
+% Prints one line per reachable pair, sorted, then `count => 16`.
 %
-% ⚠️ THE SET IS THE POINT, NOT THE ORDER. Tabling is set-semantics by design in
-% every implementation (the delimited-control paper dedups in store_answer/2; SWI
-% dedups structurally via the answer trie), so both sides must be compared as sets.
+% 🔴 WHAT THE DIFFERENTIAL ACTUALLY USES, corrected 2026-08-16 — an earlier version
+% of this header said "the differential compares as a SET against Core's answers".
+% IT DOES NOT, and must not:
+%
+%   * THIS FILE AND THE MeTTa SIDE ARE DIFFERENT PROGRAMS. Here: 4 edge facts and
+%     both the symmetric and the transitive rule. There: 2 edges and the symmetric
+%     rule only. The closures cannot match, and were never meant to.
+%   * §7.2 is a TERMINATION property, so it is asserted as one. The `count => 16`
+%     line is used as a POSITIVE CONTROL — under plain SLD this program does not
+%     finish at all, so the mere existence of that line IS §7.2 holding on the
+%     Prolog side. §7.1 (fib_71.pl) is where exact VALUE agreement is asserted.
+%
+% See the "WHAT IS AND IS NOT COMPARED" header of
+% `test/standard/test_tabling_swipl_differential.jl`, which is authoritative.
+%
+% (Set-vs-multiset is a separate matter: tabling is set-semantics by design in every
+% implementation, and where MeTTa's MULTISET semantics differs is roadmap 2.0, pinned
+% by its own test. Not re-litigated here.)
 % Lower-case atoms so the MeTTa side can use the same symbols verbatim.
 
 :- table connection/2.
