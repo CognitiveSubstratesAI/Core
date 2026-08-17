@@ -179,24 +179,26 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         end
     end
 
-    @testset "🔴🔴 …and OVER-APPROXIMATES when it does not — MEASURED, not hidden" begin
-        # 🔴 THIS TEST ASSERTS A KNOWN IMPRECISION, DELIBERATELY. Two rules give different constants
-        # for different instances; the abstracted call cannot tell them apart, because neither answer
-        # mentions the abstracted variable and a VALUE carries no record of which instance produced
-        # it. Upstream filters here; we cannot, and making it exact needs answers to carry their goal
-        # instance — the same structural change delay lists need (roadmap 7.A).
+    @testset "🔴🔴 …and EXACT when it does not, because 7.A records the goal INSTANCE" begin
+        # 🟢 THIS TESTSET USED TO ASSERT THE OPPOSITE, and the change is the point of roadmap 7.A.
+        # Two rules give different constants for different instances. Neither answer MENTIONS the
+        # abstracted variable, so the abstraction binding cannot specialise them and this
+        # over-approximated — `shallow` came back alongside `deep`, and the imprecision was pinned
+        # here as a known gap rather than hidden.
         #
-        # Pinning it as a TEST rather than a comment is the point: an over-approximating restraint
-        # that looked exact is a worse failure than one that is documented, and this fails loudly the
-        # day the answer representation changes — which is exactly when it should be revisited.
+        # Per-answer metadata closes it. `_leader_pass` records `subst(key, bnd)` — the goal instance
+        # that produced each answer — on the answer's TRIE NODE, so the filter upstream performs by
+        # unifying the answer skeleton is now expressible: keep an answer iff some instance that
+        # produced it unifies with the call. Prolog gets this for free because an answer IS its
+        # skeleton; we had to record it.
         _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
         try
             s = Space(); load_core_stdlib!(s)
             load_metta!(s, raw"(= (d (s (s (s a)))) deep)" * "\n" *
                            raw"(= (d (s a)) shallow)" * "\n")
 
-            # WITHOUT the restraint the specific table is exact — the baseline that makes the
-            # comparison below mean something rather than just recording current behaviour.
+            # the UNRESTRAINED table is exact — the baseline that makes the comparison mean
+            # something rather than merely recording current behaviour.
             _AB.table!(:d)
             exact = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
                                 for x in (y isa AbstractVector ? y : [y])])
@@ -204,14 +206,38 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
 
             _AB.untable_all!(); _AB.abolish_all_tables!()
             _AB.table_as!(:d, :subgoal_abstract => 1)
-            approx = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
-                                 for x in (y isa AbstractVector ? y : [y])])
-            @test "deep" in approx              # SOUND: the real answer is never lost…
-            @test approx != exact               # …but it is an OVER-approximation, not a filter
-            @test "shallow" in approx           # …and this is precisely what cannot be filtered out
+            got = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
+                              for x in (y isa AbstractVector ? y : [y])])
+            @test got == exact                  # …the restraint no longer costs precision
+            @test !("shallow" in got)           # …and this is the answer that used to leak through
         finally
             _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
         end
+    end
+
+    @testset "🔴 UNRECORDED instances ADMIT the answer — imprecise, never unsound" begin
+        # An empty instance list means NOT RECORDED, not "no instance". Only `_leader_pass` records;
+        # answers arriving by other routes (the completion mirror, monotonic propagation) have none.
+        # Reading empty as "nothing matches" would DROP real answers, turning a documented
+        # imprecision into a silent unsoundness — the strictly worse failure, and the easy mistake
+        # once a filter exists. This drives `abstract_answers` directly so the fallback is gated
+        # even where no end-to-end program currently reaches it.
+        t = _AB.AnswerTrie()
+        @test _AB.trie_insert!(t, Sym(:deep))            # stored with NO instance
+        @test isempty(_AB.trie_instances(t, Sym(:deep)))
+
+        gen  = Expression(Atom[Sym(:d), Expression(Atom[Sym(:s), Var("_sa", UInt64(1))])])
+        spec = Expression(Atom[Sym(:d), _ab_s(3)])
+        @test _AB.abstract_answers(Atom[Sym(:deep)], gen, spec, t) == Atom[Sym(:deep)]
+
+        # …and once an instance IS recorded, the filter engages and rejects a non-matching one
+        other = Expression(Atom[Sym(:d), _ab_s(1)])      # (d (s a)) — does NOT unify with (d (s (s (s a))))
+        @test _AB.trie_record_instance!(t, Sym(:deep), other)
+        @test isempty(_AB.abstract_answers(Atom[Sym(:deep)], gen, spec, t))
+
+        # recording is VARIANT-deduped, or a fixpoint re-deriving an answer grows this without bound
+        @test !_AB.trie_record_instance!(t, Sym(:deep), other)
+        @test length(_AB.trie_instances(t, Sym(:deep))) == 1
     end
 
     @testset "an already-abstracted goal is a FIXPOINT — the recursion cannot run away" begin

@@ -49,6 +49,43 @@ base and getting 2.0 for free.
 
 ---
 
+## 0f. 🟢 7.A PART ONE — PER-ANSWER METADATA ON THE TRIE NODE (2026-08-17)
+
+`TrieNode` gained `instances::Vector{Atom}`; `_leader_pass` records `subst(key, bnd)` — the goal
+instance that produced each answer — on the answer's node.
+
+**Why the node, and nowhere else.** The trie is the only store with VARIANT identity: `p($x)` and
+`p($y)` reach one node, which is exactly the grouping the metadata needs. A `Dict{Atom,…}` side table
+cannot do it (`==` splits variants); an index-aligned parallel vector cannot survive
+`_merge_partial`'s dedup. This is why 0e (making the trie authoritative) had to come first.
+
+**Why the recording step exists at all.** In Prolog it does not: an answer IS a substitution over the
+goal skeleton, so the node carries the instance inherently and the delay list hangs off the same
+node. A MeTTa answer is a VALUE, so the relation — one answer to MANY instances — has to be made
+explicit. `_leader_pass` is the ONLY place the binding still exists; one line later it is gone.
+
+| measured | result |
+|---|---|
+| §7.11.1 precision | **EXACT** — the over-approximation pinned in 0d is closed; `test_abstract.jl`'s testset now asserts the opposite of what it asserted this morning |
+| coverage | 11 of 11 answers carry an instance on `fib 10` |
+| cost | **+0.08%** allocations (fib 12: 5,836,784 vs 5,832,208) |
+| suite | 88 files / 0 failed |
+
+⚠️ **EMPTY MEANS UNRECORDED, NOT "NO INSTANCE."** Only `_leader_pass` records; answers arriving by
+the completion mirror or monotonic propagation have none. A consumer reading empty as "nothing
+matches" would DROP answers — turning a documented imprecision into a silent unsoundness, the
+strictly worse failure. `abstract_answers` falls back to the over-approximation there, and that
+fallback is gated by its own test rather than left to a comment.
+
+### WHAT IS LEFT OF 7.A
+
+The `delays` half. The node now has a home for it, and the two features that need it
+(WFS residuation, §7.11.2 `answer_abstract`) are unblocked structurally — but the CONTENT is a
+separate decision: a delay condition must ride WITH the value, because our evaluator maps over a
+COLLECTION of values where SWI has one linear derivation and a trail to unwind. That is 7.B/7.C.
+
+---
+
 ## 0e. 🟢 THE ANSWER TRIE IS THE READ PATH — flipped 2026-08-17 (roadmap 1.0b step 2)
 
 Flipped on the same two-part standard as the resumption flip, MEASURED not argued:

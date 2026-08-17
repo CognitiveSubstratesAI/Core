@@ -150,13 +150,34 @@ Making it exact requires answers to carry their goal instance, which is the SAME
 delay lists need (conditions must ride WITH the value). Recorded in the roadmap under 7.A, not
 papered over here: an over-approximating restraint that looked exact would be the worse failure.
 """
-function abstract_answers(general::Vector{Atom}, gen::Atom, specific::Atom)::Vector{Atom}
+function abstract_answers(general::Vector{Atom}, gen::Atom, specific::Atom,
+                          trie::Union{AnswerTrie,Nothing} = nothing)::Vector{Atom}
     bs = match_atoms(gen, specific)                 # what the abstraction's variables stood for
     isempty(bs) && return general                   # cannot specialise ⇒ the general set, unfiltered
     out = Atom[]
-    for a in general, b in bs
-        inst = subst(a, b)
-        any(x -> variant_eq(x, inst), out) || push!(out, inst)
+    for a in general
+        # ── roadmap 7.A: FILTER BY THE RECORDED GOAL INSTANCE ────────────────────────────────────
+        # This is upstream's filter, restored. It could not be expressed before per-answer metadata
+        # existed, because a value carries no record of its derivation; now `_leader_pass` records
+        # `subst(key, bnd)` on the answer's trie node, so we can ask the question upstream asks:
+        # did any instance that produced this answer unify with the call?
+        #
+        # ⚠️ AN EMPTY INSTANCE LIST MEANS UNRECORDED, NOT "NONE" — and reading it as "none" would
+        # DROP answers, converting a documented imprecision into a silent unsoundness. So the empty
+        # case falls through to the over-approximation, which is what this did for everything before.
+        _abstract_instance_admits(trie, a, specific) || continue
+        for b in bs
+            inst = subst(a, b)
+            any(x -> variant_eq(x, inst), out) || push!(out, inst)
+        end
     end
     out
+end
+
+"Does a recorded instance of `a` unify with `specific`? TRUE when nothing was recorded — see above."
+function _abstract_instance_admits(trie::Union{AnswerTrie,Nothing}, a::Atom, specific::Atom)::Bool
+    trie === nothing && return true
+    insts = trie_instances(trie, a)
+    isempty(insts) && return true                   # UNRECORDED ⇒ admit (sound over-approximation)
+    any(i -> !isempty(match_atoms(i, specific)), insts)
 end

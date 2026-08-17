@@ -662,7 +662,21 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
         for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
             is_present(mb, X) || continue
             for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
-                is_empty_atom(at) || push!(out, subst(at, bnd))
+                is_empty_atom(at) && continue
+                v = subst(at, bnd)
+                push!(out, v)
+                # ── roadmap 7.A: RECORD THE GOAL INSTANCE THAT PRODUCED THIS ANSWER ──────────────
+                # 🔑 THIS IS THE ONLY PLACE THE INSTANCE STILL EXISTS. `bnd` binds `key`'s variables
+                # to whatever the matching rule required, so `subst(key, bnd)` IS the instantiated
+                # goal — and one line later it is gone, because `out` carries values. Every consumer
+                # that has wanted it (§7.11.1's filter, and the delay list's "which derivation") has
+                # wanted it from here.
+                #
+                # In Prolog the recording step does not exist: an answer IS a substitution over the
+                # goal skeleton, so the trie node holds the instance inherently. A MeTTa answer is a
+                # VALUE, so the relation has to be made explicit — and it is one answer to MANY
+                # instances, which is why it lives on the node rather than beside the answer.
+                trie_record_instance!(answer_trie_for(key), v, subst(key, bnd))
             end
         end
     finally
@@ -1065,7 +1079,11 @@ function _abstract_tabled_eval(red::Atom, gen::Atom, typ::Atom, space::Space, b:
     # replace. `_project(general, gen)` restores gen's actual variables; `match_atoms(gen, red)` then
     # binds the `_sa` ones to the subterms they replaced AND red's own variables to themselves, so
     # the result is already in the caller's terms and needs no second projection.
-    _replay(abstract_answers(_project(general, gen), gen, red), b, prev)
+    # the trie is passed so the specialisation can FILTER by recorded instance (roadmap 7.A), not
+    # merely substitute — without it §7.11.1 over-approximates whenever an answer does not mention
+    # the abstracted variable, which was the measured gap when this shipped.
+    gtrie = has_answer_trie(genkey) ? answer_trie_for(genkey) : nothing
+    _replay(abstract_answers(_project(general, gen), gen, red, gtrie), b, prev)
 end
 
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)

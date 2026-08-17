@@ -73,8 +73,21 @@ mutable struct TrieNode
     children::Dict{TrieKey,TrieNode}
     answer::Union{Atom,Nothing}
     seq::Int                      # insertion order; 0 until this node terminates an answer
+    # ── PER-ANSWER METADATA (roadmap 7.A, added 2026-08-17) ──────────────────────────────────────
+    # 🔑 THE NODE IS THE ONLY PLACE THIS CAN LIVE, and that is upstream's design, not a convenience.
+    # A Prolog answer IS its skeleton, so the trie node carries the goal instance inherently and the
+    # delay list hangs off the same node. A MeTTa answer is a VALUE, so both have to be attached
+    # explicitly — but they attach HERE, because the trie is the only store with VARIANT identity:
+    # `p($x)` and `p($y)` reach one node, which is exactly the grouping the metadata needs. A
+    # `Dict{Atom,...}` side table cannot do it (`==` splits variants), and an index-aligned parallel
+    # vector cannot survive `_merge_partial`'s dedup.
+    #
+    # THREE features converge here — see the roadmap 0e table:
+    #   instances -> §7.11.1 subgoal abstraction, currently OVER-APPROXIMATING without them
+    #   delays    -> WFS residuation and §7.11.2 `answer_abstract`
+    instances::Vector{Atom}       # goal instances that PRODUCED this answer; empty = unrecorded
 end
-TrieNode() = TrieNode(Dict{TrieKey,TrieNode}(), nothing, 0)
+TrieNode() = TrieNode(Dict{TrieKey,TrieNode}(), nothing, 0, Atom[])
 
 """The answer table for ONE tabled goal.
 
@@ -191,6 +204,41 @@ function trie_insert!(t::AnswerTrie, a::Atom)::Bool
     t.inserts += 1; node.seq = t.inserts             # stamp AT INSERT — see `trie_answers`
     t.count += 1
     true
+end
+
+"""
+    trie_record_instance!(t, a, instance) -> Bool
+
+Record that goal `instance` produced answer `a`. Returns whether the instance was NEW.
+
+🔴 WHY IT IS KEYED BY THE ANSWER RATHER THAN STORED ALONGSIDE IT. In Prolog the question does not
+arise: an answer is a substitution over the goal skeleton, so the instance IS the answer. Here the
+value `deep` says nothing about which call produced it, and the same value can come from many
+instances — so the relation is one answer to MANY instances, and the node is where they collect.
+
+The instance list is VARIANT-deduped for the same reason the trie itself is: two instances differing
+only by variable naming are one instance, and a fixpoint that re-derives an answer each round would
+otherwise grow this list without bound.
+
+⚠️ AN EMPTY LIST MEANS "NOT RECORDED", NOT "NO INSTANCE". Recording happens in `_leader_pass`, which
+is the only place that still holds the binding; answers arriving by other routes (the completion
+mirror, monotonic propagation) leave it empty. Consumers MUST treat empty as unknown and fall back
+to the sound over-approximation — treating it as "no instance matches" would silently DROP answers,
+turning an imprecision into an unsoundness.
+"""
+function trie_record_instance!(t::AnswerTrie, a::Atom, instance::Atom)::Bool
+    node = trie_lookup!(t, a, true)::TrieNode
+    any(x -> variant_eq(x, instance), node.instances) && return false
+    push!(node.instances, instance)
+    true
+end
+
+"""The goal instances known to have produced `a` — EMPTY means unrecorded, not none.
+
+See `trie_record_instance!`: a consumer that reads empty as "nothing matches" drops real answers."""
+function trie_instances(t::AnswerTrie, a::Atom)::Vector{Atom}
+    node = trie_lookup!(t, a, false)
+    node === nothing ? Atom[] : node.instances
 end
 
 "Is `a` already stored? Structural, so variants of a stored answer count as present."
