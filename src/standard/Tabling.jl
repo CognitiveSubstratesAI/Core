@@ -179,6 +179,8 @@ function untable!(head::Symbol)::Bool
     abolish_table_subgoals!(head)
     untable_modes!(head)        # '$table_mode' — tabling/Aggregation.jl
     restraint!(head, :max_answers, -1)   # the attribute-shaped state — tabling/Tripwires.jl
+    untable_subsumptive!(head)           # §7.5 mode — tabling/Subsumptive.jl
+    clear_table_options!(head)           # the parsed `as ...` record — tabling/Options.jl
     true
 end
 

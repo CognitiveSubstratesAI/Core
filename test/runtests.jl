@@ -155,6 +155,9 @@ module StandardMeTTaTests
     # SWI §7.5 subsumptive tabling — a second LOOKUP MODE over the same tables: the more specific
     # call is answered from the more general table. NOT wired into tabled_eval; gates the lookup.
     Main.@suite("standard/tabling/test_subsumptive.jl")
+    # ONE declaration surface — SWI's table_options/3 (roadmap 0b, the config principle). Gates the
+    # three states an option can be in: HONOURED, REFUSED-with-a-reason, and UNKNOWN (domain_error).
+    Main.@suite("standard/tabling/test_options.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
