@@ -1017,8 +1017,56 @@ end
 # `test/standard/test_tnot_wfs.jl` (41 assertions) plus `test_wfs_swipl_differential.jl`, which runs a
 # LIVE swipl oracle and skips loudly if swipl is absent. Two stale scope claims in one header is why
 # `[[feedback_capability_claims_expire_retest_the_premise]]` exists.
+"""Solve the GENERAL goal, then answer the SPECIFIC one from its table — §7.11.1's abstracted arm.
+
+`start_abstract_tabling`'s non-trivial branches all reduce to this: get the general table into a
+COMPLETE state (`create_abstract_table` runs `run_leader` on the general skeleton; the `complete`
+branch skips straight past it), then `'\$tbl_answer_update_dl'(Trie, Skeleton)` unifies its answers
+into the specific call.
+
+⚠️ THE GENERAL GOAL IS DRIVEN THROUGH `tabled_eval` ITSELF, not through a private path. That is what
+makes the abstract table a real table — invalidated by the IDG, restrained by §7.11.3, readable by
+§7.5 — rather than a cache that happens to look like one. It cannot recurse indefinitely: `gen` is
+strictly more general than `red`, and `abstract_subgoal(gen)` is a fixpoint (abstracting an already
+abstracted goal spends the same budget on strictly fewer compounds), so the second entry takes the
+plain variant arm.
+"""
+function _abstract_tabled_eval(red::Atom, gen::Atom, typ::Atom, space::Space, b::Bindings, prev)
+    genkey = _variant_rename(gen)
+    # drive the general table to completion, discarding its answers — we want the TABLE, not this
+    # call's projection of it. Fresh bindings so the caller's variables cannot be bound by the
+    # general solve; `prev = nothing` because these results are not the ones being returned.
+    tabled_eval(gen, typ, space, Bindings(), nothing)
+    general = haskey(_ANSWER_TABLE, genkey) ? _ANSWER_TABLE[genkey] :
+              (has_answer_trie(genkey) ? trie_answers(answer_trie_for(genkey)) : Atom[])
+    # ⚠️ PROJECT ONTO `gen` FIRST, THEN SPECIALISE. A stored answer holds `Var("_v", i)` placeholders
+    # keyed to ITS OWN table's ordered variables, so an answer that mentions the abstracted variable
+    # mentions `_v_i`, NOT `_sa_i` — and substituting the abstraction binding would find nothing to
+    # replace. `_project(general, gen)` restores gen's actual variables; `match_atoms(gen, red)` then
+    # binds the `_sa` ones to the subterms they replaced AND red's own variables to themselves, so
+    # the result is already in the caller's terms and needs no second projection.
+    _replay(abstract_answers(_project(general, gen), gen, red), b, prev)
+end
+
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
-    red = _reduced_goal(atom, space, b); key = _variant_rename(red)             # red keeps the caller's vars;
+    red = _reduced_goal(atom, space, b)
+    # ── §7.11.1 SUBGOAL ABSTRACTION — `start_abstract_tabling/3` (boot/tabling.pl:477-499) ────────
+    # Upstream's dispatch, in its own words (`:469-472`): *"If the goal is not abstracted this is
+    # simple variant tabling. If the goal is abstracted we must solve the more general goal and use
+    # answers from the abstract table."* So the branch is on `size_abstract`'s TRIE_ABSTRACTED flag,
+    # and the abstracted arm is the §7.5 subsumptive read against the general table.
+    #
+    # ⚠️ THE GUARD IS `is_most_general_term(Skeleton)`, NOT "was anything abstracted". Upstream tests
+    # the SKELETON: an abstraction that happens to produce a maximally-general goal is indistinguish-
+    # able from having asked the general goal directly, so it takes the plain variant arm and avoids
+    # a pointless self-subsumption. `is_most_general_term` (§7.5) is that test — every argument a
+    # DISTINCT unbound variable, distinctness included, since `p($x, $x)` is a real constraint.
+    gen, abstracted = abstract_subgoal(red)
+    if abstracted && !is_most_general_term(gen)
+        return _abstract_tabled_eval(red, gen, typ, space, b, prev)
+    end
+    abstracted && (red = gen)          # abstracted TO the most general form ⇒ just table that
+    key = _variant_rename(red)                                                  # red keeps the caller's vars;
     # §7.7: THE DEPENDENCY EDGE, AT THE CALL — not at the cache hit.
     # 🔴 FIRST ATTEMPT PUT THIS ON THE CACHE-HIT PATH AND IT WAS UNSOUND. Upstream adds the edge in
     # `tbl_variant_table` (`pl-tabling.c:4549-4560`), which looks up OR CREATES the table on EVERY

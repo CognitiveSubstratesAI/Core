@@ -49,6 +49,45 @@ base and getting 2.0 for free.
 
 ---
 
+## 0d. §7.11.1 SUBGOAL ABSTRACTION — BUILT 2026-08-17, and it found a THIRD-ASSUMPTION case
+
+`src/standard/tabling/Abstract.jl` + the `start_abstract_tabling` arm in `tabled_eval`. 42 tests.
+
+**It was refused for a reason that was never true.** `Options.jl` had it blocked on "abstraction over
+TRIE TERMS at a depth — trie walk not built", i.e. the answer trie as prerequisite. Upstream states
+the design in one sentence (`boot/tabling.pl:469-472`): *"This is a merge between variant and
+subsumptive tabling."* It rides on §7.5, which we already had. **A refusal reason carried forward
+unexamined kept a buildable feature out of reach for weeks** —
+`[[feedback_capability_claims_expire_retest_the_premise]]`.
+
+**It is a SIZE BUDGET, not a depth limit.** `aleft` is one counter for the whole term, decremented at
+every compound and never restored per branch (`pl-trie.c:893`), DFS pre-order. On `q(f(a), g(b))`
+with N=1 a depth limit treats both arguments alike; the budget keeps the first and abstracts the
+second. That case is the test that tells the two implementations apart.
+
+### 🔴 …AND IT SURFACED THE THIRD ASSUMPTION AGAIN, BY BEING BUILT
+
+Upstream specialises the general table's answers by UNIFYING the answer against the specific call —
+sound because **a Prolog answer IS a substitution over the goal skeleton**. A MeTTa answer is a
+**VALUE**: `(= (depth $x) ok)` answers `ok`, which carries no record of which instance produced it.
+The Prolog filter has no argument to work on, and the first implementation — a faithful port —
+returned EMPTY for every non-ground abstraction.
+
+What is recoverable is the ABSTRACTION BINDING (`match_atoms(gen, red)`), so:
+
+| the answer… | result |
+|---|---|
+| MENTIONS the abstracted variable | specialised EXACTLY, as upstream |
+| does NOT (a constant; two rules → two constants) | **OVER-APPROXIMATES** — cannot be filtered |
+
+Sound in both cases (the real answer is never lost), imprecise in the second. **Both sides are pinned
+as tests**, including a baseline showing the unrestrained table is exact — an over-approximating
+restraint that looked exact would be the worse failure. Making it exact requires answers to carry
+their goal instance, which is the **same structural change delay lists need**. That is now THREE
+features converging on one representation change (7.A): delay lists, `answer_abstract`, and this.
+
+---
+
 ## 0c. THE ADVERSARIAL AUDIT vs THE C — 2026-08-17, 23 FINDINGS, 22 FIXED
 
 An agent read all ten `src/standard/tabling/*.jl` plus `Tabling.jl` against `pl-tabling.c`,

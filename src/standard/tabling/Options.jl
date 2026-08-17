@@ -62,17 +62,14 @@ const _REFUSED_OPTIONS = Dict{Symbol,Tuple{String,String}}(
     :dynamic          => ("§7.4",     "tabling for impure/dynamic predicates — interaction rules unbuilt"),
     :shared           => ("§7.9",     "needs a THREADING model; MettaJam is the intended first consumer"),
     :private          => ("§7.9",     "the paired inverse of `shared`; meaningless without it"),
-    # 🔴 THIS REASON WAS WRONG UNTIL 2026-08-17 — it said "abstraction over TRIE TERMS at a depth —
-    # trie walk not built", i.e. that the ANSWER TRIE was the prerequisite. It is not.
-    # `start_abstract_tabling/3` (boot/tabling.pl:466-517) says the design outright: *"This is a merge
-    # between variant and subsumptive tabling… If the goal is abstracted we must solve the more
-    # general goal and use answers from the abstract table."* Subgoal abstraction rides on SUBSUMPTIVE
-    # TABLING — which we HAVE (§7.5) — plus `size_abstract` in the VARIANT trie lookup, which is eight
-    # lines inside the existing insert walk (pl-trie.c:829-884), not a new pass.
-    # ⇒ §7.11.1 IS BUILDABLE NOW. Kept refused only because it is unbuilt, not because it is blocked.
-    :subgoal_abstract => ("§7.11.1",  "BUILDABLE NOW — needs `size_abstract` in the variant-trie " *
-                                      "lookup + the §7.5 subsumptive path we already have; unbuilt, " *
-                                      "not blocked"),
+    # ✅ `:subgoal_abstract` IS NO LONGER HERE — §7.11.1 is BUILT (`tabling/Abstract.jl`, 2026-08-17).
+    # Its refusal reason had been wrong AND load-bearing: it said the option needed "abstraction over
+    # TRIE TERMS at a depth — trie walk not built", i.e. that the answer trie was the prerequisite.
+    # It never was. `start_abstract_tabling/3` states the design outright (boot/tabling.pl:469-472):
+    # *"This is a merge between variant and subsumptive tabling… If the goal is abstracted we must
+    # solve the more general goal and use answers from the abstract table."* It rides on SUBSUMPTIVE
+    # TABLING (§7.5, already built) plus `size_abstract`, which is a budget threaded through the walk
+    # — not a new pass. A refusal reason carried forward unexamined kept it out of reach for weeks.
     # ⚠️ AND THIS ONE IS GENUINELY BLOCKED, FOR A REASON I HAD NOT FOUND. The mechanism needs only the
     # trie — but its only SOUND action does not. `answer_abstract` OVER-approximates (it generalises
     # an answer, so the table claims more than was derived), and `bounded_rationality` compensates by
@@ -130,7 +127,10 @@ function table_options!(o::TableOptions, spec)::TableOptions
         if opt === :max_answers
             # `restraint/4`: a NEGATIVE value REMOVES the restraint rather than storing it.
             o.max_answers = n < 0 ? NO_RESTRAINT : Int(n)
-        elseif opt === :subgoal_abstract || opt === :answer_abstract
+        elseif opt === :subgoal_abstract
+            # §7.11.1 — same negative-removes convention as `max_answers` (`restraint/4`).
+            o.subgoal_abstract = n < 0 ? NO_RESTRAINT : Int(n)
+        elseif opt === :answer_abstract
             _refuse(opt)
         else
             throw(ArgumentError("domain_error(table_option, $(opt)($(n)))"))
@@ -167,6 +167,7 @@ head itself to `_TABLED_HEADS`.
     table_as!(:p)                                  # plain variant tabling
     table_as!(:p, :subsumptive)                    # §7.5
     table_as!(:p, :subsumptive, :max_answers => 1000)
+    table_as!(:p, :subgoal_abstract => 2)          # §7.11.1 — bound the table SET, not each table
     table_as!(:p, :incremental)                    # THROWS, naming §7.7 and why
 """
 function table_as!(head::Symbol, specs...)
@@ -175,6 +176,7 @@ function table_as!(head::Symbol, specs...)
     table!(head)
     o.mode === :subsumptive ? table_subsumptive!(head) : untable_subsumptive!(head)
     restraint!(head, :max_answers, o.max_answers)
+    subgoal_abstract!(head, o.subgoal_abstract)    # §7.11.1
     o
 end
 

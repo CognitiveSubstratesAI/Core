@@ -1050,6 +1050,7 @@ include("tabling/Subsumptive.jl")  # SWI §7.5 — a second LOOKUP MODE over tho
 include("tabling/Options.jl")      # SWI table_options/3 — THE declaration surface (roadmap 0b)
 include("tabling/IDG.jl")          # SWI §7.7 incremental — the dependency graph
 include("tabling/Monotonic.jl")    # SWI §7.8 — propagate forward on assert, invalidate on retract
+include("tabling/Abstract.jl")     # SWI §7.11.1 subgoal_abstract — variant+subsumptive merge
 
 function metta_instr(f::Frame, b::Bindings, space)
     a = f.atom

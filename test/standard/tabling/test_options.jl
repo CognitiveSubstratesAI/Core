@@ -44,9 +44,12 @@ const _OP = Eval
         for opt in (:incremental, :opaque, :monotonic, :lazy, :dynamic, :shared, :private)
             @test_throws ArgumentError _OP.table_as!(:q, opt)
         end
-        for opt in (:subgoal_abstract, :answer_abstract)
-            @test_throws ArgumentError _OP.table_as!(:q, opt => 3)
-        end
+        # ✅ `:subgoal_abstract` MOVED OUT OF THIS LIST on 2026-08-17 — §7.11.1 is BUILT
+        # (`tabling/Abstract.jl`), so it is HONOURED now and asserting it still throws would pin the
+        # port as less finished than it is. `:answer_abstract` stays: it is blocked on delay lists,
+        # because its only sound action routes through `radial_restraint :- tnot(radial_restraint)`.
+        @test_throws ArgumentError _OP.table_as!(:q, :answer_abstract => 3)
+        @test _OP.table_as!(:q, :subgoal_abstract => 3).subgoal_abstract == 3
         # every refusal must NAME its roadmap item, or the message teaches nothing
         for (opt, (item, _)) in _OP._REFUSED_OPTIONS
             msg = try; _OP.table_as!(:q, opt); ""

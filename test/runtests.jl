@@ -166,6 +166,14 @@ module StandardMeTTaTests
     # vehicle is §1.0's Dependency + resume_continuation, so 7.8 needed the assert/retract branch
     # and the eager/lazy split rather than a new engine.
     Main.@suite("standard/tabling/test_monotonic.jl")
+    # SWI §7.11.1 subgoal_abstract — the OTHER restraint: §7.11.3 bounds how big one table gets, this
+    # bounds how MANY tables there are. Upstream calls it "a merge between variant and subsumptive
+    # tabling", which is why it rides on §7.5 and NOT on the answer trie — the refusal reason that
+    # kept it unbuilt was simply wrong. WIRED into `tabled_eval`. Pins that the budget is a SIZE
+    # limit, not a depth limit (they differ on branching terms), and pins BOTH sides of the
+    # precision boundary: exact when an answer mentions the abstracted variable, over-approximating
+    # when it does not — because a MeTTa answer is a VALUE, not a substitution over the skeleton.
+    Main.@suite("standard/tabling/test_abstract.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

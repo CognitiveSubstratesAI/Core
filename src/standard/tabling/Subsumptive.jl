@@ -82,6 +82,33 @@ function _is_most_general(b::Bindings, vars::Vector{Var})::Bool
 end
 
 """
+    is_most_general_term(t) -> Bool
+
+`is_most_general_term/1` (`pl-prims.c:3499-3572`) — the TERM-level predicate, as distinct from
+`_is_most_general(bindings, vars)` above, which asks the same question of a UNIFICATION.
+
+    isAtom(t)  -> true
+    isTerm(t)  -> every argument is a DISTINCT unbound variable
+    otherwise  -> false        (a bare variable included — that is upstream's answer, not an omission)
+
+⚠️ DISTINCTNESS IS THE HALF THAT IS EASY TO DROP, and upstream enforces it by a trick worth naming:
+it `set_marked`s each argument as it goes, and a marked word no longer satisfies `isVar`, so a
+SECOND occurrence of the same variable fails the very test that admitted the first. `p(X, X)` is
+therefore NOT most general — it constrains its two arguments to be equal, which is a real constraint.
+
+Used by §7.11.1 to decide whether an abstracted goal is worth treating as abstract at all: an
+abstraction that lands on a maximally-general goal is indistinguishable from having asked the general
+goal directly, so it takes the plain variant arm (`boot/tabling.pl:481`).
+"""
+function is_most_general_term(t::Atom)::Bool
+    t isa Sym && return true
+    t isa Expression || return false
+    args = @view (t::Expression).children[2:end]        # children[1] is the functor
+    all(x -> x isa Var, args) || return false
+    length(unique(args)) == length(args)                # …and DISTINCT
+end
+
+"""
     more_general_table(goal) -> Union{Tuple{Atom,AnswerTrie},Nothing}
 
 `more_general_table/2` (`boot/tabling.pl:1073`). The table whose key SUBSUMES `goal`, or `nothing`.
