@@ -164,7 +164,19 @@ absence as failure. Generalisation needs no trie; only the *conditional/undefine
 that is what `answer_count_restraint` records for the caller.
 """
 function tbl_wkl_add_answer(head::Symbol, answers::Vector{Atom},
-                                candidate::Atom)::Tuple{Vector{Atom},Bool,Union{TripwireAction,Nothing}}
+                                candidate::Atom)::Tuple{Vector{Atom},Bool,Union{TripwireAction,Nothing,Symbol}}
+    # `Symbol` in the return union carries `:duplicate` — upstream simply `return false`s there,
+    # but naming it keeps a duplicate distinguishable from a `fail` action, which also adds nothing.
+    # 🔴 A DUPLICATE MUST NOT TRIP THE RESTRAINT — fixed 2026-08-17 from the C, which orders it
+    # differently from this function's original form. `$tbl_wkl_add_answer` creates the trie node
+    # FIRST and reaches the tripwire only in the `else` branch (`pl-tabling.c:3618` vs `:3633`):
+    #     if ( node->value )        -> DUPLICATE, return false          <- no restraint event
+    #     else if ( (action = tripwire_answers_for_subgoal(wl)) ) ...
+    # Consulting the bound before knowing whether the candidate is a duplicate fires the restraint on
+    # every re-insertion at the bound and marks a table APPROXIMATE that never grew. MEASURED: at
+    # bound 2 with answers {1,2}, re-inserting `1` returned BOUNDED_RATIONALITY and set the
+    # approximate flag; the trie-seated `trie_insert_restrained!` returns `:duplicate` and does not.
+    any(x -> x == candidate, answers) && return (answers, false, :duplicate)
     act = tripwire_answers_for_subgoal(head, length(answers))
     act === nothing              && return (push!(copy(answers), candidate), true, nothing)
     if act == TW_WARNING

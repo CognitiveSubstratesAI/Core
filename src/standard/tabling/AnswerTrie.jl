@@ -305,3 +305,64 @@ function trie_insert_moded!(t::AnswerTrie, a::Atom, modes::Vector{<:TableMode})
     node.answer = new                                    # action `delete`: old replaced in place
     (true, :delete)
 end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RESTRAINED INSERTION — §7.11.3 re-seated onto the trie.
+#
+# `Tripwires.apply_answer_restraint` works over a `Vector{Atom}` and needs `_is_general_variant`
+# bolted on, because a Vector has no structural identity and each generalisation mints fresh
+# variables. The trie supplies both: variant identity is the path, so the general answer dedups by
+# construction.
+#
+# 🔴 AND THE C EXPOSES AN ORDERING BUG IN THE VECTOR VERSION. `$tbl_wkl_add_answer`
+# (`pl-tabling.c:3596-3646`) does, in this order:
+#
+#     rc = trie_lookup_abstract(..., add=true, ...)   /* CREATE the node */
+#     if ( node->value )            -> already an answer: DUPLICATE, return false
+#     else if ( (action = tripwire_answers_for_subgoal(wl)) )   /* only reached when NEW */
+#          ... bounded_rationality: trie_delete(node); generalise; add_answer_count_restraint()
+#
+# THE TRIPWIRE SITS IN THE `else` BRANCH. A DUPLICATE ANSWER NEVER TRIPS THE RESTRAINT — which is
+# right, because a duplicate does not grow the table. `apply_answer_restraint` consults the bound
+# BEFORE knowing whether the candidate is a duplicate, so re-inserting the same answer at the bound
+# fires the restraint on every attempt and can mark a table approximate that never grew. Fixed here
+# by construction: the node tells us.
+
+"""
+    trie_insert_restrained!(t, head, a) -> (added::Bool, action)
+
+Insert `a` subject to `head`'s §7.11.3 restraint. The trie-seated `$tbl_wkl_add_answer` answer path.
+
+Returns `action` `:duplicate` (already present — the restraint is NOT consulted, per the C),
+`nothing` (inserted, no restraint fired), or the `TripwireAction` that fired.
+"""
+function trie_insert_restrained!(t::AnswerTrie, head::Symbol, a::Atom)
+    node = trie_lookup!(t, a, true)::TrieNode
+    if node.answer !== nothing                       # `if ( node->value )` — duplicate.
+        return (false, :duplicate)                   # NOT a restraint event (pl-tabling.c:3618)
+    end
+    act = tripwire_answers_for_subgoal(head, t.count)
+    if act === nothing
+        node.answer = a
+        t.inserts += 1; node.seq = t.inserts; t.count += 1
+        return (true, nothing)
+    elseif act == TW_WARNING                          # `goto add_anyway` (:3660)
+        @warn "tabling: max_answers exceeded for $(head) — answer added anyway" bound=max_answers(head)
+        node.answer = a
+        t.inserts += 1; node.seq = t.inserts; t.count += 1
+        return (true, act)
+    elseif act == TW_FAIL
+        return (false, act)                           # `trie_delete` + false (:3662)
+    elseif act == TW_ERROR || act == TW_SUSPEND
+        act == TW_SUSPEND &&
+            @warn "tabling: max_answers exceeded for $(head) — SWI would break to a debugger here"
+        throw(ErrorException("resource_error(tripwire(max_answers_for_subgoal, $(head)))"))
+    end
+    # BOUNDED_RATIONALITY (:3636-3654): delete the offending node, then insert ONE maximally general
+    # answer subsuming what the bound stopped computing, and mark the table an approximation.
+    # ⚠️ NO `_is_general_variant` HERE: `trie_insert!` dedups by variant structurally, so a second
+    # generalisation of the same shape finds the node already marked and returns false. That helper
+    # exists in Tripwires.jl only because a Vector cannot do this.
+    add_answer_count_restraint!(head)
+    (trie_insert!(t, generalise_answer_substitution(a)), act)
+end

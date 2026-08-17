@@ -97,6 +97,21 @@ dequeue with the left/right invariant · an answer TRIE.
 by design everywhere, so the guard is still needed after the move. The reasons are PERFORMANCE and
 the three structures above.
 
+### 1.0b — WIRING THE TRIE IN (open, found 2026-08-17)
+
+§7.3 and §7.11.3 are now re-seated onto `AnswerTrie`, but the trie is not yet `tabled_eval`'s
+storage — `_ANSWER_TABLE`/`_PARTIAL` still are. Two things to carry over when it is, both from
+reading the C rather than the Prolog:
+
+* **`Cluster` should hold `TrieNode`, not `Atom`.** Upstream's cluster member is a TRIE NODE POINTER
+  (`answer ans = {an}` where `an` is `trie_node *`; `pl-tabling.h:106-111`, `pl-tabling.c:3133`), so
+  the trie OWNS answers and the worklist only references them. Taking an answer off the worklist,
+  upstream can return to its node — for `TN_IDG_DELETED`, conditionality, pruning. Ours loses that
+  identity and would have to re-walk the path.
+* **A moded table is `TRIE_ISMAP`** and holds possibly MANY answers per skeleton key
+  (`update_subsuming_answers` maps over every child, `:3871`). Our one-row-per-key is correct only
+  while no answer can be conditional — i.e. only until delay lists land.
+
 ### 1.1–1.13 the §7 surface, in dependency order
 
 | § | feature | status | notes |

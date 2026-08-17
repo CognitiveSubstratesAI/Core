@@ -37,6 +37,22 @@
 "Which kind of work a cluster holds. `CLUSTER_ANSWERS` / `CLUSTER_SUSPENSIONS` (pl-tabling.c:2708)."
 @enum ClusterKind CLUSTER_ANSWERS CLUSTER_SUSPENSIONS
 
+# 🔴 A DIVERGENCE FROM UPSTREAM, FOUND 2026-08-17 AND NOT YET COSTLY — but it becomes so when the
+# trie is wired into `tabled_eval`. Upstream's cluster member is a TRIE NODE POINTER, not a term:
+#
+#     answer ans = {an};                              /* `an` is a `trie_node *` */
+#     wkl_add_answer(worklist *wl, trie_node *an)     /* pl-tabling.c:3133 */
+#     typedef struct cluster { ...; buffer members; }  /* pl-tabling.h:106-111 */
+#
+# So THE TRIE OWNS THE ANSWERS AND THE WORKLIST ONLY REFERENCES THEM. Taking an answer off the
+# worklist, upstream can go straight back to its node — to test `TN_IDG_DELETED`, to re-check
+# conditionality, to prune (`ctx.garbage` / `prune_answers_worklist`).
+#
+# Ours stores a bare `Atom`. In Julia that costs no copy — `Atom` is already a heap reference — but
+# the IDENTITY is lost: we cannot get from a dequeued answer back to its trie node without re-walking
+# its path. Harmless today (worklist and trie are not yet connected); when they are,
+# `Cluster.answers` should hold `TrieNode` references instead, matching `:106-111`.
+
 """A run of consecutive same-kind work items.
 
 Upstream keeps one `members` buffer whose element type depends on `type`; Julia gets two typed

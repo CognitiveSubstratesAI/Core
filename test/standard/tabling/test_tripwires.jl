@@ -125,3 +125,84 @@ end
     @test_throws ArgumentError _RS.restraint!(:x, :no_such_option, 1)
     _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
 end
+
+@testset "§7.11.3 re-seated onto the ANSWER TRIE — and the duplicate-ordering fix" begin
+    _run_trie(head::Symbol, n::Int, vals) = begin
+        _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+        _RS.restraint!(head, :max_answers, n)
+        t = _RS.AnswerTrie()
+        acts = Any[]
+        for v in vals
+            (_, a) = _RS.trie_insert_restrained!(t, head, _p(v)); push!(acts, a)
+        end
+        (t, acts)
+    end
+
+    @testset "matches the swipl oracle through the trie" begin
+        if Sys.which("swipl") === nothing || !isfile(_RS_ORACLE)
+            @test_skip "swipl NOT ON PATH — the trie-path §7.11.3 differential did not run."
+        else
+            oracle = _rs_pairs(_RS_ORACLE)
+            @test sort(collect(keys(oracle))) == ["count", "general", "ground"]   # positive control
+            (t, _) = _run_trie(:p, 2, 1:4)
+            as  = _RS.trie_answers(t)
+            gen = [a for a in as if (a::Expression).children[2] isa Var]
+            @test length(as)  == parse(Int, oracle["count"])     # 3, NOT 2
+            @test length(gen) == parse(Int, oracle["general"])   # exactly one general answer
+            @test _RS.answer_count_restraint(:p)                 # table marked an approximation
+        end
+    end
+
+    @testset "🔴 a DUPLICATE must NOT trip the restraint" begin
+        # The C reaches the tripwire only in the `else` branch of the node-exists test
+        # (`pl-tabling.c:3618` vs `:3633`), so a duplicate — which does not grow the table — is
+        # never a restraint event. MEASURED before the fix: at bound 2 with answers {1,2},
+        # re-inserting `1` returned BOUNDED_RATIONALITY and set the approximate flag.
+        _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+        _RS.restraint!(:q, :max_answers, 2)
+        t = _RS.AnswerTrie()
+        _RS.trie_insert_restrained!(t, :q, _p(1))
+        _RS.trie_insert_restrained!(t, :q, _p(2))
+        @test length(t) == 2 && !_RS.answer_count_restraint(:q)   # at the bound, not yet approximate
+
+        @test _RS.trie_insert_restrained!(t, :q, _p(1)) == (false, :duplicate)
+        @test !_RS.answer_count_restraint(:q)          # STILL not approximate — the whole point
+        @test length(t) == 2
+
+        # …and the Vector path now agrees, which is the regression this pins.
+        _RS.clear_answer_count_restraints!()
+        (kept, added, act) = _RS.tbl_wkl_add_answer(:q, Atom[_p(1), _p(2)], _p(1))
+        @test act == :duplicate && !added && length(kept) == 2
+        @test !_RS.answer_count_restraint(:q)
+        _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+    end
+
+    @testset "the general answer dedups WITHOUT _is_general_variant" begin
+        # In the Vector implementation each generalisation mints fresh variables, so `==` never
+        # matched and `_is_general_variant` had to be written. The trie keys variables by
+        # FIRST-OCCURRENCE INDEX, so the second generalisation lands on the same node by
+        # construction. Measured 4 vs the oracle's 3 before that helper existed.
+        (t, _) = _run_trie(:v, 2, 1:6)                 # four answers past the bound
+        @test count(a -> (a::Expression).children[2] isa Var, _RS.trie_answers(t)) == 1
+        @test length(t) == 3
+        _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+    end
+
+    @testset "actions: warning ADDS ANYWAY, fail drops, error throws" begin
+        _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+        _RS.set_global_max_answers!(1, _RS.TW_WARNING)
+        t = _RS.AnswerTrie(); _RS.trie_insert_restrained!(t, :w, _p(1))
+        (added, act) = (@test_logs (:warn,) match_mode=:any _RS.trie_insert_restrained!(t, :w, _p(2)))
+        @test added && act == _RS.TW_WARNING && length(t) == 2    # `goto add_anyway`
+
+        _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.TW_FAIL)
+        t2 = _RS.AnswerTrie(); _RS.trie_insert_restrained!(t2, :f, _p(1))
+        @test _RS.trie_insert_restrained!(t2, :f, _p(2)) == (false, _RS.TW_FAIL)
+        @test length(t2) == 1
+
+        _RS.clear_all_restraints!(); _RS.set_global_max_answers!(1, _RS.TW_ERROR)
+        t3 = _RS.AnswerTrie(); _RS.trie_insert_restrained!(t3, :e, _p(1))
+        @test_throws ErrorException _RS.trie_insert_restrained!(t3, :e, _p(2))
+        _RS.clear_all_restraints!(); _RS.clear_answer_count_restraints!()
+    end
+end
