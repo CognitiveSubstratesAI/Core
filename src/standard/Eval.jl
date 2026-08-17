@@ -2414,6 +2414,49 @@ using PrecompileTools: @setup_workload, @compile_workload
             # `(rel a b)` match above.
             load_metta!(sp, "(colour red) (colour green) (colour blue)")
             load_metta!(sp, "!(match &self (colour \$c) \$c)")
+
+            # 🔴 TABLING — ADDED 2026-08-17, AND ITS ABSENCE WAS THE ANSWER TO A REAL QUESTION.
+            # The workload above was measured against the CONFORMANCE corpus and is right for it, but
+            # it predates every line of the SLG port: `tabled_eval`, `_leader_pass`, the worklist
+            # dequeue, the answer trie, `tnot`/WFS and the delay path are reached by NOTHING in it, so
+            # none of their specializations were traced into the package image. Measured consequence:
+            # verifying a day of tabling work in fresh processes paid that JIT thirteen times over,
+            # and the same 23-file shard cost 265 s once and 100 s later purely on warmth.
+            # ⚠️ Keep this cheap — a workload runs on EVERY precompile. Small `fib`/`reach`/paradox
+            # instances are enough to trace the specializations; the cost is in first-call compilation,
+            # not in the number of answers.
+            #
+            # 📏 MEASURED A/B, back-to-back in one session (the only comparison worth trusting here —
+            # a single reading taken while the block was silently broken suggested the OPPOSITE):
+            #     first tabled call in a COLD process, WITHOUT this block: 12.45 s, 11.52 s
+            #                                          WITH this block:     9.76 s,  9.29 s
+            # ⇒ ~2.5 s saved per cold process (~21%), against ~15 s added to each precompile. Worth it
+            # above roughly six cold processes per source change — and one day of this port used
+            # THIRTEEN. It does NOT help a warm session, which is the other lever entirely
+            # (`tools/warm_suite.sh`); the two are complementary, never alternatives
+            # (`[[feedback_revise_vs_precompiletools]]`).
+            # ⚠️ THE STDLIB MUST BE LOADED HERE. First cut used a bare `Space()`, and `fib` then had no
+            # `if`/`<` to reduce with, so the recursion never terminated — a HANG, which `try/catch`
+            # cannot rescue, inside a block that runs on every precompile. Caught by executing the
+            # block standalone rather than trusting that a silent workload is a working one
+            # (`[[feedback_parses_is_not_fires]]`): a `catch end` makes "never ran" and "ran
+            # perfectly" look identical from the outside.
+            let ts = Space()
+                isempty(stdlib) || load_metta!(ts, stdlib)
+                load_metta!(ts, "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 2)))))")
+                table!(:fib)
+                load_metta!(ts, "!(fib 6)")                      # memo + completion + trie insert/read
+                load_metta!(ts, "(edge a b) (edge b c)")
+                load_metta!(ts, "(= (reach \$x \$y) (match &self (edge \$x \$y) True))")
+                load_metta!(ts, "(= (reach \$x \$y) (reach \$y \$x))")
+                table!(:reach)
+                load_metta!(ts, "!(reach b a)")                  # consumer/suspension + resumption
+                load_metta!(ts, "(= (p) (tnot (q)))")
+                load_metta!(ts, "(= (q) (tnot (p)))")
+                table!(:p); table!(:q)
+                load_metta!(ts, "!(p)")                          # tnot + WFS + the delay/residual path
+                untable_all!(); abolish_all_tables!()
+            end
         catch
         end
     end
