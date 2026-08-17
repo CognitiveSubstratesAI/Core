@@ -162,6 +162,10 @@ module StandardMeTTaTests
     # invalidation with per-table. Gates the GRAPH (edges, direction, transitive propagation,
     # teardown); the RE-EVALUATION half of §7.7 is not built.
     Main.@suite("standard/tabling/test_idg.jl")
+    # SWI §7.8 monotonic — PROPAGATE FORWARD on assert, INVALIDATE on retract. The propagation
+    # vehicle is §1.0's Dependency + resume_continuation, so 7.8 needed the assert/retract branch
+    # and the eager/lazy split rather than a new engine.
+    Main.@suite("standard/tabling/test_monotonic.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

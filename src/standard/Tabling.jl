@@ -133,7 +133,7 @@ const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; N
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
-                   _CURRENT_TARGET[] = nothing; clear_worklists!(); clear_answer_tries!(); clear_idg!();  # §1.0 steps 3-4 + §7.7
+                   _CURRENT_TARGET[] = nothing; clear_worklists!(); clear_answer_tries!(); clear_idg!(); clear_mono!();  # §1.0 3-4 + §7.7 + §7.8
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
@@ -216,6 +216,9 @@ function abolish_table_subgoals!(head::Symbol)
     # §7.7: and its IDG node, unlinking both directions — a dropped table must not leave dangling
     # edges that propagate invalidation into nothing.
     for key in collect(keys(_IDG)); _ishead(key) && drop_idg_node!(key); end
+    # §7.8: and its monotonic dependencies, in both directions — a resume into a dropped table
+    # would feed answers into a trie that no longer exists.
+    for key in collect(keys(_MONO_DEPS)); _ishead(key) && drop_mono_deps!(key); end
     nothing
 end
 @inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
