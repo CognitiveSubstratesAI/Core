@@ -19,6 +19,9 @@ const _HCHECKS = Tuple{String,String}[
     ("LeaTTa proved-oracle (CORE_BUG gate)", joinpath(_HROOT, "oracle", "leatta", "test_leatta_oracle.jl")),
     ("no dangling lib ops",                  joinpath(_HROOT, "test_no_dangling_ops.jl")),
     ("no stdlib shadowing",                  joinpath(_HROOT, "test_no_stdlib_shadow.jl")),
+    # A `$name` in a docstring is INTERPOLATION and breaks PRECOMPILE — cost three failures on
+    # 2026-08-16/17, each quoting an upstream `$tbl_*` predicate or a MeTTa `$variable`.
+    ("no docstring \$-interpolation",         joinpath(_HROOT, "test_no_docstring_interpolation.jl")),
     ("type system",                          joinpath(_HROOT, "test_types.jl")),
 ]
 
