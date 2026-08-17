@@ -756,6 +756,12 @@ end
 # the §7.1/§7.2 and WFS swipl differentials, which are the only gates that exercise tabling at
 # breadth. A handful of hand-written cases is not corpus coverage, and the flip must not rest on one.
 # Same shape as `CORE_TEST_CETTA` for the opt-in CeTTa scan.
+# ── roadmap 1.0b step 2: is the ANSWER TRIE the read path? OFF until the corpus agrees. ─────────
+# `CORE_TABLING_TRIE_READ=1` turns it on for a whole-suite differential, the same shape as
+# `CORE_TABLING_RECOMPUTE`. Read in `__init__`, NOT as a const initialiser — a const is evaluated at
+# PRECOMPILE time and bakes in the environment of whoever compiled the package (measured 2026-08-16).
+const _TRIE_READ = Ref(false)
+
 const _RESUME_COMPLETION = Ref(false)
 
 """Read `CORE_TABLING_RESUME` at LOAD time.
@@ -773,6 +779,7 @@ function __init__()
     recompute = get(ENV, "CORE_TABLING_RECOMPUTE", "") == "1"
     _RESUME_COMPLETION[] = !recompute
     _DEPS_RECORD[]       = !recompute
+    _TRIE_READ[]         = get(ENV, "CORE_TABLING_TRIE_READ", "") == "1"
 end
 
 """
@@ -916,7 +923,23 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     red = _reduced_goal(atom, space, b); key = _variant_rename(red)             # red keeps the caller's vars;
     if haskey(_ANSWER_TABLE, key)                                                # complete entry — but only replay if
         if get(_ANSWER_STAMP, key, (UInt(0), -1)) == (objectid(space), space.revision)
-            return _replay(_project(_ANSWER_TABLE[key], red), b, prev)          #   FRESH (space unchanged) ⇒ project+replay
+            # ── roadmap 1.0b, STEP 2: the READ PATH, behind a flag ───────────────────────────────
+            # Step 1 MIRRORED completed answers into the trie and proved the two stores agree across
+            # the whole corpus. This is the switch that makes the trie authoritative.
+            #
+            # 🔴 THE FIRST CHANGE IN THIS ARC THAT ALTERS EVALUATION. Everything before it was
+            # additive or provably behaviour-preserving, so it gets the same treatment as the
+            # resumption flip rather than being folded in: OFF by default, both paths runnable, and
+            # the corpus compared before the default moves. `_TRIE_READ[]` is that gate.
+            #
+            # ⚠️ ORDER IS PRESERVED, NOT INCIDENTAL. `trie_answers` returns INSERTION order via the
+            # `seq` stamp, and the mirror inserts in `_PARTIAL` order — so the two paths yield the
+            # same sequence, not merely the same set. Answer order is user-visible
+            # (`Eval.jl` propagates store order into answer order), so a switch that quietly
+            # reordered would be a behaviour change hiding inside a storage change.
+            answers = _TRIE_READ[] && has_answer_trie(key) ?
+                      trie_answers(answer_trie_for(key)) : _ANSWER_TABLE[key]
+            return _replay(_project(answers, red), b, prev)                      #   FRESH ⇒ project+replay
         end
         delete!(_ANSWER_TABLE, key); delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
         drop_answer_trie!(key)                                                   #   …and the mirrored trie with it: a

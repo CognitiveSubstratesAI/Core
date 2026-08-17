@@ -49,6 +49,44 @@ base and getting 2.0 for free.
 
 ---
 
+## 0b. THE CONFIG PRINCIPLE — USER-STATED 2026-08-17
+
+> **"in SLG there may be different options — we will port them, but in config we will only config
+> what is suitable and working for us."**
+
+**PORT THE FULL SURFACE; LET CONFIG DECIDE WHAT IS LIVE.** This settles a question that was being
+re-litigated per feature, and it changes the bar for landing one:
+
+* an option does NOT have to WIN to be worth porting — it has to be CORRECT and SELECTABLE. The
+  trie read path (1.0b step 2) is the case that made this concrete: it is a consolidation, not
+  obviously a speed-up, and under this principle it lands behind a flag whether or not it is faster.
+* "ported but not enabled" is a REAL STATE, not a half-measure. An option may be declarable,
+  documented, and REFUSED with a stated reason — which is what `subgoal_abstract`/`answer_abstract`
+  already do (they name the answer trie as their prerequisite instead of silently no-opping).
+  ⚠️ The failure mode this avoids is the one that has cost most in this port: a no-op that looks
+  like it works.
+
+### ⚠️ CONSEQUENCE — THE CONFIG SURFACE MUST CONVERGE ON `table_options/3`
+
+Ours has drifted into FIVE shapes for one concept: env `CORE_TABLING_RECOMPUTE`, env
+`CORE_TABLING_TRIE_READ`, `table_subsumptive!(head)`, `table_mode!(head, specs)`,
+`restraint!(head, :max_answers, n)`.
+
+Upstream has ONE (`boot/tabling.pl:1291-1335`):
+
+    :- table p/2 as subsumptive, incremental, max_answers(1000).
+    :- table path(_,_,min).
+
+`table_options/3` dispatches every option — subsumptive · variant · incremental · monotonic ·
+opaque · lazy · dynamic · shared · private · max_answers(N) · subgoal_abstract(N) ·
+answer_abstract(N) — through one entry point into one options dict.
+
+⇒ **consolidate onto that shape before 7.7/7.8/7.11.1-2 land.** It is cheap at five options and gets
+steadily more expensive with each one added. Per-PREDICATE options go through `table_options`;
+ENGINE-level choices (resumption vs recomputation, trie read path) stay env-level, because they are
+global rather than per-predicate — a distinction upstream also makes (`$tbl_*` flags vs table
+options).
+
 ## 1. THE TARGET IS ALL OF SWI §7 — DECIDED 2026-08-16
 
 **Build the complete tabling solution whether or not it is used immediately, so the solution is
