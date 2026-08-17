@@ -49,6 +49,57 @@ base and getting 2.0 for free.
 
 ---
 
+## 0h. 7.C DONE (as a REGRESSION FIX), 7.D's PREMISE MEASURED — 2026-08-17
+
+### 7.C — and it landed as a bug fix, not a feature
+
+Making the bottom residuated **broke dedup**, and the suite did not catch it: 89 files / 0 failed
+while `(r)` returned **two** `undefined` answers where it had returned one. While `UNDEFINED` was a
+singleton, two bottoms were `==` and collapsed; carrying a DNF makes them distinct atoms. Found by a
+two-paradox probe the same day, because the suite never covered a goal undefined via two derivations.
+
+Upstream cannot have this bug, and the reason is exactly 7.C: `delay_info` hangs off the TRIE NODE,
+so one answer term has ONE record holding a DISJUNCTION of `delay_set`s. Several derivations
+contribute alternative conjunctions to the same answer — they do not become several answers.
+`merge_bottom_into!` restores that: `⊥{A}` and `⊥{B}` are one answer conditional on `A ∨ B`.
+
+**A second gap surfaced with it.** The `== UNDEFINED` sweep converted the *conditions* but left
+`ExecOk(Atom[UNDEFINED])` returning the bare constant, so the DNF died at the first binary op. Ten
+sites; the 7.D test is what exposed it. Contagion now propagates the found bottom everywhere, and the
+alternating fixpoint's own bottom (`_wfs_bottom_for`) carries the disjunction of what its optimistic
+answers were conditional on.
+
+### 7.D — the premise, measured rather than argued
+
+In Prolog an answer is a substitution and the condition is SEPARATE, so `p(a)` is stored
+conditionally with its value intact — simplify the condition away and `a` is still there. Here
+`(+ 1 ⊥)` cannot form a value at all: strict-op contagion returns the BOTTOM. We never hold "4,
+conditional on p"; we hold ⊥. **If p is later refuted, the 4 is not waiting to be un-delayed — it was
+never computed, and the producer must RE-RUN.** ⇒ 7.D is a genuine divergence, not an unported
+detail, and that is now a test rather than a paragraph.
+
+### Static analysis (JET + AllocCheck, global env)
+
+Run with a POSITIVE CONTROL first — a JET sweep reporting zero proves nothing until a deliberately
+dynamic function is shown to be reported.
+
+| result | reading |
+|---|---|
+| 56 `report_opt` findings over 18 functions | root cause is abstract `Atom` (`Atoms.jl:22`) reached via `Vector{Atom}` — the correct representation for a term language, PRE-EXISTING, guarded by `[[reference_core_interpreter_perf_findings]]` |
+| no `Any` in the new files | the only match is a comment saying we avoid it |
+| `is_undefined` | narrowed to `a isa Grounded{WFSBottom}` — one concrete check, **JET 0, ZERO allocations** on every concrete type. Was an unparameterised `isa` plus a dynamic field read, behind ~34 call sites |
+| ⚠️ an earlier "1 allocation site" reading was FALSE | `check_allocs` asserts on a non-dispatch signature; the `catch` counted the AssertionError as a finding. Concrete signatures only |
+
+### Tooling: `CORE_SUITE_SHARD=i/n`
+
+The suite outgrew the 10-minute window a wrapped runner can wait for, and backgrounding it is what
+the hooks forbid. Sharding keeps each lane inside the window while covering every file across lanes.
+**A sharded run announces itself loudly** — a partial run printing the same summary as a full one is
+how "89 files, 0 failed" comes to mean nothing. Measured: cold load is **3.2 s**, so cold start was
+never the cost; ~265 s is test execution and the rest is JIT.
+
+---
+
 ## 0g. 🟢 7.A PART TWO + 7.B — DELAY LISTS: THE CONDITION RIDES ON THE VALUE (2026-08-17)
 
 `src/standard/tabling/Delays.jl` + a residuated `WFSBottom`. 36 tests.

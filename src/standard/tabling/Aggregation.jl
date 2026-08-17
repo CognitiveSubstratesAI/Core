@@ -277,6 +277,14 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
             # `variant_eq` (tabling/AnswerTrie.jl) IS `=@=` — equality of `trie_keys`. It existed, its
             # own header argued exactly this point, and it was called ONLY from `trie_insert_moded!`;
             # the default wired path never reached it. Later include is fine — Julia resolves at call.
+            # 7.C: a second DERIVATION of the bottom is not a second ANSWER — its condition joins
+            # the existing one by DISJUNCTION. Upstream gets this from `delay_info` hanging off the
+            # trie node: one answer term, one record, many alternative `delay_set`s.
+            m = merge_bottom_into!(out, a)
+            if m !== nothing
+                (m::Bool) && (changed = true)
+                continue
+            end
             any(x -> variant_eq(x, a), out) && continue
             push!(out, a); changed = true
         end

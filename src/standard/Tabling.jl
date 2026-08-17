@@ -166,7 +166,13 @@ and treat a residuated bottom as an ordinary value — a soundness bug, silent, 
 So the predicate lands FIRST and the sweep is behaviour-preserving on its own; only then does the
 field go in. `[[feedback_recurring_defect_derive_the_rule]]`
 """
-@inline is_undefined(a::Atom)::Bool = a isa Grounded && (a::Grounded).value isa WFSBottom
+# ⚡ `Grounded{WFSBottom}` IS A CONCRETE TYPE — one `isa`, no field access. Measured with
+# AllocCheck/JET 2026-08-17: the obvious spelling, `a isa Grounded && (a::Grounded).value isa
+# WFSBottom`, tests the UNPARAMETERISED `Grounded` (i.e. `Grounded{T} where T`) and then reads
+# `.value` off it, which is a dynamic field access and allocated. Since `Grounded{T}` is
+# parameterised, the whole predicate collapses to a single concrete type check. This sits behind
+# ~34 call sites including every strict-op guard, so it is worth the two lines of explanation.
+@inline is_undefined(a::Atom)::Bool = a isa Grounded{WFSBottom}
 
 """
     propagated_undefined(xs) -> Union{Atom,Nothing}
@@ -195,7 +201,7 @@ end
 
 "The DNF carried by a WFS bottom — empty for anything else, so callers need no type test."
 delays_of(a::Atom)::DelayDNF =
-    is_undefined(a) ? ((a::Grounded).value::WFSBottom).delays : DelayDNF()
+    a isa Grounded{WFSBottom} ? a.value.delays : DelayDNF()   # narrowed ⇒ `.value` is TYPED here
 
 "A WFS bottom carrying `dnf` as its reason."
 undefined_with(dnf::DelayDNF)::Atom = Grounded(WFSBottom(dnf))
@@ -769,10 +775,43 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     _variant_unique(out)
 end
 
+
+"""
+    merge_bottom_into!(out, a) -> Union{Bool,Nothing}
+
+7.C, IN OUR TERMS. If `a` is a WFS bottom and `out` already holds one, MERGE their conditions by
+DISJUNCTION and return whether that added anything; otherwise return `nothing` (not a bottom, or no
+bottom present) and let the caller fall through to ordinary variant dedup.
+
+🔴 THIS EXISTS BECAUSE MAKING THE BOTTOM RESIDUATED BROKE DEDUP — a regression introduced by the
+delay-list commit and caught the same day by a two-paradox probe, NOT by the suite (89 files / 0
+failed did not cover a goal undefined via two derivations). While `UNDEFINED` was a singleton, two
+bottoms were `==` and collapsed to one. Carrying a DNF makes them distinct atoms, so `(= (r) (p))`
+and `(= (r) (u))` with p and u separately paradoxical returned **two** `undefined` answers where one
+was returned before — user-visible, and wrong.
+
+Upstream cannot have this bug and the reason is instructive: `delay_info` hangs off the TRIE NODE
+(`pl-tabling.h:179-184`), so one answer term has exactly ONE `delay_info` holding a DISJUNCTION of
+`delay_set`s — several derivations of the same answer contribute alternative conjunctions to the
+same record, they do not become several answers. `⊥{A}` and `⊥{B}` are one answer conditional on
+`A ∨ B`. That is what this restores.
+"""
+function merge_bottom_into!(out::Vector{Atom}, a::Atom)::Union{Bool,Nothing}
+    is_undefined(a) || return nothing
+    i = findfirst(is_undefined, out)
+    i === nothing && return nothing
+    prev = delays_of(out[i])
+    merged = dnf_or(prev, delays_of(a))
+    length(merged) == length(prev) && return false      # no new derivation ⇒ nothing changed
+    out[i] = undefined_with(merged)
+    true
+end
+
 "`unique` under `=@=` rather than `==` — the answer trie's identity, applied to a plain vector."
 function _variant_unique(xs::Vector{Atom})::Vector{Atom}
     out = Atom[]
     for x in xs
+        merge_bottom_into!(out, x) === nothing || continue   # 7.C: bottoms MERGE, they do not repeat
         any(y -> variant_eq(y, x), out) || push!(out, x)
     end
     out
@@ -1056,6 +1095,18 @@ end
 # so an only-UNDEFINED set is NOT treated as membership (keeps the layered-undefined case sound).
 @inline _wfs_definite(S)::Bool = any(a -> !is_undefined(a), S)
 
+"""The bottom to emit for a goal the alternating fixpoint classified UNDEFINED.
+
+Its reason is the DISJUNCTION of whatever the optimistic answers were conditional on — several
+optimistic derivations, several alternative conditions, which is exactly upstream's `delay_info`
+shape. Empty when none of them carried a delay, and that reads as "reason not recorded", never as
+unconditional."""
+function _wfs_bottom_for(um::Vector{Atom})::Atom
+    dnf = DelayDNF()
+    for a in um; dnf = dnf_or(dnf, delays_of(a)); end
+    undefined_with(dnf)
+end
+
 # S_P(I): the least model of the van Gelder reduct P/I over the SCC, materialized into _PARTIAL.
 #   • positive in-SCC edges (g2:-g1) read the GROWING _PARTIAL via the consumer path (tabled_eval);
 #   • in-SCC tnot(G) reads the FIXED bound I (=_WFS_BOUND) — no drive, no taint, no inprog-guard (TNOT branch);
@@ -1108,8 +1159,13 @@ function _wfs_complete!(members::Vector{Atom}, typ::Atom, space::Space, key::Ato
     end
     for m in comp()
         km = get(K, m, Atom[]); um = get(U, m, Atom[])
+        # roadmap 7.A: the bottom this fixpoint EMITS should carry a reason too. It has no single
+        # `tnot` to name — this is the alternating fixpoint's own classification, "in the optimistic
+        # bound U but unfounded in K" — so the reason is whatever the OPTIMISTIC answers were
+        # conditional on, disjoined. When none of them carried a delay the DNF is empty, which reads
+        # correctly as "undefined, reason not recorded" rather than as unconditional.
         _PARTIAL[m] = _wfs_definite(km) ? km :                   # TRUE  — well-founded definite answers
-                      !isempty(um)      ? Atom[UNDEFINED] :      # UNDEFINED — in U, unfounded in K
+                      !isempty(um)      ? Atom[_wfs_bottom_for(um)] :   # UNDEFINED — in U, unfounded in K
                                           Atom[]                  # FALSE — not even in the optimistic U
     end
     return nothing

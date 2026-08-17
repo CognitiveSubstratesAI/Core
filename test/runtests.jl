@@ -27,9 +27,39 @@ using MeTTaCore
 # macro's defining module and every wrapped file would silently land in the wrong namespace.
 const SUITE_RAN    = String[]
 const SUITE_FAILED = Tuple{String,String}[]
+
+# ── SHARDING: `CORE_SUITE_SHARD=1/2` runs every other file ────────────────────────────────────────
+# Added 2026-08-17 because the suite outgrew the 10-minute window a wrapped runner can wait for, and
+# the alternative — running it in the background and polling — is exactly what the hooks forbid, for
+# good reasons. Sharding keeps each half inside the window while still executing EVERY file across
+# the two runs.
+#
+# 🔴 A SHARDED RUN ANNOUNCES ITSELF LOUDLY, AND THAT IS THE WHOLE DESIGN. A partial run that prints
+# the same summary as a full one is how "88 files, 0 failed" comes to mean nothing — the count is the
+# thing people quote. `SUITE_SKIPPED` is reported alongside the failures and the header says SHARD,
+# so a filtered run cannot be mistaken for a complete one. `[[feedback_measured_need_not_checklist]]`
+const SUITE_SKIPPED = String[]
+const SUITE_SHARD = let v = get(ENV, "CORE_SUITE_SHARD", "")
+    if isempty(v)
+        nothing
+    else
+        parts = split(v, '/')
+        length(parts) == 2 || error("CORE_SUITE_SHARD must be i/n, got $(v)")
+        (parse(Int, parts[1]), parse(Int, parts[2]))
+    end
+end
+SUITE_SHARD === nothing || printstyled(
+    "\n  ⚠️  SHARDED RUN: shard $(SUITE_SHARD[1]) of $(SUITE_SHARD[2]) — this is NOT the full suite\n";
+    color = :yellow, bold = true)
+
 macro suite(path)
     quote
         local p = $(esc(path))
+        if Main.SUITE_SHARD !== nothing &&
+           (length(Main.SUITE_RAN) + length(Main.SUITE_SKIPPED)) % Main.SUITE_SHARD[2] !=
+           Main.SUITE_SHARD[1] - 1
+            push!(Main.SUITE_SKIPPED, p)
+        else
         push!(Main.SUITE_RAN, p)
         try
             $(esc(:include))(p)
@@ -37,6 +67,7 @@ macro suite(path)
             push!(Main.SUITE_FAILED,
                   (p, first(replace(sprint(showerror, e), '\n' => ' '), 200)))
             printstyled("\n  ✗ SUITE FILE FAILED (continuing): ", p, "\n"; color = :red, bold = true)
+        end
         end
     end
 end
@@ -347,7 +378,13 @@ let testdir = @__DIR__
         end
     end
     walk(joinpath(testdir, "runtests.jl"))
-    ran = Set(normpath(isabspath(p) ? p : joinpath(testdir, p)) for p in SUITE_RAN)
+    # ⚠️ A SHARDED-OUT FILE IS STILL REACHABLE. This gate asks "is every test file wired into
+    # runtests.jl", which `CORE_SUITE_SHARD` does not change — the file is registered, this run simply
+    # was not its turn. Counting only SUITE_RAN would make every sharded lane fail the gate and train
+    # a reader to ignore it, which is worse than not having it. The SKIPPED count is reported
+    # separately and loudly, so nothing is hidden by folding the two together here.
+    ran = Set(normpath(isabspath(p) ? p : joinpath(testdir, p))
+              for p in Iterators.flatten((SUITE_RAN, SUITE_SKIPPED)))
     # pln/*.jl arrive via the readdir loop, not a literal — they are in `ran`, never in `reachable`.
     missed = sort([p for p in reachable if !(p in ran) && isfile(p)])
     if !isempty(missed)
@@ -355,6 +392,9 @@ let testdir = @__DIR__
                     color = :red, bold = true)
         for p in missed; println("      ", relpath(p, testdir)); end
     end
+    isempty(SUITE_SKIPPED) || printstyled(
+        "\n  ⚠️  SHARDED: $(length(SUITE_SKIPPED)) files SKIPPED — this run does NOT cover the suite\n";
+        color = :yellow, bold = true)
     printstyled("\n  suite: $(length(SUITE_RAN)) files executed, $(length(SUITE_FAILED)) failed\n";
                 color = isempty(SUITE_FAILED) ? :green : :red, bold = true)
     if !isempty(SUITE_FAILED) || !isempty(missed)

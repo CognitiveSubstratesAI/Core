@@ -134,6 +134,72 @@ _dl_key(n::Symbol) = Sym(n)
         end
     end
 
+    @testset "🔴🔴 7.C — TWO DERIVATIONS make ONE answer, conditions DISJOINED" begin
+        # 🔴 THIS IS A REGRESSION TEST FOR A BUG THIS FEATURE INTRODUCED, found the same day by a
+        # two-paradox probe and NOT by the suite — 89 files / 0 failed did not cover a goal undefined
+        # via two derivations. While `UNDEFINED` was a singleton, two bottoms were `==` and collapsed
+        # to one. Carrying a DNF makes them DISTINCT ATOMS, so `(r)` returned **two** `undefined`
+        # answers where it had returned one. User-visible, and wrong.
+        #
+        # Upstream cannot have this bug, and the reason is the design: `delay_info` hangs off the TRIE
+        # NODE (pl-tabling.h:179-184), so one answer term has ONE record holding a DISJUNCTION of
+        # `delay_set`s. Several derivations contribute alternative conjunctions to the same answer —
+        # they do not become several answers. `⊥{A}` and `⊥{B}` are one answer conditional on `A ∨ B`.
+        _DL.untable_all!(); _DL.abolish_all_tables!()
+        try
+            s = Space(); load_core_stdlib!(s)
+            load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
+                           raw"(= (u) (tnot (v)))" * "\n" * raw"(= (v) (tnot (u)))" * "\n" *
+                           raw"(= (r) (p))" * "\n" * raw"(= (r) (u))" * "\n")
+            for h in (:p, :q, :u, :v, :r); _DL.table!(h); end
+            vals = Atom[x for y in load_metta!(s, "!(r)\n")
+                        for x in (y isa AbstractVector ? y : [y])]
+
+            @test length(vals) == 1                     # ONE answer, not two
+            @test _DL.is_undefined(vals[1])
+            dnf = _DL.delays_of(vals[1])
+            @test length(dnf) == 2                      # …carrying BOTH derivations, disjoined
+            res = string(_DL.answer_residual(vals[1]))
+            @test occursin("or", res)                   # ANTI-VACUITY: it really is a disjunction
+            @test occursin("q", res) && occursin("v", res)   # …naming both paradoxes
+        finally
+            _DL.untable_all!(); _DL.abolish_all_tables!()
+        end
+    end
+
+    @testset "🔴 7.D's PREMISE, MEASURED: contagion DISCARDS the value, so it cannot be recovered" begin
+        # 7.D asks whether refuting a delayed literal lets us reuse the answer. SWI drops the conjunct
+        # and the answer and relies on ordinary resolution to re-derive next round. This pins WHY that
+        # does not transfer, with a measurement rather than an argument.
+        #
+        # In Prolog an answer is a substitution and the condition is SEPARATE, so `p(a)` can be stored
+        # conditionally with its value intact — simplify the condition away and `a` is still there.
+        # Here `(+ 1 ⊥)` cannot form a value at all: strict-op contagion returns the BOTTOM. So we
+        # never hold "4, conditional on p" — we hold ⊥. If p is later refuted, the 4 is not sitting
+        # there waiting to be un-delayed; it was NEVER COMPUTED, and the producer must RE-RUN.
+        #
+        # ⇒ 7.D is a genuine divergence, not an unported detail, and this is the fact it rests on.
+        _DL.untable_all!(); _DL.abolish_all_tables!()
+        try
+            s = Space(); load_core_stdlib!(s)
+            load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
+                           raw"(= (g) (+ 1 (p)))" * "\n")
+            for h in (:p, :q, :g); _DL.table!(h); end
+            vals = Atom[x for y in load_metta!(s, "!(g)\n")
+                        for x in (y isa AbstractVector ? y : [y])]
+
+            @test length(vals) == 1
+            @test _DL.is_undefined(vals[1])             # ⊥, NOT "4 conditional on p"
+            @test string(vals[1]) == "undefined"
+            # the condition SURVIVED the arithmetic — that half works, and is why the residual is
+            # still useful even though the value is gone
+            @test _DL.answer_residual(vals[1]) != Sym("True")
+            @test occursin("q", string(_DL.answer_residual(vals[1])))
+        finally
+            _DL.untable_all!(); _DL.abolish_all_tables!()
+        end
+    end
+
     @testset "an UNCONDITIONAL answer has residual True — and so does an unrecorded bottom" begin
         # The two are indistinguishable from `answer_residual`, deliberately: empty means NO
         # INFORMATION, never "unsatisfiable". A consumer that reads empty as false would call a real

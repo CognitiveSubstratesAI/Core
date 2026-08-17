@@ -400,7 +400,7 @@ function decons_atom(f::Frame, b::Bindings)
     (a isa Expression && length(a.children) == 2) ||
         return finished_result(error_atom(a, "expected (decons-atom <expr>)"), b, f.prev)
     e = subst(a.children[2], b)
-    is_undefined(e) && return finished_result(UNDEFINED, b, f.prev)   # WFS bottom contagious through strict ops
+    is_undefined(e) && return finished_result(e, b, f.prev)           # contagious — and `e` CARRIES the condition
     (e isa Expression && !isempty(e.children)) ||
         return finished_result(error_atom(a, "expected: (decons-atom (: <expr> Expression)), found: $(a)"), b, f.prev)
     head = e.children[1]; tail = Expression(e.children[2:end])
@@ -413,7 +413,8 @@ function cons_atom(f::Frame, b::Bindings)
     (a isa Expression && length(a.children) == 3) ||
         return finished_result(error_atom(a, "expected (cons-atom <head> <tail>)"), b, f.prev)
     head = subst(a.children[2], b); tail = subst(a.children[3], b)
-    (is_undefined(head) || is_undefined(tail)) && return finished_result(UNDEFINED, b, f.prev)   # WFS bottom contagious
+    (_u = propagated_undefined(Atom[head, tail])) === nothing ||
+        return finished_result(_u, b, f.prev)                    # WFS bottom contagious, WITH its condition
     (tail isa Expression) ||
         return finished_result(error_atom(a, "expected: (cons-atom <head> (: <tail> Expression))"), b, f.prev)
     finished_result(Expression(Atom[head; tail.children]), b, f.prev)
@@ -464,7 +465,7 @@ function _num_binop(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         length(xs) == 2 || return ExecNoReduce()
         x, y = xs[1], xs[2]
-        (is_undefined(x) || is_undefined(y)) && return ExecOk(Atom[UNDEFINED])   # WFS bottom is contagious through strict ops
+        (_u = propagated_undefined(Atom[x, y])) === nothing || return ExecOk(Atom[_u])   # WFS bottom is contagious through strict ops
         (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
         ExecOk(Atom[Grounded(f(x.value, y.value))])
     end))
@@ -478,7 +479,7 @@ function _num_binop_seam(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         length(xs) == 2 || return ExecNoReduce()
         x, y = xs[1], xs[2]
-        (is_undefined(x) || is_undefined(y)) && return ExecOk(Atom[UNDEFINED])
+        (_u = propagated_undefined(Atom[x, y])) === nothing || return ExecOk(Atom[_u])
         (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
         r = f(x.value, y.value)
         r isa SeamError && return ExecOk(Atom[Expression(Atom[
@@ -494,7 +495,7 @@ function _num_cmp(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         length(xs) == 2 || return ExecNoReduce()
         x, y = xs[1], xs[2]
-        (is_undefined(x) || is_undefined(y)) && return ExecOk(Atom[UNDEFINED])   # WFS bottom is contagious through strict ops
+        (_u = propagated_undefined(Atom[x, y])) === nothing || return ExecOk(Atom[_u])   # WFS bottom is contagious through strict ops
         (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
         ExecOk(Atom[f(x.value, y.value) ? Sym("True") : Sym("False")])
     end))
@@ -1730,7 +1731,7 @@ const DIVIDE_SEAM = _num_binop_seam("/", seam_div)
 const MOD_SEAM    = _num_binop_seam("%", seam_mod)
 const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
 const EQ_OP = Grounded(Operation("==", xs -> length(xs) != 2 ? ExecNoReduce() :
-    (is_undefined(xs[1]) || is_undefined(xs[2])) ? ExecOk(Atom[UNDEFINED]) :        # WFS bottom contagious through ==
+    (_u = propagated_undefined(Atom[xs[1], xs[2]])) !== nothing ? ExecOk(Atom[_u]) :        # WFS bottom contagious through ==
     ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")])))
 # Bool logic (grounded; True/False are symbols)
 _to_bool(a::Atom) = a == Sym("True") ? true : a == Sym("False") ? false : nothing
@@ -1739,7 +1740,7 @@ function _bool_binop(name, f)
         length(xs) == 2 || return ExecNoReduce()
         # WFS: an undefined operand makes and/or undefined. SOUND (never a wrong definite answer), but
         # OVER-CONSERVATIVE — full Kleene (⊥∧False=False, ⊥∨True=True) is a deferred precision refinement.
-        (is_undefined(xs[1]) || is_undefined(xs[2])) && return ExecOk(Atom[UNDEFINED])
+        (_u = propagated_undefined(Atom[xs[1], xs[2]])) === nothing || return ExecOk(Atom[_u])
         x = _to_bool(xs[1]); y = _to_bool(xs[2])
         (x === nothing || y === nothing) ? ExecNoReduce() : ExecOk(Atom[f(x, y) ? Sym("True") : Sym("False")])
     end))
@@ -1747,7 +1748,7 @@ end
 const AND = _bool_binop("and", &)
 const OR  = _bool_binop("or", |)
 const NOT = Grounded(Operation("not", xs -> length(xs) != 1 ? ExecNoReduce() :
-    is_undefined(xs[1]) ? ExecOk(Atom[UNDEFINED]) :                                # ¬⊥ = ⊥ (WFS Kleene = plain propagate)
+    is_undefined(xs[1]) ? ExecOk(Atom[xs[1]]) :                                # ¬⊥ = ⊥ (WFS Kleene = plain propagate)
     (tb = _to_bool(xs[1])) !== nothing ? ExecOk(Atom[tb ? Sym("False") : Sym("True")]) : ExecNoReduce()))
 const ID  = Grounded(Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce()))
 
@@ -1787,7 +1788,7 @@ const SEALED = Grounded(Operation("sealed", function (xs)
 end))
 # size-atom / index-atom / get-metatype (grounded)
 const SIZE_ATOM = Grounded(Operation("size-atom", xs -> length(xs) != 1 ? ExecNoReduce() :
-    is_undefined(xs[1]) ? ExecOk(Atom[UNDEFINED]) :                                # WFS bottom contagious through strict ops
+    is_undefined(xs[1]) ? ExecOk(Atom[xs[1]]) :                                # WFS bottom contagious through strict ops
     xs[1] isa Expression ? ExecOk(Atom[Grounded(length(xs[1].children))]) : ExecNoReduce()))
 const INDEX_ATOM = Grounded(Operation("index-atom", function (xs)
     (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
