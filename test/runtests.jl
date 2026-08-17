@@ -148,6 +148,10 @@ module StandardMeTTaTests
     # is agreement with the engine it replaces. Every case asserts whether it ACTUALLY exercised
     # resumption before comparing — most programs do not (fib is a plain memo, no suspension).
     Main.@suite("standard/tabling/test_completion_resume.jl")
+    # SWI `library(tables)`, the PORTABLE half — §7.12 inspection over the answer trie. The three
+    # predicates NOT here (get_residual/2, get_returns_and_dls/3, get_returns_and_tvs/3) need delay
+    # lists, which is a boundary visible in the C primitive list rather than a judgement call.
+    Main.@suite("standard/tabling/test_inspect.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

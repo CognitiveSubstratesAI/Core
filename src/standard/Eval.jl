@@ -1045,6 +1045,7 @@ include("Tabling.jl")
 # completion loop consumes the worklist — so those two structs move into the subfolder then.
 include("tabling/Worklists.jl")
 include("tabling/AnswerTrie.jl")
+include("tabling/Inspect.jl")   # SWI library(tables) — needs the trie above
 
 function metta_instr(f::Frame, b::Bindings, space)
     a = f.atom

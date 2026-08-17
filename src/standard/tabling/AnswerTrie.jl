@@ -85,8 +85,33 @@ mutable struct AnswerTrie
     root::TrieNode
     count::Int
     inserts::Int                  # monotonic stamp source for `seq` — never decremented on delete
+    status::Symbol                # `\$tbl_table_status` — see TABLE_STATUSES
 end
-AnswerTrie() = AnswerTrie(TrieNode(), 0, 0)
+AnswerTrie() = AnswerTrie(TrieNode(), 0, 0, :fresh)
+
+"""Table statuses, from `unify_table_status`/`complete_or_invalid_status` (`pl-tabling.c:3208-3239`).
+
+  :fresh     — created, not yet completed. Upstream also uses `fresh` while REEVALUATING.
+  :active    — a completion is running. Upstream has no atom for this: it returns the COMPOUND
+               `fresh(SCC, Worklist)`, so "has a worklist" IS the active marker. We name it, because
+               a Symbol field cannot carry the pair and `untable!`'s incomplete-table guard needs to
+               ask the question directly (it currently approximates via `_TABLE_INPROG`).
+  :complete  — completion finished.
+  :invalid   — ⚠️ UNREACHABLE FOR US. Upstream returns it when `n->falsecount > 0` on the IDG, i.e.
+               incremental invalidation (§7.7), which we do not have. Listed so the set is upstream's
+               rather than ours, and so §7.7 finds the name already reserved.
+  :dynamic   — ⚠️ UNREACHABLE FOR US: pseudo answer tries for dynamic predicates (`:3295`)."""
+const TABLE_STATUSES = (:fresh, :active, :complete, :invalid, :dynamic)
+
+"`\$tbl_table_status` — the table's status atom."
+table_status(t::AnswerTrie)::Symbol = t.status
+function set_table_status!(t::AnswerTrie, s::Symbol)
+    s in TABLE_STATUSES || throw(ArgumentError(
+        "unknown table status $(s) — upstream's set is $(TABLE_STATUSES) (pl-tabling.c:3208-3239)"))
+    t.status = s
+    t
+end
+is_complete(t::AnswerTrie)::Bool = t.status === :complete
 Base.length(t::AnswerTrie) = t.count
 Base.isempty(t::AnswerTrie) = t.count == 0
 
@@ -331,7 +356,7 @@ end
 """
     trie_insert_restrained!(t, head, a) -> (added::Bool, action)
 
-Insert `a` subject to `head`'s §7.11.3 restraint. The trie-seated `$tbl_wkl_add_answer` answer path.
+Insert `a` subject to `head`'s §7.11.3 restraint. The trie-seated `\$tbl_wkl_add_answer` answer path.
 
 Returns `action` `:duplicate` (already present — the restraint is NOT consulted, per the C),
 `nothing` (inserted, no restraint fired), or the `TripwireAction` that fired.
