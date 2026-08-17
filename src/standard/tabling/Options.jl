@@ -62,8 +62,28 @@ const _REFUSED_OPTIONS = Dict{Symbol,Tuple{String,String}}(
     :dynamic          => ("§7.4",     "tabling for impure/dynamic predicates — interaction rules unbuilt"),
     :shared           => ("§7.9",     "needs a THREADING model; MettaJam is the intended first consumer"),
     :private          => ("§7.9",     "the paired inverse of `shared`; meaningless without it"),
-    :subgoal_abstract => ("§7.11.1",  "abstraction over TRIE TERMS at a depth — trie walk not built"),
-    :answer_abstract  => ("§7.11.2",  "likewise"),
+    # 🔴 THIS REASON WAS WRONG UNTIL 2026-08-17 — it said "abstraction over TRIE TERMS at a depth —
+    # trie walk not built", i.e. that the ANSWER TRIE was the prerequisite. It is not.
+    # `start_abstract_tabling/3` (boot/tabling.pl:466-517) says the design outright: *"This is a merge
+    # between variant and subsumptive tabling… If the goal is abstracted we must solve the more
+    # general goal and use answers from the abstract table."* Subgoal abstraction rides on SUBSUMPTIVE
+    # TABLING — which we HAVE (§7.5) — plus `size_abstract` in the VARIANT trie lookup, which is eight
+    # lines inside the existing insert walk (pl-trie.c:829-884), not a new pass.
+    # ⇒ §7.11.1 IS BUILDABLE NOW. Kept refused only because it is unbuilt, not because it is blocked.
+    :subgoal_abstract => ("§7.11.1",  "BUILDABLE NOW — needs `size_abstract` in the variant-trie " *
+                                      "lookup + the §7.5 subsumptive path we already have; unbuilt, " *
+                                      "not blocked"),
+    # ⚠️ AND THIS ONE IS GENUINELY BLOCKED, FOR A REASON I HAD NOT FOUND. The mechanism needs only the
+    # trie — but its only SOUND action does not. `answer_abstract` OVER-approximates (it generalises
+    # an answer, so the table claims more than was derived), and `bounded_rationality` compensates by
+    # calling `add_radial_restraint()` → `system:(radial_restraint :- tnot(radial_restraint))`
+    # (boot/tabling.pl:2317) — an intentionally UNDEFINED predicate whose whole job is to push onto
+    # the DELAY LIST, making every abstracted answer conditional in WFS. Without delay lists the only
+    # remaining action is `fail`, which UNDER-approximates and is unsound in the other direction for
+    # negation. So this waits on delay lists (roadmap 1.0c), and its sibling above does not.
+    :answer_abstract  => ("§7.11.2",  "needs DELAY LISTS — it over-approximates, and its only sound " *
+                                      "action (bounded_rationality) makes the answer conditional via " *
+                                      "radial_restraint; `fail` under-approximates instead"),
 )
 
 _refuse(opt::Symbol) = begin
@@ -82,10 +102,17 @@ end
 `spec` is a `Symbol` (`:subsumptive`, `:variant`, …) or an `Expr`-like pair for the parameterised
 ones, given as `opt => n` (`:max_answers => 1000`) — Julia's analogue of upstream's `max_answers(N)`.
 
-⚠️ `incremental` AND `opaque` ARE PAIRED AND MUTUALLY EXCLUSIVE. Upstream sets BOTH keys for either
-option — `put_dict(#{incremental:true,opaque:false})` — so declaring one CLEARS the other. Setting
-just the named field would leave a predicate both incremental and opaque, which upstream cannot
-represent. Kept even though both are currently refused, because the pairing is the semantics.
+⚠️ `incremental` AND `opaque` ARE PAIRED AND MUTUALLY EXCLUSIVE upstream: it sets BOTH keys for
+either option — `put_dict(#{incremental:true,opaque:false})` — so declaring one CLEARS the other.
+Setting just the named field would leave a predicate both incremental and opaque, which upstream
+cannot represent.
+
+🔴 …AND THIS FILE DOES NOT IMPLEMENT THAT PAIRING. Corrected 2026-08-17: the text above used to
+claim it was "kept even though both are currently refused", which is false — `_refuse(spec)` is
+reached FIRST, so neither `TableOptions.incremental` nor `.opaque` is ever written by either option.
+Harmless while both are refused, and precisely the note that would mislead whoever un-refuses them,
+which is why it is stated as a TODO rather than as behaviour: un-refusing either one must set BOTH
+fields in the same assignment.
 """
 function table_options!(o::TableOptions, spec)::TableOptions
     if spec isa Symbol

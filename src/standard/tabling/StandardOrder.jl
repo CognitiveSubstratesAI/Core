@@ -49,6 +49,13 @@ function std_rank(a::Atom)::Int
     a isa Var        && return 0
     if a isa Grounded
         v = a.value
+        # 🔴 `Bool <: Real` IN JULIA, AND UPSTREAM DISAGREES — FIXED 2026-08-17.
+        # `v isa Real` alone put `Grounded(true)` in the Number rank, so
+        # `compare_standard(Grounded(true), Grounded(1))` returned 0 (EQUAL): `1 < 1` false,
+        # `1 > 1` false, neither an AbstractFloat. `min`/`max` then treated `true` and `1` as
+        # interchangeable. In SWI `true` is a TAG_ATOM and `1` a TAG_INTEGER (`pl-prims.c:1783`) —
+        # different ranks, never equal. Ours is a Julia representation artefact, not a port choice.
+        v isa Bool           && return 4    # Atom — `true`/`false` are ATOMS in Prolog, not numbers
         v isa Real           && return 1    # Number
         v isa AbstractString && return 2    # String
         return 3                            # other grounded payloads: after String, before Atom

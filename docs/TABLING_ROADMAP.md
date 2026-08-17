@@ -49,6 +49,42 @@ base and getting 2.0 for free.
 
 ---
 
+## 0c. THE ADVERSARIAL AUDIT vs THE C — 2026-08-17, 23 FINDINGS, 22 FIXED
+
+An agent read all ten `src/standard/tabling/*.jl` plus `Tabling.jl` against `pl-tabling.c`,
+`boot/tabling.pl`, `library/tables.pl` and `pl-prims.c`. **This is the highest-yield hour the port
+has had**, and the reason is worth keeping: the tests were green throughout — every one of these
+survived a suite that reported 87 files / 0 failed. A test suite gates the behaviours you thought
+to assert; only the source gates the ones you did not.
+
+**Four were CRITICAL, and two of those changed answers on the DEFAULT path:**
+
+| # | defect | why it was invisible |
+|---|---|---|
+| 1 | the completion fixpoint's duplicate test was `==`, not variant | a non-ground answer with a fresh body variable is structurally new EVERY round ⇒ **the fixpoint does not terminate**. `variant_eq` already existed, and its own header argued this exact point — it was called only from `trie_insert_moded!` |
+| 4 | `_complete_resume!` never set `_CURRENT_TARGET` | `record_dependency!` hit its `tgt === nothing` guard and **recorded nothing**. Any variant first reached inside a resumed continuation suspended without a suspension: incomplete table, no error |
+| 2 | monotonic propagation was ONE HOP | A→B→C left C **silently stale**. Upstream's `pdelim/3` recurses via `propagate_answer/2` |
+| 3 | monotonic invalidation stopped at the direct target | the retract branch — the file's own soundness argument — invalidated only the first ring |
+
+**The pattern across all 23:** in nine cases the correct code was already present somewhere in the
+file and the wired path used something else (`variant_eq`, the trie, `mode_key`). The port did not
+lack knowledge; it lacked the connection. `[[feedback_verify_code_body_not_comments]]`
+
+**Fixed:** 1–15, 17–19, 21–23, plus an aliasing bug the #19 fix introduced and the anti-vacuity
+probe in `test_completion_resume.jl`, which had been reading the leak that #6 fixed.
+
+**#16** (`lattice`/`po` restricted to a fixed builtin set) is fixed by OPENING the registries —
+`register_lattice!` / `register_po!`. Upstream accepts any `Name/3` and `Name/2`, and ships **no
+built-in `po` predicates at all**; ours are a convenience, not a ceiling. The `M:`-qualified and
+`lattice(Head)` compound forms remain unported — module qualification has no analogue here yet.
+
+**#20 is the one NOT fixed, deliberately.** Our work iteration is suspensions-outer/answers-inner,
+forward; upstream is answers-outer and walks both **backwards** (`advance_wkl_state`). Answer ORDER
+is user-visible in this engine, so changing it is a corpus-wide behavioural change that needs its own
+differential — not a line edit smuggled into an audit response. **Recorded as a known divergence.**
+
+---
+
 ## 0b. THE CONFIG PRINCIPLE — USER-STATED 2026-08-17
 
 > **"in SLG there may be different options — we will port them, but in config we will only config
@@ -150,6 +186,83 @@ reading the C rather than the Prolog:
   (`update_subsuming_answers` maps over every child, `:3871`). Our one-row-per-key is correct only
   while no answer can be conditional — i.e. only until delay lists land.
 
+### 1.0c — DELAY LISTS: SCOPED FROM THE C, AND THE THIRD PROLOG ASSUMPTION (2026-08-17)
+
+Delay lists block §7.6.1, three of §7.12's predicates, §7.5's efficient retrieval, and conditional
+answers generally. Scoped from `pl-tabling.c` directly. **~1,850 lines of code** (C ~1,435 +
+Prolog ~407), concentrated in `TABLE DELAY LISTS :741-1511`, `SIMPLIFICATION :1512-1869`,
+`ANSWER COMPLETION :1870-2177`, and the reporting path `:5230-5570`.
+
+**The structure is a DNF.** `delay_info` holds a flat `delays` buffer plus `delay_sets` windows into
+it — each set is a CONJUNCT, the sets are a DISJUNCTION. One `delay` is two pointers: the callee's
+answer trie, and a node in it — **`answer == NULL` IS the encoding of negation**. It hangs off the
+answer trie node in three states: `NULL` = unconditional · `DL_UNDEFINED` = undefined-reason-discarded
+· pointer = the condition. `unify_delay_info` (`:5342`) is literally where §7.6.1's `undefined`
+surfaces: `true` / a `;`-`,` body / the bare atom `undefined`.
+
+## 🔴🔴 7.A — THE THIRD ASSUMPTION, AND IT IS ARCHITECTURAL, NOT SEMANTIC
+
+The first two were semantic (tabling-is-set vs multiset; ground-goal-completes-after-first). **This
+one is about where the condition LIVES.**
+
+`LD->tabling.delay_list` is a **trail-scoped THREAD-GLOBAL** (`pl-setup.c:1552`), pushed
+destructively with `TrailAssignment` (`pl-tabling.c:1389-1399`) and UNWOUND BY BACKTRACKING. Every
+entry point brackets it as `( reset_delays, ..., fail ; true )` (`boot/tabling.pl:587`, `:724`,
+`:782`). `update_delay_list` then decides conditionality by SCRAPING that global at the moment of
+insertion: `if ( isNil(*ldlp) && isNil(*gdlp) )` (`:1123-1128`).
+
+**The invariant that makes this correct is: between generating an answer and inserting it, the engine
+is executing EXACTLY ONE derivation, and any abandoned attempt is erased by the trail.** That holds
+because Prolog control is depth-first backtracking over one substitution at a time.
+
+⇒ **IT DOES NOT HOLD FOR US.** A call to `(f a)` yields a COLLECTION of values which we then map over.
+At the moment the k-th result is inserted there is no "current branch" — delayed literals from
+DIFFERENT result values are simultaneously live in the same dynamic extent. Port the register
+literally and **value #1's `tnot(p)` condition leaks onto value #2**, with no trail to unwind it.
+⚠️ Even SWI must hand-roll save/reset/restore where the linear-branch assumption breaks — `'$wfs_call'/2`
+(`boot/tabling.pl:938-948`) saves `DL0`, resets, calls, re-appends, precisely because `call/1` is a
+re-entrancy point.
+
+⇒ **THE CONDITION MUST RIDE WITH THE VALUE.** Every answer becomes a pair `(value, condition)` — a
+residuated value — and combination is an EXPLICIT conjunction at each join, not a push onto ambient
+state. **That is a change to the ANSWER REPRESENTATION, the continuation/worklist payloads, and the
+dependency record — a prerequisite, not an optimisation, and budgeted SEPARATELY from the 1,850
+lines.** (SWI already threads `Delays` explicitly through SUSPENSIONS, `boot/tabling.pl:803-838`; we
+would need it EVERYWHERE.)
+
+## THREE MORE, EACH DECIDING A STRUCT FIELD — SETTLE BEFORE WRITING THE STRUCT
+
+* **7.B — negative delays have NO answer slot.** `tnot(g)` is table-level ("the callee's table is
+  empty"), decided by `wl->table->value_count == 0` (`:1779`) and `d->answer == NULL` (`:1668`). In a
+  value language the natural negations are `(not (f a))` AND `(not (== (f a) 3))` — **the struct has
+  nowhere to put the 3.** Needs a third delay kind, negative-with-answer.
+* **7.C — conditionality is per answer KEY, and unconditional re-derivation ERASES it.**
+  `data.delayinfo` hangs off the trie node, so at most ONE condition per distinct answer term, and a
+  later unconditional derivation calls `destroy_delay_info` (`:1131-1138`). Sound under SET semantics
+  — and it is the direct reason our one-answer-per-key holds. **Unsound if multiplicity is
+  observable**, which is roadmap 2.0 again: `delay_info` would have to live per answer-OCCURRENCE,
+  and `wl->delays` (a flat buffer keyed by node pointer, `:803-815`) needs a different index.
+* **7.D — deleting a conditional answer is NOT ENOUGH for us.** SWI's rule is drop-the-conjunct,
+  drop-the-answer (`remove_conditional_answer`, `:1592`), because in Prolog ordinary resolution
+  re-derives it next round. In a value language `(+ 1 (f a))` produced `4` BECAUSE `(f a)` gave `3`;
+  if `3` is later refuted and `5` is true, the answer `4` is dead and `6` **was never produced**.
+  ⇒ **we may have to RE-RUN THE PRODUCER**, which SWI never does. Check against the worklist design.
+
+## PORT ORDER (from the source, cheapest useful win last-but-one)
+
+1. decide 7.B and 7.C — **they change the struct**
+2. residuated values replacing the global delay list (7.A) — the PREREQUISITE
+3. `update_delay_list` + the `tnot` trichotomy (unconditional answer ⇒ fail · conditional ⇒ delay ·
+   complete-and-empty ⇒ succeed · incomplete ⇒ suspend)
+4. `propagate_to_answer` + `simplify_component` (~213 lines) — unlocks §7.6.1 "why undefined"
+5. `put_delay_set` + `unify_delay_info` (~145 lines) — unlocks `get_residual/2` and the two
+   `get_returns_and_*`; **cheapest win once (2) exists**
+6. `$tbl_answer_update_dl` — unlocks efficient §7.5 retrieval, trivial after (2)
+7. **ANSWER COMPLETION — DEFER.** It removes POSITIVE LOOPS (`p :- p`) that local propagation can
+   never detect, by re-running the residual program in an isolated tabling environment. 450 lines,
+   `#ifdef`-guarded upstream, reachable only at `:1847`. Shippable without it: SOUND but incomplete
+   on positive loops.
+
 ### 1.1–1.13 the §7 surface, in dependency order
 
 | § | feature | status | notes |
@@ -164,7 +277,7 @@ reading the C rather than the Prolog:
 | **7.3** | answer subsumption / mode-directed | ❌ | `lattice(F/3)`, `po(F/2)`. Consumer named by §3.6 in our vocabulary ("product quantale structure"); `Core/lib/quantale/` exists. 🔴 CATCH: the fixpoint test is CARDINALITY-based and a lattice breaks it silently |
 | **7.7** | incremental | ❌ | IDG + `falsecount`, lazy like ours; buys per-table GRANULARITY. Consumes the base's dependency graph |
 | **7.8** | monotonic (+ eager/lazy, tracking, external data) | 🟡 **CHEAPER THAN LISTED — IT REUSES §1.0 STEP 2** | READ FROM SOURCE 2026-08-17. Monotonic is NOT another invalidation scheme: `mon_propagate` (`boot/tabling.pl:1644`) BRANCHES — on ASSERT it calls `propagate_assert`, pushing the new answer FORWARD through a stored continuation (monotone addition); on RETRACT it falls back to `mon_invalidate_dependents`, because retraction is not monotone. The lazy variant queues via `$mono_idg_changed` instead of propagating eagerly. 🔑 **THE PROPAGATION VEHICLE IS OUR `Dependency`.** `mon_assert_dep` stores `dependency(SrcSkel, IsMono, Cont, Skel)` against the source trie — SOURCE · CONTINUATION · TARGET — which is exactly `Tabling.Dependency` from §1.0 step 2, and `resume_continuation` is the mechanism that feeds an answer through it. ⇒ 7.8 needs the ASSERT/RETRACT branch and the eager/lazy split, NOT a new propagation engine. Substantially cheaper than 7.7's re-evaluation half, which genuinely does need new machinery (old answers held for comparison). |
-| **7.4** | tabling for impure programs | 🟡 **HALF DONE ALREADY — one mechanism of two** | SCOPED 2026-08-17 from our own extraction (`docs/specs/prolog/SWI-Prolog_10.1.9_ch7_tabling_spec.md:236`). §7.4 is not one feature; it is TWO mechanisms that recover correctness for impure patterns, and the hazard they recover from is: *"pruning the choice points of an INCOMPLETE tabled goal may leave an incomplete table, so subsequent queries return only the partial answer set."* ✅ **DYNAMIC SCC — WE HAVE IT.** `_COMPONENT` union-find merges scheduling components on a cross-leader cycle, and dynamic (not static) determination is what keeps them MINIMAL. The Desouter paper lists static SCC identification as its own FUTURE WORK, so this is a place we are ahead of the design we took the control flow from. ❌ **EARLY COMPLETION — WE DO NOT.** *"Ground goals are considered completed after the FIRST solution… this is what lets `p(42)` short-circuit the recursive enumeration of `p(_)`."* We treat groundness only as an answer-PROJECTION fast path (`_ordered_vars` identity); the completion loop still runs to fixpoint. ⚠️ THIS IS A TERMINATION PROPERTY, NOT ONLY SPEED: a ground goal over a predicate that enumerates infinitely can still be answered. Buildable now — `collect_vars` gives groundness and the status field gives `:complete`. |
+| **7.4** | tabling for impure programs | 🟡 **HALF DONE ALREADY — one mechanism of two** | SCOPED 2026-08-17 from our own extraction (`docs/specs/prolog/SWI-Prolog_10.1.9_ch7_tabling_spec.md:236`). §7.4 is not one feature; it is TWO mechanisms that recover correctness for impure patterns, and the hazard they recover from is: *"pruning the choice points of an INCOMPLETE tabled goal may leave an incomplete table, so subsequent queries return only the partial answer set."* ✅ **DYNAMIC SCC — WE HAVE IT.** `_COMPONENT` union-find merges scheduling components on a cross-leader cycle, and dynamic (not static) determination is what keeps them MINIMAL. The Desouter paper lists static SCC identification as its own FUTURE WORK, so this is a place we are ahead of the design we took the control flow from. ❌ **EARLY COMPLETION — WE DO NOT.** *"Ground goals are considered completed after the FIRST solution… this is what lets `p(42)` short-circuit the recursive enumeration of `p(_)`."* We treat groundness only as an answer-PROJECTION fast path (`_ordered_vars` identity); the completion loop still runs to fixpoint. 🔴 **AND IT IS UNSOUND FOR MeTTa — MEASURED 2026-08-17, DO NOT PORT AS STATED.** Upstream's rule assumes a ground goal has AT MOST ONE answer, because in Prolog the answer to a ground call is a SUBSTITUTION OVER ZERO VARIABLES. MeTTa returns a VALUE, so a ground call can have many: `(= (p 1) a)` + `(= (p 1) b)` with `p` tabled returns **`["a", "b"]`** — two answers for a goal with zero variables. Completing after the first would return `a` and SILENTLY DROP `b`. ⇒ SAME SHAPE AS ROADMAP 2.0 (tabling-is-set vs MeTTa-is-multiset): a Prolog assumption that does not survive the language change, and the second one found in this port. **IF IT IS WANTED, THE CONDITION MUST BE DIFFERENT** — not "the GOAL is ground" but something like "the goal is ground AND its head has exactly one applicable rule", which is the multivalued question roadmap 2.0 already had to answer. Until then the fixpoint runs, which is CORRECT and slower. ⚠️ The termination benefit is real and is therefore also forfeited: a ground goal over an infinitely enumerating predicate still does not terminate. That is a genuine cost of MeTTa's semantics, not a gap in the port. |
 | **7.9** | shared tabling (+ abolishing) | ❌ | **IN SCOPE — threading later.** Prereq: a threading model. Julia has `Threads.@spawn`; MettaJam is the natural first consumer. Upstream's `tshared` + `abolish_shared_tables/0`. ⚠️ the paper flags NON-BACKTRACKABLE MUTATION as essential to retain answers across disjunctions — the concurrency story starts there |
 | **7.10** | tabling and constraints | ❌ | **IN SCOPE.** Prereq we do not yet have: a CONSTRAINT STORE for tabling to interact with. Possible substrate — MORK's optional `z3` source (see the MM2 capability-boundary row in CODEMAP). Scope this only after a constraint story exists |
 | **7.12** | predicate reference | 🟡 **PARTIAL — and `library(tables)` is the fuller surface** | HAVE: `untable!` + `abolish_table_subgoals!` at head granularity (0.3, `ceb7e40`). ⚠️ SWI ALSO SHIPS `library(tables)`, an **XSB-COMPATIBILITY** layer that is the INSPECTION API over the answer trie — read 2026-08-16: `get_call/3` · `get_calls/3` · `get_returns/2,3` · `get_returns_and_tvs/3` · `get_returns_and_dls/3` · `get_residual/2` · `get_returns_for_call/2` · `abolish_table_pred/1` · `abolish_table_call/1,2` · `abolish_table_subgoals/2`. Our answer trie (§1.0 step 4) is the substrate these need, so `get_call`/`get_returns` are now cheap. 🔴 BUT the THREE truth-value/delay ones (`get_returns_and_tvs`, `get_returns_and_dls`, `get_residual`) are BLOCKED ON DELAY LISTS — see 7.6.1. Note `set_pil_on/0`/`set_pil_off/0` are documented DUMMIES for XSB compat: do not port. 🟢 **AND IT IS SMALL AND VENDORED** — read from SOURCE 2026-08-16, not the web page: `dev-zone/swipl-devel/library/tables.pl`, **381 lines of Prolog** over **7 C primitives**. (The source also corrects the doc page: it exports `'t not'/1` with a SPACE, plus `abolish_all_tables/0`, `abolish_module_tables/1` and `op(900, fy, tnot)`.) PRIMITIVE-BY-PRIMITIVE, WE ALREADY HAVE FIVE: `$tbl_variant_table`→`_ANSWER_TRIES` · `$tbl_answer`→`trie_answers` · `$tbl_trienode`→`MODED_SLOT` · `$table_mode`→`table_modes` · `$tbl_table_status`→🟡 `_TABLE_INPROG`+`_ANSWER_TABLE` (no `fresh/active/complete` FIELD yet). MISSING EXACTLY TWO, both delay-list: **`$tbl_answer_dl`** and **`$tbl_answer_update_dl`** — which is why the split is `get_residual`/`get_returns_and_dls`/`get_returns_and_tvs` on one side and everything else on the other. ⇒ the portable half is a SMALL, well-scoped job on the trie we already built. |

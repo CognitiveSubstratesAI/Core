@@ -132,6 +132,14 @@ end
 `abolish_table_pred!`, and the counterpart to `untable_all!` which also drops declarations.
 """
 function abolish_all_tables!()
+    # 🔴 THE DEPENDENCY GRAPHS GO TOO — upstream says so outright (`boot/tabling.pl:1007-1016`):
+    # *"The dependency graphs for incremental and monotonic tabling are reclaimed as well."* Leaving
+    # them was the dangling-`_DEPS` class `abolish_table_subgoals!` is careful about — a resumption
+    # firing into a table that no longer exists — and it made the two "clear everything" entry points
+    # disagree, since `_table_reset!` already cleared all of them.
+    empty!(_IDG); empty!(_MONO_DEPS); empty!(_MONO_QUEUE); empty!(_DEPS)
+    empty!(_TABLE_INPROG); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_SCC_NEG)
+    _CURRENT_TARGET[] = nothing
     empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_PARTIAL); empty!(_PARTIAL_READ)
     clear_answer_tries!(); clear_worklists!()
     nothing

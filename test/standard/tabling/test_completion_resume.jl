@@ -28,8 +28,12 @@ const _CR = Eval
 
 """Run `query` under one completion strategy; return (answers, dependencies-recorded).
 
-The dependency count is sampled INSIDE the run — teardown clears `_DEPS` — and is what distinguishes
-"resumption agreed" from "resumption never ran"."""
+🔴 THE PROBE IS A CUMULATIVE COUNTER, NOT A SAMPLE OF `_DEPS`. It used to be the latter, and that
+only worked because completion LEAKED its worklists and suspensions — audit finding #6, fixed
+2026-08-17, where upstream frees every worklist at `'\$tbl_table_complete_all'`. Once cleanup was
+correct the sample read ZERO for a run that had done real resumption work, and this file's whole
+anti-vacuity argument would have inverted: a green run would again mean nothing. Counting the EVENT
+instead of its residue cannot be falsified by correct cleanup."""
 function _cr_run(prog::AbstractString, query::AbstractString, heads::Vector{Symbol}, resume::Bool)
     _CR.untable_all!()
     _CR._RESUME_COMPLETION[] = resume
@@ -39,7 +43,7 @@ function _cr_run(prog::AbstractString, query::AbstractString, heads::Vector{Symb
         s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
         for h in heads; _CR.table!(h); end
         r = load_metta!(s, query)
-        deps = sum(length(v) for (_, v) in _CR._DEPS; init = 0)
+        deps = _CR._DEPS_COUNT[]
         (sort(String[string(x) for y in r for x in (y isa AbstractVector ? y : [y])]), deps)
     finally
         _CR._RESUME_COMPLETION[] = false

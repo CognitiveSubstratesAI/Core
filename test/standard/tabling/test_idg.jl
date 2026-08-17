@@ -67,7 +67,13 @@ _dg_k(name::Symbol) = Sym(name)
         _DG.idg_add_edge!(a, b); _DG.idg_add_edge!(b, a)   # mutual
         hit = _DG.idg_propagate_change!(a)
         @test hit == Set([a, b])                    # a IS reached, via b — it is a genuine parent here
-        @test _DG.idg_node_for(b).falsecount == 1   # …and each bumped exactly ONCE, not looped
+        # 🔴 THESE COUNTS WERE WRONG UNTIL 2026-08-17, and asserted OUR bug as the contract.
+        # Upstream increments on EVERY incoming edge and recurses only on the 0->1 transition
+        # (`ATOMIC_INC(&n->falsecount) == 1`, `pl-tabling.c:7043`). So walking a↔b from `a`: b goes
+        # 0->1 and is pushed; b's affected gives a 0->1, pushed; a's affected gives b 1->2, NOT
+        # pushed — and it terminates there. Termination comes from the SAME test as the count, which
+        # is why a `seen` set was not a harmless substitute for it.
+        @test _DG.idg_node_for(b).falsecount == 2   # …reached twice: directly, and back around
         @test _DG.idg_node_for(a).falsecount == 1
         _DG.clear_idg!()
     end
@@ -86,6 +92,38 @@ _dg_k(name::Symbol) = Sym(name)
         # dependency set and must not carry invalidation counted against the OLD one.
         _DG.idg_reset_falsecount!(c)
         @test !_DG.idg_is_invalid(c) && isempty(_DG.idg_invalid_tables())
+        _DG.clear_idg!()
+    end
+
+    @testset "🔴 idg_changed! is the ENTRY POINT — three guards the inner walk does not have" begin
+        # `idg_propagate_change!` is upstream's INNER loop; every real caller goes through
+        # `idg_changed` (`pl-tabling.c:7133`). Calling the walk directly skips all three of these,
+        # which is how the monotonic retract path was leaving its own source table valid.
+        _DG.clear_idg!()
+        a, b = _dg_k(:a), _dg_k(:b)
+        _DG.idg_add_edge!(a, b)                          # b depends on a
+
+        hit = _DG.idg_changed!(a)
+        @test _DG.idg_is_invalid(a)                      # (2) the CHANGED table IS invalidated
+        @test a in hit && b in hit
+        @test _DG.idg_node_for(a).falsecount == 1
+        @test _DG.idg_node_for(b).falsecount == 1
+
+        # (1) already-invalid ⇒ no re-propagation, so counts do NOT inflate on a repeat change
+        @test isempty(_DG.idg_changed!(a))
+        @test _DG.idg_node_for(b).falsecount == 1
+
+        # (3) an INCOMPLETE table cannot be invalidated — permission error, not silent corruption
+        _DG.clear_idg!()
+        _DG.idg_add_edge!(a, b)
+        push!(_DG._TABLE_INPROG, a)
+        try
+            @test_throws ArgumentError _DG.idg_changed!(a)
+            @test isempty(_DG.idg_changed!(a; mono = true))   # …mono STOPS instead of erroring
+            @test !_DG.idg_is_invalid(b)
+        finally
+            delete!(_DG._TABLE_INPROG, a)
+        end
         _DG.clear_idg!()
     end
 

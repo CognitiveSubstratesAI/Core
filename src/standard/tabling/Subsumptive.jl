@@ -132,9 +132,19 @@ function subsumptive_answers(goal::Atom)
     is_complete(t) || return nothing               # not complete ⇒ fall through, do not under-answer
     out = Atom[]
     for a in trie_answers(t)
-        # filter by unification with the specific call, exactly as upstream's indexed fetch does —
-        # we scan because `$tbl_answer_update_dl` is a delay-list primitive we lack (see the header).
-        isempty(match_atoms(a, goal)) || push!(out, a)
+        # 🔴 RETURN THE ANSWER INSTANTIATED TO THE CALL, NOT THE STORED ONE — FIXED 2026-08-17.
+        # This was `isempty(match_atoms(a, goal)) || push!(out, a)`: it used the unifier as a FILTER
+        # and then discarded its bindings, pushing the GENERAL atom. For a general table holding a
+        # non-ground `p($X)` and a specific call `p(a)`, upstream yields `p(a)` and we yielded
+        # `p($X)`. Upstream unifies the general variant against the CALLER's Wrapper and then
+        # `'$tbl_answer_update_dl'(ATrie, Skeleton)` unifies each trie answer INTO that partly-bound
+        # skeleton (`boot/tabling.pl:439-441`) — the bindings are the point, not a side effect.
+        # This also makes §7.5 and §7.11.3 interact correctly: the maximally-general answer that
+        # `generalise_answer_substitution` inserts is exactly the shape that went wrong.
+        for b in match_atoms(a, goal)
+            inst = subst(a, b)
+            any(x -> variant_eq(x, inst), out) || push!(out, inst)
+        end
     end
     out
 end

@@ -132,16 +132,34 @@ const UPDATE_ALIAS = Dict{Symbol,TableMode}(
     :sum    => ModeLattice(:sum,   agg_sum),
 )
 
-"Modes a user may name in a `lattice(...)`/`po(...)` spec, beyond the aliases."
+# 🔴 THESE REGISTRIES ARE OPEN, AND THAT IS THE PORT — CORRECTED 2026-08-17.
+# They were closed sets, and `lattice(NAME)` THREW off them. Upstream accepts **any** atom:
+# `lattice(Name/Arity)` requires only arity 3 (`boot/tabling.pl:1459-1495`) and `po(Name/Arity)` only
+# arity 2. The six builtins are merely `update_alias/2` SHORTHANDS (`:1503-1508`) — and upstream ships
+# **no built-in `po` predicates at all**; ours are a convenience, not a ceiling. Closing the set
+# rejected the entire user-defined half of §7.3, which is what mode-directed tabling is FOR.
+"Named lattice/3 operations. OPEN — `register_lattice!` adds one; the six below are the aliases."
 const LATTICE_OPS = Dict{Symbol,Function}(
     :first => agg_first, :last => agg_last, :min => agg_min, :max => agg_max, :sum => agg_sum,
 )
+"Named po/2 operations. OPEN — upstream ships NONE of these; they are ours, and users may add more."
 const PO_OPS = Dict{Symbol,Function}(
     :leq => (s0, s1) -> compare_standard(s0, s1) <= 0,
     :lt  => standard_lt,
     :geq => (s0, s1) -> compare_standard(s0, s1) >= 0,
     :gt  => standard_gt,
 )
+
+"""
+    register_lattice!(name, f)   # f(stored, new) -> Atom, i.e. upstream's arity 3
+    register_po!(name, f)        # f(stored, new) -> Bool, i.e. upstream's arity 2
+
+Upstream's `lattice(Name/3)` / `po(Name/2)` accept any predicate of the right arity. These are the
+Julia surface for that: register once, then `(lattice NAME)` resolves. The arity check is upstream's
+only precondition, and here it is the function signature.
+"""
+register_lattice!(name::Symbol, f::Function) = (LATTICE_OPS[name] = f; nothing)
+register_po!(name::Symbol, f::Function) = (PO_OPS[name] = f; nothing)
 
 """
     update_goal(spec) -> TableMode
@@ -155,7 +173,10 @@ did nothing".
 function update_goal(spec::Atom)::TableMode
     if spec isa Sym
         n = (spec::Sym).name
-        (n === :index || n === :_) && return ModeIndex()
+        # `indexed_mode/1` has THREE clauses (`boot/tabling.pl:1421-1425`), one per dialect:
+        # `var(Mode)` (XSB) · `index` (YAP) · `+` (B-Prolog). `+` was missing, so the legal
+        # `:- table p(+, min)` was a domain_error for us. `:_` is our spelling of the var clause.
+        (n === :index || n === :_ || n === Symbol("+")) && return ModeIndex()
         haskey(UPDATE_ALIAS, n) && return UPDATE_ALIAS[n]
         throw(ArgumentError("domain_error(tabled_mode, $(n)) — known: index, " *
                             join(sort(string.(collect(keys(UPDATE_ALIAS)))), ", ")))
@@ -165,11 +186,14 @@ function update_goal(spec::Atom)::TableMode
             "domain_error(tabled_mode, $(spec)) — expected (lattice NAME) or (po NAME)"))
         kind, nm = (ch[1]::Sym).name, (ch[2]::Sym).name
         if kind === :lattice
-            haskey(LATTICE_OPS, nm) ||
-                throw(ArgumentError("unknown lattice/3: $(nm)"))
+            haskey(LATTICE_OPS, nm) || throw(ArgumentError(
+                "unknown lattice/3: $(nm) — upstream accepts any Name/3; register it with " *
+                "`register_lattice!(:$(nm), f)` where `f(stored, new) -> Atom`"))
             return ModeLattice(nm, LATTICE_OPS[nm])
         elseif kind === :po
-            haskey(PO_OPS, nm) || throw(ArgumentError("unknown po/2: $(nm)"))
+            haskey(PO_OPS, nm) || throw(ArgumentError(
+                "unknown po/2: $(nm) — upstream accepts any Name/2 (and ships none built in); " *
+                "register it with `register_po!(:$(nm), f)` where `f(stored, new) -> Bool`"))
             return ModePO(nm, PO_OPS[nm])
         end
         throw(ArgumentError("domain_error(tabled_mode, $(spec))"))
@@ -237,7 +261,23 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
     if !has_aggregation(modes)
         out = copy(existing); changed = false
         for a in incoming
-            any(x -> x == a, out) && continue
+            # 🔴 VARIANT, NOT STRUCTURAL — FIXED 2026-08-17 (adversarial audit vs the C).
+            # Was `any(x -> x == a, out)`. Upstream's duplicate test IS the answer trie:
+            # `trie_lookup_abstract(..., add=true)` then `if (node->value) return false`
+            # (`pl-tabling.c:3596-3618`) — and the trie keys variables by FIRST-OCCURRENCE INDEX, so
+            # `p($x)` and `p($y)` reach the SAME NODE and the second is a duplicate.
+            #
+            # `Atom ==` distinguishes `Var("_y",17)` from `Var("_y",23)`. So a non-ground answer whose
+            # rule body introduces a FRESH VARIABLE is structurally new EVERY ROUND ⇒ `changed = true`
+            # forever ⇒ the completion fixpoints (`Tabling.jl`'s `while true … grew || break`, and
+            # `_S_P!`'s) DO NOT TERMINATE and `_PARTIAL` grows without bound. SWI terminates on the
+            # same program. This is the single merge point for every completion path, so the bug was
+            # reachable from all of them.
+            #
+            # `variant_eq` (tabling/AnswerTrie.jl) IS `=@=` — equality of `trie_keys`. It existed, its
+            # own header argued exactly this point, and it was called ONLY from `trie_insert_moded!`;
+            # the default wired path never reached it. Later include is fine — Julia resolves at call.
+            any(x -> variant_eq(x, a), out) && continue
             push!(out, a); changed = true
         end
         return (out, changed)
@@ -269,7 +309,10 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
                           update_body(modes[mi], cc[i], ac[i]) : cc[i])
         end
         new = Expression(merged)
-        if new != cur                     # VALUE-based change detection, not cardinality
+        # 🔴 VARIANT AGAIN (same audit). Upstream's `update/7` 0b11 clause succeeds only when
+        # `Agg \\=@= Next` (`boot/tabling.pl:752-755`). `!=` reports "changed" on a pure RENAMING of a
+        # non-ground aggregated value, so the moded fixpoint never converges either.
+        if !variant_eq(new, cur)          # VALUE-based change detection, not cardinality
             bykey[k] = new; changed = true
         end
     end

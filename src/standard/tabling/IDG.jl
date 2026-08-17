@@ -107,20 +107,64 @@ handled by whatever changed it (a re-evaluation, or the revision-stamp eviction)
 everyone who cached ITS answers.
 """
 function idg_propagate_change!(key::Atom)::Set{Atom}
-    seen = Set{Atom}()
+    touched = Set{Atom}()
     stack = Atom[key]
     while !isempty(stack)
         k = pop!(stack)
         n = get(_IDG, k, nothing)
         n === nothing && continue
         for parent in n.affected
-            parent in seen && continue              # cycle-safe: recursive deps are the normal case
-            push!(seen, parent)
-            _IDG[parent].falsecount += 1
-            push!(stack, parent)
+            p = get(_IDG, parent, nothing)
+            p === nothing && continue
+            # 🔴 INCREMENT ALWAYS, RECURSE ONLY ON 0->1 — FIXED 2026-08-17 (audit vs the C).
+            # This was `parent in seen && continue`, i.e. ONE increment per node per call and a
+            # re-walk on first visit regardless. Upstream (`idg_changed_loop`, `pl-tabling.c:7043`):
+            #     if ( ATOMIC_INC(&n->falsecount) == 1 ) { ... pushSegStack(...) }
+            # Two differences, both material. (a) The count rises ONCE PER INCOMING EDGE from an
+            # invalidated ancestor: in a diamond A->{B,C}->D upstream leaves `D.falsecount == 2` and
+            # ours left 1. (b) Recursion stops on an already-invalid node, so the walk is bounded by
+            # transitions, not by a visited set — cycle-safety comes from the SAME test.
+            # `falsecount` is a COUNT precisely so re-validation can decrement it symmetrically
+            # (`:7053`); undercounting would let one re-validation mark a table valid while a second
+            # invalidating dependency is still outstanding. Latent today (no re-validation path), but
+            # this file's header asserted the counting semantics were ported, and they were not.
+            p.falsecount += 1
+            push!(touched, parent)
+            p.falsecount == 1 && push!(stack, parent)
         end
     end
-    seen
+    touched
+end
+
+"""
+    idg_changed!(key; mono=false) -> Set{Atom}
+
+`idg_changed` (`pl-tabling.c:7133-7169`) — THE entry point every upstream caller uses.
+`idg_propagate_change!` is only its inner walk, and calling that directly skips three things:
+
+1. **the `falsecount == 0` guard** — a table already invalid is not re-propagated, so repeated
+   changes to the same table cost nothing and cannot inflate its dependants' counts;
+2. **incrementing `key` ITSELF** (`:7155`) — the CHANGED table *is* invalidated. Ours documented the
+   opposite ("`key` ITSELF IS NOT INVALIDATED") as if it were the whole story; that is true of the
+   inner walk and false of the operation, which is why the monotonic retract path was leaving its
+   source table valid;
+3. **the incomplete-table check** (`:7148-7153`) — changing a table mid-completion is a permission
+   error upstream, not a silent corruption of a running fixpoint. `mono=true` is upstream's
+   `IDG_CHANGED_MONO`, which STOPS propagation on an incomplete table instead of erroring.
+"""
+function idg_changed!(key::Atom; mono::Bool = false)::Set{Atom}
+    n = get(_IDG, key, nothing)
+    n === nothing && return Set{Atom}()
+    n.falsecount == 0 || return Set{Atom}()                 # (1) already invalid ⇒ done
+    if key in _TABLE_INPROG                                 # (3) `table_is_incomplete`
+        mono && return Set{Atom}()
+        throw(ArgumentError("permission_error(update, variant, $(key)) — a table cannot be " *
+                            "invalidated while it is being completed (pl-tabling.c:7148)"))
+    end
+    n.falsecount += 1                                       # (2) the CHANGED table is invalidated
+    hit = idg_propagate_change!(key)
+    push!(hit, key)
+    hit
 end
 
 "Is this table invalidated? `complete_or_invalid_status`: `n->falsecount > 0` ⇒ `invalid`."

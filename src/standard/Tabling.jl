@@ -133,7 +133,7 @@ const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; N
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
-                   _CURRENT_TARGET[] = nothing; clear_worklists!(); clear_answer_tries!(); clear_idg!(); clear_mono!();  # §1.0 3-4 + §7.7 + §7.8
+                   _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_idg!(); clear_mono!();  # §1.0 3-4 + §7.7 + §7.8
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
@@ -668,7 +668,21 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     finally
         _CURRENT_TARGET[] = saved_target                       # nest-safe (mirrors _WFS_BOUND save/restore)
     end
-    unique(out)
+    # 🔴 VARIANT DEDUP, not `unique` — FIXED 2026-08-17 with `_merge_partial`'s twin site.
+    # `unique` is `==`-based, so two answers differing only by variable IDENTITY both survive, and
+    # the caller then sees a "new" answer every round. Upstream's answer trie keys variables by
+    # first-occurrence index, making them one node. See tabling/Aggregation.jl's merge for the full
+    # argument — this is the same defect in the pass that FEEDS it.
+    _variant_unique(out)
+end
+
+"`unique` under `=@=` rather than `==` — the answer trie's identity, applied to a plain vector."
+function _variant_unique(xs::Vector{Atom})::Vector{Atom}
+    out = Atom[]
+    for x in xs
+        any(y -> variant_eq(y, x), out) || push!(out, x)
+    end
+    out
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -694,12 +708,23 @@ const _DEPS_RECORD    = Ref(false)                          # opt-in: record dep
                                                             # (on together with _RESUME_COMPLETION — resumption
                                                             #  without recording silently completes nothing)
 
+"""How many dependencies have been RECORDED since the last table reset.
+
+⚠️ A CUMULATIVE COUNTER, NOT `length(_DEPS)`, AND THE DIFFERENCE IS THE POINT. The resumption tests'
+anti-vacuity probe used to sample `_DEPS` after a run — which only worked because completion LEAKED
+its worklists and suspensions (audit finding #6, fixed 2026-08-17). Now that they are freed as
+upstream frees them (`complete_worklist`, `pl-tabling.c:4876`), the surviving-state sample reads
+zero for a run that did plenty of work. A counter observes the EVENT rather than its residue, so it
+cannot be falsified by correct cleanup."""
+const _DEPS_COUNT = Ref{Int}(0)
+
 "Record `dependency(source, cont, target)` in the SOURCE's table (§4.2). No-op unless enabled."
 function record_dependency!(source::Atom, b::Bindings, prev, red::Atom)
     _DEPS_RECORD[] || return nothing
     tgt = _CURRENT_TARGET[]
     tgt === nothing && return nothing            # not inside a worker ⇒ no target to feed
     push!(get!(_DEPS, source, Dependency[]), Dependency(source, capture_continuation(b, prev, red), tgt))
+    _DEPS_COUNT[] += 1          # CUMULATIVE — `_DEPS` itself is now freed at completion (#6)
     nothing
 end
 
@@ -797,6 +822,36 @@ function __init__()
     _IDG_RECORD[]        = get(ENV, "CORE_TABLING_IDG", "") == "1"
 end
 
+"""The SCC's members RIGHT NOW — upstream's growing `created_worklists`, not a frozen list.
+
+A table first reached inside a resumed continuation joins the component mid-completion and must be
+drained too; `members` is the entry-time snapshot and cannot see it. Union rather than replacement,
+because a member whose worklist was already dropped is still owed its `_PARTIAL`."""
+function _resume_members(members::Vector{Atom}, key::Atom)::Vector{Atom}
+    out = copy(members)
+    seen = Set{Atom}(out)
+    for g in _GEN_STACK
+        _scc_root(g) == key && !(g in seen) && (push!(out, g); push!(seen, g))
+    end
+    out
+end
+
+"""The MERGED form of `newa` in `merged` — what a mode-directed table actually holds.
+
+Without aggregation the answer IS its own merged form. With it, the entry sharing `newa`'s mode key
+is the aggregate; falls back to `newa` if the modes cannot key it, which is the pre-aggregation
+behaviour and so never worse than before."""
+function _aggregated_form(merged::Vector{Atom}, newa::Atom, key::Atom)::Atom
+    modes = table_modes(head_name(key))
+    has_aggregation(modes) || return newa
+    k = try; mode_key(newa, modes); catch; return newa; end
+    for a in merged
+        ka = try; mode_key(a, modes); catch; continue; end
+        variant_eq(ka, k) && return a
+    end
+    newa
+end
+
 """
     _complete_resume!(members, typ, space, key) -> Bool
 
@@ -817,18 +872,46 @@ function _complete_resume!(members::Vector{Atom}, typ::Atom, space::Space, key::
     guard = 0
     while true
         did = false
-        for m in members
+        # 🔴 #5: THE MEMBER LIST MUST BE RE-READ EACH ROUND. `for m in members` froze the component
+        # at entry, so a table first reached INSIDE a resumed continuation got `_PARTIAL`/a worklist
+        # written and was then never drained — its answers leaked and vanished in the `finally`.
+        # Upstream's `completion_` repeats `'$tbl_pop_worklist'(SCC, WorkList)` over the SCC's
+        # GROWING `created_worklists` (`pl-tabling.c:4858`), which is exactly this re-read. The naive
+        # loop and `_S_P!` already recomputed their component; only this path did not.
+        for m in _resume_members(members, key)
             w = wkl_get_work!(worklist_for(m))
             w === nothing && continue
             did = true
             ansbatch, deps = w
             for d in deps, a in _project(ansbatch, d.cont.goal)
-                for (at, bnd) in resume_continuation(d.cont, a, space)
+                # 🔴 #4 CRITICAL: THE TARGET MUST BE CURRENT WHILE THE CONTINUATION RUNS.
+                # `_CURRENT_TARGET[]` was left at whatever the caller had — `nothing` at top level,
+                # since `_leader_pass` restores it before `_complete_resume!` is ever entered — so
+                # `record_dependency!` hit its `tgt === nothing && return nothing` guard and SILENTLY
+                # RECORDED NOTHING. Any tabled variant first reached inside a resumed continuation
+                # suspended without a suspension: incomplete table, no error, on the DEFAULT path.
+                # Upstream sets it before the continuation runs — `unify_dependency` does
+                # `idg_set_current_wl(a0+3)` (the TargetWL, `pl-tabling.c:4199`), and
+                # `delim(TargetSkeleton, Continuation, TargetWL, Delays)` (`boot/tabling.pl:836`)
+                # makes the target explicit. Saved/restored because resumption nests.
+                saved_tgt = _CURRENT_TARGET[]
+                _CURRENT_TARGET[] = d.target
+                resumed = try
+                    resume_continuation(d.cont, a, space)
+                finally
+                    _CURRENT_TARGET[] = saved_tgt
+                end
+                for (at, bnd) in resumed
                     is_empty_atom(at) && continue
                     newa = subst(at, bnd)
                     tgt = d.target
                     _PARTIAL[tgt], ch = _merge_partial(get(_PARTIAL, tgt, Atom[]), Atom[newa], tgt)
-                    ch && wkl_add_answer!(worklist_for(tgt), newa)   # only a NEW answer is new work
+                    # 🔴 #12: PROPAGATE THE AGGREGATED ANSWER, NOT THE RAW ONE. Under a `lattice`/`po`
+                    # mode `ch` is true because the MERGED value changed, but `newa` is the incoming
+                    # pre-aggregation answer — so consumers of a mode-directed table saw values that
+                    # were never in it. Upstream passes `wkl_add_answer(wl, node)` a TRIE NODE, whose
+                    # value is the aggregated one (`wkl_mode_add_answer`, `pl-tabling.c:3928`).
+                    ch && wkl_add_answer!(worklist_for(tgt), _aggregated_form(_PARTIAL[tgt], newa, tgt))
                 end
             end
         end
@@ -1029,6 +1112,14 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         # read `_ANSWER_TRIES`, and until now nothing populated it from a real evaluation. They were
         # correct and unreachable.
         #
+        # 🔴 THE "THE TWO STORES AGREE" CLAIM ABOVE WAS CONDITIONAL UNTIL 2026-08-17, and the audit
+        # caught it: the trie dedups by VARIANT, `_ANSWER_TABLE` came from `_PARTIAL` which deduped
+        # by `==`, so wherever `_PARTIAL` held two variant-but-not-`==` answers the two stores held
+        # DIFFERENT ANSWER COUNTS and the switch was not answer-preserving. The trie was the
+        # upstream-correct one. Fixing `_merge_partial`/`_leader_pass` to dedup by `variant_eq`
+        # (audit finding #1 — it was also a NON-TERMINATION bug) makes both stores use the same
+        # identity, so the claim now holds unconditionally rather than only on ground answer sets.
+        #
         # Mirroring before switching is deliberate: it makes the trie OBSERVABLE against the live
         # engine (the two must agree) without putting it on the answer path, which is the same
         # disable-to-prove order used for the resumption flip.
@@ -1044,6 +1135,16 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             for m in done
                 delete!(_TABLE_INPROG, m); delete!(_PARTIAL, m); delete!(_COMPONENT, m); delete!(_PARTIAL_READ, m)
                 delete!(_SCC_NEG, m)
+                # 🔴 #6: THE WORKLIST AND THE SUSPENSIONS MUST DIE WITH THE COMPLETION.
+                # They did not, and re-completing the same key after a revision bump re-seeded into a
+                # worklist still holding the PREVIOUS run's clusters — the old suspension cluster
+                # landing adjacent to the new answer cluster, so `wkl_get_work!` resumed
+                # continuations captured during an evaluation whose table had been EVICTED, against
+                # the new space. Silently wrong answers, plus `_DEPS` growing without bound.
+                # Upstream frees every worklist at `'$tbl_table_complete_all'`: `complete_worklist`
+                # with `destroy = !wl->undefined && isEmptyBuffer(&wl->delays)` (`pl-tabling.c:4876`)
+                # — and with no delay lists, which is our configuration, that is ALWAYS true.
+                drop_worklist!(m); delete!(_DEPS, m)
             end
         end
     end

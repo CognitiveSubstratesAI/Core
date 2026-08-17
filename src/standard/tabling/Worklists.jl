@@ -135,6 +135,31 @@ answers to the RIGHT of those dependencies — which is how the invariant record
 """
 function wkl_swap_clusters!(wl::Worklist, i::Int)
     wl.clusters[i], wl.clusters[i+1] = wl.clusters[i+1], wl.clusters[i]
+    _wkl_merge_adjacent!(wl, i)
+    wl
+end
+
+"""Merge the same-kind neighbours a SWAP just created — `advance_wkl_state` (`pl-tabling.c:4276`).
+
+🔴 THIS WAS MISSING, AND IT FALSIFIED THIS FILE'S OWN JUSTIFICATION. The header argued that riac may
+be COMPUTED rather than cached because "a table holds few clusters, since consecutive same-kind
+insertions merge rather than append" — true on INSERTION, and insertion was the only place we
+merged. A swap also creates adjacency, and post-swap adjacency was never merged, so the cluster count
+grew monotonically across a long completion with `wkl_riac`'s O(n) scan on top of it. Correctness is
+unaffected either way (the invariant still combines every pair, and the swap count still strictly
+decreases) — this is what makes the header's cost argument true."""
+function _wkl_merge_adjacent!(wl::Worklist, i::Int)
+    for j in min(i + 1, length(wl.clusters) - 1):-1:max(i - 1, 1)
+        j + 1 <= length(wl.clusters) || continue
+        a, b = wl.clusters[j], wl.clusters[j+1]
+        a.kind == b.kind || continue
+        if a.kind == CLUSTER_ANSWERS
+            append!(a.answers, b.answers)
+        else
+            append!(a.deps, b.deps)
+        end
+        deleteat!(wl.clusters, j + 1)
+    end
     wl
 end
 
@@ -155,8 +180,13 @@ take is the difference between an invariant and a convention
 function wkl_get_work!(wl::Worklist)
     i = wkl_riac(wl)
     i == 0 && return nothing
-    ans  = wl.clusters[i].answers
-    deps = wl.clusters[i+1].deps
+    # ⚠️ SNAPSHOT BEFORE THE SWAP. These were returned BY REFERENCE, which was safe only while the
+    # swap did nothing but exchange two slots. Now that it also MERGES the same-kind neighbours it
+    # creates (`_wkl_merge_adjacent!`), the surviving cluster's vector is `append!`ed to — so the
+    # caller's `ans` would grow under it and the batch would no longer be the batch that was taken.
+    # Copying makes the returned batch immutable-in-practice, which is what the caller assumes.
+    ans  = copy(wl.clusters[i].answers)
+    deps = copy(wl.clusters[i+1].deps)
     wkl_swap_clusters!(wl, i)
     (ans, deps)
 end
