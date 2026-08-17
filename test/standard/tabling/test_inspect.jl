@@ -106,3 +106,42 @@ _in_g(h::Symbol, a) = Expression(Atom[Sym(h), Grounded(a)])
         _IN.untable_all!()
     end
 end
+
+@testset "roadmap 1.0b step 1 — the trie MIRRORS a real completed table" begin
+    # Until this, `_ANSWER_TRIES` was populated only by hand in tests: `library(tables)`, §7.5's
+    # `more_general_table` and §7.3/§7.11.3's trie-seated inserts were CORRECT AND UNREACHABLE from a
+    # real evaluation. `tabled_eval` now mirrors completed answers into the trie.
+    #
+    # ⚠️ MIRROR, NOT SWITCH. `_ANSWER_TABLE` is still the read path, so this changes no behaviour —
+    # it makes the trie OBSERVABLE against the live engine first. Same disable-to-prove order as the
+    # resumption flip: agreement before adoption.
+    _IN.untable_all!(); _IN.abolish_all_tables!()
+    try
+        s = Space(); load_core_stdlib!(s)
+        load_metta!(s, raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n")
+        _IN.table!(:fib)
+        @test String[string(x) for y in load_metta!(s, "!(fib 8)\n")
+                     for x in (y isa AbstractVector ? y : [y])] == ["21"]
+
+        # ANTI-VACUITY: a run that tabled nothing would make every assertion below trivially true.
+        calls = _IN.get_calls(:fib)
+        @test length(calls) > 1                      # fib 8 memoises several subgoals
+        @test _IN.tabled_heads() == [:fib]
+
+        # 🔴 THE TWO STORES MUST AGREE — that is the whole point of mirroring before switching.
+        for (k, t, st) in calls
+            @test st == :complete                    # completion marks status, which §7.5 requires
+            @test sort(String[string(a) for a in get(_IN._ANSWER_TABLE, k, Atom[])]) ==
+                  sort(String[string(a) for a in _IN.get_returns(t)])
+        end
+
+        # and the inspection API reaches a REAL table, not a hand-built one
+        goal = _IN._reduced_goal(_IN.parse_from(_IN.tokenize("(fib 8)"), Ref(1), s.tokens),
+                                 s, _IN.Bindings())
+        c = _IN.get_call(goal)
+        @test c !== nothing && c[3] == :complete
+        @test String[string(a) for a in _IN.get_returns(c[2])] == ["21"]
+    finally
+        _IN.abolish_all_tables!(); _IN.untable_all!()
+    end
+end

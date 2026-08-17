@@ -919,6 +919,9 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             return _replay(_project(_ANSWER_TABLE[key], red), b, prev)          #   FRESH (space unchanged) ⇒ project+replay
         end
         delete!(_ANSWER_TABLE, key); delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
+        drop_answer_trie!(key)                                                   #   …and the mirrored trie with it: a
+                                                                                 #   surviving trie would let §7.5 answer
+                                                                                 #   a subsumed call from evicted data.
     end
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
@@ -972,6 +975,21 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         ans = _PARTIAL[key]
         _stamp = (objectid(space), space.revision)                              # stamp each completed answer set with
         for m in comp(); _ANSWER_TABLE[m] = _PARTIAL[m]; _ANSWER_STAMP[m] = _stamp; end  # the (space, revision) it holds for
+        # ── roadmap 1.0b, STEP 1: MIRROR the completed answers into the ANSWER TRIE ──────────────
+        # The trie is not yet the read path — `_ANSWER_TABLE` above still is — so this changes NO
+        # behaviour. What it changes is REACHABILITY: `library(tables)` (`get_call`/`get_calls`/
+        # `get_returns`), §7.5's `more_general_table`, and §7.3/§7.11.3's trie-seated inserts all
+        # read `_ANSWER_TRIES`, and until now nothing populated it from a real evaluation. They were
+        # correct and unreachable.
+        #
+        # Mirroring before switching is deliberate: it makes the trie OBSERVABLE against the live
+        # engine (the two must agree) without putting it on the answer path, which is the same
+        # disable-to-prove order used for the resumption flip.
+        for m in comp()
+            t = answer_trie_for(m)
+            for a in _PARTIAL[m]; trie_insert!(t, a); end
+            set_table_status!(t, :complete)          # `$tbl_table_status` — §7.5 requires COMPLETE
+        end
     finally
         if _scc_root(key) == key                                                # only the ROOT cleans its SCC
             done = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
