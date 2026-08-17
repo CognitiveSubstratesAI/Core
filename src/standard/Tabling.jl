@@ -133,7 +133,7 @@ const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; N
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
-                   _CURRENT_TARGET[] = nothing; clear_worklists!(); clear_answer_tries!();  # §1.0 steps 3-4
+                   _CURRENT_TARGET[] = nothing; clear_worklists!(); clear_answer_tries!(); clear_idg!();  # §1.0 steps 3-4 + §7.7
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
@@ -213,6 +213,9 @@ function abolish_table_subgoals!(head::Symbol)
     # §1.0 step 4: and its ANSWER TRIE. A surviving trie would serve answers for a predicate that is
     # no longer tabled — the same class as a stranded _DEPS entry.
     for key in collect(keys(_ANSWER_TRIES)); _ishead(key) && drop_answer_trie!(key); end
+    # §7.7: and its IDG node, unlinking both directions — a dropped table must not leave dangling
+    # edges that propagate invalidation into nothing.
+    for key in collect(keys(_IDG)); _ishead(key) && drop_idg_node!(key); end
     nothing
 end
 @inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
@@ -762,6 +765,12 @@ end
 # `CORE_TABLING_TRIE_READ=1` turns it on for a whole-suite differential, the same shape as
 # `CORE_TABLING_RECOMPUTE`. Read in `__init__`, NOT as a const initialiser — a const is evaluated at
 # PRECOMPILE time and bakes in the environment of whoever compiled the package (measured 2026-08-16).
+# ── §7.7: record IDG edges during evaluation? OFF until the graph is consumed. ──────────────────
+# Recording is OBSERVATIONAL — it changes no answer — but it costs memory per table, and the graph
+# is not yet USED for invalidation (the revision stamp still does that job). `CORE_TABLING_IDG=1`
+# turns recording on so the graph can be inspected against real runs before anything depends on it.
+const _IDG_RECORD = Ref(false)
+
 const _TRIE_READ = Ref(false)
 
 const _RESUME_COMPLETION = Ref(false)
@@ -782,6 +791,7 @@ function __init__()
     _RESUME_COMPLETION[] = !recompute
     _DEPS_RECORD[]       = !recompute
     _TRIE_READ[]         = get(ENV, "CORE_TABLING_TRIE_READ", "") == "1"
+    _IDG_RECORD[]        = get(ENV, "CORE_TABLING_IDG", "") == "1"
 end
 
 """
@@ -923,6 +933,15 @@ end
 # `[[feedback_capability_claims_expire_retest_the_premise]]` exists.
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     red = _reduced_goal(atom, space, b); key = _variant_rename(red)             # red keeps the caller's vars;
+    # §7.7: THE DEPENDENCY EDGE, AT THE CALL — not at the cache hit.
+    # 🔴 FIRST ATTEMPT PUT THIS ON THE CACHE-HIT PATH AND IT WAS UNSOUND. Upstream adds the edge in
+    # `tbl_variant_table` (`pl-tabling.c:4549-4560`), which looks up OR CREATES the table on EVERY
+    # tabled call, before any answer exists. Recording only on a hit misses every dependency where
+    # the caller COMPUTED the subgoal instead of reusing it — MEASURED on `fib 8`: the edge
+    # fib(7)->fib(6) was absent, because fib(7) computed fib(6) first. A missed edge means a stale
+    # table never gets invalidated, which is the one failure an IDG must not have.
+    # `_GEN_STACK[end]` is `idg_current()`; an empty stack is a top-level query, depending on nothing.
+    _IDG_RECORD[] && !isempty(_GEN_STACK) && idg_add_edge!(key, _GEN_STACK[end])
     if haskey(_ANSWER_TABLE, key)                                                # complete entry — but only replay if
         if get(_ANSWER_STAMP, key, (UInt(0), -1)) == (objectid(space), space.revision)
             # ── roadmap 1.0b, STEP 2: the READ PATH, behind a flag ───────────────────────────────

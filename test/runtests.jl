@@ -158,6 +158,10 @@ module StandardMeTTaTests
     # ONE declaration surface — SWI's table_options/3 (roadmap 0b, the config principle). Gates the
     # three states an option can be in: HONOURED, REFUSED-with-a-reason, and UNKNOWN (domain_error).
     Main.@suite("standard/tabling/test_options.jl")
+    # SWI §7.7 — the incremental dependency graph. Replaces the revision stamp's all-or-nothing
+    # invalidation with per-table. Gates the GRAPH (edges, direction, transitive propagation,
+    # teardown); the RE-EVALUATION half of §7.7 is not built.
+    Main.@suite("standard/tabling/test_idg.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
