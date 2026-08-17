@@ -215,3 +215,93 @@ has_answer_trie(key::Atom)::Bool = haskey(_ANSWER_TRIES, key)
 "Drop one table's trie — called by `abolish_table_subgoals!` so it dies with its table."
 drop_answer_trie!(key::Atom) = (delete!(_ANSWER_TRIES, key); nothing)
 clear_answer_tries!() = (empty!(_ANSWER_TRIES); nothing)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODE-DIRECTED INSERTION — §7.3 re-seated onto the trie (roadmap step after §1.0).
+#
+# `Aggregation.merge_answers` folds a mode vector over a `Vector{Atom}`. That existed only because
+# there was no trie to insert into — its own header says so. Upstream has no such entry point: the
+# merge happens INSIDE `$tbl_wkl_add_answer` (`pl-tabling.c:3577`), and a moded table is marked
+# `TRIE_ISMAP` — a MAP from key to aggregated value, not a set of answers.
+#
+# ─── WHAT THE TRIE GIVES THAT THE VECTOR COULD NOT ───────────────────────────────────────────────
+#   * the KEY IS THE PATH. `mode_key` replaces every moded argument with `MODED_SLOT`, so answers
+#     differing only in aggregated positions land on ONE NODE by construction — no scan, no grouping.
+#   * VARIANT identity is structural, so `_is_general_variant` (`tabling/Tripwires.jl`, bolted on
+#     because a Vector has no structural identity) becomes unnecessary here.
+#   * `=@=` COMES FREE: two atoms are variants iff `trie_keys` agree, because variables are keyed by
+#     FIRST-OCCURRENCE INDEX. That matters — see the changed-signal note below.
+#
+# ─── PORTED FROM `update/7` (`boot/tabling.pl:732-773`), INCLUDING WHAT WE CANNOT USE YET ────────
+# Upstream dispatches on a CONDITIONALITY BITMASK — which of (old, new) are unconditional:
+#
+#   0b11 both unconditional  -> merge; action DELETE (replace old); succeeds iff `Agg \=@= Next`
+#   0b10 old uncond, new cond -> merge; action KEEP (old stays, new is ADDED alongside)
+#   0b01 old cond, new uncond -> merge WITH ARGUMENTS SWAPPED (`New, Agg`); action KEEP
+#   0b00 both conditional     -> NO merge at all; `Next = New`; action KEEP
+#
+# 🔴 WE ARE ALWAYS IN 0b11, AND THAT IS A CONSEQUENCE OF A GAP, NOT A SIMPLIFICATION. A conditional
+# answer is one delayed under WFS, which requires DELAY LISTS — recorded as absent (§7.6.1 in
+# `Core/docs/TABLING_ROADMAP.md`). Until they exist no answer can be conditional, so the other three
+# clauses are unreachable rather than unimplemented. They are written out here so that whoever lands
+# delay lists finds the three cases named instead of discovering the bitmask afterwards.
+#
+# ⚠️ AND THE C CONFIRMS THE CONSEQUENCE — checked in `pl-tabling.c`, not inferred from the Prolog:
+#   * `wkl_mode_add_answer` (:3928) receives the answer as `Skel/MArgs` — a `/2` functor SPLITTING
+#     the key part from the moded arguments — and calls `trie_lookup` on **arg0 only**. So upstream's
+#     moded trie is keyed on the SKELETON ALONE. That is what `mode_key` does here.
+#   * `update_subsuming_answers` (:3871) then does
+#         map_trie_node(root, update_subsuming_answer, &ctx)
+#     i.e. it MAPS OVER EVERY CHILD of that key's node. A moded table upstream therefore holds
+#     POSSIBLY MANY answers per key, and "update" means visiting each.
+#   * two mechanisms put them there, and WE HAVE NEITHER: `ctx.flags = AS_NEW_DEFINED` is set only
+#     when both delay lists are nil, so CONDITIONAL answers coexist under one key; and `ctx.garbage`
+#     + `prune_answers_worklist` means deleted answers LINGER until pruned.
+#
+# ⇒ one-row-per-key is correct for our feature set and WRONG the moment delay lists land. When they
+# do, `node.answer` becomes a SET and this function becomes a map-over-children, matching :3871.
+#
+# ⚠️ THE CHANGED SIGNAL IS VARIANT INEQUALITY (`\=@=`), NOT STRUCTURAL (`\==`). `merge_answers` used
+# `new != cur`. For ground values they coincide, which is why the differential never caught it; for a
+# non-ground aggregated value — a generalised answer is nothing but variables — they differ, and a
+# structural test reports "changed" on a pure renaming, so the completion fixpoint would never
+# converge. `trie_keys` equality IS `=@=`.
+
+"`=@=` — variant equality. Two atoms are variants iff their trie paths agree (variables keyed by
+first occurrence), which is exactly upstream's `\\=@=` test in `update/7`'s 0b11 clause."
+variant_eq(a::Atom, b::Atom)::Bool = trie_keys(a) == trie_keys(b)
+
+"""
+    trie_insert_moded!(t, a, modes) -> (inserted_or_changed::Bool, action::Symbol)
+
+Insert `a` under `modes`, merging into the existing answer for its mode key. The trie-seated form of
+`update/7`'s 0b11 clause: merge, REPLACE the old answer, and report change by VARIANT inequality.
+
+`action` is `:new` (no answer for this key yet), `:delete` (replaced — upstream's word for it) or
+`:unchanged`. With no moded position this degrades to `trie_insert!`, so an all-`index` declaration
+behaves exactly as no declaration.
+"""
+function trie_insert_moded!(t::AnswerTrie, a::Atom, modes::Vector{<:TableMode})
+    has_aggregation(modes) || return (trie_insert!(t, a), :new)
+    key  = mode_key(a, modes)
+    node = trie_lookup!(t, key, true)::TrieNode
+    cur  = node.answer
+    if cur === nothing                                  # first answer for this key
+        node.answer = a
+        t.inserts += 1; node.seq = t.inserts; t.count += 1
+        return (true, :new)
+    end
+    (cur isa Expression && a isa Expression) || return (false, :unchanged)
+    cc, ac = (cur::Expression).children, (a::Expression).children
+    length(cc) == length(ac) || return (false, :unchanged)
+    merged = Atom[cc[1]]
+    for i in 2:length(cc)
+        mi = i - 1
+        push!(merged, (mi <= length(modes) && is_moded(modes[mi])) ?
+                      update_body(modes[mi], cc[i], ac[i]) : cc[i])
+    end
+    new = Expression(merged)
+    variant_eq(new, cur) && return (false, :unchanged)   # `Agg \=@= Next` failed ⇒ no change
+    node.answer = new                                    # action `delete`: old replaced in place
+    (true, :delete)
+end

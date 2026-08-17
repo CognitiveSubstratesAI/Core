@@ -135,3 +135,70 @@ end
     @test_throws ArgumentError _AG.update_goal(Sym(:bogus))
     @test_throws ArgumentError _AG.update_goal(Expression(Atom[Sym(:lattice), Sym(:nosuch)]))
 end
+
+@testset "§7.3 re-seated onto the ANSWER TRIE — same oracle, merge at insertion" begin
+    # `merge_answers` folds a mode vector over a Vector because there was no trie to insert into.
+    # Upstream has no such entry point: the merge happens inside `$tbl_wkl_add_answer` and a moded
+    # table is `TRIE_ISMAP` — a MAP from key to aggregated value. `trie_insert_moded!` is that.
+    #
+    # This asserts the trie path against the SAME swipl oracle, and against the Vector path it
+    # replaces — a re-seating that changed an answer would otherwise be invisible.
+    _ins(head, key, vals, modes) = begin
+        t = _AG.AnswerTrie()
+        for v in vals
+            _AG.trie_insert_moded!(t, Expression(Atom[Sym(head), Sym(key), Grounded(v)]), modes)
+        end
+        t
+    end
+    _val(t) = (as = _AG.trie_answers(t); length(as) == 1 ?
+               (as[1]::Expression).children[3] : nothing)
+
+    if Sys.which("swipl") !== nothing && isfile(_AGG_ORACLE)
+        oracle = agg_pairs(_AGG_ORACLE)
+        @test length(oracle) == 7                      # positive control before any comparison
+        # the shortest-path case: 9 direct vs 3 via b — the trie must subsume exactly as swipl did
+        @test _val(_ins(:path, :c, [9, 3], _AG.TableMode[_idx(), _mode(Sym(:min))])) ==
+              Grounded(parse(Int, oracle["path(a,c)"]))
+        @test _val(_ins(:tot, :k, [1, 2, 4], _AG.TableMode[_idx(), _mode(Sym(:sum))])) ==
+              Grounded(parse(Int, oracle["tot(k)"]))
+        @test _val(_ins(:best, :k, [1, 2, 4], _AG.TableMode[_idx(), _mode(Sym(:max))])) ==
+              Grounded(parse(Int, oracle["best(k)"]))
+    else
+        @test_skip "swipl NOT ON PATH — the trie-path §7.3 differential did not run. NOT a pass."
+    end
+
+    # AGREEMENT WITH THE IMPLEMENTATION IT REPLACES, on every built-in lattice.
+    for m in (:min, :max, :sum, :first, :last)
+        modes = _AG.TableMode[_idx(), _mode(Sym(m))]
+        vals  = [5, 1, 9]
+        trie  = _val(_ins(:p, :k, vals, modes))
+        vec   = Atom[]
+        for v in vals; vec, _ = _AG.merge_answers(vec, Atom[_ans(:p, :k, v)], modes); end
+        @test trie == (vec[1]::Expression).children[3]
+    end
+
+    # ── the ACTION vocabulary is upstream's (`update/7`), not ours: :new / :delete / :unchanged.
+    modes = _AG.TableMode[_idx(), _mode(Sym(:min))]
+    t = _AG.AnswerTrie()
+    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 3), modes) == (true,  :new)
+    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 9), modes) == (false, :unchanged)  # `Agg \=@= Next` fails
+    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 1), modes) == (true,  :delete)     # old REPLACED
+    @test length(t) == 1                                    # a moded table is a MAP, one row per key
+
+    # ── 🔴 THE CHANGED SIGNAL IS VARIANT INEQUALITY, NOT STRUCTURAL. `merge_answers` used `!=`; for
+    # ground values the two coincide, which is why the existing differential never separated them.
+    # For a NON-GROUND aggregated value they differ, and a structural test would report "changed" on
+    # a pure renaming — a fixpoint that never converges.
+    vx, vy, vz = Var("x", UInt64(1)), Var("y", UInt64(2)), Var("z", UInt64(3))
+    f(a, b) = Expression(Atom[Sym(:f), a, b])
+    @test _AG.variant_eq(f(vx, vx), f(vy, vy))              # renaming only ⇒ SAME
+    @test !_AG.variant_eq(f(vx, vx), f(vx, vz))             # repeated vs distinct ⇒ different
+    @test f(vx, vx) != f(vy, vy)                            # …and structurally they are NOT equal,
+                                                            #    which is exactly the trap
+
+    # ── an all-`index` declaration must behave as no declaration at all.
+    noagg = _AG.TableMode[_idx(), _idx()]
+    t2 = _AG.AnswerTrie()
+    for v in (1, 2, 1); _AG.trie_insert_moded!(t2, _ans(:r, :a, v), noagg); end
+    @test length(t2) == 2                                   # duplicate dropped, both keys kept
+end
