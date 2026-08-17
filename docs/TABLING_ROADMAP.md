@@ -49,6 +49,39 @@ base and getting 2.0 for free.
 
 ---
 
+## 0e. 🟢 THE ANSWER TRIE IS THE READ PATH — flipped 2026-08-17 (roadmap 1.0b step 2)
+
+Flipped on the same two-part standard as the resumption flip, MEASURED not argued:
+
+| evidence | result |
+|---|---|
+| whole suite, trie ON | 88 files / 0 failed |
+| whole suite, `CORE_TABLING_TRIE_READ=0` | 88 files / 0 failed — the reverse lane still runs |
+| anti-vacuity (`fib 12`) | 13 of 13 tables carried a mirrored trie; `trie_answers(k) == _ANSWER_TABLE[k]` for EVERY key — same answers AND same order |
+| cost | **+0.1%** allocations at fib 12 and fib 16 (best of 3) — noise |
+
+⚠️ **The agreement only became real with audit finding #1.** Before it, `_PARTIAL` deduped by `==`
+and the trie by VARIANT, so the two stores held different answer COUNTS wherever an answer set
+contained variants — this switch was *not* answer-preserving, and the comment claiming it was had
+been true only of ground answer sets. Both now use one identity. The evidence above is kept
+executable in `test_answer_trie.jl` rather than left in a commit message.
+
+### 🔑 THE REASON TO FLIP IS NOT THE COST — IT IS WHAT IT UNBLOCKS
+
+Per-answer METADATA has no home in a `Vector{Atom}`, and **three separate features now need one**:
+
+| feature | needs |
+|---|---|
+| §7.11.1 subgoal abstraction | each answer's goal INSTANCE — measured over-approximating without it (0d) |
+| delay lists / WFS residuation | per-answer CONDITIONS (7.A) |
+| §7.11.2 `answer_abstract` | the same conditions — `radial_restraint` makes its answers conditional |
+
+Upstream keeps all of it on the **trie node**. Making the trie authoritative is the prerequisite
+those three share, and it is now done — so 7.A is next, and it pays for three items at once rather
+than one.
+
+---
+
 ## 0d. §7.11.1 SUBGOAL ABSTRACTION — BUILT 2026-08-17, and it found a THIRD-ASSUMPTION case
 
 `src/standard/tabling/Abstract.jl` + the `start_abstract_tabling` arm in `tabled_eval`. 42 tests.

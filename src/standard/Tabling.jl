@@ -789,17 +789,37 @@ end
 # the §7.1/§7.2 and WFS swipl differentials, which are the only gates that exercise tabling at
 # breadth. A handful of hand-written cases is not corpus coverage, and the flip must not rest on one.
 # Same shape as `CORE_TEST_CETTA` for the opt-in CeTTa scan.
-# ── roadmap 1.0b step 2: is the ANSWER TRIE the read path? OFF until the corpus agrees. ─────────
-# `CORE_TABLING_TRIE_READ=1` turns it on for a whole-suite differential, the same shape as
-# `CORE_TABLING_RECOMPUTE`. Read in `__init__`, NOT as a const initialiser — a const is evaluated at
-# PRECOMPILE time and bakes in the environment of whoever compiled the package (measured 2026-08-16).
+# ── roadmap 1.0b step 2: the ANSWER TRIE IS THE READ PATH. 🟢 FLIPPED ON 2026-08-17. ───────────
+# It was off until the corpus agreed, and the corpus agreed, on the same two-part standard the
+# resumption flip used — MEASURED, not argued:
+#   • whole-suite: 88 files / 0 failed with `CORE_TABLING_TRIE_READ=1`;
+#   • anti-vacuity: on `fib 12`, 13 of 13 tables carried a mirrored trie and `trie_answers(k)` was
+#     `==` to `_ANSWER_TABLE[k]` for EVERY key — same answers AND same order, so the agreement is
+#     evidence rather than a path that never ran;
+#   • cost: +0.1% allocations at fib 12 and fib 16 (best of 3 each) — noise.
+#
+# 🔑 AND THE REASON TO FLIP IS NOT THE COST, IT IS WHAT IT UNBLOCKS. Per-answer METADATA has no home
+# in a `Vector{Atom}`, and THREE separate features now need one: subgoal abstraction needs each
+# answer's goal INSTANCE to be exact (§7.11.1, measured over-approximating without it), and delay
+# lists + `answer_abstract` need per-answer CONDITIONS. Upstream keeps all of it on the trie node.
+# Making the trie authoritative is the prerequisite those three share.
+#
+# ⚠️ THE AGREEMENT ABOVE HOLDS ONLY BECAUSE OF THE AUDIT FIX. Before 2026-08-17 `_PARTIAL` deduped by
+# `==` and the trie by VARIANT, so the two stores held different answer COUNTS wherever an answer set
+# contained variants — the switch was not answer-preserving and the old comment claiming it was is
+# corrected at the read site. Finding #1 made both use one identity.
+#
+# `CORE_TABLING_TRIE_READ=0` still reaches the old store: a differential you can only run one way has
+# stopped being a differential. Read in `__init__`, NOT as a const initialiser — a const is evaluated
+# at PRECOMPILE time and bakes in the environment of whoever compiled the package (measured
+# 2026-08-16).
 # ── §7.7: record IDG edges during evaluation? OFF until the graph is consumed. ──────────────────
 # Recording is OBSERVATIONAL — it changes no answer — but it costs memory per table, and the graph
 # is not yet USED for invalidation (the revision stamp still does that job). `CORE_TABLING_IDG=1`
 # turns recording on so the graph can be inspected against real runs before anything depends on it.
 const _IDG_RECORD = Ref(false)
 
-const _TRIE_READ = Ref(false)
+const _TRIE_READ = Ref(true)     # 🟢 DEFAULT ON — see the block above
 
 const _RESUME_COMPLETION = Ref(false)
 
@@ -818,7 +838,7 @@ function __init__()
     recompute = get(ENV, "CORE_TABLING_RECOMPUTE", "") == "1"
     _RESUME_COMPLETION[] = !recompute
     _DEPS_RECORD[]       = !recompute
-    _TRIE_READ[]         = get(ENV, "CORE_TABLING_TRIE_READ", "") == "1"
+    _TRIE_READ[]         = get(ENV, "CORE_TABLING_TRIE_READ", "") != "0"    # ON unless explicitly 0
     _IDG_RECORD[]        = get(ENV, "CORE_TABLING_IDG", "") == "1"
 end
 
@@ -1078,14 +1098,18 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     _IDG_RECORD[] && !isempty(_GEN_STACK) && idg_add_edge!(key, _GEN_STACK[end])
     if haskey(_ANSWER_TABLE, key)                                                # complete entry — but only replay if
         if get(_ANSWER_STAMP, key, (UInt(0), -1)) == (objectid(space), space.revision)
-            # ── roadmap 1.0b, STEP 2: the READ PATH, behind a flag ───────────────────────────────
-            # Step 1 MIRRORED completed answers into the trie and proved the two stores agree across
-            # the whole corpus. This is the switch that makes the trie authoritative.
+            # ── roadmap 1.0b, STEP 2: the READ PATH. 🟢 ON BY DEFAULT since 2026-08-17. ──────────
+            # Step 1 MIRRORED completed answers into the trie; this makes the trie AUTHORITATIVE.
+            # Flipped on whole-suite agreement (88/88), anti-vacuity (13/13 tables mirrored, answers
+            # and ORDER identical) and a +0.1% allocation cost — see the flag block for the numbers.
+            # `CORE_TABLING_TRIE_READ=0` still reaches the old store.
             #
-            # 🔴 THE FIRST CHANGE IN THIS ARC THAT ALTERS EVALUATION. Everything before it was
-            # additive or provably behaviour-preserving, so it gets the same treatment as the
-            # resumption flip rather than being folded in: OFF by default, both paths runnable, and
-            # the corpus compared before the default moves. `_TRIE_READ[]` is that gate.
+            # 🔴 THE CLAIM THAT THE TWO STORES AGREE WAS CONDITIONAL UNTIL THE AUDIT. The trie dedups
+            # by VARIANT and `_ANSWER_TABLE` came from `_PARTIAL`, which deduped by `==` — so
+            # wherever an answer set contained variants the counts DIFFERED and this switch was not
+            # answer-preserving. The trie was the upstream-correct one. Fixing `_merge_partial` to
+            # use `variant_eq` (audit finding #1, itself a non-termination bug) is what made the
+            # agreement real rather than a property of ground answer sets.
             #
             # ⚠️ ORDER IS PRESERVED, NOT INCIDENTAL. `trie_answers` returns INSERTION order via the
             # `seq` stamp, and the mirror inserts in `_PARTIAL` order — so the two paths yield the
