@@ -152,6 +152,9 @@ module StandardMeTTaTests
     # predicates NOT here (get_residual/2, get_returns_and_dls/3, get_returns_and_tvs/3) need delay
     # lists, which is a boundary visible in the C primitive list rather than a judgement call.
     Main.@suite("standard/tabling/test_inspect.jl")
+    # SWI §7.5 subsumptive tabling — a second LOOKUP MODE over the same tables: the more specific
+    # call is answered from the more general table. NOT wired into tabled_eval; gates the lookup.
+    Main.@suite("standard/tabling/test_subsumptive.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.
@@ -232,6 +235,13 @@ Main.@suite("test_no_stdlib_shadow.jl")
 # but present only in the dead top-level stdlib/ or an upstream stdlib name. Closes the silent
 # ported-dangling class found 2026-06-30 in PLN (append/list_to_set/exclude-item).
 Main.@suite("test_no_dangling_ops.jl")
+
+# Structural lint (third) — no unescaped `$` in a docstring. A `$name` in a Julia string is
+# INTERPOLATION, so in a docstring it fails PRECOMPILE with UndefVarError before any test runs. It
+# recurred four times on 2026-08-16/17 because this port quotes exactly the two things that trip it:
+# SWI's `$tbl_*` C predicates and MeTTa's `$variables`. Registered HERE as well as in bin/health,
+# matching the other two structural lints — the reachability gate caught the omission.
+Main.@suite("test_no_docstring_interpolation.jl")
 
 # Type-system conformance — Core vs the metta-lang.dev types_basics tutorials,
 # grounded in hyperon-experimental's b5_types_prelim/d4_type_prop scripts: gradual
