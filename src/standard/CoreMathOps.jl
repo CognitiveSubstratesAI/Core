@@ -16,7 +16,7 @@ _mnum(a::Atom) = (a isa Grounded && a.value isa Number) ? a.value : nothing
 # unary, always-Float (NaN on domain error, like Rust f64)
 function _math_un_float(name, f, errmsg)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         (length(xs) == 1 && (x = _mnum(xs[1])) !== nothing) || return ExecRuntime(errmsg)
         r = try f(Float64(x)) catch e; e isa DomainError ? NaN : rethrow() end
         ExecOk(Atom[Grounded(r)])
@@ -25,7 +25,7 @@ end
 # unary, PRESERVE type: Int → fi(Int), Float → ff(Float)
 function _math_un_preserve(name, fi, ff, errmsg)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         (length(xs) == 1 && (x = _mnum(xs[1])) !== nothing) || return ExecRuntime(errmsg)
         ExecOk(Atom[Grounded(x isa Integer ? fi(x) : ff(Float64(x)))])
     end))
@@ -33,7 +33,7 @@ end
 # unary, Bool: Int → False, Float → test(x)
 function _math_un_bool(name, test, errmsg)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         (length(xs) == 1 && (x = _mnum(xs[1])) !== nothing) || return ExecRuntime(errmsg)
         ExecOk(Atom[(x isa Integer ? false : test(x)) ? Sym("True") : Sym("False")])
     end))
@@ -62,7 +62,7 @@ const ISINF_MATH = _math_un_bool("isinf-math", isinf, "isinf-math expects one ar
 # NEGATIVE power is fine (2 ^ -1 = 0.5) and only a power outside the SIGNED i32 range errors (NOT u32,
 # NOT p<0 — both were wrong here and diverged from hyperon: pow-math 2 -1 errored vs hyperon's 0.5).
 const POW_MATH = Grounded(Operation("pow-math", function (xs::Vector{Atom})
-    any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+    (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
     length(xs) == 2 || return ExecRuntime("pow-math expects two arguments: number (base) and number (power)")
     b = _mnum(xs[1]); p = _mnum(xs[2])     # assign unconditionally (not inside the && — keeps locals defined)
     (b === nothing || p === nothing) &&
@@ -73,7 +73,7 @@ const POW_MATH = Grounded(Operation("pow-math", function (xs::Vector{Atom})
 end))
 # log-math (base input) → Float; log_base(input) = log(input)/log(base)
 const LOG_MATH = Grounded(Operation("log-math", function (xs::Vector{Atom})
-    any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+    (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
     length(xs) == 2 || return ExecRuntime("log-math expects two arguments: base (number) and input value (number)")
     base = _mnum(xs[1]); input = _mnum(xs[2])
     (base === nothing || input === nothing) &&
@@ -86,7 +86,7 @@ end))
 # (preserving its Int/Float type). Errors: empty expression, or a non-number present. Error strings verbatim.
 function _minmax_atom(name, better)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         (length(xs) == 1 && xs[1] isa Expression) ||
             return ExecRuntime("$name expects one argument: an expression of numbers")
         ch = xs[1].children

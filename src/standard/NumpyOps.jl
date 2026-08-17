@@ -23,7 +23,7 @@ _cno_wrapv(v) = Expression(Atom[Grounded(Float64(x)) for x in v])     # Vector â
 # op of fixed arity; the closure unwraps + computes + wraps, returning `nothing` on any bad arg â†’ ExecNoReduce
 function _cno(name, n, fn)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         length(xs) == n || return ExecNoReduce()
         r = fn(xs)
         r === nothing ? ExecNoReduce() : ExecOk(Atom[r])

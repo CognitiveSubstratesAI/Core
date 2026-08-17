@@ -174,6 +174,15 @@ module StandardMeTTaTests
     # precision boundary: exact when an answer mentions the abstracted variable, over-approximating
     # when it does not — because a MeTTa answer is a VALUE, not a substitution over the skeleton.
     Main.@suite("standard/tabling/test_abstract.jl")
+    # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
+    # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
+    # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global
+    # and scrapes it at insertion, correct there because the engine runs ONE derivation and the trail
+    # erases abandoned ones; we map over a COLLECTION, so a literal port leaks value #1's condition
+    # onto value #2 with no trail to unwind it. Pins the DNF algebra (empty is the UNIT, not the
+    # zero), that 7.B's third delay kind exists with NO producer yet, and end-to-end that a real
+    # paradox yields a residual naming the goal it is stuck on — not the vacuous `True`.
+    Main.@suite("standard/tabling/test_delays.jl")
     # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
     # because the rest silently falls back to the interpreter. This is the only thing that makes
     # that incompleteness cost something: the emitted count may not decrease.

@@ -400,7 +400,7 @@ function decons_atom(f::Frame, b::Bindings)
     (a isa Expression && length(a.children) == 2) ||
         return finished_result(error_atom(a, "expected (decons-atom <expr>)"), b, f.prev)
     e = subst(a.children[2], b)
-    e == UNDEFINED && return finished_result(UNDEFINED, b, f.prev)   # WFS bottom contagious through strict ops
+    is_undefined(e) && return finished_result(UNDEFINED, b, f.prev)   # WFS bottom contagious through strict ops
     (e isa Expression && !isempty(e.children)) ||
         return finished_result(error_atom(a, "expected: (decons-atom (: <expr> Expression)), found: $(a)"), b, f.prev)
     head = e.children[1]; tail = Expression(e.children[2:end])
@@ -413,7 +413,7 @@ function cons_atom(f::Frame, b::Bindings)
     (a isa Expression && length(a.children) == 3) ||
         return finished_result(error_atom(a, "expected (cons-atom <head> <tail>)"), b, f.prev)
     head = subst(a.children[2], b); tail = subst(a.children[3], b)
-    (head == UNDEFINED || tail == UNDEFINED) && return finished_result(UNDEFINED, b, f.prev)   # WFS bottom contagious
+    (is_undefined(head) || is_undefined(tail)) && return finished_result(UNDEFINED, b, f.prev)   # WFS bottom contagious
     (tail isa Expression) ||
         return finished_result(error_atom(a, "expected: (cons-atom <head> (: <tail> Expression))"), b, f.prev)
     finished_result(Expression(Atom[head; tail.children]), b, f.prev)
@@ -464,7 +464,7 @@ function _num_binop(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         length(xs) == 2 || return ExecNoReduce()
         x, y = xs[1], xs[2]
-        (x == UNDEFINED || y == UNDEFINED) && return ExecOk(Atom[UNDEFINED])   # WFS bottom is contagious through strict ops
+        (is_undefined(x) || is_undefined(y)) && return ExecOk(Atom[UNDEFINED])   # WFS bottom is contagious through strict ops
         (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
         ExecOk(Atom[Grounded(f(x.value, y.value))])
     end))
@@ -478,7 +478,7 @@ function _num_binop_seam(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         length(xs) == 2 || return ExecNoReduce()
         x, y = xs[1], xs[2]
-        (x == UNDEFINED || y == UNDEFINED) && return ExecOk(Atom[UNDEFINED])
+        (is_undefined(x) || is_undefined(y)) && return ExecOk(Atom[UNDEFINED])
         (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
         r = f(x.value, y.value)
         r isa SeamError && return ExecOk(Atom[Expression(Atom[
@@ -494,7 +494,7 @@ function _num_cmp(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
         length(xs) == 2 || return ExecNoReduce()
         x, y = xs[1], xs[2]
-        (x == UNDEFINED || y == UNDEFINED) && return ExecOk(Atom[UNDEFINED])   # WFS bottom is contagious through strict ops
+        (is_undefined(x) || is_undefined(y)) && return ExecOk(Atom[UNDEFINED])   # WFS bottom is contagious through strict ops
         (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
         ExecOk(Atom[f(x.value, y.value) ? Sym("True") : Sym("False")])
     end))
@@ -1039,6 +1039,11 @@ _chain(nested::Atom, v::Var, templ::Atom) = Expression(CHAIN, nested, v, templ)
 include("tabling/StandardOrder.jl")
 include("tabling/Aggregation.jl")
 include("tabling/Tripwires.jl")
+# ⚠️ BEFORE Tabling.jl, NOT WITH THE REST OF THE SUBFOLDER: `WFSBottom` carries a `DelayDNF`
+# FIELD (roadmap 7.A — the condition rides on the value), and a struct field type must exist at
+# definition time, not merely at call time. The other tabling/*.jl files load after Tabling.jl
+# because they only reference its functions.
+include("tabling/Delays.jl")       # SWI §7.6 delay lists — conditional answers (roadmap 7.A-7.D)
 include("Tabling.jl")
 # ⚠️ AFTER Tabling.jl, not with its siblings: `Worklist` holds `Dependency`, and `Dependency` /
 # `Continuation` (§1.0 step 1) still live in Tabling.jl. Step 4 needs the reverse order — the
@@ -1725,7 +1730,7 @@ const DIVIDE_SEAM = _num_binop_seam("/", seam_div)
 const MOD_SEAM    = _num_binop_seam("%", seam_mod)
 const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
 const EQ_OP = Grounded(Operation("==", xs -> length(xs) != 2 ? ExecNoReduce() :
-    (xs[1] == UNDEFINED || xs[2] == UNDEFINED) ? ExecOk(Atom[UNDEFINED]) :        # WFS bottom contagious through ==
+    (is_undefined(xs[1]) || is_undefined(xs[2])) ? ExecOk(Atom[UNDEFINED]) :        # WFS bottom contagious through ==
     ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")])))
 # Bool logic (grounded; True/False are symbols)
 _to_bool(a::Atom) = a == Sym("True") ? true : a == Sym("False") ? false : nothing
@@ -1734,7 +1739,7 @@ function _bool_binop(name, f)
         length(xs) == 2 || return ExecNoReduce()
         # WFS: an undefined operand makes and/or undefined. SOUND (never a wrong definite answer), but
         # OVER-CONSERVATIVE — full Kleene (⊥∧False=False, ⊥∨True=True) is a deferred precision refinement.
-        (xs[1] == UNDEFINED || xs[2] == UNDEFINED) && return ExecOk(Atom[UNDEFINED])
+        (is_undefined(xs[1]) || is_undefined(xs[2])) && return ExecOk(Atom[UNDEFINED])
         x = _to_bool(xs[1]); y = _to_bool(xs[2])
         (x === nothing || y === nothing) ? ExecNoReduce() : ExecOk(Atom[f(x, y) ? Sym("True") : Sym("False")])
     end))
@@ -1742,7 +1747,7 @@ end
 const AND = _bool_binop("and", &)
 const OR  = _bool_binop("or", |)
 const NOT = Grounded(Operation("not", xs -> length(xs) != 1 ? ExecNoReduce() :
-    xs[1] == UNDEFINED ? ExecOk(Atom[UNDEFINED]) :                                # ¬⊥ = ⊥ (WFS Kleene = plain propagate)
+    is_undefined(xs[1]) ? ExecOk(Atom[UNDEFINED]) :                                # ¬⊥ = ⊥ (WFS Kleene = plain propagate)
     (tb = _to_bool(xs[1])) !== nothing ? ExecOk(Atom[tb ? Sym("False") : Sym("True")]) : ExecNoReduce()))
 const ID  = Grounded(Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce()))
 
@@ -1782,10 +1787,10 @@ const SEALED = Grounded(Operation("sealed", function (xs)
 end))
 # size-atom / index-atom / get-metatype (grounded)
 const SIZE_ATOM = Grounded(Operation("size-atom", xs -> length(xs) != 1 ? ExecNoReduce() :
-    xs[1] == UNDEFINED ? ExecOk(Atom[UNDEFINED]) :                                # WFS bottom contagious through strict ops
+    is_undefined(xs[1]) ? ExecOk(Atom[UNDEFINED]) :                                # WFS bottom contagious through strict ops
     xs[1] isa Expression ? ExecOk(Atom[Grounded(length(xs[1].children))]) : ExecNoReduce()))
 const INDEX_ATOM = Grounded(Operation("index-atom", function (xs)
-    any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+    (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
     # Core's number model is Float64, so computed indices arrive as integral Floats (e.g. (ceil 4.75) → 5.0,
     # (+ $i 1) → Float). Accept any integral Real (Int or 4.0), matching hyperon/CeTTa's grounded index-atom
     # semantics in Core's number model — without this, the canonical op no-ops on every computed index,
@@ -1965,7 +1970,7 @@ const CASE = Grounded(SpaceOp("case", function (xs, space)
     # not one result. A no-match alternative is dropped (hyperon/CeTTa arbiter). metta_run returns reverse
     # order, so iterate reversed to emit forward (cf. COLLAPSE above).
     for res in reverse(results)
-        if res == UNDEFINED                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
+        if is_undefined(res)                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
             push!(out, UNDEFINED); push!(binds, Bindings())
             continue
         end

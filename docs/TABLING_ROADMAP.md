@@ -49,6 +49,62 @@ base and getting 2.0 for free.
 
 ---
 
+## 0g. 🟢 7.A PART TWO + 7.B — DELAY LISTS: THE CONDITION RIDES ON THE VALUE (2026-08-17)
+
+`src/standard/tabling/Delays.jl` + a residuated `WFSBottom`. 36 tests.
+
+**We already had the third truth value** — the alternating fixpoint computes the same WFS model SWI
+computes with delay lists + simplification. What we did not have is the **reason**. An answer is now
+undefined *because of* named literals, readable via `answer_residual`.
+
+### The adaptation, and why it is forced
+
+SWI keeps conditionality in `LD->tabling.delay_list`, a trail-scoped thread-global scraped at
+insertion time. Correct there because the engine runs **exactly one derivation** and the trail erases
+abandoned ones. We map over a **collection** of values: at the k-th insertion there is no "current
+branch", and a literal port leaks value #1's condition onto value #2 with no trail to unwind it. So
+`WFSBottom` carries its own DNF, and conjunction is **explicit** (`dnf_and`, which distributes) where
+upstream gets it implicitly from pushing onto one register. `dnf_and` is the operation upstream does
+not need at all.
+
+⚠️ **Empty is the UNIT, not the zero.** Unconditional ∧ conditional = conditional; and an unrecorded
+reason is "no information", never "unsatisfiable". Reading empty as false inverts the lattice, and it
+reads plausible — hence a test for it at both levels (`dnf_and`, and `answer_residual`).
+
+### 7.B — settled, and honestly
+
+`DELAY_NEGATIVE_ANSWER` exists because 7.B decides a **struct field** and the struct was being
+written. Upstream has two kinds encoded by `answer == NULL`; a value language also needs
+`(not (== (f a) 3))`, and upstream's struct has nowhere to put the 3. **No site produces it yet** —
+our `tnot` is table-level — and the tests assert that rather than let the enum look implemented.
+
+### The sweep that had to come first
+
+~34 sites asked `x == UNDEFINED`. Every one was a **type test wearing a value test's clothes**: a
+residuated bottom is not `==` to the bare constant, so all 34 would have silently answered false and
+treated it as an ordinary value — a soundness bug in the strict-op layer. `is_undefined` landed
+first, the sweep was verified behaviour-preserving on its own (88/88), and only then did the field go
+in. The two WFS test harnesses needed the same fix, which is the test-layer instance of the same
+defect.
+
+| measured | result |
+|---|---|
+| end-to-end | `p :- tnot(q), q :- tnot(p)` yields a residual naming `q` — **not** the vacuous `True` |
+| oracle safety | the bottom still PRINTS `"undefined"`, so the swipl WFS differentials compare unchanged |
+| suite | 89 files / 0 failed, health 6/6 |
+
+### What remains: 7.C and 7.D
+
+Both are about REVISION, not representation, and both are now unblocked but unbuilt:
+**7.C** — conditionality is per answer KEY upstream (`data.delayinfo` hangs off the trie node) and
+unconditional re-derivation ERASES it; that is sound under set semantics and interacts with roadmap
+2.0 (multiset). **7.D** — SWI's `remove_conditional_answer` drops the conjunct and the answer,
+relying on ordinary resolution to re-derive next round; in a value language `(+ 1 (f a))` produced
+`4` BECAUSE `(f a)` gave `3`, so if `3` is refuted we may have to **RE-RUN THE PRODUCER**, which SWI
+never does.
+
+---
+
 ## 0f. 🟢 7.A PART ONE — PER-ANSWER METADATA ON THE TRIE NODE (2026-08-17)
 
 `TrieNode` gained `instances::Vector{Atom}`; `_leader_pass` records `subst(key, bnd)` — the goal

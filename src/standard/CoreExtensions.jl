@@ -20,20 +20,20 @@ _ext_isnum(a::Atom) = a isa Grounded && a.value isa Number
 _ext_domsafe(f, args...) = try f(args...) catch e; e isa DomainError ? NaN : rethrow() end
 function _ext_unop(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         (length(xs) == 1 && _ext_isnum(xs[1])) || return ExecNoReduce()
         ExecOk(Atom[Grounded(_ext_domsafe(f, xs[1].value))])
     end))
 end
 function _ext_binop(name, f)
     Grounded(Operation(name, function (xs::Vector{Atom})
-        any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+        (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
         (length(xs) == 2 && _ext_isnum(xs[1]) && _ext_isnum(xs[2])) || return ExecNoReduce()
         ExecOk(Atom[Grounded(_ext_domsafe(f, xs[1].value, xs[2].value))])
     end))
 end
 const CLAMP = Grounded(Operation("clamp", function (xs::Vector{Atom})
-    any(a -> a == UNDEFINED, xs) && return ExecOk(Atom[UNDEFINED])   # WFS bottom contagious through strict ops
+    (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
     (length(xs) == 3 && all(_ext_isnum, xs)) || return ExecNoReduce()
     ExecOk(Atom[Grounded(clamp(xs[1].value, xs[2].value, xs[3].value))])
 end))

@@ -12,11 +12,26 @@ using Test
 const U = Eval.UNDEFINED               # WFS bottom / third truth value (out-of-band sentinel)
 
 # load a program then run one query, on a fresh space with global tabling reset (tabling state is global).
+
+# 🔴 THE BOTTOM IS RESIDUATED SINCE 2026-08-17 (roadmap 7.A), SO EQUALITY TO `UNDEFINED` IS NO LONGER
+# THE RIGHT TEST. `WFSBottom` now carries the DNF of literals it is waiting on, so a bottom produced
+# by a real derivation is NOT `==` to the bare constant — `Atom[undefined] == Atom[U]` fails while
+# both print "undefined". That was the predicted fallout of the sweep, and it is a TEST-LAYER
+# instance of the same defect the sweep fixed in src: `== UNDEFINED` was always a TYPE test wearing a
+# value test's clothes.
+#
+# This file compares TRUTH VALUES, not reasons — the residual is `test_delays.jl`'s subject — so the
+# harness canonicalises every bottom to the bare constant on the way out. That keeps each assertion
+# below reading as it did and confines the change to one place, rather than rewriting 17 comparisons
+# into something less legible. `[[feedback_recurring_defect_derive_the_rule]]`
+_wfs_canonical(xs::Vector{Atom})::Vector{Atom} =
+    Atom[Eval.is_undefined(x) ? Eval.UNDEFINED : x for x in xs]
+
 function _wfs(prog::AbstractString, query::AbstractString)::Vector{Atom}
     Eval.untable_all!()
     s = Space(); load_core_stdlib!(s)
     load_metta!(s, prog)
-    load_metta!(s, query)
+    _wfs_canonical(load_metta!(s, query))
 end
 
 @testset "WFS tnot — stratified negation + honest undefined (swipl-oracle verified)" begin

@@ -127,9 +127,88 @@ const _SCC_NEG    = Set{Atom}()                       # in-progress goals re-ent
 # `undefined` parses to a `Sym`, and cross-type `Sym == Grounded` is `false`), so it can never collide. It
 # renders as "undefined" (SWI's term) via `show(::Grounded)=print(value)`; the printed form does NOT round-trip
 # back to this sentinel, by design — it is a truth value, not reconstructable data.
-struct WFSBottom end
-Base.show(io::IO, ::WFSBottom) = print(io, "undefined")
+"""The WFS bottom — and, since 2026-08-17, WHY.
+
+🔴 THE DELAY LIST RIDES ON THE VALUE (roadmap 7.A). SWI keeps conditionality in a trail-scoped
+THREAD-GLOBAL and scrapes it at insertion time, which is correct there because the engine is running
+exactly ONE derivation and the trail erases abandoned ones. We map over a COLLECTION of values, so at
+the moment the k-th result is inserted there is no "current branch" and delayed literals from
+different results are simultaneously live — port the register literally and value #1's condition
+LEAKS onto value #2, with no trail to unwind it. Making the bottom carry its own condition is what
+replaces the register.
+
+`delays` is a DNF (`tabling/Delays.jl`): the answer is undefined if ANY conjunction is unresolved.
+EMPTY means "reason not recorded", NOT "unconditional" — a bottom is undefined either way, and a
+consumer must not read empty as an unsatisfiable condition."""
+struct WFSBottom
+    delays::DelayDNF
+end
+WFSBottom() = WFSBottom(DelayDNF())
+Base.show(io::IO, w::WFSBottom) =
+    print(io, isempty(w.delays) ? "undefined" : "undefined")   # the RESIDUAL is asked for explicitly,
+                                                               # via `answer_residual` — printing it
+                                                               # here would change every WFS oracle
+                                                               # comparison, which compares TEXT.
 const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; NOT a program Sym
+
+"""
+    is_undefined(a) -> Bool
+
+Is `a` the WFS bottom? **Use this, never `is_undefined(a)`.**
+
+🔴 EVERY `== UNDEFINED` IN THIS CODEBASE IS A TYPE TEST WEARING A VALUE TEST'S CLOTHES, and the
+distinction is about to matter. `UNDEFINED` is a singleton today, so equality happens to work; the
+moment `WFSBottom` carries WHY it is undefined (roadmap 7.A/7.B — the delay list must ride WITH the
+value, because we map over a COLLECTION where SWI has one linear derivation and a trail), two bottoms
+with different delays stop being `==`. Every one of those ~25 sites would then quietly answer FALSE
+and treat a residuated bottom as an ordinary value — a soundness bug, silent, in the strict-op layer.
+
+So the predicate lands FIRST and the sweep is behaviour-preserving on its own; only then does the
+field go in. `[[feedback_recurring_defect_derive_the_rule]]`
+"""
+@inline is_undefined(a::Atom)::Bool = a isa Grounded && (a::Grounded).value isa WFSBottom
+
+"""
+    propagated_undefined(xs) -> Union{Atom,Nothing}
+
+The WFS bottom that a strict operation over `xs` should return, or `nothing` if none of them is one.
+
+Returns an ATOM rather than a flag so the condition survives contagion instead of being dropped at
+the first arithmetic op it meets — substituting the bare `UNDEFINED` constant would silently discard
+the reason.
+
+🔴 AND IT CONJOINS WHEN THERE ARE SEVERAL. `(+ ⊥{p} ⊥{q})` is undefined because of p AND q, not
+because of whichever happened to be scanned first. Returning the first bottom would be sound (still
+undefined) but would report a condition that is INCOMPLETE — and an incomplete residual is worse than
+none, because it looks authoritative. `dnf_and` is the explicit conjunction that upstream gets
+implicitly from pushing onto one ambient register.
+"""
+function propagated_undefined(xs::Vector{Atom})::Union{Atom,Nothing}
+    found = nothing
+    for x in xs
+        is_undefined(x) || continue
+        found = found === nothing ? x :
+                undefined_with(dnf_and(delays_of(found::Atom), delays_of(x)))
+    end
+    found
+end
+
+"The DNF carried by a WFS bottom — empty for anything else, so callers need no type test."
+delays_of(a::Atom)::DelayDNF =
+    is_undefined(a) ? ((a::Grounded).value::WFSBottom).delays : DelayDNF()
+
+"A WFS bottom carrying `dnf` as its reason."
+undefined_with(dnf::DelayDNF)::Atom = Grounded(WFSBottom(dnf))
+
+"""
+    answer_residual(a) -> Atom
+
+`answer_residual/2` (`library(tables)`): the condition under which `a` holds, as a MeTTa atom.
+
+`True` for an unconditional answer AND for a bottom whose reason was not recorded — the two are
+indistinguishable from here, which is why `delays_of` returning empty must never be read as "false".
+"""
+answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
@@ -973,9 +1052,9 @@ end
 # `_NEG_TAINT` already knows). A purely-positive / stratified SCC never trips the barrier ⇒ byte-identical naive
 # fixpoint (fib path); only genuine recursion-through-negation routes to `_wfs_complete!`.
 
-# "definite" = has ≥1 REAL (non-UNDEFINED) answer — mirrors the provably-true test at TNOT (`any(a != UNDEFINED)`),
+# "definite" = has ≥1 REAL (non-UNDEFINED) answer — mirrors the provably-true test at TNOT (`any(!is_undefined(a))`),
 # so an only-UNDEFINED set is NOT treated as membership (keeps the layered-undefined case sound).
-@inline _wfs_definite(S)::Bool = any(a -> a != UNDEFINED, S)
+@inline _wfs_definite(S)::Bool = any(a -> !is_undefined(a), S)
 
 # S_P(I): the least model of the van Gelder reduct P/I over the SCC, materialized into _PARTIAL.
 #   • positive in-SCC edges (g2:-g1) read the GROWING _PARTIAL via the consumer path (tabled_eval);
@@ -1262,13 +1341,21 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
     isempty(collect_vars(G)) || return ExecOk(Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
         "tnot: non-ground goal (instantiation_error)")])
     key = _canonical_goal(G, space, Bindings())
+    # ── roadmap 7.A/7.B: EVERY BOTTOM BELOW CARRIES ITS REASON ──────────────────────────────────
+    # These four sites are the only places this engine produces a WFS bottom from NEGATION, and each
+    # of them KNOWS the literal it is stuck on: `tnot(G)`, with G's table undecided. That is exactly
+    # upstream's NEGATIVE delay — `delay { variant = G's table, answer = NULL }` — and recording it is
+    # what turns "undefined" from a flag into a CONDITIONAL ANSWER with a readable residual.
+    # Table-level, because our `tnot` requires a GROUND goal and asks whether the table is empty; 7.B's
+    # answer-level kind has no producer yet, and the tests assert that rather than let it look wired.
+    und = undefined_with(DelayDNF([DelaySet([delay_negative(key)])]))
     if _WFS_ACTIVE[] && haskey(_WFS_BOUND[], key)                        # WFS Stage B: IN-SCC negation during the
         S = _WFS_BOUND[][key]                                            #   alternating fixpoint — read the phase-
         return _wfs_definite(S) ? ExecOk(Atom[]) :                       #   FIXED bound I (no drive/taint/inprog):
                isempty(S)       ? ExecOk(Atom[Sym("True")]) :            #     G∈I definite ⇒ ¬G false (Empty)
-                                  ExecOk(Atom[UNDEFINED])               #     G∉I empty    ⇒ ¬G true
+                                  ExecOk(Atom[und])                     #     G∉I empty    ⇒ ¬G true
     end                                                                 #     I[G] only-undef ⇒ ¬G undefined
-    key in _TABLE_INPROG && return ExecOk(Atom[UNDEFINED])                # live negative loop ⇒ WFS bottom
+    key in _TABLE_INPROG && return ExecOk(Atom[und])                      # live negative loop ⇒ WFS bottom
     saved = copy(_NEG_BARRIER); union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
     st = _NEG_TAINT[]; _NEG_TAINT[] = false; _NEG_DEPTH[] += 1            #   a consumer reading a barrier key
     local A::Vector{Atom} = Atom[]; local tainted::Bool = false          #   ⇒ a positive edge crossed the tnot
@@ -1278,8 +1365,13 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
         _NEG_DEPTH[] -= 1; tainted = _NEG_TAINT[]; _NEG_TAINT[] = st
         empty!(_NEG_BARRIER); union!(_NEG_BARRIER, saved)
     end
-    tainted                     && return ExecOk(Atom[UNDEFINED])         # crossed the negation ⇒ can't decide
-    any(a -> a != UNDEFINED, A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
-    any(a -> a == UNDEFINED, A) && return ExecOk(Atom[UNDEFINED])         # G only-undefined ⇒ ¬G undefined
+    tainted                     && return ExecOk(Atom[und])               # crossed the negation ⇒ can't decide
+    any(a -> !is_undefined(a), A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
+    # G only-undefined ⇒ ¬G undefined. The reason is OUR negative delay CONJOINED with whatever made
+    # G's own answers undefined — the residual must reach THROUGH the negation, or it names only the
+    # last link of the chain while reading as complete.
+    if (_u = propagated_undefined(A)) !== nothing
+        return ExecOk(Atom[undefined_with(dnf_and(delays_of(und), delays_of(_u)))])
+    end
     ExecOk(Atom[Sym("True")])                                            # G false ⇒ ¬G true
 end))
