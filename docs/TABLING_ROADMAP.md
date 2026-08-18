@@ -156,6 +156,58 @@ never does.
 
 ---
 
+## 0j. 🔴🔴 AUDIT ROUND TWO — 27 FINDINGS, 10 SURVIVED REFUTATION, ALL FIXED (2026-08-18)
+
+Four adversarial slices over the delay lists, §7.11.1, the 7.A/7.C metadata work, and a cross-cutting
+regression hunt. Each finding was handed to an independent agent whose job was to REFUTE it.
+
+**27 raised · 10 survived · 17 refuted.** The refutation pass is not ceremony: it rejected nearly two
+thirds, and on one finding it CONFIRMED the defect while rejecting the finding's own evidence and
+severity — *"the defect is REAL and I reproduced it, but the claim's evidence is INVALID and its
+attribution is wrong."* Taking that reasoning on trust would have put a wrong rationale in the file.
+
+### The worst one, seen from two ends at once
+
+`WFSBottom` gained a `DelayDNF` field on 2026-08-17 and **no `==` / `hash`**. Julia compares a
+struct's `Vector` field by IDENTITY, so two bottoms carrying the SAME reason were different answers:
+
+| measured before the fix | |
+|---|---|
+| `b1 == b2` (content-identical DNFs) | **false** |
+| `Set([b1, b2])` | **2 elements** |
+| `issetequal([b1], [b2])` | **false** ← `_wfs_complete!`'s convergence test |
+
+One slice reported it as **non-termination of the alternating fixpoint**, another as **broken variant
+identity**. Same bug. `_variant_unique` was *accidentally* safe because `merge_bottom_into!`
+intercepts bottoms before the equality test — incidental cover, shared by nothing else, and exactly
+how a defect sits under a green suite.
+
+### 🔴 THE STANDING PATTERN: A SWEEP MATCHES A SHAPE, NOT A MEANING
+
+Four sites survived four separate sweeps, each doing the same wrong thing in a different SHAPE:
+
+| site | did | the sweep it evaded |
+|---|---|---|
+| `case` (`Eval.jl:1974`) | pushed the bare `UNDEFINED` constant | the `ExecOk(Atom[UNDEFINED])` residuation sweep |
+| `fire_dependencies!` | `unique` (`==`) | the `_variant_unique` conversion |
+| `_wfs_complete!` | `issetequal` (`==`) | same |
+| `unify` | took its `else` branch on ⊥ | the strict-op contagion sweep |
+
+⇒ **after a sweep, enumerate by MEANING and check each one, rather than trusting the pattern found
+them all.** Three of four slices flagged `case` independently — that is what a real gap looks like
+from the outside.
+
+### Also fixed
+
+`tnot` suspended on an in-progress table without first checking for a definite answer (upstream
+checks before suspending — sound but needlessly imprecise, and the imprecision propagates), and
+`untable!` cleared four registries but not §7.11.1's, so a RETRACTED declaration kept abstracting and
+changed answers.
+
+**Commits:** `58f434e` · `cbbca5b` · `94a6a42` · `d664709` · `c1b7b9e`. Verified 89/89, health 6/6.
+
+---
+
 ## 0i. 🔴 THE §7.11.1 AUDIT — SIX FINDINGS AGAINST ONE DAY-OLD FEATURE (2026-08-18)
 
 **Everything sections 0d and 0f claim about §7.11.1 being EXACT is RETRACTED. Read this first.**
