@@ -261,7 +261,23 @@ const SM = MeTTaCore.StandardMeTTa
         @test !MC.space_caps(:vector).persist
         dir = mktempdir()
         MC.set_act_dir!(dir)
-        s = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("persist_probe/"))
+        # 🔴 THE PREFIX MUST BE UNIQUE PER INVOCATION, AND THIS IS THE ONE ASSERTION IN THE FILE THAT
+        # CARES. `Shared` regions co-reside in ONE PROCESS-GLOBAL trie that nothing resets, so a fixed
+        # `persist_probe/` still holds the `[:durable, 1]` written the last time ANY file in this
+        # process ran this testset — and then `snapshot_space_to_act!` correctly returns `true` for a
+        # region that is no longer empty, failing an assertion about emptiness that was never about
+        # this data.
+        #
+        # MEASURED 2026-08-18: this single testset is why `warm_suite.sh run` restarts the daemon on
+        # every invocation, which costs ~9 minutes of JIT per gate. Running the file twice in one
+        # process failed here on BOTH passes — pass 1 included, because an earlier file in the same
+        # process had already populated the region. The leak crosses FILES, not just runs.
+        #
+        # A unique prefix preserves the claim exactly — "an EMPTY region returns false" is true of any
+        # fresh region — while removing the dependence on global freshness. `mktempdir` already gives
+        # us a unique name, so we reuse it rather than inventing a counter that would itself be state.
+        pfx = Vector{UInt8}("persist_probe_" * basename(dir) * "/")
+        s = MC.make_space(:mork; mode = MC.Shared, prefix = pfx)
         # An EMPTY region returns false — the guard is `n_atoms == 0`, not "root prefix".
         @test MC.snapshot_space_to_act!(s, "empty_probe") === false
         MC.core_add!(s, [:durable, 1])

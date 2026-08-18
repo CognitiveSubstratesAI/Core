@@ -89,7 +89,14 @@ fresh() = load_stdlib!(new_core_space())
     @testset "Stage 1 — read-your-writes within a prefix" begin
         using MeTTaCore: get_node_shared, new_core_space
         shared = get_node_shared()
-        s = new_core_space(shared, Vector{UInt8}("ryw/"))
+        # 🔴 UNIQUE PREFIX PER INVOCATION. `Shared` regions co-reside in ONE process-global trie that
+        # nothing resets, so a fixed `ryw/` still holds the `[:fact, 2]` this testset wrote the last
+        # time it ran IN THIS PROCESS — and then `isempty` is false for reasons that have nothing to
+        # do with read-your-writes. Measured 2026-08-18 by running the whole suite twice in one
+        # daemon: this and `test_spaces_registry.jl`'s persist probe were the only two data leaks in
+        # 92 files, and between them they are why every gate pays a fresh process.
+        # `gensym` gives a per-call unique name without introducing a counter that is itself state.
+        s = new_core_space(shared, Vector{UInt8}("ryw_" * string(gensym()) * "/"))
         @test isempty(core_atoms(s))
         core_add!(s, [:fact, 1])
         @test [:fact, 1] ∈ core_atoms(s)

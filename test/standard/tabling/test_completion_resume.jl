@@ -46,8 +46,7 @@ function _cr_run(prog::AbstractString, query::AbstractString, heads::Vector{Symb
         deps = _CR._DEPS_COUNT[]
         (sort(String[string(x) for y in r for x in (y isa AbstractVector ? y : [y])]), deps)
     finally
-        _CR._RESUME_COMPLETION[] = false
-        _CR._DEPS_RECORD[]       = false
+        _CR.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
         _CR.untable_all!()
     end
 end

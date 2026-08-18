@@ -21,20 +21,27 @@
 # Cold load of MeTTaCore is only ~3.2 s once precompiled, so package loading was never the cost; test
 # code JIT is.
 #
-# 🔴 AND THE "STRUCT" EXEMPTION DOES NOT EXIST — MEASURED 2026-08-17, after the author of this file
-# had already written the opposite here. On Julia 1.12, Revise DOES reload a struct FIELD change
-# in-process: in an isolated scratch package, `fieldnames` went `(:a,)` -> `(:a, :b)` after
-# NO explicit revise call here: see the boot block for why the pkgimage is made current instead.
-# rule is PRE-1.12 folklore, and it was the stated reason for nearly every cold start that motivated
-# this script. `restart` therefore exists for a daemon that is genuinely wedged, NOT as the routine
-# answer to editing a struct.
+# 🔴 THE "STRUCT" RULE, RECONCILED — and both halves are measured, which is why it reads oddly.
+# On Julia 1.12 Revise DOES reload a struct FIELD change in-process: in an isolated scratch package
+# `fieldnames` went (:a,) -> (:a, :b) after `Revise.revise()` and the new constructor worked, same
+# session (2026-08-17). "Revise can't reload structs" is pre-1.12 folklore, and it was the stated
+# reason for nearly every cold start this script was built to eliminate.
+# BUT (2026-08-18) redefining the struct does NOT re-initialise a `const` container typed on it —
+# that would wipe live state — so the container is stranded in the old world age and every insert
+# dies with "Cannot convert IDGNode to @world(IDGNode, ...)". Revise names the mechanism in an OPEN
+# issue, #1116: "revise() runs in a frozen world, and on 1.12 globals are world-partitioned".
+# SO: edit a struct freely; RESTART if anything holds it in a const container. The driver detects
+# that specific error and says so, rather than letting it read as a test failure.
 #
 #   tools/warm_suite.sh start            # boot the daemon (idempotent)
-#   tools/warm_suite.sh run              # full suite, REAL exit code (restarts first — see the note
-#                                        #   at the `run` case: the suite is not re-runnable warm)
+#   tools/warm_suite.sh run              # full suite, REAL exit code — WARM: 147 s vs 466 s cold
 #   tools/warm_suite.sh run 1/4          # one shard (CORE_SUITE_SHARD)
+#   tools/warm_suite.sh run-cold         # the old always-restart behaviour; the arbiter when a
+#                                        #   `run` failure looks implausible
+#   tools/warm_suite.sh run-warm         # diagnostic: a second pass in the SAME process, to find
+#                                        #   state a file leaks into the next one
 #   tools/warm_suite.sh file test/standard/tabling/test_delays.jl
-#   tools/warm_suite.sh restart          # REQUIRED after a struct field change
+#   tools/warm_suite.sh restart          # after a struct change that a const container holds
 #   tools/warm_suite.sh status | stop
 set -uo pipefail
 
@@ -247,8 +254,9 @@ case "${1:-run}" in
   status)
      if _alive; then
        echo "  warm_suite: UP (pid $(cat "$PIDFILE"), port $PORT)"
-       echo "  ℹ️  Revise on 1.12 reloads FUNCTION BODIES *and* struct field changes (measured)."
-       echo "     restart only if the daemon is genuinely wedged — editing a struct is not a reason."
+       echo "  ℹ️  Revise reloads function bodies AND struct fields on 1.12 (measured)."
+       echo "     BUT a const container typed on a changed struct is stranded in the old world age"
+       echo "     (Revise #1116, open) — restart if you changed a struct something holds."
      else echo "  warm_suite: DOWN"; fi ;;
   file)
      _start || exit 1
@@ -264,19 +272,44 @@ case "${1:-run}" in
      case "$2" in /*) tgt="$2" ;; *) tgt="$CORE/$2" ;; esac
      _run_driver "include(raw\"$tgt\")" ;;
   run)
-     # 🔴🔴 THE SUITE LANE ALWAYS RESTARTS, AND THAT IS A CORRECTNESS DECISION THAT COSTS THE SPEEDUP.
-     # MEASURED 2026-08-17: run test/test_spaces_registry.jl twice in ONE daemon and the second run
-     # FAILS at "persist is declared exactly where it holds" — it builds a Shared MORK space at
-     # prefix `persist_probe/` and asserts the region is EMPTY, but the previous run's `core_add!` is
-     # still in the shared trie. Cold: passes. Warm-repeat: fails. The suite is simply not written to
-     # be re-runnable in one process, and `[[feedback_warm_server_probes_not_suites]]` says so —
-     # it was built this way anyway and the suite produced a FALSE FAILURE that read as a 1.12.7
-     # regression.
+     # 🟢 THE SUITE LANE IS NOW WARM BY DEFAULT — 2026-08-18. It restarted on every invocation for a
+     # year of sessions, and the reason was real: the suite leaked state, so a second run in one
+     # process invented failures, and a harness that invents failures is worse than a slow one.
      #
-     # A harness that invents failures is worse than a slow one: it destroys the meaning of the
-     # number everyone quotes. So `run` pays a fresh process every time and keeps only the package
-     # load; the warmth that survives is in the `file` lane, for iterating on ONE file, which is the
-     # loop this script was actually built to fix.
+     # THE LEAKS ARE FIXED, and there were only three in 92 files. Found by running the suite twice in
+     # one daemon and diffing (`run-warm`, below):
+     #   · test_spaces_registry.jl and test_corespace.jl each built a Shared MORK region at a FIXED
+     #     prefix and asserted it was empty. Shared regions co-reside in ONE process-global trie that
+     #     nothing resets, so the region still held what that testset wrote the last time it ran
+     #     ANYWHERE in the process. Both now derive a unique prefix per invocation.
+     #   · test_completion_resume.jl and test_dependency_firing.jl restored `_RESUME_COMPLETION` and
+     #     `_DEPS_RECORD` to the LITERAL false — the default when they were written. That default
+     #     flipped to true on 2026-08-16 and the restores never followed, so every file that ran after
+     #     them silently exercised the RECOMPUTATION path. All restores now go through
+     #     `reset_execution_flags!()`, so a default can only move in one place.
+     #
+     # MEASURED back to back on the same box, 92 files / 0 failed each:
+     #     run-cold   466 s wall   (298 s of testsets + restart + full JIT)
+     #     run        147 s wall   (120-121 s of testsets)
+     # A 3.2x speedup, ~5 minutes back on every gate. That is the difference between verifying once
+     # and verifying often.
+     # ⚠️ AN EARLIER DRAFT OF THIS COMMENT SAID "~20 min -> 2.5 min, 8x". That was real elapsed time
+     # but not a like-for-like comparison: those runs also paid a cold precompile and shared the box
+     # with other work. The honest number is the one above, and it is still the right call.
+     #
+     # ⚠️ IF A `run` FAILURE LOOKS IMPLAUSIBLE, RE-CHECK IT WITH `run-cold` BEFORE BELIEVING IT.
+     # A newly-added test that leaks would show up here first, and it will look like a regression in
+     # whatever ran after it rather than in itself.
+     _start || exit 1
+     shard="${2:-}"
+     if [ -n "$shard" ]; then
+       _run_driver "isdefined(Main, :SUITE_FAILED) && empty!(Main.SUITE_FAILED); ENV[\"CORE_SUITE_SHARD\"] = raw\"$shard\"; include(raw\"$CORE/test/runtests.jl\")"
+     else
+       _run_driver "isdefined(Main, :SUITE_FAILED) && empty!(Main.SUITE_FAILED); delete!(ENV, \"CORE_SUITE_SHARD\"); include(raw\"$CORE/test/runtests.jl\")"
+     fi ;;
+  run-cold)
+     # The old behaviour, kept as the arbiter. Use it to confirm a suspicious `run` failure, or when
+     # you have just added a test that touches shared/global state.
      "$0" restart >/dev/null 2>&1
      _start || exit 1
      shard="${2:-}"
@@ -285,5 +318,17 @@ case "${1:-run}" in
      else
        _run_driver "delete!(ENV, \"CORE_SUITE_SHARD\"); include(raw\"$CORE/test/runtests.jl\")"
      fi ;;
-  *) echo "  usage: warm_suite.sh {start|run [i/n]|file <path>|restart|status|stop}"; exit 2 ;;
+  run-warm)
+     # 🔬 THE SAME SUITE, IN THE DAEMON THAT IS ALREADY UP — no restart. This is the MEASUREMENT that
+     # tells us whether `run` still needs to restart: anything that fails here and passed under `run`
+     # is state some file LEAKS into the next one.
+     #
+     # ⚠️ NOT A GATE. Use `run` for a verdict. This exists to FIND leaks so `run` can eventually stop
+     # restarting, which is worth roughly nine minutes on every gate.
+     # ⚠️ runtests.jl declares `const SUITE_FAILED`, so a second include in one process would fail on
+     # the const redeclaration rather than on any test. The driver therefore clears it first — that is
+     # the harness's own state, not the suite's, and leaving it would mask exactly what we are hunting.
+     _start || exit 1
+     _run_driver "isdefined(Main, :SUITE_FAILED) && empty!(Main.SUITE_FAILED); delete!(ENV, \"CORE_SUITE_SHARD\"); include(raw\"$CORE/test/runtests.jl\")" ;;
+  *) echo "  usage: warm_suite.sh {start|run [i/n]|run-cold [i/n]|run-warm|file <path>|restart|status|stop}"; exit 2 ;;
 esac

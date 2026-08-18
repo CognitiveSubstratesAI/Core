@@ -1215,14 +1215,29 @@ const _TRIE_READ = Ref(true)     # 🟢 DEFAULT ON — see the block above
 
 const _RESUME_COMPLETION = Ref(false)
 
-"""Read `CORE_TABLING_RESUME` at LOAD time.
+"""
+    reset_execution_flags!()
 
-⚠️ MUST be `__init__`, not a `const Ref(get(ENV,…))` initialiser. A const is evaluated during
-PRECOMPILATION and baked into the image, so the env var is read when the package is compiled rather
-than when it is run — measured: `CORE_TABLING_RESUME=1 julia -e 'using MeTTaCore'` reported the flag
-still FALSE. Both flags move together, because resumption without recording silently completes
-nothing."""
-function __init__()
+Put every tabling execution-mode flag back to what the ENVIRONMENT says it should be.
+
+⚠️ MUST be called from `__init__`, never replaced by a `const Ref(get(ENV,…))` initialiser. A const
+is evaluated during PRECOMPILATION and baked into the image, so the env var would be read when the
+package is COMPILED rather than when it is run — measured: `CORE_TABLING_RESUME=1 julia -e 'using
+MeTTaCore'` reported the flag still FALSE. `_RESUME_COMPLETION` and `_DEPS_RECORD` move together,
+because resumption without recording silently completes nothing.
+
+🔴 THIS EXISTS SO NOTHING HAS TO HARDCODE A DEFAULT, and that is not hygiene — it is a measured bug
+class. A test that flips a flag and restores it with a LITERAL is asserting the default at the moment
+it was written, and defaults move: `_RESUME_COMPLETION`/`_DEPS_RECORD` flipped from false to true on
+2026-08-16, and two test files went on restoring `false`. The visible symptom was that
+`test_completion_resume.jl` failed its OWN first assertion when the suite ran twice in one process.
+The invisible one is worse: every file that ran after those left `_DEPS_RECORD` off, so they
+exercised the recomputation path while claiming to test the default one — a green suite over a code
+path nobody chose (`[[feedback_green_suite_hides_unwired_correct_code]]`).
+
+Restoring THROUGH this function means a default can only move in one place.
+"""
+function reset_execution_flags!()
     # DEFAULT: resumption. `CORE_TABLING_RECOMPUTE=1` forces the old recomputation engine, which is
     # what keeps the differential runnable IN BOTH DIRECTIONS after the flip — a comparison you can
     # only run one way stops being a comparison. `CORE_TABLING_RESUME=1` is still honoured so the
@@ -1232,7 +1247,10 @@ function __init__()
     _DEPS_RECORD[]       = !recompute
     _TRIE_READ[]         = get(ENV, "CORE_TABLING_TRIE_READ", "") != "0"    # ON unless explicitly 0
     _IDG_RECORD[]        = get(ENV, "CORE_TABLING_IDG", "") == "1"
+    nothing
 end
+
+__init__() = reset_execution_flags!()
 
 """The SCC's members RIGHT NOW — upstream's growing `created_worklists`, not a frozen list.
 

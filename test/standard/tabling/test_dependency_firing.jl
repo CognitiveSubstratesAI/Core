@@ -34,7 +34,7 @@ function _df_run(prog::AbstractString, query::AbstractString, head::Symbol)
                      for x in (y isa AbstractVector ? y : [y])]
         (sort!(ans), s)
     finally
-        _DF._DEPS_RECORD[] = false
+        _DF.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
     end
 end
 
@@ -122,7 +122,8 @@ end
             @test n1 == n2        # per-completion count is STABLE; the growth is across ROUNDS, and a
                                   # fresh completion must not inherit the previous one's dependencies
         finally
-            _DF._DEPS_RECORD[] = false; _DF.untable_all!()
+            # restore the ENV default, never a literal — defaults move (they did, 2026-08-16)
+            _DF.reset_execution_flags!(); _DF.untable_all!()
         end
     end
 end

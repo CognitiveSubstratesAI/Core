@@ -36,7 +36,7 @@ function _ur_isolated(body::Function)
     try
         body()
     finally
-        _UR._IDG_RECORD[] = false
+        _UR.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
         _UR.untable_all!(); _UR.abolish_all_tables!(); _UR.clear_idg!(); _UR.clear_dyn_deps!()
     end
 end
@@ -144,6 +144,8 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
             @test isempty(_UR._DYN_ALL)
             @test isempty(_UR._IDG)
         finally
+            # this testset SETS the flag deliberately, so it owes the same restore as the others.
+            _UR.reset_execution_flags!()
             _UR.untable_all!(); _UR.abolish_all_tables!(); _UR.clear_idg!(); _UR.clear_dyn_deps!()
         end
     end

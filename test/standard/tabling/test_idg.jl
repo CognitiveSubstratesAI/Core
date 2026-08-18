@@ -203,7 +203,7 @@ end
         # …and this is §7.7's whole point: FEWER than the revision stamp, which evicts every table.
         @test length(hit) < length(_DG._ANSWER_TABLE)
     finally
-        _DG._IDG_RECORD[] = false
+        _DG.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
         _DG.untable_all!(); _DG.abolish_all_tables!(); _DG.clear_idg!()
     end
 end
