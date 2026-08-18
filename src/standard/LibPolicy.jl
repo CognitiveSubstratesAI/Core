@@ -106,7 +106,11 @@ rather than a set of hand-written ECAN accessors. `lib_policy_names` enumerates 
 declares, which is what an audit (or TECAN Stage T0's cost annotation) needs.
 """
 
-const _POLICY_SPACES = Dict{Symbol, Any}()
+# 🔴 `CoreSpace`, NOT `Any` — found by a JET/Any sweep 2026-08-18, and it was the ONLY genuine `Any`
+# left in `src/`. `new_core_space()` returns a concrete `CoreSpace`, so the `Any` bought nothing and
+# cost the inference of every caller: `policy_space(::Symbol)` inferred `Any`, which then propagates
+# into whatever reads a policy. Measured before/after with `Base.return_types`.
+const _POLICY_SPACES = Dict{Symbol, CoreSpace}()
 
 """
     policy_space(lib) -> CoreSpace

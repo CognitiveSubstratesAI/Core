@@ -145,3 +145,87 @@ results). Trading a correct, hyperon-faithful interpreter for speed is only just
 **If/when implemented**, gate on: full **234-conformance** + every domain suite + the 4-engine
 `workflows/metta_xcheck.sh` (the references are the only ground truth for "COW preserved semantics"). Prefer
 the low-risk `atom_types` interning first.
+
+---
+
+## 2026-08-18 — tool-driven sweep: Aqua · JET · AllocCheck · BenchmarkTools
+
+Run from the global `v1.12` env (Aqua 0.8.16, JET 0.12.0, AllocCheck 0.2.6, BenchmarkTools 1.8.0)
+against the probe daemon. **Two attempted optimisations were measured and REVERTED.** They are
+recorded here precisely so nobody re-derives them — the failures are the useful part.
+
+### Aqua — clean
+
+`unbound_args` · `undefined_exports` · `stale_deps` · `deps_compat` · `project_extras` · `piracies`
+all pass, and `detect_ambiguities(MeTTaCore; recursive=true)` finds **0 ambiguities, 0 pirated
+methods**. For a package with many small typed methods over an abstract `Atom` hierarchy that is a
+real result, not a formality.
+
+### JET — 284 optimisation findings on the tabling hot path, one root cause
+
+`report_opt` over the tabling entry points:
+
+| function | findings |
+|---|---|
+| `_S_P!` | 108 |
+| `_leader_pass` | 78 |
+| `_wfs_complete!` | 45 |
+| `_merge_partial` | 21 |
+| `is_multivalued` | 6 |
+| `_scc_root` · `_union_scc!` · `dyn_changed!` | 5 each |
+
+Nearly all reduce to ONE cause: **`Atom` is abstract, so `==`/`hash` dispatch dynamically**, and that
+propagates into every `Dict{Atom,…}`:
+
+```
+runtime dispatch detected: Base.hashindex(%86::Atom, %19::Int64)::Tuple{Int64, UInt8}
+runtime dispatch detected: (%1::Atom == k::Atom)::Any
+```
+
+Tabling is Dict-heavy — `_COMPONENT`, `_PARTIAL`, `_ANSWER_TABLE`, `_IDG`, `_DYN_DEPS` — and
+`_scc_root` touches `_COMPONENT` on every component query.
+
+### Where the allocations actually are
+
+| operation | ns | allocs | bytes |
+|---|---|---|---|
+| `hash(::Sym)` | 33 | **0** | 0 |
+| `hash(::Var)` | 79 | **0** | 0 |
+| `hash(::Expression)` flat (2 children) | 118 | **3** | 48 |
+| `hash(::Expression)` nested (3, one deep) | 258 | **6** | 96 |
+| `==(::Sym, ::Sym)` | 29 | **0** | 0 |
+| `==(::Expression, ::Expression)` nested | 271 | **0** | 0 |
+| `Dict{Atom,Int}` — 200 inserts | ~39 µs | 1000 | 19 200 |
+| `Dict{Atom,Int}` — 200 lookups | ~38 µs | 800 | 12 800 |
+
+**`hash(::Expression)` costs ~1.5 allocations per child** — a boxed `UInt64` per element, because the
+children are `Vector{Atom}` and each element's `hash` is a dynamic dispatch. `==` is allocation-free,
+so equality is NOT the problem; hashing is. That is 4 allocations per Dict lookup.
+
+### 🛑 TWO FIXES TRIED, BOTH REVERTED — DO NOT REDO
+
+1. **Annotating the return types** (`==(::Sym,::Sym)::Bool`, `hash(::Sym,::UInt)::UInt`, all 8
+   methods). The annotations DID land — `Base.return_types(==, (Atom,Atom))` went from a widened
+   result to `[Bool,Bool,Bool,Bool,Bool]` — and changed **nothing**: `_scc_root` still reported 5
+   findings, Dict allocations were identical (1000/800). The dispatch is the *method lookup* on an
+   abstract key type; knowing the return type does not remove it.
+2. **Folding `hash(::Expression)`** into an explicit loop with a `::UInt`-asserted accumulator,
+   instead of `hash(a.children, h)`. **Strictly worse**: 4 allocs flat (from 3), 10 nested (from 6),
+   Dict inserts 1400 (from 1000). The `::UInt` assert on a dynamic call boxes, and the manual loop
+   loses Base's optimised array-hash path.
+
+**What would actually work is a memoised hash field on `Expression`** — computed once at
+construction, so the per-child dispatch is paid once per term rather than once per Dict operation.
+That is a change to a core struct, and this session measured what those cost (Revise strands a
+`const` container typed on a changed struct in the old world age; Revise #1116). Not attempted.
+Treat it as the next real lever, with `[[reference_core_interpreter_perf_findings]]`'s standing rule:
+no eval-core change without a measured need. The need is now measured; the change still is not.
+
+### `Any` sweep
+
+`src/` had exactly ONE genuine `Any`: `LibPolicy.jl`'s `_POLICY_SPACES = Dict{Symbol,Any}()`, which
+made `policy_space(::Symbol)` infer `Any` although `new_core_space()` returns a concrete `CoreSpace`.
+Fixed; `policy_space` now infers `CoreSpace`. Remaining grep hits in `src/` are docstrings quoting
+JET output. `test/` still has four (`test_frame_agnostic_ret.jl` ×3, `test_tripwires.jl` ×1) — at
+least one looks deliberate (it stores a deliberately-hidden `Any` to prove the frame-agnostic return
+path handles it), so they want reading, not a sweep.
