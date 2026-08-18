@@ -72,8 +72,11 @@ const NO_RESTRAINT = -1
                          there is no interactive break to enter from a completing table
   FAIL                 — drop the answer silently (`trie_delete` + return false)
   BOUNDED_RATIONALITY  — drop it, generalise, and mark the table an APPROXIMATION (see below)
+  ABSTRACT             — ONLY valid for `max_table_subgoal_size_action`, and it is the value that
+                         PERMITS abstraction at all (`pl-tabling.c:2511-2514`). The flag validator
+                         accepts it for that key alone (`:8873-8874`).
 """
-@enum TripwireAction TW_ERROR TW_WARNING TW_SUSPEND TW_FAIL TW_BOUNDED_RATIONALITY
+@enum TripwireAction TW_ERROR TW_WARNING TW_SUSPEND TW_FAIL TW_BOUNDED_RATIONALITY TW_ABSTRACT
 
 "Default action for the global bound. Upstream's flag default is `error`."
 const DEFAULT_TRIPWIRE_ACTION = TW_ERROR
@@ -81,6 +84,55 @@ const DEFAULT_TRIPWIRE_ACTION = TW_ERROR
 const _MAX_ANSWERS        = Dict{Symbol,Int}()          # per-head bound (the `max_answers(N)` option)
 const _MAX_ANSWERS_GLOBAL = Ref{Int}(NO_RESTRAINT)      # the global flag
 const _MAX_ANSWERS_ACTION = Ref{TripwireAction}(DEFAULT_TRIPWIRE_ACTION)
+
+# ── §7.11.1's own action flag: `max_table_subgoal_size_action` ───────────────────────────────────
+"""Upstream's `max_table_subgoal_size_action`. **DEFAULT `TW_ERROR`, exactly as SWI.**
+
+🔴 `subgoal_abstract(N)` DOES NOT MEAN "ABSTRACT" IN SWI — it means "bound the subgoal size", and the
+default disposition of that bound is to REFUSE THE PROGRAM. Verified on live swipl 10.1.12:
+
+    :- table p/1 as subgoal_abstract(1).   p(_).
+    ?- p(s(s(s(a)))).
+    ERROR: resource_error(tripwire(max_table_subgoal_size, user:p(_)))
+    ?- current_prolog_flag(max_table_subgoal_size_action, A).   A = error.
+
+Only after `set_prolog_flag(max_table_subgoal_size_action, abstract)` does the goal abstract to
+`p(s(_))`. Our port abstracted UNCONDITIONALLY until 2026-08-18, which meant `subgoal_abstract` here
+silently did something SWI refuses to do — the worst kind of divergence, because the program runs.
+
+⚠️ THE DEFAULT IS DELIBERATELY THE STRICT ONE, and it is why every §7.11.1 test now sets this flag
+explicitly — precisely as the swipl oracle script had to. A conformance port whose default differs
+from the reference cannot be differentialled without remembering to compensate, and that is exactly
+the kind of thing nobody remembers. `[[feedback_parity_vs_opt_in]]`"""
+const _MAX_SUBGOAL_SIZE_ACTION = Ref{TripwireAction}(TW_ERROR)
+
+"Set `max_table_subgoal_size_action`. `TW_ABSTRACT` is the only value that permits abstraction."
+set_max_table_subgoal_size_action!(a::TripwireAction) = (_MAX_SUBGOAL_SIZE_ACTION[] = a; nothing)
+max_table_subgoal_size_action() = _MAX_SUBGOAL_SIZE_ACTION[]
+
+"""
+    fire_subgoal_size_tripwire(head) -> Bool
+
+`pl-tabling.c:2506-2523`. Returns TRUE when the caller must RETRY UNABSTRACTED (upstream's
+`sa.size = (size_t)-1; goto retry`), and throws for `TW_ERROR`.
+
+The retry is the part that is easy to miss: upstream does not merely refuse the abstraction, it
+re-runs the variant lookup with the restraint disabled, so a WARNING disposition still tables the
+FULL goal rather than the abstracted one.
+"""
+function fire_subgoal_size_tripwire(head::Union{Symbol,Nothing})::Bool
+    act = _MAX_SUBGOAL_SIZE_ACTION[]
+    act == TW_ABSTRACT && return false
+    hd = head === nothing ? "?" : String(head)
+    if act == TW_ERROR || act == TW_SUSPEND
+        throw(ArgumentError("resource_error(tripwire(max_table_subgoal_size, $(hd))) — the goal " *
+                            "exceeds its `subgoal_abstract` bound. SWI's default action for this " *
+                            "restraint is `error`, NOT `abstract`; call " *
+                            "`set_max_table_subgoal_size_action!(TW_ABSTRACT)` to abstract instead."))
+    end
+    act == TW_WARNING && @warn "tripwire max_table_subgoal_size for $(hd) — tabling the FULL goal"
+    true                                   # retry with the restraint disabled
+end
 
 """
     restraint!(head, name, value)

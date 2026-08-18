@@ -1193,9 +1193,17 @@ COMPLETE state (`create_abstract_table` runs `run_leader` on the general skeleto
 branch skips straight past it), then `'\$tbl_answer_update_dl'(Trie, Skeleton)` unifies its answers
 into the specific call.
 
-⚠️ THE GENERAL GOAL IS DRIVEN THROUGH `tabled_eval` ITSELF, not through a private path. That is what
-makes the abstract table a real table — invalidated by the IDG, restrained by §7.11.3, readable by
-§7.5 — rather than a cache that happens to look like one. It cannot recurse indefinitely: `gen` is
+⚠️ THE GENERAL GOAL IS DRIVEN THROUGH `tabled_eval` ITSELF, not through a private path, so it is a
+real table rather than a private cache. 🔴 THE ORIGINAL WORDING HERE CLAIMED MORE THAN THAT — that the
+abstract table is "invalidated by the IDG, restrained by §7.11.3, readable by §7.5" — and an audit
+checked all three from the code body: IDG recording is OFF unless `CORE_TABLING_IDG=1`, NO table in
+this engine is answer-restrained (`trie_insert_restrained!` has no live caller), and
+`subsumptive_answers` has none either. The claim was true of UPSTREAM's `create_abstract_table`
+(`boot/tabling.pl:487-492`) and was written as if it were true of ours. It is exactly the class of
+comment that survives review because it flatters a real design decision.
+`[[feedback_verify_code_body_not_comments]]`
+
+It cannot recurse indefinitely: `gen` is
 strictly more general than `red`, and `abstract_subgoal(gen)` is a fixpoint (abstracting an already
 abstracted goal spends the same budget on strictly fewer compounds), so the second entry takes the
 plain variant arm.
@@ -1244,13 +1252,27 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     # ⚠️ THE GUARD IS `is_most_general_term(Skeleton)`, NOT "was anything abstracted". Upstream tests
     # the SKELETON: an abstraction that happens to produce a maximally-general goal is indistinguish-
     # able from having asked the general goal directly, so it takes the plain variant arm and avoids
-    # a pointless self-subsumption. `is_most_general_term` (§7.5) is that test — every argument a
-    # DISTINCT unbound variable, distinctness included, since `p($x, $x)` is a real constraint.
+    # a pointless self-subsumption.
+    #
+    # 🔴 WE NO LONGER TAKE THAT SHORTCUT, AND THE REASON IS AN AUDIT FINDING (2026-08-18).
+    # This read `abstracted && !is_most_general_term(gen)` and, when the abstraction happened to land
+    # on a maximally-general goal, fell through to `red = gen` — tabling the GENERAL goal as if the
+    # caller had asked it. That skips the specialisation step entirely: answers come back projected
+    # onto `gen`'s variables rather than the caller's, so a non-ground specific call gets bindings
+    # that belong to a different term.
+    #
+    # Upstream's guard tests `is_most_general_term(Skeleton)` — the RETURN skeleton `ret(V1..Vn)`
+    # built by `unify_trie_ret` (`pl-tabling.c:2573`), NOT the goal — and an abstracted position
+    # contributes a variable to that skeleton, so the two tests are simply not the same predicate on
+    # the same object. Rather than reconstruct a skeleton we do not otherwise have, EVERY abstracted
+    # call now goes through `_abstract_tabled_eval`, which specialises correctly whether or not `gen`
+    # is maximally general. That costs one avoidable self-subsumption in the degenerate case and
+    # cannot get the bindings wrong. Terminating: `abstract_subgoal(gen)` does not abstract again
+    # (its arguments are already variables), so the inner `tabled_eval` takes the plain variant arm.
     gen, abstracted = abstract_subgoal(red)
-    if abstracted && !is_most_general_term(gen)
+    if abstracted
         return _abstract_tabled_eval(red, gen, typ, space, b, prev)
     end
-    abstracted && (red = gen)          # abstracted TO the most general form ⇒ just table that
     key = _variant_rename(red)                                                  # red keeps the caller's vars;
     # §7.7: THE DEPENDENCY EDGE, AT THE CALL — not at the cache hit.
     # 🔴 FIRST ATTEMPT PUT THIS ON THE CACHE-HIT PATH AND IT WAS UNSOUND. Upstream adds the edge in

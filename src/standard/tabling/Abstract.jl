@@ -156,7 +156,14 @@ function abstract_subgoal(red::Atom)::Tuple{Atom,Bool}
     h === nothing && return (red, false)
     n = subgoal_abstract_for(h)
     n == NO_RESTRAINT && return (red, false)
-    size_abstract(red, n)
+    (gen, abstracted) = size_abstract(red, n)
+    # 🔴 THE ACTION GATE — `pl-tabling.c:2506-2523`, ADDED 2026-08-18. Abstraction is NOT what
+    # `subgoal_abstract(N)` does by default: the flag `max_table_subgoal_size_action` defaults to
+    # `error`, and upstream RAISES rather than abstracting. `TW_ABSTRACT` is the only value that
+    # permits it, and any other disposition RETRIES UNABSTRACTED (`sa.size = -1; goto retry`).
+    abstracted || return (red, false)
+    fire_subgoal_size_tripwire(h) && return (red, false)     # retry with the restraint disabled
+    (gen, true)
 end
 
 """

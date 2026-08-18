@@ -14,6 +14,15 @@ using Test
 
 const _AB = Eval
 
+# 🔴 EVERY TEST BELOW SETS `max_table_subgoal_size_action` EXPLICITLY, and that is deliberate.
+# SWI's default is `error`: `:- table p/1 as subgoal_abstract(1)` RAISES on an oversized goal rather
+# than abstracting (verified on live swipl 10.1.12), and our port matches that default since
+# 2026-08-18. The oracle script had to set the same flag to observe abstraction at all — so a test
+# that did NOT set it would be testing a different configuration from the one it is differentialled
+# against, which is the failure this comment exists to prevent.
+_ab_abstract_mode!() = _AB.set_max_table_subgoal_size_action!(_AB.TW_ABSTRACT)
+_ab_strict_mode!()   = _AB.set_max_table_subgoal_size_action!(_AB.TW_ERROR)
+
 # (p (s (s (s a)))) — the chain from the SWI manual, built directly so the test does not depend on
 # the parser's treatment of nesting.
 _ab_s(n::Int) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), _ab_s(n - 1)])
@@ -145,13 +154,14 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
     @testset "the declaration surface, and the negative-removes convention" begin
         _AB.untable_all!(); _AB.clear_subgoal_abstract!()
         @test _AB.subgoal_abstract_for(:p) == _AB.NO_RESTRAINT
+        _ab_abstract_mode!()
         o = _AB.table_as!(:p, :subgoal_abstract => 2)          # no longer REFUSED — §7.11.1 is built
         @test o.subgoal_abstract == 2
         @test _AB.subgoal_abstract_for(:p) == 2
 
         # `restraint/4`: a NEGATIVE value REMOVES the restraint. Same convention as `max_answers`,
         # asserted here so the two cannot drift apart.
-        _AB.table_as!(:p, :subgoal_abstract => -1)
+        _ab_abstract_mode!(); _AB.table_as!(:p, :subgoal_abstract => -1)
         @test _AB.subgoal_abstract_for(:p) == _AB.NO_RESTRAINT
         _AB.untable_all!(); _AB.clear_subgoal_abstract!()
     end
@@ -165,7 +175,7 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         try
             s = Space(); load_core_stdlib!(s)
             load_metta!(s, raw"(= (depth $x) ok)" * "\n")
-            _AB.table_as!(:depth, :subgoal_abstract => 1)
+            _ab_abstract_mode!(); _AB.table_as!(:depth, :subgoal_abstract => 1)
 
             r = String[string(x) for y in load_metta!(s, "!(depth (s (s (s a))))\n")
                        for x in (y isa AbstractVector ? y : [y])]
@@ -197,7 +207,7 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
             @test unrestrained >= 6
 
             _AB.untable_all!(); _AB.abolish_all_tables!()
-            _AB.table_as!(:grow, :subgoal_abstract => 1)
+            _ab_abstract_mode!(); _AB.table_as!(:grow, :subgoal_abstract => 1)
             for n in 1:6; load_metta!(s, "!(grow $(_ab_s(n)))\n"); end
             restrained = length(_AB._ANSWER_TABLE)
 
@@ -217,7 +227,7 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         try
             s = Space(); load_core_stdlib!(s)
             load_metta!(s, raw"(= (peel (s $x)) (found $x))" * "\n")
-            _AB.table_as!(:peel, :subgoal_abstract => 1)
+            _ab_abstract_mode!(); _AB.table_as!(:peel, :subgoal_abstract => 1)
             r = String[string(x) for y in load_metta!(s, "!(peel (s (s (s a))))\n")
                        for x in (y isa AbstractVector ? y : [y])]
             # the abstracted subterm comes BACK — not `(found $_sa1)`, and not the general answer
@@ -249,7 +259,7 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
             @test exact == ["deep"]
 
             _AB.untable_all!(); _AB.abolish_all_tables!()
-            _AB.table_as!(:d, :subgoal_abstract => 1)
+            _ab_abstract_mode!(); _AB.table_as!(:d, :subgoal_abstract => 1)
             approx = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
                                  for x in (y isa AbstractVector ? y : [y])])
             @test "deep" in approx              # SOUND: the real answer is never lost…
@@ -276,7 +286,7 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
 
             _AB.untable_all!(); _AB.abolish_all_tables!()
             s2 = Space(); load_core_stdlib!(s2); load_metta!(s2, prog)
-            _AB.table_as!(:e, :subgoal_abstract => 1)
+            _ab_abstract_mode!(); _AB.table_as!(:e, :subgoal_abstract => 1)
             got = String[string(x) for y in load_metta!(s2, "!(e (f (g (g a))))\n")
                          for x in (y isa AbstractVector ? y : [y])]
             @test got == base                   # the restraint must not LOSE it (it did, until today)
@@ -300,6 +310,42 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         # variant-deduped, or a fixpoint re-deriving an answer grows this without bound
         @test !_AB.trie_record_instance!(t, Sym(:deep), inst)
         @test length(_AB.trie_instances(t, Sym(:deep))) == 1
+    end
+
+    @testset "🔴🔴 THE DEFAULT ACTION IS `error`, NOT `abstract` — as SWI, verified against it" begin
+        # `subgoal_abstract(N)` does NOT mean "abstract" in SWI. It means "bound the subgoal size",
+        # and the default disposition of that bound is to REFUSE THE PROGRAM:
+        #     ?- current_prolog_flag(max_table_subgoal_size_action, A).   A = error.
+        #     ?- p(s(s(s(a)))).   ERROR: resource_error(tripwire(max_table_subgoal_size, user:p(_)))
+        # We abstracted unconditionally until 2026-08-18 — silently doing what SWI refuses to do,
+        # which is the worst kind of divergence because the program appears to work.
+        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        try
+            _ab_strict_mode!()
+            @test _AB.max_table_subgoal_size_action() == _AB.TW_ERROR      # OUR default, unset
+            s = Space(); load_core_stdlib!(s)
+            load_metta!(s, raw"(= (depth $x) ok)" * "\n")
+            _AB.table_as!(:depth, :subgoal_abstract => 1)
+            # a goal WITHIN the bound is untouched and must NOT trip anything
+            (small, hit_small) = _AB.abstract_subgoal(
+                _AB.parse_from(_AB.tokenize("(depth (s a))"), Ref(1), s.tokens))
+            @test !hit_small
+            # …and one OVER the bound raises, naming the tripwire, instead of abstracting
+            big = _AB.parse_from(_AB.tokenize("(depth (s (s (s a))))"), Ref(1), s.tokens)
+            @test_throws ArgumentError _AB.abstract_subgoal(big)
+
+            # WARNING retries UNABSTRACTED — upstream's `sa.size = -1; goto retry`, easy to miss
+            _AB.set_max_table_subgoal_size_action!(_AB.TW_WARNING)
+            (g, hit) = _AB.abstract_subgoal(big)
+            @test !hit && g == big            # the FULL goal is tabled, not the abstracted one
+
+            _ab_abstract_mode!()
+            (g2, hit2) = _AB.abstract_subgoal(big)
+            @test hit2 && g2 != big           # only TW_ABSTRACT actually abstracts
+        finally
+            _ab_abstract_mode!()
+            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        end
     end
 
     @testset "an already-abstracted goal is a FIXPOINT — the recursion cannot run away" begin
