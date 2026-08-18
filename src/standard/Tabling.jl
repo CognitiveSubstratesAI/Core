@@ -276,7 +276,7 @@ answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_NEG_DELAYS); empty!(_DEPS);
-                   _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_answer_delays!(); clear_idg!(); clear_mono!(); empty!(_REEVAL_PENDING);  # §1.0 3-4 + §7.7 + §7.8
+                   _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_answer_delays!(); clear_idg!(); clear_mono!(); clear_dyn_deps!(); empty!(_REEVAL_PENDING);  # §1.0 3-4 + §7.7 + §7.8
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 
@@ -1123,6 +1123,93 @@ const _IDG_RECORD = Ref(false)
 A Set rather than a flag, because completion completes a whole SCC and the question ("was this
 member being re-evaluated?") has to be asked per member."""
 const _REEVAL_PENDING = Set{Atom}()
+
+# ── §7.7's INVALIDATION ENTRY — the dynamic-predicate edge ───────────────────────────────────────
+# 🔴 WITHOUT THIS, §7.7 IS A FEATURE THAT CANNOT FIRE. `idg_changed!` had NO caller in `src/`, so no
+# table could ever BE invalid, so the re-evaluation lifecycle was unreachable and the revision stamp
+# still evicted EVERY table on any mutation (measured: one `add-atom` makes both of two unrelated
+# tables stale).
+#
+# UPSTREAM (`boot/tabling.pl:1807-1813`) unifies the changed term against the VARIANT TRIE:
+#     dyn_changed_pattern(Term) :- forall(dyn_affected(Term, ATrie), '\$idg_changed'(ATrie)).
+# We have one mutable space and no predicate objects, so the graph's leaf is synthesised from the
+# store's own discriminant — which is already computed on BOTH sides (`_index_key` in `add_atom!`
+# and in `query`). Coarser than per-variant unification, still per-table.
+"The store discriminant a tabled evaluation READ — `Tuple{Symbol,Symbol}`, never `Any`."
+const _DYN_DEPS = Dict{Tuple{Symbol,Symbol},Set{Atom}}()
+
+"""Tables whose derivation did a FULL SCAN, so no discriminant can describe what they depend on.
+
+⚠️ THIS SET IS THE SOUNDNESS ESCAPE, NOT AN OPTIMISATION GAP. A tabled body that reads the whole
+space (`get-atoms`, or a `query` whose pattern has a variable head) depends on everything, and
+`_DYN_DEPS` cannot express that. Upstream ERRORS in the analogous case
+(`idg_dependency_error_dyncall`, pl-tabling.c:6510-6520); reading the whole space is a legitimate
+MeTTa idiom, so we degrade instead — these tables are invalidated by ANY mutation. Silent
+under-invalidation is the one failure an IDG must not have."""
+const _DYN_ALL = Set{Atom}()
+
+"""
+    dyn_read!(k)
+
+Record that the table currently being derived read discriminant `k` (`nothing` ⇒ a full scan).
+
+🔑 THE OWNER IS `_CURRENT_TARGET`, NOT `_GEN_STACK[end]` — the same correction the negative-delay
+record needed, and for the same reason: the stack's top is the innermost goal being TABLED, which
+during a drive is the CALLEE, not the caller whose body is running.
+"""
+function dyn_read!(k::Union{Tuple{Symbol,Symbol},Nothing})
+    # 🔴 THE IDG IS OPT-IN, AND SO IS ITS ENTRY. `_IDG_RECORD[]` already gates edge recording
+    # (`CORE_TABLING_IDG=1`); these hooks are part of the same graph and must obey the same switch.
+    # MEASURED: without this gate `test_abstract.jl` — which builds many abstracted variants, hence
+    # many nodes — span at 98% CPU for over five minutes without finishing a single file, where the
+    # whole 90-file suite is about eleven. Every tabled read created a node and every `add-atom` then
+    # walked them. Unconditional bookkeeping for a feature nobody switched on.
+    _IDG_RECORD[] || return nothing
+    owner = _CURRENT_TARGET[]
+    owner === nothing && (owner = isempty(_GEN_STACK) ? nothing : _GEN_STACK[end])
+    owner === nothing && return nothing          # not inside a tabled derivation
+    # 🔴 CREATE THE GRAPH NODE HERE, NOT ONLY WHERE ONE TABLE CONSULTS ANOTHER. Upstream looks the
+    # variant table up OR CREATES it on EVERY tabled call (`tbl_variant_table`, pl-tabling.c:4549-4560),
+    # and `idg_changed!` can only invalidate a table that HAS a node. Without this the entry was inert
+    # in exactly the common case: a probe built two tables, `_DYN_DEPS` attributed all 8 buckets to the
+    # right owners — and `_IDG` was EMPTY, because neither table happened to call another tabled
+    # predicate, so nothing had ever created a node for them. `dyn_changed!` then invalidated 0 of 2.
+    idg_node_for(owner::Atom)
+    k === nothing ? push!(_DYN_ALL, owner::Atom) :
+                    push!(get!(_DYN_DEPS, k, Set{Atom}()), owner::Atom)
+    nothing
+end
+
+"""
+    dyn_changed!(k) -> Int
+
+`dyn_changed_pattern/1`. Invalidate every table that read discriminant `k`, plus every full-scan
+table. Returns how many were invalidated.
+
+⚠️ `mono = true` DELIBERATELY. `idg_changed!`'s incomplete-table guard raises a permission error
+upstream (`change_incomplete_error`), but an `add-atom` executed inside a tabled rule body is a
+legitimate MeTTa idiom and our purity gating is head-level — so a mutation arriving mid-completion
+STOPS propagating rather than aborting the run.
+"""
+function dyn_changed!(k::Union{Tuple{Symbol,Symbol},Nothing})::Int
+    _IDG_RECORD[] || return 0            # see `dyn_read!` — same switch, same reason
+    n = 0
+    for tbl in (k === nothing ? Atom[] : collect(get(_DYN_DEPS, k, Set{Atom}())))
+        n += length(idg_changed!(tbl; mono = true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
+    end
+    for tbl in collect(_DYN_ALL)
+        n += length(idg_changed!(tbl; mono = true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
+    end
+    n
+end
+
+"Drop a table's dynamic-dependency records — called wherever a table is abolished."
+function drop_dyn_deps!(key::Atom)
+    for (_, tbls) in _DYN_DEPS; delete!(tbls, key); end
+    delete!(_DYN_ALL, key)
+    nothing
+end
+clear_dyn_deps!() = (empty!(_DYN_DEPS); empty!(_DYN_ALL); nothing)
 
 const _TRIE_READ = Ref(true)     # 🟢 DEFAULT ON — see the block above
 

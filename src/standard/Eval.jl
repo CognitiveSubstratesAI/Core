@@ -617,6 +617,7 @@ function add_atom!(s::Space, a::Atom)
         push!(get!(() -> Atom[], s.store.index, k), a)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
+    dyn_changed!(k)                              # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
@@ -630,6 +631,7 @@ function remove_atom!(s::Space, a::Atom)
         b = get(s.store.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
+    dyn_changed!(k)                              # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)
     s
 end
@@ -839,6 +841,7 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     gg = _FAST_MATCH[] && _is_eq_rule(pattern) && _ground_atom(pattern.children[2])
     @inline prep(stored::Atom) = (gg && _is_closed_rule(stored)) ? stored : rename_fresh(stored)
     k = _index_key(pattern)
+    dyn_read!(k)                                       # §7.7: record what this tabled derivation READ
     if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
         for stored in all_atoms(space)                 # contract, not the field (see MettaJam af05996)
             append!(out, match_atoms(pattern, prep(stored)))

@@ -200,7 +200,11 @@ let
     write(raw"$verdict", ok ? "0" : "1")
 end
 JULIA
-    julia -e "using DaemonMode; runfile(raw\"$drv\"; port=$PORT)"
+    # 🔴 STREAM IT. DaemonMode hands the client output as the run PROGRESSES for some lanes and only
+    # at the END for others, and a silent 12-minute run is indistinguishable from a hung one -- I sat
+    # on a 0-byte output file twice today deciding whether to kill it. `stdbuf -oL` line-buffers the
+    # client so progress is visible as it happens, and the tee keeps a log to point at afterwards.
+    stdbuf -oL -eL julia -e "using DaemonMode; runfile(raw\"$drv\"; port=$PORT)" 2>&1 | tee "$RUNDIR/last.log"
     rm -f "$drv"
     [ -f "$verdict" ] && exit "$(cat "$verdict")"
     echo "  warm_suite: NO VERDICT WRITTEN — treating as FAILURE (daemon died?)"; exit 1
