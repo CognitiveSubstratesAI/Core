@@ -223,6 +223,12 @@ module StandardMeTTaTests
     # `swipl-devel/tests/tabling/test_reeval.pl` supplies the claims; all 18 upstream tabling files
     # (165 tests) pass against the live binary — `workflows/swipl_tabling_oracle.sh`.
     Main.@suite("standard/tabling/upstream/test_upstream_reeval.jl")
+    # XSB's own WFS conformance corpus — 72 programs each shipping a machine-readable gold row
+    # (TRUE set / UNDEFINED set; absent ⇒ false), validated 72-agree-0-differ against live swipl by
+    # `test/standard/tabling/upstream/verify_corpus.sh`. 7 translated so far, spanning all three
+    # verdicts. This is the defect class `test_delays.jl` CANNOT see: that file tests the delay
+    # ALGEBRA, and a perfect algebra over a broken fixpoint passes every assertion in it.
+    Main.@suite("standard/tabling/upstream/test_xsb_wfs_corpus.jl")
     # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
     # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
     # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global
