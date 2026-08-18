@@ -65,44 +65,43 @@ _start() {
     # when the wrapping shell is killed on a timeout the daemon takes SIGTERM with it — observed as
     # `signal 15: Terminated` in this very log, after which `start` kept probing a corpse.
     rm -f "$READYFILE"
-    # 🔴 PRECOMPILE FIRST. THIS IS THE FIX -- not the load order, and not skipping revise(); both were
-    # tried today and neither worked, because the damage happens at LOAD. MEASURED with a probe after
-    # two wrong guesses, and CONFIRMED by Revise's own docs.
+    # 🔴🔴 TWO RULES ABOUT THIS BOOT, BOTH LEARNED THE EXPENSIVE WAY ON 2026-08-18.
     #
-    # If the pkgimage is stale relative to source, Revise applies the diff while loading. When that
-    # diff redefines a STRUCT, Revise re-evaluates the struct and its dependent methods -- but a const
-    # global is NOT re-initialised, because doing so would wipe live state. So Eval._IDG kept the type
-    # it was BUILT with while the module exported a new one:
+    # (1) `using Revise` COMES FIRST, BEFORE THE PACKAGE. Revise tracks what is loaded after it.
+    # I reordered it the other way earlier today -- for a cause that turned out to be wrong -- and then
+    # measured the "fix" against a daemon that had never actually restarted, so I never saw that the
+    # reorder SILENTLY DISABLES HOT RELOAD. It surfaced only when a probe asked "is the new function
+    # even defined?" and got false, while a benchmark reported perfectly stable numbers for code that
+    # had not changed. A harness that does not reload is worse than none: every measurement is of the
+    # previous build and looks convincing.
+    # ⚠️ IF YOU TOUCH THIS ORDER, VERIFY WITH A NEW SYMBOL (isdefined), NEVER WITH A TIMING.
+    # ⚠️ AND ORDER MAY NOT BE THE WHOLE STORY: Revise issue #994, still OPEN, is exactly this shape --
+    # "Edits to function initially ignored, until unrelated edits happen". So treat a missing symbol as
+    # a REASON TO RESTART, not as a puzzle to solve; the restart is seconds and the puzzle is not.
+    #
+    # (2) PRECOMPILE BEFORE BOOTING, so Revise has no struct diff to apply at load. Revise revises
+    # structs on 1.12, but it cannot re-initialise a const global when its struct is redefined --
+    # doing so would wipe live state -- so a daemon that outlives a struct change strands every const
+    # container typed on it in the old world age:
     #     _IDG type      = Dict{Atom, @world at MeTTaCore.Eval.IDGNode, 38726:41727}
     #     valtype match? = false
-    # and every insert died with "Cannot convert IDGNode to @world at IDGNode". Eight errors in
-    # test_idg.jl through the daemon; the SAME file passed 34/34 + 6/6 cold. The harness, not the code.
+    # and inserts die with "Cannot convert IDGNode to @world at IDGNode". Revise documents the binding
+    # half under Limitations, "Toplevel binding changes do not propagate": "The same applies to const
+    # bindings and other global bindings that are referenced in type definitions."
+    # Vendored at dev-zone/Revise.jl/docs/src/limitations.md.
+    # 🔑 AND THE MECHANISM IS NAMED IN AN OPEN UPSTREAM ISSUE -- Revise #1116: "revise() runs in a
+    # frozen world, and on 1.12 globals are world-partitioned". That is precisely the @world type we
+    # saw. Related open ones in the same family: #1107 (a removed global keeps its old value live),
+    # #1104/#1105/#1106 (stale methods survive various edits). Revise's method tracking is excellent;
+    # its BINDING tracking has a live bug family. Structure long-lived warm state accordingly.
     #
-    # Revise documents this directly under Limitations, "Toplevel binding changes do not propagate":
-    # "The same applies to const bindings and other global bindings that are referenced in type
-    # definitions." Vendored at dev-zone/Revise.jl/docs/src/limitations.md -- READ IT before blaming
-    # our code for a warm-harness error.
-    #
-    # Precompiling makes the diff EMPTY, so nothing is redefined and nothing is stranded. Free when the
-    # image is already current, which is the usual case. If you ever DO hit a stranded const in a live
-    # session, the documented recovery is the MODULE form -- Revise.revise(MeTTaCore.Eval) -- which
-    # re-evaluates every definition in the module, const initialisers included. It also discards that
-    # module's live state, which is why it is the recovery and not the default.
+    # 🔑 AND THE META-LESSON, WHICH COST MORE THAN EITHER: the world-age failure I chased for an hour
+    # belonged to a THREE-HOUR-OLD daemon that `stop` could not see, because RUNDIR had moved and its
+    # pidfile was at the old path. Four "fixes" were measured against a process that had none of them.
+    # BEFORE BELIEVING A WARM RESULT, CHECK WHICH PROCESS SERVED IT. That is why `stop` kills by PORT.
     julia --project="$CORE" -e 'using Pkg; Pkg.precompile(io=devnull)' >/dev/null 2>&1
-    # 🔴 AND NO `using Revise` IN THIS DAEMON. MEASURED 2026-08-18 -- the split above is caused BY
-    # Revise, and precompiling does not prevent it. Same probe, two loads:
-    #     daemon WITH Revise:  _IDG = Dict{Atom, @world at IDGNode, 38726:41727}   match? false
-    #     plain julia, none:   _IDG = Dict{Atom, IDGNode}                          match? true
-    # The world range is IDENTICAL across restarts, so it is deterministic at LOAD, not a stale image.
-    #
-    # THE TRADE, STATED PLAINLY. This daemon exists for WARM JIT -- measured 265 s -> 100 s on the same
-    # 23-file shard. Hot reload was the bonus, and today it cost three separate FALSE failures: a const
-    # closure (`tnot`) that served stale code through a warm probe, this const Dict, and one more. A
-    # harness that reports errors the code does not have is worth less than one that is slower. So:
-    # edit, then `restart` -- which precompiles first and reuses the image, so it is seconds, not a
-    # cold start. MettaJam's :7702 KEEPS Revise for function-body probes, where it works correctly.
     setsid nohup julia --project="$CORE" -e "
-        using DaemonMode
+        using Revise, DaemonMode
         @eval Main using MeTTaCore
         using Revise
         write(raw\"$READYFILE\", \"ok\")     # sentinel: see the readiness note below
@@ -146,6 +145,23 @@ _run_driver() {
     # reported its exit status as its own (observed 2026-08-18, by the agent it happened to).
     # A harness that reports a result for work it did not run is worse than one that fails:
     # the number is wrong AND it looks right.
+    # 🔴🔴 ONE CLIENT AT A TIME. DaemonMode serves requests SEQUENTIALLY, so a second invocation does
+    # not run in parallel -- it QUEUES, invisibly, behind whatever is already running. Measured
+    # 2026-08-18: a `for f in test/.../*.jl` loop hit this script's 10-minute budget, the outer command
+    # was killed, and its ALREADY-SPAWNED clients kept sitting in the queue. Everything afterwards
+    # looked mysteriously slow -- three clients stacked on one daemon, the oldest 32 minutes in, all
+    # serialised on a 2-core box. Nothing errored; there was simply a line I could not see.
+    # Refuse instead, and say what to do. (A loop over files is the wrong shape anyway: each call
+    # spawns a fresh client julia that pays its OWN JIT before it ever reaches the warm daemon.
+    # Put the loop INSIDE one driver file.)
+    local busy
+    busy=$(pgrep -f "runfile.*port=$PORT" 2>/dev/null | grep -v "^$$\$" | head -3)
+    if [ -n "$busy" ]; then
+      echo "  warm_suite: ⛔ a client is ALREADY running against port $PORT (pids: $(echo $busy))."
+      echo "     DaemonMode serialises — a second run would queue silently, not go faster."
+      echo "     Wait for it, or: kill $(echo $busy)"
+      exit 1
+    fi
     local drv="$RUNDIR/driver.$$.$RANDOM.jl"
     cat > "$drv" <<JULIA
 # Hot reload is ON. A FRESH daemon revises structs correctly -- measured 2026-08-18, valtype match
