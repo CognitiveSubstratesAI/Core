@@ -526,6 +526,55 @@ function _multivalued_heads(atoms)::Set{Symbol}
     multi
 end
 
+"""
+    _self_reaching_heads(atoms) -> Set{Symbol}
+
+Every head that can reach ITSELF through the call graph — directly or mutually recursive.
+
+🔴 THIS IS THE GATE THAT MAKES §7.11.1's INSTANCE FILTER SOUND, and it exists because a `println`
+trace of one instance showed exactly where the filter's premise breaks. Recall the two cases:
+
+    A  (= (d (s (s (s a)))) deep)  (= (d (s a)) shallow)      call (d (s (s (s a))))
+       instances: deep -> (d (s (s (s a))))   shallow -> (d (s a))
+       the instance IS the call ⇒ filtering on it is EXACT
+
+    B  (= (e (f a)) v)  (= (e (f (g \$x))) (e (f \$x)))          call (e (f (g (g a))))
+       instance: v -> (e (f a))
+       the call REDUCES into that instance ⇒ filtering on it DROPS a correct answer
+
+The recorded instance is the goal AT THE POINT THE RULE MATCHED. For a head that can reduce back into
+itself, that is a DIFFERENT term from the original call, so comparing the caller against it is
+meaningless. For a head that cannot, the two coincide and the comparison is exact.
+
+⇒ the filter is sound EXACTLY on heads that are not self-reaching, and nothing local to an answer
+distinguishes the two — it is a property of the PROGRAM, which is why it is computed here over the
+whole call graph rather than guessed at per answer.
+
+Same shape as `_multivalued_heads` and `_pure_heads`: a least fixpoint over `_callees!`, computed
+over ALL rules (stdlib included) because the chain back into a head can run through library code.
+"""
+function _self_reaching_heads(atoms)::Set{Symbol}
+    rules = _rules_of(atoms)
+    reach = Dict{Symbol,Set{Symbol}}()
+    for (h, bodies) in rules
+        cs = Set{Symbol}()
+        for b in bodies; _callees!(b, cs); end
+        reach[h] = cs
+    end
+    changed = true
+    while changed                                   # transitive closure
+        changed = false
+        for (h, cs) in reach
+            for c in collect(cs)
+                for c2 in get(reach, c, Set{Symbol}())
+                    c2 in cs || (push!(cs, c2); changed = true)
+                end
+            end
+        end
+    end
+    Set{Symbol}(h for (h, cs) in reach if h in cs)
+end
+
 function auto_table!(space::Space)
     pure = _pure_heads(_rules_of(all_atoms(space)))                         # analyze ALL rules (stdlib deps too)
     user = keys(_rules_of(own_atoms(space)))                               # but only TABLE the user's own heads
@@ -1238,7 +1287,16 @@ function _abstract_tabled_eval(red::Atom, gen::Atom, typ::Atom, space::Space, b:
     # instance — that filter was UNSOUND and is gone (see tabling/Abstract.jl for the three-line
     # program it lost an answer on). What remains is substitution of the abstraction binding, which
     # is sound and imprecise.
-    _replay(abstract_answers(_project(general, gen), gen, red), b, prev)
+    # ── PRECISION, SOUNDLY GATED (2026-08-18) ────────────────────────────────────────────────────
+    # The instance filter was removed because it LOST ANSWERS on a reducing predicate. It is exact on
+    # a NON-reducing one, and `_self_reaching_heads` is what tells them apart — see its docstring for
+    # the two traced cases. Recomputed per abstracted call rather than cached: abstraction is rare,
+    # the space can change between calls, and a stale purity cache is a defect surface this feature
+    # has already paid for once.
+    h = head_name(red)
+    filterable = h !== nothing && !(h in _self_reaching_heads(all_atoms(space)))
+    gtrie = filterable && has_answer_trie(genkey) ? answer_trie_for(genkey) : nothing
+    _replay(abstract_answers(_project(general, gen), gen, red, gtrie), b, prev)
 end
 
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)

@@ -196,11 +196,15 @@ Making it exact requires answers to carry their goal instance, which is the SAME
 delay lists need (conditions must ride WITH the value). Recorded in the roadmap under 7.A, not
 papered over here: an over-approximating restraint that looked exact would be the worse failure.
 """
-function abstract_answers(general::Vector{Atom}, gen::Atom, specific::Atom)::Vector{Atom}
+function abstract_answers(general::Vector{Atom}, gen::Atom, specific::Atom,
+                          trie::Union{AnswerTrie,Nothing} = nothing)::Vector{Atom}
     bs = match_atoms(gen, specific)                 # what the abstraction's variables stood for
     isempty(bs) && return general                   # cannot specialise ⇒ the general set, unfiltered
     out = Atom[]
     for a in general
+        # `trie === nothing` ⇒ the caller could not prove the filter sound for this head (it is
+        # self-reaching, so a recorded instance is a REDUCED term, not the call) ⇒ admit everything.
+        _abstract_instance_admits(trie, a, specific) || continue
         # 🔴🔴 THE INSTANCE FILTER WAS REMOVED 2026-08-18 — IT WAS UNSOUND, AND IT WAS MINE.
         # Shipped 2026-08-17 (7425b7d) claiming §7.11.1 was now EXACT. An adversarial audit the same
         # night found it DROPS REAL ANSWERS on the default path, and the reproduction is three lines:

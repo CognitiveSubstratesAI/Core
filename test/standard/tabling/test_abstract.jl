@@ -237,17 +237,19 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         end
     end
 
-    @testset "🔴🔴 IT OVER-APPROXIMATES, and the attempt to make it EXACT was UNSOUND" begin
-        # 🔴 THIS TESTSET HAS NOW BEEN WRITTEN THREE TIMES, AND THE HISTORY IS THE LESSON.
-        #   b98f581 — shipped over-approximating; this asserted the imprecision, deliberately.
-        #   7425b7d — 7.A recorded each answer's goal INSTANCE, a filter was added, and this was
-        #             flipped to assert EXACTNESS.
-        #   TODAY   — an adversarial audit found the filter DROPS REAL ANSWERS, and it is reverted.
+    @testset "🔴🔴 PRECISION IS GATED ON THE CALL GRAPH — exact when sound, coarse when not" begin
+        # 🔴 THIS TESTSET HAS BEEN WRITTEN FOUR TIMES, and the sequence is the whole lesson:
+        #   b98f581 — shipped over-approximating; asserted the imprecision deliberately.
+        #   7425b7d — an instance filter was added and this was flipped to assert EXACTNESS.
+        #   58f434e — the filter was found to LOSE ANSWERS; reverted, back to over-approximating.
+        #   NOW     — a `println` trace of one instance showed WHY, and the fix is a GATE, not a
+        #             retreat: the filter is exact on a head that cannot reduce into itself, and
+        #             meaningless on one that can, because the recorded instance is the goal AT THE
+        #             POINT THE RULE MATCHED — a REDUCED term, not the call.
         #
-        # The filter asked "did some instance that produced this answer unify with the call?" That is
-        # NOT the same question as "does this answer hold for this call", and upstream only appears to
-        # ask it because a Prolog answer IS a substitution over the goal skeleton. See the regression
-        # testset below for the three-line program that proves the difference.
+        # `d` here is NON-REDUCING (both rules are facts), so `_self_reaching_heads` clears it and the
+        # filter runs: the result is EXACT. The reducing counterpart is the testset below, which must
+        # stay coarse — and must not lose its answer.
         _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
         try
             s = Space(); load_core_stdlib!(s)
@@ -260,13 +262,27 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
 
             _AB.untable_all!(); _AB.abolish_all_tables!()
             _ab_abstract_mode!(); _AB.table_as!(:d, :subgoal_abstract => 1)
-            approx = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
-                                 for x in (y isa AbstractVector ? y : [y])])
-            @test "deep" in approx              # SOUND: the real answer is never lost…
-            @test approx != exact               # …but it IS an over-approximation, not a filter
+            got = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
+                              for x in (y isa AbstractVector ? y : [y])])
+            @test got == exact                  # EXACT — the restraint costs no precision here
+            @test !("shallow" in got)           # …and this is what the coarse version let through
         finally
             _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
         end
+    end
+
+    @testset "the GATE itself — `_self_reaching_heads` is what separates the two cases" begin
+        # Asserting the gate directly, so a future change to the call-graph analysis cannot silently
+        # re-enable the filter on a reducing head (which is the unsound direction).
+        s = Space(); load_core_stdlib!(s)
+        load_metta!(s, raw"(= (d (s a)) shallow)" * "\n" *
+                       raw"(= (e (f a)) v)" * "\n" *
+                       raw"(= (e (f (g $x))) (e (f $x)))" * "\n" *
+                       raw"(= (m1) (m2))" * "\n" * raw"(= (m2) (m1))" * "\n")
+        sr = _AB._self_reaching_heads(_AB.all_atoms(s))
+        @test !(:d in sr)                       # facts only ⇒ cannot reduce into itself
+        @test :e in sr                          # directly recursive
+        @test :m1 in sr && :m2 in sr            # MUTUAL recursion must be caught too
     end
 
     @testset "🔴🔴 REGRESSION: the instance filter LOST an answer — three lines that prove it" begin

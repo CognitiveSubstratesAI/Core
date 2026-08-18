@@ -156,6 +156,62 @@ never does.
 
 ---
 
+## 0i. 🔴 THE §7.11.1 AUDIT — SIX FINDINGS AGAINST ONE DAY-OLD FEATURE (2026-08-18)
+
+**Everything sections 0d and 0f claim about §7.11.1 being EXACT is RETRACTED. Read this first.**
+
+An adversarial audit of the previous day's own work returned six findings against §7.11.1 — the
+feature that had shipped hours earlier with 49 green tests. Fixed in `58f434e` + `cbbca5b`.
+
+| # | defect | how it was settled |
+|---|---|---|
+| 1 | **the instance filter LOST REAL ANSWERS** | reproduced in 3 lines before touching anything |
+| 3 | the abstraction model diverged on **every multi-argument goal** | live swipl oracle, 6 variants |
+| 4 | an in-progress general table answered **EMPTY** | read `_PARTIAL`, as the consumer branch does |
+| 5 | `subgoal_abstract(N)` did what **SWI refuses to do by default** | live swipl: default action is `error` |
+| 2 | the most-general shortcut **skipped specialisation** | route every abstracted call through the arm |
+| 6 | a docstring asserted three properties that are **false here** | all three checked from the code body |
+
+### 🔴 #1 — and it is the deepest thing found so far
+
+    (= (e (f a)) v)     (= (e (f (g $x))) (e (f $x)))
+    !(e (f (g (g a))))     unrestrained -> ["v"]     subgoal_abstract(1) -> []     ← ANSWER GONE
+
+The general table holds `v` with recorded instance `(e (f a))`; the call is `(e (f (g (g a))))`,
+which does not unify with it — yet `v` IS correct, because the call **reduces into** `(e (f a))`.
+
+⇒ **"some instance that produced this answer unifies with the call" is NOT "this answer holds for the
+call".** Upstream's test only looks equivalent because a Prolog answer IS a substitution over the goal
+skeleton, so unifying the SKELETON carries the CALLER's bindings — it never asks about provenance. In
+a rewriting language the call reduces into other instances and no provenance test can see it.
+**This is the THIRD ASSUMPTION one level subtler than 7.A found it: recording the instance was not
+enough, because the instance does not answer the question.** Recovering precision needs the answer to
+carry the caller's bindings — the same representation change 7.D needs.
+
+### 🔴 #3 — the file ARGUED the wrong model, citing the C
+
+It cited `pl-trie.c:768`'s **generic** `from_depth = 1`. Tabling uses `pl-tabling.c:2472`
+`{.from_depth = 2}`, and `compounds` is a **depth that unwinds on POP**, not a running total — so the
+budget re-arms at **every top-level argument**. Ground truth, live swipl 10.1.12:
+
+| goal | N | swipl |
+|---|---|---|
+| `p(s(s(s(a))))` | 1 | `p(s(_))` |
+| `q(f(a), g(b))` | 1 | **UNCHANGED** ← we abstracted `g(b)` |
+| `r(f(a), g(b), h(c))` | 1 | **UNCHANGED** ← we abstracted two arguments |
+| `a2(f(g(h(a))), k(l(m(b))))` | 2 | `a2(f(g(_)), k(l(_)))` |
+
+All six rows are now the test. **Reading the source is not reading the CALL SITE** — an executable
+oracle settled in one command what re-reading the C had got wrong twice.
+
+### THE STANDING LESSON
+
+Six defects, one day old, 49 green tests, written carefully with upstream citations throughout — and
+the citations were part of how it went wrong. **An audit against the source is not optional after a
+feature; it is part of shipping it.** `[[feedback_green_suite_hides_unwired_correct_code]]`
+
+---
+
 ## 0f. 🟢 7.A PART ONE — PER-ANSWER METADATA ON THE TRIE NODE (2026-08-17)
 
 `TrieNode` gained `instances::Vector{Atom}`; `_leader_pass` records `subst(key, bnd)` — the goal
@@ -173,7 +229,7 @@ explicit. `_leader_pass` is the ONLY place the binding still exists; one line la
 
 | measured | result |
 |---|---|
-| §7.11.1 precision | **EXACT** — the over-approximation pinned in 0d is closed; `test_abstract.jl`'s testset now asserts the opposite of what it asserted this morning |
+| §7.11.1 precision | ⚠️ **CLAIM RETRACTED 2026-08-18 — the filter that made it "exact" was UNSOUND and LOST ANSWERS. See section 0i.** |
 | coverage | 11 of 11 answers carry an instance on `fib 10` |
 | cost | **+0.08%** allocations (fib 12: 5,836,784 vs 5,832,208) |
 | suite | 88 files / 0 failed |
