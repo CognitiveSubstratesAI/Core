@@ -229,6 +229,11 @@ module StandardMeTTaTests
     # verdicts. This is the defect class `test_delays.jl` CANNOT see: that file tests the delay
     # ALGEBRA, and a perfect algebra over a broken fixpoint passes every assertion in it.
     Main.@suite("standard/tabling/upstream/test_xsb_wfs_corpus.jl")
+    # The GROUNDED enumeration: which `Grounded{T}` payloads the PARSER can produce (three) versus
+    # which the engine constructs (five more), and that `Grounded{Bindings}` never reaches an answer.
+    # A gate rather than prose in `docs/src/language/grammar.md`, because enumerations in prose go
+    # stale on the first addition.
+    Main.@suite("standard/test_grounded_payloads.jl")
     # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
     # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
     # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global
