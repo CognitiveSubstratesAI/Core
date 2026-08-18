@@ -527,10 +527,22 @@ function _rule_heads_of(atoms)::Dict{Symbol,Vector{Atom}}
     d
 end
 
+# ⚡ INTERPOLATION-FREE NAMES. `Var("_sa$(tag)", …)` built a FRESH STRING per renamed variable —
+# MEASURED at **256 B each**, against **0 B** for a literal name, because a literal is a constant and
+# an interpolation is not. `tag` only ever takes the two values `is_multivalued` passes, so the names
+# are constants and the allocation was pure waste.
+# ⚠️ THE ASYMMETRY UNDERNEATH IS NOT TABLING'S TO FIX: `Sym.name` is a `Symbol` (interned) while
+# `Var.name` is a `String`, so neither `Var` nor `Sym` is `isbits`. That is core `Atoms.jl` and
+# changing it touches every atom in the engine — out of scope here, and guarded by
+# `[[reference_core_interpreter_perf_findings]]` (no eval-core change without a measured need).
+const _SA_NAMES = ("_sa0", "_sa1", "_sa2", "_sa3")
+@inline _sa_name(tag::UInt64) = _SA_NAMES[(tag & 0x3) + 1]
+
 "Rename every variable in `a` to a fresh id, so two patterns share no variable (standardise apart)."
 function _standardise_apart(a::Atom, tag::UInt64)::Atom
     seen = Dict{Var,Var}(); n = Ref(0)
-    rn(x::Atom) = x isa Var ? get!(() -> (n[] += 1; Var("_sa$(tag)", UInt64(n[]))), seen, x) :
+    nm = _sa_name(tag)
+    rn(x::Atom) = x isa Var ? get!(() -> (n[] += 1; Var(nm, UInt64(n[]))), seen, x) :
                   (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
     rn(a)
 end
