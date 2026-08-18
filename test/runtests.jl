@@ -205,6 +205,18 @@ module StandardMeTTaTests
     # precision boundary: exact when an answer mentions the abstracted variable, over-approximating
     # when it does not — because a MeTTa answer is a VALUE, not a substitution over the skeleton.
     Main.@suite("standard/tabling/test_abstract.jl")
+    # SWI §7.7's RE-EVALUATION half — the IDG's second stage. The graph (edges, falsecount,
+    # transitive invalidation) shipped earlier; this is `prepare_reeval!` / `reeval_complete!` /
+    # `reset_reevaluation!` plus the DECREMENT walk that re-validates dependants.
+    # 🔴 The verdict is a CONTENT DIGEST, not upstream's `answer_count == value_count`. Cardinality
+    # is sound in Prolog because an answer IS its substitution; here every answer has a payload, and
+    # TWO measured mutation classes change content at constant count — `trie_insert_moded!` replaces
+    # a moded aggregate in place, and `merge_bottom_into!` widens a WFS bottom's condition. SWI
+    # documents the same insufficiency and patches it only in the monotonic path.
+    # ⚠️ The hook stays INERT until something calls `idg_changed!` on a space mutation, which is the
+    # dynamic-predicate edge and is still unbuilt — this lands the re-evaluation half, NOT
+    # incremental tabling end to end. The tests supply the trigger directly.
+    Main.@suite("standard/tabling/test_reeval.jl")
     # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
     # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
     # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global

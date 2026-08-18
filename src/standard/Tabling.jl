@@ -276,7 +276,7 @@ answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_NEG_DELAYS); empty!(_DEPS);
-                   _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_idg!(); clear_mono!();  # §1.0 3-4 + §7.7 + §7.8
+                   _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_answer_delays!(); clear_idg!(); clear_mono!(); empty!(_REEVAL_PENDING);  # §1.0 3-4 + §7.7 + §7.8
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 
@@ -1098,6 +1098,12 @@ end
 # turns recording on so the graph can be inspected against real runs before anything depends on it.
 const _IDG_RECORD = Ref(false)
 
+"""Tables with a `prepare_reeval!` outstanding — §7.7's re-evaluation half.
+
+A Set rather than a flag, because completion completes a whole SCC and the question ("was this
+member being re-evaluated?") has to be asked per member."""
+const _REEVAL_PENDING = Set{Atom}()
+
 const _TRIE_READ = Ref(true)     # 🟢 DEFAULT ON — see the block above
 
 const _RESUME_COMPLETION = Ref(false)
@@ -1481,9 +1487,20 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             return _replay(_project(answers, red), b, prev)                      #   FRESH ⇒ project+replay
         end
         delete!(_ANSWER_TABLE, key); delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
+        # ── §7.7: RE-EVALUATE rather than DISCARD ───────────────────────────────────────────────
+        # `drop_answer_trie!` throws the old answers away, and with them the only thing that could
+        # establish that re-derivation produced the SAME answers — which is what lets
+        # `reeval_complete!` RE-VALIDATE the dependants instead of leaving every one of them to
+        # recompute. `prepare_reeval!` empties the trie and HOLDS the old answers; the §7.5 concern
+        # the comment below names is still covered, because the emptied trie's status is `:fresh`,
+        # not `:complete`.
+        if _IDG_RECORD[] && has_idg_node(key) && idg_is_invalid(key) && prepare_reeval!(key)
+            push!(_REEVAL_PENDING, key)
+        else
         drop_answer_trie!(key)                                                   #   …and the mirrored trie with it: a
                                                                                  #   surviving trie would let §7.5 answer
                                                                                  #   a subsumed call from evicted data.
+        end
     end
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
         push!(_PARTIAL_READ, key)                                                #   flag self-recursion,
@@ -1552,13 +1569,26 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         for m in comp()
             t = answer_trie_for(m)
             for a in _PARTIAL[m]; trie_insert!(t, a); end
-            set_table_status!(t, :complete)          # `$tbl_table_status` — §7.5 requires COMPLETE
+            if m in _REEVAL_PENDING                  # §7.7: finish the re-evaluation lifecycle —
+                delete!(_REEVAL_PENDING, m)          #   `reeval_complete!` sets :complete itself and,
+                reeval_complete!(m)                  #   on :same, RE-VALIDATES the dependants (:8495)
+            else
+                set_table_status!(t, :complete)      # `$tbl_table_status` — §7.5 requires COMPLETE
+            end
         end
     finally
         if _scc_root(key) == key                                                # only the ROOT cleans its SCC
             done = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
             filter!(g -> _scc_root(g) != key, _GEN_STACK)
             for m in done
+                # §7.7: an exception escaping completion must NOT leave a table half re-evaluated.
+                # A no-op on the normal path (`reeval_complete!` already cleared both); on the
+                # exception path it restores the OLD answers and leaves falsecount at 1 so the next
+                # call retries — `reset_reevaluation`, pl-tabling.c:8548.
+                if m in _REEVAL_PENDING
+                    delete!(_REEVAL_PENDING, m)
+                    idg_is_reevaluating(m) && reset_reevaluation!(m)
+                end
                 delete!(_TABLE_INPROG, m); delete!(_PARTIAL, m); delete!(_COMPONENT, m); delete!(_PARTIAL_READ, m)
                 delete!(_SCC_NEG, m)
                 # 🔴 #6: THE WORKLIST AND THE SUSPENSIONS MUST DIE WITH THE COMPLETION.

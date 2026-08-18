@@ -439,3 +439,200 @@ function trie_insert_restrained!(t::AnswerTrie, head::Symbol, a::Atom)
     add_answer_count_restraint!(head)
     (trie_insert!(t, generalise_answer_substitution(a)), act)
 end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONTENT DIGESTS — §7.7's "did the answers change?" verdict.
+#
+# `reeval_complete` (`pl-tabling.c:8477-8505`) decides whether a re-evaluated table produced the
+# same answers, and if so RE-VALIDATES its dependants instead of re-running them. Its verdict is
+# `:8484-8485`:
+#
+#     same_answers = ( n->new_answer == false && n->answer_count == atrie->value_count );
+#
+# 🔴🔴 THAT TEST IS CARDINALITY, AND PORTING IT AS WRITTEN WOULD BE SILENTLY WRONG HERE.
+#
+# It is safe in Prolog because AN ANSWER *IS* ITS SUBSTITUTION: a stored answer has no payload
+# beyond the term that reached the node, so the only way the table's content can change is for a
+# node to appear or disappear — which the count sees. Upstream knows the test is insufficient the
+# moment that stops holding, and says so itself at `:7663-7679` (`$mono_reeval_prepare`):
+#
+#     "Without answer subsumption, this is easy: as the trie is monotonic no answers are deleted
+#      and thus the trie is unchanged iff the `value_count` of the trie is unchanged.
+#      With answer subsumption this is harder as each primary node (`value_count`) has one
+#      secondary node (the _ModeArgs_) ..."
+#
+# `value_count` counts only TN_PRIMARY nodes (`pl-trie.c:1436-1437`), and a mode-directed
+# aggregate lives on a SECONDARY node — so upstream patches around the hole (TN_IDG_AS_LAST) ONLY
+# in the monotonic path, where it is forced to.
+#
+# ⇒ FOR US THE EXCEPTION IS THE NORMAL CASE. Every MeTTa answer carries a VALUE, and two measured
+# mutations change the value at CONSTANT CARDINALITY:
+#
+#   * `trie_insert_moded!` (above) REPLACES `node.answer` in place on the `:delete` action — the
+#     §7.3 aggregate moves, `t.count` does not.
+#   * `merge_bottom_into!` (`Tabling.jl`) replaces a WFS bottom with a WIDER-CONDITION bottom —
+#     one answer before, one after, a different residual condition.
+#
+# A cardinality verdict calls both "same answers" and re-validates every dependant while it holds
+# STALE RESULTS. That failure is silent: nothing errors, the dependants simply answer from a cache
+# that no longer matches its source. So the cardinality clause is REPLACED, not ported, and
+# `test/standard/tabling/test_reeval.jl` runs the same case against a deliberate
+# `length(old) == length(new)` mutant and shows it fail — a claim that the digest is NECESSARY is
+# worth nothing until the cardinality version is shown to break.
+#
+# ─── 🔴 WHY THE DIGEST CANNOT BE BUILT ON `hash` ─────────────────────────────────────────────────
+# `Base.hash(w::WFSBottom, h)` (`Tabling.jl`) hashes `length(w.delays)` — the DISJUNCT COUNT — BY
+# DESIGN, and its comment says why: `==` on a bottom is `dnf_equiv`, SET equality over a set of
+# sets, which has no stable order to hash, so the count is "the strongest order-independent key
+# available; collisions merely fall through to `==`". Correct for a Dict. FATAL for a digest:
+# `(p ∨ q)` and `(r ∨ s)` are two disjuncts either way, so two DIFFERENT residual conditions
+# collide SYSTEMATICALLY rather than by accident, and a digest has no `==` to fall through to.
+#
+# So `_dnf_digest` folds the DNF EXPLICITLY, the way `dnf_equiv`/`set_eq`/`delay_eq` COMPARE it:
+# order-insensitive within a `DelaySet` and across the `DelayDNF`, by digesting the members and
+# SORTING the digests. Sorting rather than `xor`-folding is deliberate — `xor` is the obvious
+# order-insensitive combiner and it CANCELS duplicates, which is another systematic collision.
+#
+# ⚠️ AND NOTE WHAT IS *NOT* BROKEN: `variant_eq` is already EXACT on bottoms. `trie_keys` yields
+# `GroundKey{WFSBottom}`, whose `==` is `a.v == b.v`, i.e. `dnf_equiv`. Only the HASH is lossy.
+# That is why `answers_identical` — the real decision — is pairwise `variant_eq` and the digest is
+# the CHEAP STAMP that additionally covers metadata `variant_eq` cannot see.
+#
+# ⚠️ DIGESTS ARE SESSION-LOCAL. They are built on `Base.hash` of Symbols/values, which is not
+# guaranteed stable across processes. Every comparison here is prepare→complete inside one run;
+# nothing persists a digest, and nothing should.
+
+"Seed for the answer digests. A named constant so a stray `hash(x)` with no seed cannot silently
+produce a digest that compares equal to a properly seeded one."
+const _ANSWER_DIGEST_SEED = hash(:core_tabling_answer_digest)
+
+"""
+    answer_digest(a, h = _ANSWER_DIGEST_SEED) -> UInt
+
+A content digest of one answer, folded into `h`.
+
+VARIANT-CANONICAL: it walks `trie_keys(a)`, so two answers equal up to variable renaming digest
+identically — the same identity `trie_insert!` and `variant_eq` use, not a weaker one.
+
+🔴 The WFS bottom is folded EXPLICITLY rather than through `hash`. See the section header: the
+bottom's `Base.hash` deliberately hashes only its disjunct COUNT, so two different residual
+conditions would collide systematically. Recursion through `_delay_digest` terminates because a
+`DelayDNF` names other tables' variants and answers, which are finite terms and never contain the
+bottom currently being digested.
+"""
+function answer_digest(a::Atom, h::UInt = _ANSWER_DIGEST_SEED)::UInt
+    for k in trie_keys(a)
+        h = _key_digest(k, h)
+    end
+    h
+end
+
+# ⚠️ TWO METHODS, NOT AN `isa` INSIDE ONE. `GroundKey{WFSBottom}` is a concrete type, so the split
+# is a dispatch rather than a runtime type test on a `Union` — the same reasoning `is_undefined`
+# records in Tabling.jl.
+_key_digest(k::TrieKey, h::UInt)::UInt = hash(k, h)
+_key_digest(k::GroundKey{WFSBottom}, h::UInt)::UInt =
+    _dnf_digest(k.v.delays, hash(:wfsbottom, h))
+
+"""Digest a DNF the way `dnf_equiv` COMPARES it: order-insensitive across the disjunction.
+
+Sort-then-fold, not `xor`-fold: `xor` is order-insensitive but CANCELS duplicates, and a digest has
+no `==` to fall through to when it collides."""
+function _dnf_digest(dnf::DelayDNF, h::UInt)::UInt
+    ds = UInt[_delayset_digest(s) for s in dnf]
+    sort!(ds)
+    for d in ds; h = hash(d, h); end
+    hash(length(ds), h)
+end
+
+"Digest one conjunction — order-insensitive within the set, matching `set_eq`."
+function _delayset_digest(s::DelaySet)::UInt
+    ds = UInt[_delay_digest(d) for d in s]
+    sort!(ds)
+    h = hash(:delayset, _ANSWER_DIGEST_SEED)
+    for d in ds; h = hash(d, h); end
+    hash(length(ds), h)
+end
+
+"Digest one delayed literal — the three fields `delay_eq` compares, and no others."
+function _delay_digest(d::Delay)::UInt
+    h = hash(d.kind, hash(:delay, _ANSWER_DIGEST_SEED))
+    h = answer_digest(d.variant, h)
+    d.answer === nothing ? hash(:table_level, h) : answer_digest(d.answer::Atom, h)
+end
+
+"""
+    table_digest(answers) -> UInt
+
+An ORDERED digest of an answer SEQUENCE — upstream's `value_count`, replaced by content.
+
+⚠️ ORDERED, and that is a decision. `trie_answers` returns INSERTION order by explicit design (see
+its docstring: order is user-visible because `Eval.jl` propagates store order into answer order), so
+a re-evaluation that returns the same answers in a DIFFERENT order has changed what a caller sees
+and its dependants must not be re-validated.
+"""
+function table_digest(answers::Vector{Atom})::UInt
+    h = hash(:answers_only, _ANSWER_DIGEST_SEED)
+    for a in answers; h = answer_digest(a, h); end
+    hash(length(answers), h)
+end
+
+"""
+    table_digest(t::AnswerTrie) -> UInt
+
+The digest of a whole table: every answer in insertion order, PLUS the per-answer metadata that a
+`Vector{Atom}` cannot carry.
+
+Today that means `length(node.instances)`, which §7.11.1 subgoal abstraction READS (see
+`trie_record_instance!`: an empty list means UNRECORDED, and abstraction over-approximates without
+it). A re-evaluation that produced the same answers from a different set of goal instances has
+changed what abstraction will compute, so it is not a no-change.
+
+🔴 NOT INTERCHANGEABLE WITH THE `Vector{Atom}` METHOD, and salted differently so that comparing the
+two can only ever mismatch loudly instead of coinciding by luck.
+"""
+function table_digest(t::AnswerTrie)::UInt
+    h = hash(:with_metadata, _ANSWER_DIGEST_SEED)
+    for n in _answer_nodes_ordered(t)
+        h = answer_digest(n.answer::Atom, h)
+        h = hash(length(n.instances), hash(:instances, h))
+    end
+    hash(t.count, h)
+end
+
+"""The answer-bearing nodes in INSERTION order — `trie_answers`, keeping the NODE.
+
+Separate from `trie_answers` rather than a refactor of it: that function is on the hot read path and
+returns `Vector{Atom}`; this one is called once per re-evaluation and needs the metadata that lives
+on the node."""
+function _answer_nodes_ordered(t::AnswerTrie)::Vector{TrieNode}
+    out = Tuple{Int,TrieNode}[]
+    stack = TrieNode[t.root]
+    while !isempty(stack)
+        n = pop!(stack)
+        n.answer === nothing || push!(out, (n.seq, n))
+        for (_, c) in n.children; push!(stack, c); end
+    end
+    sort!(out; by = first)
+    TrieNode[n for (_, n) in out]
+end
+
+"""
+    answers_identical(old, new) -> Bool
+
+THE re-evaluation verdict on answer VALUES: same length, and pairwise `variant_eq` IN ORDER.
+
+Exact, not a digest — no hash, so no collision. `variant_eq` is `trie_keys(a) == trie_keys(b)`, and
+that is already correct for a WFS bottom: the path yields `GroundKey{WFSBottom}`, whose `==` is
+`dnf_equiv`, set equality over the DNF. Only the bottom's HASH is lossy, which is exactly why the
+digest above cannot be built on it and why this function exists alongside it.
+
+ORDERED for the reason `table_digest` documents: answer order is user-visible.
+"""
+function answers_identical(old::Vector{Atom}, new::Vector{Atom})::Bool
+    length(old) == length(new) || return false
+    for i in eachindex(old)
+        variant_eq(old[i], new[i]) || return false
+    end
+    true
+end

@@ -1,4 +1,5 @@
-# tabling/Abstract.jl — SUBGOAL ABSTRACTION. SWI §7.11.1, `subgoal_abstract(N)`.
+# tabling/Abstract.jl — THE TWO ABSTRACTION RESTRAINTS. SWI §7.11.1 `subgoal_abstract(N)` (the CALL,
+# below) and §7.11.2 `answer_abstract(N)` (the ANSWER, in the second half of this file).
 #
 # Mirrors `size_abstract` in the trie walk (`src/pl-trie.c:826-902`) and `start_abstract_tabling/3`
 # (`boot/tabling.pl:466-517`).
@@ -250,4 +251,344 @@ function _abstract_instance_admits(trie::Union{AnswerTrie,Nothing}, a::Atom, spe
     insts = trie_instances(trie, a)
     isempty(insts) && return true
     any(i -> !isempty(match_atoms(i, specific)), insts)
+end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# §7.11.2 — ANSWER ABSTRACTION, `answer_abstract(N)`.  `pl-tabling.c:3563-3617`.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+#
+# The sibling restraint, and the mirror image of the one above. `subgoal_abstract(N)` bounds how MANY
+# tables exist by generalising the CALL; `answer_abstract(N)` bounds how BIG one table's terms get by
+# generalising the ANSWER. Same trie walk, same `{.from_depth = 2}` (`pl-tabling.c:3585` vs `:2472`),
+# opposite soundness direction — and that direction is the whole difficulty.
+#
+# ─── 🔴 THE HARD PART, RESOLVED WITH EVIDENCE ────────────────────────────────────────────────────
+# Generalising a CALL is sound: a more general table answers the specific question, so §7.11.1 needs
+# no compensation. Generalising an ANSWER is NOT: the table then asserts `p(s(s(_)))` when only
+# `p(s(s(s(a))))` was derived, i.e. it claims answers nobody proved. Upstream pays that debt by
+# making the generalised answer UNDEFINED in the well-founded sense — `add_radial_restraint()`
+# (`pl-tabling.c:8989`) calls the deliberately paradoxical `system:(radial_restraint :-
+# tnot(radial_restraint))` (`boot/tabling.pl:2317`), whose only job is to push a literal onto the
+# ambient delay list, which the fall-through `update_delay_list` then attaches to the new node.
+#
+# 📏 MEASURED, live swipl 10.1.12, `library(tables)`'s own reader — this is the shape to reproduce:
+#
+#     :- table p/1 as answer_abstract(1).   q(s(s(s(a)))).  q(s(a)).   p(X) :- q(X).
+#     ?- get_returns_and_tvs(T, R, TV).      ret(s(s(_))) tv=u      ret(s(a)) tv=t
+#     ?- get_returns_and_dls(T, R, DL).      ret(s(s(_))) dl=[[radial_restraint]]   ret(s(a)) dl=[]
+#
+# ⇒ CONDITIONALITY IS PER-ANSWER, NOT PER-TABLE, and the delay list is a DNF of one conjunction of
+# one POSITIVE literal. `tabling/Delays.jl` already has that exact type (`DelayDNF`/`DelaySet`/
+# `Delay`), and `dnf_residual` renders it as `radial_restraint` — byte-identical to upstream's.
+#
+# ─── …AND WHY `undefined_with(...)` IS THE WRONG TOOL, WHICH IS THE QUESTION THAT BLOCKED THIS ───
+# `Options.jl` refused this option since 2026-08-17 with the reason "needs DELAY LISTS". Delay lists
+# landed the next day (`tabling/Delays.jl`), so the premise was RE-CHECKED rather than assumed — and
+# it turns out to have been HALF right, in a way that matters more than the half that was wrong.
+#
+# Our WFS bottom is `Grounded(WFSBottom(dnf))`: an ATOM that carries a condition and HAS NO VALUE.
+# Substituting it for the generalised answer would store "something here is undefined" in place of
+# "`(s (s $_))` holds conditionally" — which throws away the generalisation, and the generalisation
+# IS the feature (it is what makes the truncated table an over-approximation rather than a silently
+# incomplete one). So the value-level bottom cannot express a conditional VALUE. That much of the
+# refusal was right, and no amount of delay-list machinery changes it.
+#
+# 🔑 BUT UPSTREAM DOES NOT PUT IT ON THE VALUE EITHER. `delay_info` hangs off the TRIE NODE
+# (`pl-tabling.h:179-184`) — `Tabling.jl`'s `merge_bottom_into!` docstring already says so, for a
+# different reason. The node is where conditionality belongs because it is the only object with
+# VARIANT identity: several derivations of one answer contribute alternative conjunctions to ONE
+# record instead of becoming several answers. `AnswerTrie.jl`'s `TrieNode` comment anticipated this
+# exactly — *"delays -> WFS residuation and §7.11.2 `answer_abstract`"* — and only `instances` was
+# ever added. So the mechanism was not missing; it was one field short, and the field was named.
+#
+# ⇒ WE THEREFORE HAVE **TWO** CONDITIONALITY CARRIERS, and they are not redundant:
+#     VALUE-LEVEL  `Grounded(WFSBottom(dnf))`  — "the value is unknown"        (`tnot`, WFS)
+#     NODE-LEVEL   `_ANSWER_DELAYS[node]`      — "THIS value holds, but only under a condition"
+# Prolog needs only the second because a Prolog answer IS a substitution, so "unknown" is just a node
+# with no unconditional support. A MeTTa answer is a VALUE, and the two statements come apart.
+# `answer_truth_value` below reads BOTH, so a consumer never has to know which one applied.
+#
+# ⚠️ WHERE THE SIDE TABLE LIVES, AND WHY IT IS NOT THE `Dict{Atom,…}` THAT FILE WARNS AGAINST.
+# `AnswerTrie.jl` is right that a `Dict` keyed by the ANSWER TERM cannot carry per-answer metadata:
+# `==` splits variants, so `(s (s $_g1))` and `(s (s $_g2))` would be two keys for one answer. The
+# key here is the `TrieNode` ITSELF, by object identity — the same object the trie already made
+# variant-canonical. `IdDict` is the exact structure for that. The eventual home is a `delays` field
+# on `TrieNode` beside `instances`; the patch is in this session's report, and moving it later is a
+# field rename, not a redesign.
+#
+# ─── NOT PORTED, NAMED ───────────────────────────────────────────────────────────────────────────
+#  • `radial_restraint` IS NOT A LIVE TABLED PREDICATE HERE. Upstream defines it as a real paradox so
+#    the literal is resolvable; we record it as a MARKER literal. Nothing would consume the table:
+#    `simplify_answer`/`remove_conditional_answer` (`pl-tabling.c:1560`,`:1592`) are unported, so no
+#    delay list is ever simplified against a table — the residual IS the whole content. Defining a
+#    live paradox with no consumer would be ceremony that reads as machinery.
+#  • DELAY-LIST SIMPLIFICATION generally. A conditional answer never becomes unconditional here, and
+#    never gets removed when its condition turns out false. For `radial_restraint` specifically that
+#    is a NON-issue rather than a shortcut: its condition is undefined by construction and can never
+#    be resolved either way, which is the entire point of the predicate.
+#  • THE OTHER `update_delay_list` CALLERS. This file attaches conditionality at exactly one site —
+#    the abstraction — because that is the only producer we have. Ordinary answers are unconditional
+#    and `_ANSWER_DELAYS` stays empty, so nothing pays for this feature that does not use it.
+
+"""How large an ANSWER may grow before abstraction — `answer_abstract(N)`, per predicate.
+
+Keyed by head symbol. Absent = defer to the global `max_table_answer_size` flag; see
+`answer_abstract_for`, which is upstream's `pred_max_table_answer_size` (`pl-tabling.c:3563-3572`)."""
+const _ANSWER_ABSTRACT = Dict{Symbol,Int}()
+
+"""
+    answer_abstract!(head, n)
+
+Declare `:- table head as answer_abstract(n)`. A NEGATIVE `n` REMOVES the restraint, following
+`restraint/4` (`boot/tabling.pl:1337-1342`) — the same convention `subgoal_abstract!` and
+`max_answers` use, kept identical so the three cannot drift apart.
+"""
+function answer_abstract!(head::Symbol, n::Int)
+    n < 0 ? delete!(_ANSWER_ABSTRACT, head) : (_ANSWER_ABSTRACT[head] = n)
+    nothing
+end
+
+"""
+    answer_abstract_for(head) -> Int
+
+`pred_max_table_answer_size` (`pl-tabling.c:3563-3572`): the predicate's own `answer_abstract(N)`,
+falling back to the GLOBAL `max_table_answer_size` flag when it has none.
+
+⚠️ THIS FALLBACK IS THE OPPOSITE SHAPE FROM §7.11.3's and the difference is deliberate upstream.
+`tripwire_answers_for_subgoal` SHORT-CIRCUITS — a per-predicate `max_answers` suppresses the global
+flag entirely. This one DELEGATES — the global flag reaches every predicate that did not override it.
+Two restraints, forty lines apart in the same file, with genuinely different composition rules.
+"""
+function answer_abstract_for(head::Symbol)::Int
+    n = get(_ANSWER_ABSTRACT, head, NO_RESTRAINT)
+    n == NO_RESTRAINT ? max_table_answer_size() : n
+end
+
+clear_answer_abstract!() = (empty!(_ANSWER_ABSTRACT); nothing)
+
+"""
+    answer_size_abstract(a, n) -> (abstracted, was_abstracted)
+
+The answer-side `size_abstract` — **`size_abstract` ITSELF, unchanged**, and that is a measured
+result rather than a convenience.
+
+🔴 THE TWO SIDES DO NOT OBVIOUSLY SHARE A RULE, because they walk DIFFERENT TERMS with the same
+`{.from_depth = 2}`. The subgoal trie is keyed on `Module:Goal`, so at the arming depth
+(`compounds == 2`, `pl-trie.c:826`) the walk is standing on the goal's ARGUMENTS. The answer trie is
+keyed on `ret(A1..An)`, so at the same depth it is standing on each `Ai`'s ARGUMENTS. One extra
+wrapper on the subgoal side is the entire difference — and it means the same N keeps ONE MORE
+compound level in an answer than in a goal:
+
+    p(s(s(s(a))))  as a GOAL,   subgoal_abstract(1)  ->  p(s(_))
+    s(s(s(a)))     as an ANSWER, answer_abstract(1)  ->  s(s(_))
+
+Our `size_abstract(V, n)` leaves `V`'s own functor free and re-arms `n` at each of `V`'s ARGUMENTS —
+which is precisely upstream's `ret(V)` walk with `ret` playing the role of the free root. So the
+answer case needs no adjustment, while a naive "wrap it like the goal" would have been off by one.
+
+📏 VERIFIED ROW BY ROW against live swipl 10.1.12 (`get_returns_and_tvs/3`, action
+`bounded_rationality`); all seven agree with `size_abstract` exactly:
+
+    s(s(s(s(a))))            N=0 -> s(_)                    N=1 -> s(s(_))
+                             N=2 -> s(s(s(_)))              N=3 -> UNCHANGED, tv=t
+    f(g(h(a)), k(l(m(b))))   N=1 -> f(g(_), k(_))           N=2 -> f(g(h(a)), k(l(_)))
+    plainatom                N=1 -> UNCHANGED, tv=t
+
+The N=3 and `plainatom` rows are the load-bearing ones: NO abstraction ⇒ NO `radial_restraint` ⇒ the
+answer stays UNCONDITIONAL. A restraint that marked the whole table would fail both.
+
+⚠️ Abstracted positions are named `\$_sa…`, from the shared walk. The prefix says *size-abstract*,
+not *subgoal*; renaming it per side would fork a function whose whole point is that it did not fork.
+"""
+answer_size_abstract(a::Atom, n::Int)::Tuple{Atom,Bool} = size_abstract(a, n)
+
+# ─── NODE-SEATED CONDITIONALITY ──────────────────────────────────────────────────────────────────
+
+"""The delay condition of individual stored answers, keyed by the TRIE NODE that terminates them.
+
+`IdDict`, i.e. OBJECT IDENTITY — the node is the only thing in this engine with variant identity, so
+this is upstream's `delay_info` hanging off `trie_node` (`pl-tabling.h:179-184`) rather than the
+answer-term `Dict` that `AnswerTrie.jl` correctly rules out. An ABSENT or EMPTY entry means
+UNCONDITIONAL; `Delays.jl` fixes that reading for the whole DNF type.
+
+⚠️ LIFECYCLE: entries are dropped by `clear_answer_delays!`. Nothing in `Tabling.jl`'s `_table_reset!`
+calls it yet — the one-line patch is in this session's report — so across a reset the entries for
+discarded nodes are retained rather than freed. Bounded by the number of abstracted answers ever
+stored, and never wrong (a discarded node is unreachable, so a stale entry can never be read back);
+it is a reclamation gap, named here rather than left to be discovered."""
+const _ANSWER_DELAYS = IdDict{TrieNode,DelayDNF}()
+
+"""The delayed literal `add_radial_restraint()` pushes — `pl-tabling.c:8989`, `boot/tabling.pl:2317`.
+
+POSITIVE, and measured to be so: upstream renders it `[[radial_restraint]]`, not `[[tnot(...)]]`.
+The abstracted answer holds IF `radial_restraint` holds, and `radial_restraint` is undefined by
+construction. `Sym(:ret)` is upstream's own answer term for a 0-arity tabled predicate (the nullary
+return skeleton); `DELAY_POSITIVE` requires an answer, and inventing a different one would make the
+literal print differently from the oracle it is checked against."""
+const RADIAL_RESTRAINT = Delay(Sym(:radial_restraint), Sym(:ret), DELAY_POSITIVE)
+
+"The DNF `bounded_rationality` attaches: one disjunct, one conjunct. Upstream's `[[radial_restraint]]`."
+const RADIAL_RESTRAINT_DNF = DelayDNF([DelaySet([RADIAL_RESTRAINT])])
+
+"""
+    add_radial_restraint!(t, a) -> Bool
+
+`add_radial_restraint()` (`pl-tabling.c:8989`) followed by the fall-through `update_delay_list`
+(`:3640`): make stored answer `a` of trie `t` CONDITIONAL on `radial_restraint`.
+
+Returns whether `a` is a stored answer of `t` at all — `false` means the caller mis-ordered the
+insert and nothing was marked, which must not pass silently.
+
+Merges by DISJUNCTION (`dnf_or`), because a second derivation of the same answer contributes an
+ALTERNATIVE condition to one record; that is `update_delay_list`'s own behaviour and the reason
+`delay_info` holds a buffer of `delay_set`s rather than one.
+"""
+function add_radial_restraint!(t::AnswerTrie, a::Atom)::Bool
+    node = trie_lookup!(t, a, false)
+    (node === nothing || node.answer === nothing) && return false
+    prev = get(_ANSWER_DELAYS, node, DelayDNF())
+    _ANSWER_DELAYS[node] = dnf_or(prev, RADIAL_RESTRAINT_DNF)
+    true
+end
+
+"""
+    answer_delays(t, a) -> DelayDNF
+
+The condition under which stored answer `a` holds — `get_returns_and_dls/3` (`library(tables)`).
+
+EMPTY means UNCONDITIONAL **or** not stored; ask `answer_truth_value` if the difference matters.
+Reads BOTH carriers: a value-level `WFSBottom` answer contributes its own DNF, so a consumer does not
+have to know which of the two mechanisms applied.
+"""
+function answer_delays(t::AnswerTrie, a::Atom)::DelayDNF
+    node = trie_lookup!(t, a, false)
+    (node === nothing || node.answer === nothing) && return DelayDNF()
+    dnf_or(get(_ANSWER_DELAYS, node, DelayDNF()), delays_of(node.answer::Atom))
+end
+
+"""Is this stored answer CONDITIONAL? Upstream's `answer_is_conditional(node)` (`pl-tabling.c:3624`).
+
+Used by the duplicate path exactly as upstream uses it: a re-derivation merges its condition into an
+already-conditional answer, and leaves an UNCONDITIONAL one alone (`true ∨ C = true`)."""
+answer_is_conditional(t::AnswerTrie, a::Atom)::Bool = !isempty(answer_delays(t, a))
+
+"""
+    answer_truth_value(t, a) -> Symbol
+
+`get_returns_and_tvs/3` (`library(tables)`): `:t` (unconditionally true), `:u` (undefined /
+conditional), or `:none` when `a` is not a stored answer of `t` at all.
+
+Upstream has no `:none` — a term that is not in the trie simply does not enumerate. Naming it keeps
+"absent" distinguishable from "present but undefined", which is the distinction the `fail` action and
+the `bounded_rationality` action differ by, and therefore the one a test must be able to see.
+"""
+function answer_truth_value(t::AnswerTrie, a::Atom)::Symbol
+    node = trie_lookup!(t, a, false)
+    (node === nothing || node.answer === nothing) && return :none
+    is_undefined(node.answer::Atom) && return :u
+    haskey(_ANSWER_DELAYS, node) && !isempty(_ANSWER_DELAYS[node]) ? :u : :t
+end
+
+"""The residual of a stored answer as a MeTTa atom — `True` when unconditional.
+
+`answer_residual` (`Tabling.jl`) asks the same question of a VALUE; this asks it of a stored ANSWER,
+which is the only form that can be conditional while still having a value."""
+answer_residual_in(t::AnswerTrie, a::Atom)::Atom = dnf_residual(answer_delays(t, a))
+
+
+"""`update_delay_list` with an EMPTY delay list (`pl-tabling.c:1127-1136`): an UNCONDITIONAL
+derivation of `a` has arrived, so whatever condition the node carried is destroyed.
+
+Not exported as a general operation — the only caller is the non-abstracted insert path, which is the
+only place in this engine that knows a derivation was unconditional. `is_undefined` answers are
+excluded by that caller: their condition rides on the VALUE, not the node, and is not ours to clear."""
+function _clear_answer_conditionality!(t::AnswerTrie, a::Atom)::Bool
+    node = trie_lookup!(t, a, false)
+    (node === nothing || !haskey(_ANSWER_DELAYS, node)) && return false
+    delete!(_ANSWER_DELAYS, node)
+    true
+end
+
+clear_answer_delays!() = (empty!(_ANSWER_DELAYS); nothing)
+
+# ─── THE INSERT PATH ─────────────────────────────────────────────────────────────────────────────
+
+"""What one §7.11.2-restrained insert did. Returned rather than a tuple because five facts about one
+insert, positionally encoded, is how a caller reads `stored` as `added`."""
+struct AnswerInsert
+    added::Bool                        # did the trie gain an answer?
+    stored::Union{Atom,Nothing}        # WHICH term it gained — `gen`, not the candidate
+    abstracted::Bool                   # did the §7.11.2 budget blow? (upstream's TRIE_ABSTRACTED)
+    disposition::Symbol                # :none | :conditional | :store | :drop
+    count_action::Union{TripwireAction,Symbol,Nothing}   # whatever §7.11.3 did on the same insert
+end
+
+"""
+    trie_insert_answer_restrained!(t, head, a) -> AnswerInsert
+
+`\$tbl_wkl_add_answer`'s answer-size arm (`pl-tabling.c:3596-3617`), over our answer trie.
+
+Upstream's order, kept because it is load-bearing at both ends:
+
+    1. `trie_lookup_abstract(..., &sa, ...)` — ABSTRACT FIRST. The node created is the node for the
+       ABSTRACTED term, so everything downstream (duplicate test, count restraint, delay list) sees
+       the generalised answer, never the original.
+    2. `rc == TRIE_ABSTRACTED` ⇒ the action gate (`fire_answer_size_tripwire`).
+       `bounded_rationality` calls `add_radial_restraint()` and FALLS THROUGH to store; `fail` and a
+       falsifying tripwire `trie_delete` and return false; `warning`/`suspend` fall through to store
+       UNCONDITIONALLY. Three outcomes, and flattening them to two loses the one that matters.
+    3. duplicate test, then §7.11.3's count restraint — `trie_insert_restrained!` is exactly that
+       pair, so it is delegated to rather than re-implemented.
+
+⚠️ WHEN BOTH RESTRAINTS FIRE ON ONE INSERT the §7.11.3 generalisation replaces the node, and the
+radial-restraint condition is attached to the node that ACTUALLY holds the answer — found by
+`_is_general_variant` because `generalise_answer_substitution` mints fresh variables and the term
+therefore cannot be recomputed. Upstream reaches the same place by construction (`update_delay_list`
+runs on whichever node survived); we have to go and find it, and doing so is cheap because the path
+is rare. Getting this wrong would strand a condition on a node holding nothing — an answer silently
+promoted from `u` to `t`, which is unsound in the direction that matters.
+"""
+function trie_insert_answer_restrained!(t::AnswerTrie, head::Symbol, a::Atom)::AnswerInsert
+    n = answer_abstract_for(head)
+    (gen, abstracted) = answer_size_abstract(a, n)
+    if !abstracted                                   # `rc == true`: ordinary insert, no §7.11.2 event
+        (added, act) = trie_insert_restrained!(t, head, a)
+        # 🔴 …AND AN UNCONDITIONAL DERIVATION OF AN ALREADY-CONDITIONAL ANSWER CLEARS THE CONDITION.
+        # `update_delay_list` (`pl-tabling.c:1127-1136`) with both delay lists NIL destroys the
+        # answer's `delay_info` outright — its own debug string is *"Unconditional answer after
+        # conditional"*. Same WFS rule as the duplicate case below (`true ∨ C = true`), reached from
+        # the other side, and it is ORDER-INDEPENDENT: MEASURED on live swipl 10.1.12, an answer
+        # derived both ways comes back `tv=t` whichever clause is written first —
+        #     q(s(s(_))). q(s(s(s(a)))).   and   q(s(s(s(a)))). q(s(s(_))).   both -> ret(s(s(_))) tv=t
+        # Without this, only one of those two orders agreed with upstream.
+        act === :duplicate && !is_undefined(a) && _clear_answer_conditionality!(t, a)
+        return AnswerInsert(added, added ? a : nothing, false, :none, act)
+    end
+    disp = fire_answer_size_tripwire(head)           # throws for TW_ERROR, as upstream
+    disp === :drop && return AnswerInsert(false, nothing, true, :drop, nothing)
+    (added, act) = trie_insert_restrained!(t, head, gen)
+    # WHICH term landed? `gen` normally; §7.11.3's own generalisation of `gen` when its count bound
+    # fired on this same insert; nothing at all when §7.11.3 dropped it.
+    stored::Union{Atom,Nothing} =
+        trie_contains(t, gen) ? gen :
+        act == TW_BOUNDED_RATIONALITY ?
+            (i = findfirst(x -> _is_general_variant(x, gen), trie_answers(t));
+             i === nothing ? nothing : trie_answers(t)[i]) :
+            nothing
+    # 🔴 A DUPLICATE THAT IS ALREADY UNCONDITIONAL STAYS UNCONDITIONAL — `pl-tabling.c:3618-3628`.
+    # The C reaches `update_delay_list` on the duplicate path ONLY inside
+    # `if ( answer_is_conditional(node) )`, and otherwise `return false` without touching the delays.
+    # That is the WFS rule `true ∨ C = true`: an answer with an unconditional derivation does not
+    # become undefined because some OTHER derivation of it was abstracted. `add_radial_restraint()`
+    # still ran (it is called before the duplicate test), but its literal lands on nothing.
+    #
+    # THIS WAS WRONG IN THE FIRST WORKING VERSION and the probe caught it: pre-seeding `(s (s \$_))`
+    # unconditionally and then inserting `(s (s (s a)))` under `answer_abstract(1)` reported
+    # `tv=:u` — an unconditional answer demoted to undefined by a restraint that added nothing. The
+    # rule was already written into `answer_is_conditional`'s docstring one screen above and simply
+    # not implemented, which is the shape of defect a docstring cannot catch on its own.
+    mark = disp === :conditional && stored !== nothing &&
+           !(act === :duplicate && !answer_is_conditional(t, stored::Atom))
+    mark && add_radial_restraint!(t, stored::Atom)   # `add_radial_restraint()` + `update_delay_list`
+    AnswerInsert(added, stored, true, disp, act)
 end

@@ -70,17 +70,15 @@ const _REFUSED_OPTIONS = Dict{Symbol,Tuple{String,String}}(
     # solve the more general goal and use answers from the abstract table."* It rides on SUBSUMPTIVE
     # TABLING (§7.5, already built) plus `size_abstract`, which is a budget threaded through the walk
     # — not a new pass. A refusal reason carried forward unexamined kept it out of reach for weeks.
-    # ⚠️ AND THIS ONE IS GENUINELY BLOCKED, FOR A REASON I HAD NOT FOUND. The mechanism needs only the
-    # trie — but its only SOUND action does not. `answer_abstract` OVER-approximates (it generalises
-    # an answer, so the table claims more than was derived), and `bounded_rationality` compensates by
-    # calling `add_radial_restraint()` → `system:(radial_restraint :- tnot(radial_restraint))`
-    # (boot/tabling.pl:2317) — an intentionally UNDEFINED predicate whose whole job is to push onto
-    # the DELAY LIST, making every abstracted answer conditional in WFS. Without delay lists the only
-    # remaining action is `fail`, which UNDER-approximates and is unsound in the other direction for
-    # negation. So this waits on delay lists (roadmap 1.0c), and its sibling above does not.
-    :answer_abstract  => ("§7.11.2",  "needs DELAY LISTS — it over-approximates, and its only sound " *
-                                      "action (bounded_rationality) makes the answer conditional via " *
-                                      "radial_restraint; `fail` under-approximates instead"),
+    # ✅ `:answer_abstract` IS NO LONGER HERE EITHER — §7.11.2 is BUILT (`tabling/Abstract.jl`,
+    # 2026-08-18). Its reason was RE-CHECKED rather than assumed, and it was HALF right in the half
+    # that mattered. Delay lists landed the day after it was written (`tabling/Delays.jl`) — but they
+    # were never the whole blocker: our delay-carrying value `Grounded(WFSBottom(dnf))` HAS NO VALUE,
+    # so substituting it for the generalised answer would discard the generalisation, which IS the
+    # feature. Upstream does not put the condition on the value either — `delay_info` hangs off the
+    # TRIE NODE (`pl-tabling.h:179-184`), and `AnswerTrie.jl`'s own `TrieNode` comment already named
+    # `answer_abstract` as one of the two features waiting on exactly that. One named FIELD short,
+    # not one subsystem short. `[[feedback_capability_claims_expire_retest_the_premise]]`
 )
 
 _refuse(opt::Symbol) = begin
@@ -131,7 +129,8 @@ function table_options!(o::TableOptions, spec)::TableOptions
             # §7.11.1 — same negative-removes convention as `max_answers` (`restraint/4`).
             o.subgoal_abstract = n < 0 ? NO_RESTRAINT : Int(n)
         elseif opt === :answer_abstract
-            _refuse(opt)
+            # §7.11.2 — same negative-removes convention as `max_answers` (`restraint/4`).
+            o.answer_abstract = n < 0 ? NO_RESTRAINT : Int(n)
         else
             throw(ArgumentError("domain_error(table_option, $(opt)($(n)))"))
         end
@@ -177,6 +176,7 @@ function table_as!(head::Symbol, specs...)
     o.mode === :subsumptive ? table_subsumptive!(head) : untable_subsumptive!(head)
     restraint!(head, :max_answers, o.max_answers)
     subgoal_abstract!(head, o.subgoal_abstract)    # §7.11.1
+    answer_abstract!(head, o.answer_abstract)      # §7.11.2
     o
 end
 

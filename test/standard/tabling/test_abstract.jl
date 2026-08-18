@@ -374,3 +374,323 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         @test !hit2 && g2 == g1
     end
 end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# §7.11.2 — ANSWER ABSTRACTION, `answer_abstract(N)`.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+#
+# 🔴 WHAT THIS BLOCK EXISTS TO CATCH IS AN INERT RESTRAINT, NOT A WRONG ANSWER SET. §7.11.2 only ever
+# REMOVES or GENERALISES answers, so on a program that never blows the budget a completely dead
+# implementation returns exactly the right answers — and on one that does, `warning` and
+# `bounded_rationality` return the SAME ANSWER SET and differ only in a truth value. Every assertion
+# below is therefore keyed to something an inert or half-built restraint gets WRONG: which TERM was
+# stored, and whether it is CONDITIONAL.
+#
+# 📏 Every expectation is a row measured on live swipl 10.1.12 via `library(tables)`'s own readers
+# (`get_returns_and_tvs/3`, `get_returns_and_dls/3`) — not derived from the C.
+
+# the two flags this section needs, saved/restored so a failure cannot leak into the §7.11.1 block
+_aa_answer_action!(a) = _AB.set_max_table_answer_size_action!(a)
+_aa_reset!() = (_AB.clear_answer_abstract!(); _AB.clear_answer_delays!();
+                _AB.clear_all_restraints!(); _AB.clear_answer_count_restraints!();
+                _AB.set_max_table_answer_size!(-1);
+                _AB.set_max_table_answer_size_action!(_AB.TW_ERROR))
+
+# a branching answer: f(g(h(a)), k(l(m(b)))) — the shape a depth-limit implementation gets wrong
+_aa_branch() = Expression(Atom[Sym(:f),
+    Expression(Atom[Sym(:g), Expression(Atom[Sym(:h), Sym(:a)])]),
+    Expression(Atom[Sym(:k), Expression(Atom[Sym(:l), Expression(Atom[Sym(:m), Sym(:b)])])])])
+
+@testset "SWI §7.11.2 — answer abstraction" begin
+
+    @testset "the SIZE RULE is `size_abstract` unchanged — 7 rows against a live swipl oracle" begin
+        # 🔴 THE TWO SIDES KEEP DIFFERENT AMOUNTS FOR THE SAME N, and this is the assertion that
+        # pins it. The subgoal trie is keyed on `Module:Goal`, the answer trie on `ret(A1..An)`; with
+        # the same `{.from_depth = 2}` the walk arms one level shallower on the answer side. So:
+        #     p(s(s(s(a)))) as a GOAL,    subgoal_abstract(1) -> p(s(_))
+        #     s(s(s(a)))    as an ANSWER, answer_abstract(1)  ->   s(s(_))
+        # Our `size_abstract` frees the top functor and re-arms per ARGUMENT, which is exactly the
+        # `ret(V)` walk — so the answer side reuses it verbatim. An implementation that "corrected"
+        # for the missing wrapper would be off by one on every row here.
+        chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
+        c4 = chain(4)                                                # s(s(s(s(a))))
+
+        (g0, h0) = _AB.answer_size_abstract(c4, 0)                   # oracle: s(_)
+        @test h0 && g0 isa Expression
+        @test (g0::Expression).children[1] == Sym(:s)
+        @test (g0::Expression).children[2] isa Var
+
+        (g1, h1) = _AB.answer_size_abstract(c4, 1)                   # oracle: s(s(_))
+        @test h1
+        a1 = (g1::Expression).children[2]
+        @test a1 isa Expression && (a1::Expression).children[2] isa Var
+
+        (g2, h2) = _AB.answer_size_abstract(c4, 2)                   # oracle: s(s(s(_)))
+        @test h2
+        a2 = ((g2::Expression).children[2]::Expression).children[2]
+        @test a2 isa Expression && (a2::Expression).children[2] isa Var
+
+        # 🔴 THE LOAD-BEARING ROW: N=3 does NOT abstract, so nothing downstream may fire. A restraint
+        # that marked the whole table, or abstracted "just to be safe", fails right here.
+        (g3, h3) = _AB.answer_size_abstract(c4, 3)                   # oracle: UNCHANGED, tv=t
+        @test !h3 && g3 == c4
+
+        # branching, N=1: BOTH arguments get their own budget (upstream re-arms at each `Ai`'s args)
+        (b1, hb1) = _AB.answer_size_abstract(_aa_branch(), 1)        # oracle: f(g(_), k(_))
+        @test hb1
+        bc = (b1::Expression).children
+        @test (bc[2]::Expression).children[1] == Sym(:g) && (bc[2]::Expression).children[2] isa Var
+        @test (bc[3]::Expression).children[1] == Sym(:k) && (bc[3]::Expression).children[2] isa Var
+
+        # branching, N=2: the SHALLOWER argument survives whole, the deeper one is cut. A single
+        # shared budget would have spent it all on the first argument and abstracted the second.
+        (b2, hb2) = _AB.answer_size_abstract(_aa_branch(), 2)        # oracle: f(g(h(a)), k(l(_)))
+        @test hb2
+        bc2 = (b2::Expression).children
+        @test bc2[2] == (_aa_branch()::Expression).children[2]       # g(h(a)) UNTOUCHED
+        k2 = bc2[3]::Expression
+        @test (k2.children[2]::Expression).children[2] isa Var       # k(l(_))
+
+        # a non-compound answer has nothing to abstract, at any N
+        (ga, ha) = _AB.answer_size_abstract(Sym(:plainatom), 1)      # oracle: UNCHANGED, tv=t
+        @test !ha && ga == Sym(:plainatom)
+    end
+
+    @testset "🔴🔴 ANTI-VACUITY — the STORED TERM is the generalised one, and it is CONDITIONAL" begin
+        # THE ASSERTION AN INERT RESTRAINT CANNOT SURVIVE. Measured on live swipl 10.1.12:
+        #     :- table p/1 as answer_abstract(1).  q(s(s(s(a)))).  q(s(a)).  p(X) :- q(X).
+        #     get_returns_and_tvs -> ret(s(s(_))) tv=u    ret(s(a)) tv=t
+        #     get_returns_and_dls -> ret(s(s(_))) dl=[[radial_restraint]]   ret(s(a)) dl=[]
+        # Two independent things must hold and BOTH fail if the restraint does nothing:
+        #   (a) the big answer is NOT in the table — its GENERALISATION is;
+        #   (b) that generalisation is UNDEFINED, with `radial_restraint` as the reason.
+        _aa_reset!()
+        try
+            chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
+            big, small = chain(3), chain(1)
+            _aa_answer_action!(_AB.TW_BOUNDED_RATIONALITY)
+            _AB.answer_abstract!(:p, 1)
+            t = _AB.AnswerTrie()
+            r_big = _AB.trie_insert_answer_restrained!(t, :p, big)
+            r_small = _AB.trie_insert_answer_restrained!(t, :p, small)
+
+            # (a) THE ORIGINAL ANSWER IS ABSENT. This is the assertion that fails when the restraint
+            # is inert: an implementation that stored `big` unchanged returns the same ANSWER SET
+            # as a correct one on every query that only looks at answers.
+            @test !_AB.trie_contains(t, big)
+            @test _AB.answer_truth_value(t, big) == :none
+            @test r_big.abstracted && r_big.disposition === :conditional
+            stored = r_big.stored
+            @test stored !== nothing
+            @test stored != big
+            # …and it really is `s(s($_))`: the functor survived, the third `s` became a variable
+            @test (stored::Expression).children[1] == Sym(:s)
+            inner = (stored::Expression).children[2]::Expression
+            @test inner.children[1] == Sym(:s) && inner.children[2] isa Var
+
+            # (b) IT IS CONDITIONAL, AND THE REASON IS UPSTREAM'S. `dnf_residual` renders our DNF the
+            # way `get_returns_and_dls/3` renders theirs, so this compares against `[[radial_restraint]]`
+            # rather than against our own spelling of it.
+            @test _AB.answer_is_conditional(t, stored::Atom)
+            @test _AB.answer_truth_value(t, stored::Atom) == :u
+            @test _AB.answer_residual_in(t, stored::Atom) == Sym(:radial_restraint)
+            dnf = _AB.answer_delays(t, stored::Atom)
+            @test length(dnf) == 1 && length(dnf[1]) == 1            # ONE disjunct, ONE conjunct
+            @test dnf[1][1].kind == _AB.DELAY_POSITIVE               # positive, as measured upstream
+
+            # …and the answer that FIT the budget is untouched and UNCONDITIONAL. Without this the
+            # test would pass for an implementation that marked the whole table approximate.
+            @test r_small.abstracted == false && r_small.disposition === :none
+            @test _AB.trie_contains(t, small)
+            @test _AB.answer_truth_value(t, small) == :t
+            @test _AB.answer_residual_in(t, small) == Sym("True")
+            @test isempty(_AB.answer_delays(t, small))
+        finally
+            _aa_reset!()
+        end
+    end
+
+    @testset "🔴 the ACTION FLAG — default `error`, and `warning` ≠ `bounded_rationality`" begin
+        # The four dispositions, each measured. `warning` and `bounded_rationality` STORE THE SAME
+        # TERM and differ only in the truth value — which is precisely why the anti-vacuity assertion
+        # above had to be about conditionality and not about the answer set.
+        chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
+        big, small = chain(3), chain(1)
+        _aa_run(act) = begin
+            _aa_reset!(); _aa_answer_action!(act); _AB.answer_abstract!(:p, 1)
+            t = _AB.AnswerTrie()
+            r = _AB.trie_insert_answer_restrained!(t, :p, big)
+            _AB.trie_insert_answer_restrained!(t, :p, small)
+            (t, r)
+        end
+
+        _aa_reset!()
+        try
+            # DEFAULT IS `error`, exactly as SWI (`pl-tabling.c:9341`), and it RAISES. Our port
+            # would be silently more permissive than the reference if this defaulted to storing.
+            @test _AB.max_table_answer_size_action() == _AB.TW_ERROR
+            _AB.answer_abstract!(:p, 1)
+            @test_throws ArgumentError _AB.trie_insert_answer_restrained!(_AB.AnswerTrie(), :p, big)
+
+            # `fail`: the oversized answer is DROPPED — under-approximates, sound the other way.
+            (tf, rf) = _aa_run(_AB.TW_FAIL)
+            @test rf.disposition === :drop && !rf.added && rf.stored === nothing
+            @test length(_AB.trie_answers(tf)) == 1 && _AB.trie_contains(tf, small)
+
+            # `warning`: STORES THE GENERALISED ANSWER, UNCONDITIONALLY. 🔴 And note the divergence
+            # from its §7.11.1 sibling, where `warning` RETRIES UNABSTRACTED and tables the FULL
+            # goal (`sa.size = -1; goto retry`, pl-tabling.c:2519). There is no retry here.
+            (tw, rw) = (@test_logs (:warn,) match_mode=:any _aa_run(_AB.TW_WARNING))
+            @test rw.disposition === :store && rw.added && rw.stored !== nothing
+            @test rw.stored != big
+            @test _AB.answer_truth_value(tw, rw.stored::Atom) == :t          # ← UNCONDITIONAL
+            @test !_AB.answer_is_conditional(tw, rw.stored::Atom)
+
+            # `bounded_rationality`: same stored term, tv=`u`. THE DISCRIMINATOR.
+            (tb, rb) = _aa_run(_AB.TW_BOUNDED_RATIONALITY)
+            @test rb.stored !== nothing
+            @test _AB.variant_eq(rb.stored::Atom, rw.stored::Atom)           # SAME TERM as `warning`…
+            @test _AB.answer_truth_value(tb, rb.stored::Atom) == :u          # …DIFFERENT truth value
+
+            # `abstract` is a DOMAIN ERROR for this flag and legal for the subgoal one
+            # (`pl-tabling.c:8871-8877`). Verified upstream:
+            #     ?- set_prolog_flag(max_table_answer_size_action, abstract).
+            #     ERROR: domain_error(restraint_action, abstract)
+            @test_throws ArgumentError _AB.set_max_table_answer_size_action!(_AB.TW_ABSTRACT)
+            @test _AB.max_table_subgoal_size_action() isa _AB.TripwireAction  # …and it IS legal there
+            _AB.set_max_table_subgoal_size_action!(_AB.TW_ABSTRACT)           # no throw
+        finally
+            _aa_reset!(); _ab_abstract_mode!()
+        end
+    end
+
+    @testset "the GLOBAL flag, and its fallback shape (NOT §7.11.3's)" begin
+        # `pred_max_table_answer_size` (`pl-tabling.c:3563-3572`) DELEGATES to the global flag when
+        # the predicate has none. §7.11.3's `tripwire_answers_for_subgoal` SHORT-CIRCUITS instead — a
+        # per-predicate `max_answers` suppresses the global bound entirely. Two restraints, forty
+        # lines apart upstream, with genuinely different composition; collapsing them would silently
+        # change which predicates a global bound reaches.
+        _aa_reset!()
+        try
+            @test _AB.answer_abstract_for(:zz) == _AB.NO_RESTRAINT
+            _AB.set_max_table_answer_size!(1)
+            @test _AB.answer_abstract_for(:zz) == 1              # DELEGATES — no per-predicate value
+            _AB.answer_abstract!(:zz, 3)
+            @test _AB.answer_abstract_for(:zz) == 3              # per-predicate OVERRIDES
+            # `restraint/4`: a NEGATIVE value REMOVES rather than stores, on both levels
+            _AB.answer_abstract!(:zz, -1)
+            @test _AB.answer_abstract_for(:zz) == 1              # …back to the global
+            _AB.set_max_table_answer_size!(-1)
+            @test _AB.answer_abstract_for(:zz) == _AB.NO_RESTRAINT
+            # NO_RESTRAINT must abstract NOTHING, or the restraint is on by default
+            (g, h) = _AB.answer_size_abstract(_aa_branch(), _AB.answer_abstract_for(:zz))
+            @test !h && g == _aa_branch()
+        finally
+            _aa_reset!()
+        end
+    end
+
+    @testset "🔴 `true ∨ C = true` — an unconditional derivation WINS, in EITHER order" begin
+        # `update_delay_list` (`pl-tabling.c:1127-1136`) destroys an answer's `delay_info` when a
+        # derivation arrives with an empty delay list ("Unconditional answer after conditional"), and
+        # the duplicate path (`:3618-3628`) only merges INTO an answer that is already conditional.
+        # Both halves say the same thing: an answer with ANY unconditional derivation is `t`.
+        #
+        # MEASURED on live swipl 10.1.12, both clause orders, `answer_abstract(1)`:
+        #     q(s(s(_))). q(s(s(s(a)))).   -> ret(s(s(_))) tv=t
+        #     q(s(s(s(a)))). q(s(s(_))).   -> ret(s(s(_))) tv=t
+        #
+        # 🔴 THE FIRST WORKING VERSION FAILED BOTH ORDERS, in opposite ways — it demoted an
+        # unconditional answer to `u`, and it left a conditional one at `u` after an unconditional
+        # re-derivation. The rule was written into `answer_is_conditional`'s docstring and simply not
+        # implemented; a probe caught it, the docstring could not.
+        _aa_reset!()
+        try
+            chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
+            big = chain(3)                                          # abstracts to (s (s $_))
+            uncond = Expression(Atom[Sym(:s), Expression(Atom[Sym(:s), _AB.freshvar("u")])])
+            _aa_answer_action!(_AB.TW_BOUNDED_RATIONALITY)
+            _AB.answer_abstract!(:p, 1)
+
+            # order A: UNCONDITIONAL first, then the abstracted derivation of the same variant
+            tA = _AB.AnswerTrie()
+            _AB.trie_insert_answer_restrained!(tA, :p, uncond)
+            @test _AB.answer_truth_value(tA, uncond) == :t
+            rA = _AB.trie_insert_answer_restrained!(tA, :p, big)
+            @test rA.abstracted && rA.count_action === :duplicate    # it IS the same variant
+            @test _AB.answer_truth_value(tA, uncond) == :t           # …and it STAYS unconditional
+            @test length(_AB.trie_answers(tA)) == 1
+
+            # order B: the abstracted (conditional) derivation first, then an unconditional one
+            tB = _AB.AnswerTrie()
+            rB = _AB.trie_insert_answer_restrained!(tB, :p, big)
+            @test _AB.answer_truth_value(tB, rB.stored::Atom) == :u  # conditional to begin with
+            _AB.trie_insert_answer_restrained!(tB, :p, uncond)
+            @test _AB.answer_truth_value(tB, rB.stored::Atom) == :t  # …CLEARED by the unconditional
+            @test isempty(_AB.answer_delays(tB, rB.stored::Atom))
+            @test length(_AB.trie_answers(tB)) == 1
+        finally
+            _aa_reset!()
+        end
+    end
+
+    @testset "two conditional derivations of one answer DISJOIN — they are not two answers" begin
+        # `delay_info` holds a BUFFER of `delay_set`s (`pl-tabling.h:179-184`): several derivations of
+        # one answer contribute ALTERNATIVE conjunctions to one record. `Tabling.jl`'s
+        # `merge_bottom_into!` docstring makes the same point about the value-level bottom, where
+        # getting it wrong produced two `undefined` answers where one was correct.
+        _aa_reset!()
+        try
+            chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
+            _aa_answer_action!(_AB.TW_BOUNDED_RATIONALITY)
+            _AB.answer_abstract!(:p, 1)
+            t = _AB.AnswerTrie()
+            r1 = _AB.trie_insert_answer_restrained!(t, :p, chain(3))   # -> (s (s $_))
+            r2 = _AB.trie_insert_answer_restrained!(t, :p, chain(4))   # -> (s (s $_)) again
+            @test r2.count_action === :duplicate
+            @test length(_AB.trie_answers(t)) == 1                     # ONE answer, not two
+            # `dnf_or` drops the repeated conjunction (`C ∨ C = C`), so the residual stays a single
+            # `radial_restraint` rather than accumulating one disjunct per derivation.
+            @test length(_AB.answer_delays(t, r1.stored::Atom)) == 1
+            @test _AB.answer_residual_in(t, r1.stored::Atom) == Sym(:radial_restraint)
+        finally
+            _aa_reset!()
+        end
+    end
+
+    @testset "the VALUE-level bottom and the NODE-level condition are DIFFERENT carriers" begin
+        # 🔴 THE QUESTION THAT BLOCKED THIS FEATURE, ASSERTED RATHER THAN ARGUED. `Options.jl` refused
+        # `answer_abstract` for needing delay lists; delay lists landed, and the premise turned out to
+        # be half right in the half that matters. `undefined_with(dnf)` builds an atom that CARRIES a
+        # condition and HAS NO VALUE — substituting it for the generalised answer would store "some-
+        # thing here is undefined" instead of "(s (s $_)) holds conditionally", discarding the
+        # generalisation, which IS the feature. So conditionality had to go on the NODE, where
+        # upstream has always kept it (`delay_info` on `trie_node`, `pl-tabling.h:179-184`).
+        _aa_reset!()
+        try
+            chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
+            _aa_answer_action!(_AB.TW_BOUNDED_RATIONALITY)
+            _AB.answer_abstract!(:p, 1)
+            t = _AB.AnswerTrie()
+            r = _AB.trie_insert_answer_restrained!(t, :p, chain(3))
+            stored = r.stored::Atom
+
+            # NODE-level: the stored answer is a real VALUE, not a bottom — that is the whole point.
+            @test !_AB.is_undefined(stored)
+            @test _AB.answer_truth_value(t, stored) == :u
+            @test isempty(_AB.delays_of(stored))      # the VALUE carries nothing…
+            @test !isempty(_AB.answer_delays(t, stored))   # …the NODE carries the condition
+
+            # VALUE-level: a WFS bottom stored as an answer reports `:u` through the SAME reader,
+            # from its own DNF. A consumer never has to know which carrier applied.
+            und = _AB.undefined_with(_AB.DelayDNF([_AB.DelaySet([_AB.delay_negative(Sym(:g))])]))
+            @test _AB.trie_insert!(t, und)
+            @test _AB.answer_truth_value(t, und) == :u
+            @test _AB.answer_residual_in(t, und) == Expression(Atom[Sym(:not), Sym(:g)])
+            # …and it is NOT in the node-level table, so the two never shadow each other
+            @test isempty(get(_AB._ANSWER_DELAYS, _AB.trie_lookup!(t, und, false), _AB.DelayDNF()))
+        finally
+            _aa_reset!()
+        end
+    end
+end

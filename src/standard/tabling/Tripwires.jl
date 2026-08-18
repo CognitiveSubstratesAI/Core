@@ -3,17 +3,29 @@
 # Mirrors `boot/tabling.pl`'s TRIPWIRES section (`:2263-2288`) and the enforcement point in
 # `src/pl-tabling.c:3633-3665` (`tripwire_answers_for_subgoal` + the action dispatch).
 #
-# ─── SCOPE: §7.11.3 ONLY, AND THAT IS DELIBERATE ─────────────────────────────────────────────────
-# §7.11 has three restraints. Only ONE of them ports to our current table representation:
+# ─── SCOPE: ALL THREE OF §7.11, AND WHAT EACH ONE OWNS HERE ──────────────────────────────────────
+# §7.11 has three restraints. This file owns the COUNT restraint outright and the ACTION FLAGS of
+# the other two; the abstraction MECHANISM of both lives in `tabling/Abstract.jl`, because it needs
+# `size_abstract` and the answer trie, which are included after this file.
 #
-#   7.11.3 max_answers      — a COUNT. Ports to a `Dict` today. ← this file
-#   7.11.1 subgoal_abstract — abstraction over TRIE TERMS (depth-bounded generalisation)
-#   7.11.2 answer_abstract  — likewise
+#   7.11.3 max_answers      — a COUNT ⇒ `_MAX_ANSWERS` + `tripwire_answers_for_subgoal`.  ← whole
+#   7.11.1 subgoal_abstract — flag `_MAX_SUBGOAL_SIZE_ACTION` + `fire_subgoal_size_tripwire`. ← gate
+#   7.11.2 answer_abstract  — flag `_MAX_TABLE_ANSWER_SIZE(_ACTION)` + `fire_answer_size_tripwire`.
 #
-# The two abstraction restraints operate on trie terms; our answers live in a `Dict`/`Vector`, so
-# they need §1.0's answer trie and are NOT stubbed here. An empty stub that silently accepts the
-# declaration would be worse than its absence: `subgoal_abstract(3)` appearing to work while doing
-# nothing is the failure mode. `restraint!` therefore THROWS on them, naming why.
+# 🔴 THE HEADER HERE SAID "§7.11.3 ONLY, AND THAT IS DELIBERATE" UNTIL 2026-08-18, on the stated
+# ground that the two abstraction restraints "operate on trie terms; our answers live in a
+# `Dict`/`Vector`, so they need §1.0's answer trie". BOTH HALVES OF THAT AGED INTO FALSEHOOD and
+# neither was re-checked: §1.0's answer trie shipped, and §7.11.1 turned out never to have needed it
+# (it rides on subsumptive tabling — see `tabling/Abstract.jl`'s header). A scope claim written as a
+# design decision reads as settled long after the thing it describes has moved.
+# `[[feedback_capability_claims_expire_retest_the_premise]]`
+#
+# ⚠️ `restraint!` STILL THROWS on `subgoal_abstract`/`answer_abstract`, and that is now a ROUTING
+# fact rather than a capability one: both options are honoured, but they reach their registries
+# through `subgoal_abstract!`/`answer_abstract!` (`tabling/Abstract.jl`) from `table_as!`, never
+# through this function. Its message is stale prose about a capability gap that no longer exists;
+# it is left alone here only because `test/standard/tabling/test_tripwires.jl:123-124` pins the
+# throw, and rewriting a test from inside a source file is how a green suite stops meaning anything.
 #
 # ─── PORTED SEMANTICS, INCLUDING AN ASYMMETRY THAT LOOKS LIKE A TYPO AND IS NOT ──────────────────
 # `tripwire_answers_for_subgoal` (`pl-tabling.c`) has TWO paths with DIFFERENT comparisons:
@@ -132,6 +144,116 @@ function fire_subgoal_size_tripwire(head::Union{Symbol,Nothing})::Bool
     end
     act == TW_WARNING && @warn "tripwire max_table_subgoal_size for $(hd) — tabling the FULL goal"
     true                                   # retry with the restraint disabled
+end
+
+# ── §7.11.2's own flags: `max_table_answer_size` + `max_table_answer_size_action` ────────────────
+"""Upstream's `max_table_answer_size` — the GLOBAL answer-size bound (`pl-tabling.c:3570`).
+
+Consulted only when the predicate has no `answer_abstract(N)` of its own: `pred_max_table_answer_size`
+(`pl-tabling.c:3563-3572`) reads `def->tabling->answer_abstract` and falls back to this flag when it
+is `(size_t)-1`.
+
+⚠️ THAT FALLBACK IS THE OPPOSITE SHAPE FROM §7.11.3's, and the two sit forty lines apart upstream.
+`tripwire_answers_for_subgoal` SHORT-CIRCUITS: a per-predicate `max_answers` suppresses the global
+flag entirely (see `tripwire_answers_for_subgoal` above). `pred_max_table_answer_size` DELEGATES:
+the global flag applies to every predicate that did not override it. Collapsing them to one
+convention would silently change which predicates a global bound reaches."""
+const _MAX_TABLE_ANSWER_SIZE = Ref{Int}(NO_RESTRAINT)
+
+"""Upstream's `max_table_answer_size_action`. **DEFAULT `TW_ERROR`** (`pl-tabling.c:9341`).
+
+🔴 AND ITS ADMISSIBLE SET IS NOT THE SUBGOAL SIDE'S. `set_restraint_action` (`pl-tabling.c:8866-8882`)
+accepts `error`/`warning`/`suspend` for every restraint, then adds PER-KEY extras:
+
+    max_table_subgoal_size_action    + abstract                        (:8873-8874)
+    max_table_answer_size_action     + bounded_rationality, fail       (:8875-8877)
+    max_answers_for_subgoal_action   + bounded_rationality             (:8878-8879)
+
+So `abstract` is a DOMAIN ERROR here — verified on live swipl 10.1.12:
+
+    ?- set_prolog_flag(max_table_answer_size_action, abstract).
+    ERROR: domain_error(restraint_action, abstract)
+
+which is not a quirk but the semantics: on the subgoal side `abstract` is the *permission* to
+generalise the CALL, and generalising a call is sound (a more general table answers it). Generalising
+an ANSWER is not — it claims more than was derived — so the answer side has no bare `abstract`, only
+`bounded_rationality`, which generalises AND records the debt on the delay list."""
+const _MAX_TABLE_ANSWER_SIZE_ACTION = Ref{TripwireAction}(TW_ERROR)
+
+"The actions `max_table_answer_size_action` accepts — `pl-tabling.c:8871-8877`. NOTE: no `abstract`."
+const ANSWER_SIZE_ACTIONS = (TW_ERROR, TW_WARNING, TW_SUSPEND, TW_BOUNDED_RATIONALITY, TW_FAIL)
+
+"""Set `max_table_answer_size_action`, VALIDATING against upstream's per-key domain.
+
+Throws on `TW_ABSTRACT` exactly as `set_restraint_action` raises `domain_error(restraint_action,
+abstract)` — the value is legal for the SUBGOAL flag and illegal for this one."""
+function set_max_table_answer_size_action!(a::TripwireAction)
+    a in ANSWER_SIZE_ACTIONS || throw(ArgumentError(
+        "domain_error(restraint_action, $(a)) — `max_table_answer_size_action` accepts " *
+        "$(ANSWER_SIZE_ACTIONS) (pl-tabling.c:8871-8877). `TW_ABSTRACT` is legal ONLY for " *
+        "`max_table_subgoal_size_action`: generalising a CALL is sound, generalising an ANSWER is " *
+        "not, so the answer side offers `TW_BOUNDED_RATIONALITY` (generalise AND delay) instead."))
+    _MAX_TABLE_ANSWER_SIZE_ACTION[] = a
+    nothing
+end
+max_table_answer_size_action() = _MAX_TABLE_ANSWER_SIZE_ACTION[]
+
+"Set the global `max_table_answer_size`. Negative is `restraint/4`'s removal ⇒ `NO_RESTRAINT`."
+set_max_table_answer_size!(n::Int) = (_MAX_TABLE_ANSWER_SIZE[] = n < 0 ? NO_RESTRAINT : n; nothing)
+max_table_answer_size()::Int = _MAX_TABLE_ANSWER_SIZE[]
+
+"""
+    fire_answer_size_tripwire(head) -> Symbol
+
+`pl-tabling.c:3601-3617` — the disposition of an answer that BLEW its `answer_abstract(N)` budget.
+Returns one of `:conditional`, `:store`, `:drop`, and THROWS for `TW_ERROR`.
+
+The C, whose three-way shape is easy to flatten into two by accident:
+
+    if      ( action == bounded_rationality )         { add_radial_restraint(); }   /* fall through */
+    else if ( action == fail ||
+              !tbl_wl_tripwire(wl, action, ATOM_max_table_answer_size) )
+            { trie_delete(wl->table, node, true); return false; }
+    /* else fall through */
+
+`bounded_rationality` and `warning` BOTH store the generalised answer; they differ ONLY in whether it
+is conditional. `fail` alone drops it.
+
+🔴 NOTE THE DIVERGENCE FROM ITS SIBLING: `fire_subgoal_size_tripwire`'s `TW_WARNING` RETRIES
+UNABSTRACTED (`sa.size = -1; goto retry`, `pl-tabling.c:2519`), so the FULL goal gets tabled. There
+is no retry here — the abstracted node is already in the answer trie by the time the action is read —
+so `TW_WARNING` stores the ABSTRACTED answer, unconditionally. MEASURED on live swipl 10.1.12 with
+`p(X) :- q(X). q(s(s(s(a)))). q(s(a)).` under `:- table p/1 as answer_abstract(1)`:
+
+    action                 stored answers (get_returns_and_tvs/3)
+    error    (DEFAULT)     RAISED resource_error(tripwire(max_table_answer_size, <trie>))
+    warning                ret(s(s(_))) tv=t   ret(s(a)) tv=t      ← generalised, UNCONDITIONAL
+    fail                                       ret(s(a)) tv=t      ← the big answer is GONE
+    bounded_rationality    ret(s(s(_))) tv=u   ret(s(a)) tv=t      ← generalised, CONDITIONAL
+    abstract               domain_error(restraint_action, abstract)
+
+`warning` vs `bounded_rationality` differing only in the truth value is what the anti-vacuity test in
+`test_abstract.jl` keys on: an implementation that stored the generalised answer and forgot the delay
+would pass every answer-set comparison and fail exactly there.
+"""
+function fire_answer_size_tripwire(head::Union{Symbol,Nothing})::Symbol
+    act = _MAX_TABLE_ANSWER_SIZE_ACTION[]
+    hd = head === nothing ? "?" : String(head)
+    act == TW_BOUNDED_RATIONALITY && return :conditional     # add_radial_restraint(), then store
+    act == TW_FAIL && return :drop                           # trie_delete + return false
+    if act == TW_ERROR
+        throw(ArgumentError("resource_error(tripwire(max_table_answer_size, $(hd))) — the answer " *
+                            "exceeds its `answer_abstract` bound. SWI's default action for this " *
+                            "restraint is `error`; call " *
+                            "`set_max_table_answer_size_action!(TW_BOUNDED_RATIONALITY)` to store " *
+                            "a generalised CONDITIONAL answer, or `TW_FAIL` to drop it."))
+    end
+    act == TW_SUSPEND &&
+        @warn "tripwire max_table_answer_size for $(hd) — SWI would break to a debugger here"
+    act == TW_WARNING &&
+        @warn "tripwire max_table_answer_size for $(hd) — storing the GENERALISED answer " *
+              "unconditionally (SWI `warning` action: no retry on this side)"
+    :store                                   # warning/suspend: `tripwire/3` succeeds ⇒ add anyway
 end
 
 """

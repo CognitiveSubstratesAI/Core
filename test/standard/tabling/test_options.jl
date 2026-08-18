@@ -48,8 +48,14 @@ const _OP = Eval
         # (`tabling/Abstract.jl`), so it is HONOURED now and asserting it still throws would pin the
         # port as less finished than it is. `:answer_abstract` stays: it is blocked on delay lists,
         # because its only sound action routes through `radial_restraint :- tnot(radial_restraint)`.
-        @test_throws ArgumentError _OP.table_as!(:q, :answer_abstract => 3)
+        # ✅ BOTH ABSTRACTION OPTIONS HAVE NOW MOVED OUT OF THIS LIST — §7.11.1 on 2026-08-17 and
+        # §7.11.2 on 2026-08-18. Asserting either still throws would pin the port as less finished
+        # than it is. `answer_abstract` was refused for "needs DELAY LISTS"; the premise was
+        # re-checked and the real blocker was that our delay-carrying value has no VALUE — resolved
+        # by seating the condition on the TRIE NODE, where upstream keeps it.
         @test _OP.table_as!(:q, :subgoal_abstract => 3).subgoal_abstract == 3
+        @test _OP.table_as!(:q, :answer_abstract => 3).answer_abstract == 3
+        @test _OP.answer_abstract_for(:q) == 3     # …and it REACHED the registry, not just the record
         # every refusal must NAME its roadmap item, or the message teaches nothing
         for (opt, (item, _)) in _OP._REFUSED_OPTIONS
             msg = try; _OP.table_as!(:q, opt); ""
