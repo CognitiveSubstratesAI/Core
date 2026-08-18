@@ -110,10 +110,10 @@ _run_driver() {
 Revise.revise()
 cd(raw"$CORE")
 # 🔴 EVERYTHING LIVES IN A let-BLOCK SO NOTHING LANDS IN Main.
-# A driver-local `ok = try … end` looks harmless and is not: test/test_types.jl:19 defines a FUNCTION
-# named `ok`, and Julia refuses with "cannot define function ok; it already has a value" once Main
+# A driver-local ok = try … end looks harmless and is not: test/test_types.jl:19 defines a FUNCTION
+# named ok, and Julia refuses with "cannot define function ok; it already has a value" once Main
 # holds a binding of that name. One file out of 23 failed for no reason but the harness, and it would
-# have been read as a 1.12.7 regression. `include` evaluates at MODULE scope regardless of the local
+# have been read as a 1.12.7 regression. include evaluates at MODULE scope regardless of the local
 # block it is called from, so the suite still defines its own globals normally.
 # (No backticks anywhere in this heredoc: it is UNQUOTED so \$body expands, which also makes
 #  backticks command substitution — 'SUITE_FAILED: command not found' was exactly that.)

@@ -156,6 +156,34 @@ never does.
 
 ---
 
+## 0k. 🟢 §7.6.1 SIMPLIFICATION — MOTIVATION MEASURED AWAY, ~675 LINES NOT BUILT (2026-08-18)
+
+A spec agent scoped simplification at **~675 lines** and produced probes showing three wrong answers
+it would fix. Step 0 of that spec — the SCC-union fix, **44 lines, shipped as `0c2ff93`** — was the
+prerequisite. After it landed, the SAME probes were re-run:
+
+| case | after Step 0 | verdict |
+|---|---|---|
+| chain `q ← r ← p` with `(= (p) (tnot (q)))` | `q=[1] p=[] r=[]` | ✅ the WFS model |
+| pure paradox | both `undefined` | ✅ correct, and must stay so |
+| conditional-then-definite | `p=[] q=["1","True"]` | ✅ correct — `tnot(p)` RETURNS the value `True` here |
+
+⇒ **every case simplification was to fix is already right.** The remaining upstream machinery
+(`simplify_component`, `propagate_to_answer`, `make_answer_unconditional`) has **no demonstrable
+consumer in this engine**, so building it now would be building against a premise we can no longer
+reproduce. NOT BUILT, deliberately. `[[feedback_measured_need_not_checklist]]`
+
+⚠️ **The third row is a lesson in reading our own semantics.** The expected value was written as
+`q=[1]`, which is the Prolog answer; in a VALUE language `(= (q) (tnot (p)))` with `p` false yields
+the atom `True`, so `["1","True"]` is right. A "wrong answer" that is actually a wrong expectation is
+exactly how a port acquires unnecessary features.
+
+**What genuinely remains** of §7.6.1 is the REPORTING surface, not the engine: `answer_residual`
+works but has no MeTTa-level operation, and `get_residual/2` needs the `library(tables)` shape. That
+is tens of lines, not hundreds.
+
+---
+
 ## 0j. 🔴🔴 AUDIT ROUND TWO — 27 FINDINGS, 10 SURVIVED REFUTATION, ALL FIXED (2026-08-18)
 
 Four adversarial slices over the delay lists, §7.11.1, the 7.A/7.C metadata work, and a cross-cutting
