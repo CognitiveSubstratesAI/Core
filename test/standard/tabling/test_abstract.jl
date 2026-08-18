@@ -55,20 +55,68 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         @test ((a2::Expression).children[2]::Expression).children[2] isa Var   # two `s` survived
     end
 
-    @testset "🔴 SIZE, NOT DEPTH — the case that tells the two implementations apart" begin
-        # (q (f a) (g b)) with N=1. Both arguments sit at the SAME DEPTH, so a depth limit treats
-        # them alike — keeping both, or abstracting both. A size BUDGET spends its one credit on the
-        # first and abstracts the second, because `aleft` is ONE counter for the whole term and is
-        # never restored per branch (`pl-trie.c:893`, `aleft--` with no save/restore around the
-        # agenda push). This asymmetry IS the semantics.
-        t = Expression(Atom[Sym(:q),
-                            Expression(Atom[Sym(:f), Sym(:a)]),
-                            Expression(Atom[Sym(:g), Sym(:b)])])
-        (g, hit) = _AB.size_abstract(t, 1)
-        @test hit
-        ch = (g::Expression).children
-        @test ch[2] == Expression(Atom[Sym(:f), Sym(:a)])      # first argument: SURVIVED intact
-        @test ch[3] isa Var                                    # second: abstracted, same depth
+    @testset "🔴🔴 THE SWIPL ORACLE — six variants, read back from live swipl 10.1.12" begin
+        # 🔴 THIS TESTSET REPLACES ONE THAT ASSERTED THE OPPOSITE, and that is the point. The original
+        # "SIZE, NOT DEPTH" test encoded OUR model — one budget for the whole term — and passed
+        # happily while diverging from upstream on every multi-argument goal. The file even argued the
+        # model at length, citing the C; the citation was to `pl-trie.c:768`'s GENERIC `from_depth=1`
+        # rather than tabling's own `pl-tabling.c:2472` `{.from_depth = 2}`.
+        #
+        # These six rows are not our reasoning. They are what `swipl -q` printed via `current_table/2`
+        # under `max_table_subgoal_size_action=abstract`. Reading the source is not reading the CALL
+        # SITE; an executable oracle settled in one command what re-reading the C got wrong twice.
+        f(x...) = Expression(Atom[x...])
+        A, B, C = Sym(:a), Sym(:b), Sym(:c)
+        isvar(x) = x isa Var
+
+        # p(s(s(s(a)))) N=1 -> p(s(_))
+        (g1, h1) = _AB.size_abstract(_ab_p(3), 1)
+        @test h1
+        arg = (g1::Expression).children[2]
+        @test (arg::Expression).children[1] == Sym(:s)
+        @test isvar((arg::Expression).children[2])          # ONE `s` kept, rest abstracted
+
+        # q(f(a), g(b)) N=1 -> UNCHANGED  ← the row the old model failed
+        q = f(Sym(:q), f(Sym(:f), A), f(Sym(:g), B))
+        (g2, h2) = _AB.size_abstract(q, 1)
+        @test !h2 && g2 == q
+
+        # r(f(a), g(b), h(c)) N=1 -> UNCHANGED  ← and this one
+        r = f(Sym(:r), f(Sym(:f), A), f(Sym(:g), B), f(Sym(:h), C))
+        (g3, h3) = _AB.size_abstract(r, 1)
+        @test !h3 && g3 == r
+
+        # a1(f(g(a)), h(b)) N=1 -> a1(f(_), h(b))
+        a1 = f(Sym(:a1), f(Sym(:f), f(Sym(:g), A)), f(Sym(:h), B))
+        (g4, h4) = _AB.size_abstract(a1, 1)
+        @test h4
+        ch4 = (g4::Expression).children
+        @test (ch4[2]::Expression).children[1] == Sym(:f)
+        @test isvar((ch4[2]::Expression).children[2])        # f's argument abstracted…
+        @test ch4[3] == f(Sym(:h), B)                        # …and the SECOND argument untouched
+
+        # a2(f(g(h(a))), k(l(m(b)))) N=2 -> a2(f(g(_)), k(l(_)))  — budget of 2, RE-ARMED per argument
+        a2 = f(Sym(:a2), f(Sym(:f), f(Sym(:g), f(Sym(:h), A))),
+                         f(Sym(:k), f(Sym(:l), f(Sym(:m), B))))
+        (g5, h5) = _AB.size_abstract(a2, 2)
+        @test h5
+        ch5 = (g5::Expression).children
+        for (i, outer, inner) in ((2, :f, :g), (3, :k, :l))
+            e = ch5[i]::Expression
+            @test e.children[1] == Sym(outer)
+            e2 = e.children[2]::Expression
+            @test e2.children[1] == Sym(inner)
+            @test isvar(e2.children[2])                      # both arguments kept TWO levels
+        end
+
+        # a3(s(s(s(s(a))))) N=2 -> a3(s(s(_)))
+        (g6, h6) = _AB.size_abstract(_ab_p(4), 2)
+        @test h6
+        e = (g6::Expression).children[2]::Expression
+        @test e.children[1] == Sym(:s)
+        e2 = e.children[2]::Expression
+        @test e2.children[1] == Sym(:s)
+        @test isvar(e2.children[2])
     end
 
     @testset "abstracted subterms get DISTINCT variables" begin
@@ -179,26 +227,22 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         end
     end
 
-    @testset "🔴🔴 …and EXACT when it does not, because 7.A records the goal INSTANCE" begin
-        # 🟢 THIS TESTSET USED TO ASSERT THE OPPOSITE, and the change is the point of roadmap 7.A.
-        # Two rules give different constants for different instances. Neither answer MENTIONS the
-        # abstracted variable, so the abstraction binding cannot specialise them and this
-        # over-approximated — `shallow` came back alongside `deep`, and the imprecision was pinned
-        # here as a known gap rather than hidden.
+    @testset "🔴🔴 IT OVER-APPROXIMATES, and the attempt to make it EXACT was UNSOUND" begin
+        # 🔴 THIS TESTSET HAS NOW BEEN WRITTEN THREE TIMES, AND THE HISTORY IS THE LESSON.
+        #   b98f581 — shipped over-approximating; this asserted the imprecision, deliberately.
+        #   7425b7d — 7.A recorded each answer's goal INSTANCE, a filter was added, and this was
+        #             flipped to assert EXACTNESS.
+        #   TODAY   — an adversarial audit found the filter DROPS REAL ANSWERS, and it is reverted.
         #
-        # Per-answer metadata closes it. `_leader_pass` records `subst(key, bnd)` — the goal instance
-        # that produced each answer — on the answer's TRIE NODE, so the filter upstream performs by
-        # unifying the answer skeleton is now expressible: keep an answer iff some instance that
-        # produced it unifies with the call. Prolog gets this for free because an answer IS its
-        # skeleton; we had to record it.
+        # The filter asked "did some instance that produced this answer unify with the call?" That is
+        # NOT the same question as "does this answer hold for this call", and upstream only appears to
+        # ask it because a Prolog answer IS a substitution over the goal skeleton. See the regression
+        # testset below for the three-line program that proves the difference.
         _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
         try
             s = Space(); load_core_stdlib!(s)
             load_metta!(s, raw"(= (d (s (s (s a)))) deep)" * "\n" *
                            raw"(= (d (s a)) shallow)" * "\n")
-
-            # the UNRESTRAINED table is exact — the baseline that makes the comparison mean
-            # something rather than merely recording current behaviour.
             _AB.table!(:d)
             exact = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
                                 for x in (y isa AbstractVector ? y : [y])])
@@ -206,37 +250,55 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
 
             _AB.untable_all!(); _AB.abolish_all_tables!()
             _AB.table_as!(:d, :subgoal_abstract => 1)
-            got = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
-                              for x in (y isa AbstractVector ? y : [y])])
-            @test got == exact                  # …the restraint no longer costs precision
-            @test !("shallow" in got)           # …and this is the answer that used to leak through
+            approx = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
+                                 for x in (y isa AbstractVector ? y : [y])])
+            @test "deep" in approx              # SOUND: the real answer is never lost…
+            @test approx != exact               # …but it IS an over-approximation, not a filter
         finally
             _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
         end
     end
 
-    @testset "🔴 UNRECORDED instances ADMIT the answer — imprecise, never unsound" begin
-        # An empty instance list means NOT RECORDED, not "no instance". Only `_leader_pass` records;
-        # answers arriving by other routes (the completion mirror, monotonic propagation) have none.
-        # Reading empty as "nothing matches" would DROP real answers, turning a documented
-        # imprecision into a silent unsoundness — the strictly worse failure, and the easy mistake
-        # once a filter exists. This drives `abstract_answers` directly so the fallback is gated
-        # even where no end-to-end program currently reaches it.
+    @testset "🔴🔴 REGRESSION: the instance filter LOST an answer — three lines that prove it" begin
+        # The exact program from the audit. The general table `(e (f $_v#1))` holds `v` with recorded
+        # instance `(e (f a))`; the call is `(e (f (g (g a))))`, which does NOT unify with that
+        # instance — yet `v` is CORRECT, because the call REDUCES into `(e (f a))` via the recursive
+        # rule. Any future "precision" filter keyed on instance provenance fails here, which is why
+        # this is pinned as its own testset rather than folded into the one above.
+        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        try
+            prog = raw"(= (e (f a)) v)" * "\n" * raw"(= (e (f (g $x))) (e (f $x)))" * "\n"
+            s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+            _AB.table!(:e)
+            base = String[string(x) for y in load_metta!(s, "!(e (f (g (g a))))\n")
+                          for x in (y isa AbstractVector ? y : [y])]
+            @test base == ["v"]                 # ANTI-VACUITY: the program really does answer
+
+            _AB.untable_all!(); _AB.abolish_all_tables!()
+            s2 = Space(); load_core_stdlib!(s2); load_metta!(s2, prog)
+            _AB.table_as!(:e, :subgoal_abstract => 1)
+            got = String[string(x) for y in load_metta!(s2, "!(e (f (g (g a))))\n")
+                         for x in (y isa AbstractVector ? y : [y])]
+            @test got == base                   # the restraint must not LOSE it (it did, until today)
+        finally
+            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        end
+    end
+
+    @testset "instances are still RECORDED and variant-deduped — just not used as a filter" begin
+        # 7.A's recording survives the filter's removal: it is cheap (+0.08% measured) and it is the
+        # substrate that was promised. What is asserted here is the RECORDING contract, not any
+        # answer-selection behaviour — `_abstract_instance_admits` has no caller on the answer path,
+        # and its docstring says why a future caller must not treat `false` as "does not hold".
         t = _AB.AnswerTrie()
-        @test _AB.trie_insert!(t, Sym(:deep))            # stored with NO instance
-        @test isempty(_AB.trie_instances(t, Sym(:deep)))
+        @test _AB.trie_insert!(t, Sym(:deep))
+        @test isempty(_AB.trie_instances(t, Sym(:deep)))       # empty = NOT RECORDED, never "none"
 
-        gen  = Expression(Atom[Sym(:d), Expression(Atom[Sym(:s), Var("_sa", UInt64(1))])])
-        spec = Expression(Atom[Sym(:d), _ab_s(3)])
-        @test _AB.abstract_answers(Atom[Sym(:deep)], gen, spec, t) == Atom[Sym(:deep)]
-
-        # …and once an instance IS recorded, the filter engages and rejects a non-matching one
-        other = Expression(Atom[Sym(:d), _ab_s(1)])      # (d (s a)) — does NOT unify with (d (s (s (s a))))
-        @test _AB.trie_record_instance!(t, Sym(:deep), other)
-        @test isempty(_AB.abstract_answers(Atom[Sym(:deep)], gen, spec, t))
-
-        # recording is VARIANT-deduped, or a fixpoint re-deriving an answer grows this without bound
-        @test !_AB.trie_record_instance!(t, Sym(:deep), other)
+        inst = Expression(Atom[Sym(:d), _ab_s(1)])
+        @test _AB.trie_record_instance!(t, Sym(:deep), inst)
+        @test length(_AB.trie_instances(t, Sym(:deep))) == 1
+        # variant-deduped, or a fixpoint re-deriving an answer grows this without bound
+        @test !_AB.trie_record_instance!(t, Sym(:deep), inst)
         @test length(_AB.trie_instances(t, Sym(:deep))) == 1
     end
 

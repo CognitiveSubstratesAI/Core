@@ -1206,19 +1206,31 @@ function _abstract_tabled_eval(red::Atom, gen::Atom, typ::Atom, space::Space, b:
     # call's projection of it. Fresh bindings so the caller's variables cannot be bound by the
     # general solve; `prev = nothing` because these results are not the ones being returned.
     tabled_eval(gen, typ, space, Bindings(), nothing)
+    # 🔴 AN IN-PROGRESS GENERAL TABLE MUST BE READ FROM `_PARTIAL`, NOT ANSWERED EMPTY.
+    # Found by audit 2026-08-18. This read only `_ANSWER_TABLE`/the trie, both of which are populated
+    # at COMPLETION — so when the general variant is still in progress the abstracted call silently
+    # contributed NOTHING and the completion loop could not tell the difference between "no answers"
+    # and "not finished". §7.11.1's motivating program is recursion over a growing term, which is
+    # exactly the case where the recursive call abstracts back onto a general key that is still open.
+    # Upstream's final `start_abstract_tabling` clause suspends such a call as a subsumptive consumer
+    # (`shift_for_copy(call_info(GenSkeleton, Skeleton, Status))`, boot/tabling.pl:497-498) — it is
+    # never answered as empty. Reading `_PARTIAL` is the consumer branch's own behaviour
+    # (`tabled_eval` does the same for a variant re-entry), reused rather than reinvented.
     general = haskey(_ANSWER_TABLE, genkey) ? _ANSWER_TABLE[genkey] :
-              (has_answer_trie(genkey) ? trie_answers(answer_trie_for(genkey)) : Atom[])
+              genkey in _TABLE_INPROG        ? (push!(_PARTIAL_READ, genkey);
+                                                copy(get(_PARTIAL, genkey, Atom[]))) :
+              has_answer_trie(genkey)        ? trie_answers(answer_trie_for(genkey)) : Atom[]
     # ⚠️ PROJECT ONTO `gen` FIRST, THEN SPECIALISE. A stored answer holds `Var("_v", i)` placeholders
     # keyed to ITS OWN table's ordered variables, so an answer that mentions the abstracted variable
     # mentions `_v_i`, NOT `_sa_i` — and substituting the abstraction binding would find nothing to
     # replace. `_project(general, gen)` restores gen's actual variables; `match_atoms(gen, red)` then
     # binds the `_sa` ones to the subterms they replaced AND red's own variables to themselves, so
     # the result is already in the caller's terms and needs no second projection.
-    # the trie is passed so the specialisation can FILTER by recorded instance (roadmap 7.A), not
-    # merely substitute — without it §7.11.1 over-approximates whenever an answer does not mention
-    # the abstracted variable, which was the measured gap when this shipped.
-    gtrie = has_answer_trie(genkey) ? answer_trie_for(genkey) : nothing
-    _replay(abstract_answers(_project(general, gen), gen, red, gtrie), b, prev)
+    # ⚠️ NO TRIE IS PASSED ANY MORE. It used to be, so `abstract_answers` could FILTER by recorded
+    # instance — that filter was UNSOUND and is gone (see tabling/Abstract.jl for the three-line
+    # program it lost an answer on). What remains is substitution of the abstraction binding, which
+    # is sound and imprecise.
+    _replay(abstract_answers(_project(general, gen), gen, red), b, prev)
 end
 
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
