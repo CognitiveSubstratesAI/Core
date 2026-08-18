@@ -411,11 +411,11 @@ this is upstream's `delay_info` hanging off `trie_node` (`pl-tabling.h:179-184`)
 answer-term `Dict` that `AnswerTrie.jl` correctly rules out. An ABSENT or EMPTY entry means
 UNCONDITIONAL; `Delays.jl` fixes that reading for the whole DNF type.
 
-⚠️ LIFECYCLE: entries are dropped by `clear_answer_delays!`. Nothing in `Tabling.jl`'s `_table_reset!`
-calls it yet — the one-line patch is in this session's report — so across a reset the entries for
-discarded nodes are retained rather than freed. Bounded by the number of abstracted answers ever
-stored, and never wrong (a discarded node is unreachable, so a stale entry can never be read back);
-it is a reclamation gap, named here rather than left to be discovered."""
+LIFECYCLE: entries are dropped by `clear_answer_delays!`, which `Tabling.jl`'s `_table_reset!` DOES
+call (alongside `clear_answer_tries!`), so a reset frees them with the nodes they key. This docstring
+previously said the call site did not exist — it was written while the patch was still proposed and
+was not updated when the patch landed, which is the same stale-prose defect this file's own
+`answer_abstract` refusal suffered for weeks. Verify the caller, not the comment."""
 const _ANSWER_DELAYS = IdDict{TrieNode,DelayDNF}()
 
 """The delayed literal `add_radial_restraint()` pushes — `pl-tabling.c:8989`, `boot/tabling.pl:2317`.

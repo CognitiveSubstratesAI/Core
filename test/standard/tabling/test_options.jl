@@ -44,10 +44,6 @@ const _OP = Eval
         for opt in (:incremental, :opaque, :monotonic, :lazy, :dynamic, :shared, :private)
             @test_throws ArgumentError _OP.table_as!(:q, opt)
         end
-        # ✅ `:subgoal_abstract` MOVED OUT OF THIS LIST on 2026-08-17 — §7.11.1 is BUILT
-        # (`tabling/Abstract.jl`), so it is HONOURED now and asserting it still throws would pin the
-        # port as less finished than it is. `:answer_abstract` stays: it is blocked on delay lists,
-        # because its only sound action routes through `radial_restraint :- tnot(radial_restraint)`.
         # ✅ BOTH ABSTRACTION OPTIONS HAVE NOW MOVED OUT OF THIS LIST — §7.11.1 on 2026-08-17 and
         # §7.11.2 on 2026-08-18. Asserting either still throws would pin the port as less finished
         # than it is. `answer_abstract` was refused for "needs DELAY LISTS"; the premise was

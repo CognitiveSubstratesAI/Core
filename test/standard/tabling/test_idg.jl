@@ -4,11 +4,15 @@
 # table whose stamp no longer matches is evicted. Sound, and maximally coarse — one unrelated
 # `add-atom` throws away every table. The IDG makes it PER-TABLE.
 #
-# ⚠️ PARTIALLY WIRED, AND THE HALVES DIFFER. `tabled_eval` DOES record edges now, at the call point,
-# behind `_IDG_RECORD` / `CORE_TABLING_IDG=1` — the end-to-end testset below drives a real `fib 8`.
-# What is NOT built is the graph's CONSUMERS: invalidation still comes from the revision stamp, and
-# §7.7's RE-EVALUATION half (reevaluating / aborted / answer_count comparison) does not exist.
-# So a green file means the GRAPH is correct, not that tabling uses it.
+# ⚠️ PARTIALLY WIRED, AND THE HALVES DIFFER — BUT THE LINE HAS MOVED. `tabled_eval` records edges at
+# the call point behind `_IDG_RECORD` / `CORE_TABLING_IDG=1`, and the end-to-end testset below drives
+# a real `fib 8`. §7.7's RE-EVALUATION half now EXISTS (`prepare_reeval!` / `reeval_complete!` /
+# `reset_reevaluation!` and the decrement walk) — see `test_reeval.jl`, which owns those assertions.
+# 🔴 WHAT IS STILL MISSING IS THE INVALIDATION *ENTRY*: nothing calls `idg_changed!` on a space
+# mutation, so no table can ever BE invalid and the re-evaluation lifecycle is unreachable in
+# ordinary use. That is the dynamic-predicate edge (upstream's `dyn_changed_pattern/1`,
+# boot/tabling.pl:1807-1813). Until it lands, invalidation still comes from the revision stamp.
+# So a green file means the GRAPH is correct, NOT that tabling uses it.
 using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
 using Test
@@ -152,11 +156,12 @@ _dg_k(name::Symbol) = Sym(name)
         _DG.untable_all!(); _DG.clear_idg!()
     end
 
-    @testset "the RE-EVALUATION half is absent, and says so" begin
-        # §7.7's second half (reevaluating / aborted / answer_count comparison / new_answer) needs the
-        # completion loop to re-enter a table holding its old answers for comparison. The fields exist
-        # and are documented; nothing sets them. Asserting the ZERO stops a later reader taking the
-        # presence of the field for the presence of the feature.
+    @testset "a FRESH node's re-evaluation fields are the documented defaults" begin
+        # 🔴 THIS TESTSET USED TO ASSERT THE FEATURE WAS ABSENT. It is not, as of 2026-08-18 — but the
+        # assertions are still worth keeping, retargeted: they now pin that a FRESH `IDGNode` starts
+        # in the state `prepare_reeval!` expects. If a default moves, the lifecycle silently starts
+        # mid-flight, and `test_reeval.jl`'s abort path is the only other thing that would notice.
+        # The lifecycle itself is asserted in `test_reeval.jl`, which owns it.
         _DG.clear_idg!()
         n = _DG.idg_node_for(_dg_k(:a))
         @test !n.reevaluating && !_DG.idg_is_reevaluating(_dg_k(:a))

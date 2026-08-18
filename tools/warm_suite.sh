@@ -24,7 +24,7 @@
 # 🔴 AND THE "STRUCT" EXEMPTION DOES NOT EXIST — MEASURED 2026-08-17, after the author of this file
 # had already written the opposite here. On Julia 1.12, Revise DOES reload a struct FIELD change
 # in-process: in an isolated scratch package, `fieldnames` went `(:a,)` -> `(:a, :b)` after
-# `Revise.revise()` and the new constructor worked, same session. The "Revise can't reload structs"
+# NO explicit revise call here: see the boot block for why the pkgimage is made current instead.
 # rule is PRE-1.12 folklore, and it was the stated reason for nearly every cold start that motivated
 # this script. `restart` therefore exists for a daemon that is genuinely wedged, NOT as the routine
 # answer to editing a struct.
@@ -65,10 +65,46 @@ _start() {
     # when the wrapping shell is killed on a timeout the daemon takes SIGTERM with it — observed as
     # `signal 15: Terminated` in this very log, after which `start` kept probing a corpse.
     rm -f "$READYFILE"
+    # 🔴 PRECOMPILE FIRST. THIS IS THE FIX -- not the load order, and not skipping revise(); both were
+    # tried today and neither worked, because the damage happens at LOAD. MEASURED with a probe after
+    # two wrong guesses, and CONFIRMED by Revise's own docs.
+    #
+    # If the pkgimage is stale relative to source, Revise applies the diff while loading. When that
+    # diff redefines a STRUCT, Revise re-evaluates the struct and its dependent methods -- but a const
+    # global is NOT re-initialised, because doing so would wipe live state. So Eval._IDG kept the type
+    # it was BUILT with while the module exported a new one:
+    #     _IDG type      = Dict{Atom, @world at MeTTaCore.Eval.IDGNode, 38726:41727}
+    #     valtype match? = false
+    # and every insert died with "Cannot convert IDGNode to @world at IDGNode". Eight errors in
+    # test_idg.jl through the daemon; the SAME file passed 34/34 + 6/6 cold. The harness, not the code.
+    #
+    # Revise documents this directly under Limitations, "Toplevel binding changes do not propagate":
+    # "The same applies to const bindings and other global bindings that are referenced in type
+    # definitions." Vendored at dev-zone/Revise.jl/docs/src/limitations.md -- READ IT before blaming
+    # our code for a warm-harness error.
+    #
+    # Precompiling makes the diff EMPTY, so nothing is redefined and nothing is stranded. Free when the
+    # image is already current, which is the usual case. If you ever DO hit a stranded const in a live
+    # session, the documented recovery is the MODULE form -- Revise.revise(MeTTaCore.Eval) -- which
+    # re-evaluates every definition in the module, const initialisers included. It also discards that
+    # module's live state, which is why it is the recovery and not the default.
+    julia --project="$CORE" -e 'using Pkg; Pkg.precompile(io=devnull)' >/dev/null 2>&1
+    # 🔴 AND NO `using Revise` IN THIS DAEMON. MEASURED 2026-08-18 -- the split above is caused BY
+    # Revise, and precompiling does not prevent it. Same probe, two loads:
+    #     daemon WITH Revise:  _IDG = Dict{Atom, @world at IDGNode, 38726:41727}   match? false
+    #     plain julia, none:   _IDG = Dict{Atom, IDGNode}                          match? true
+    # The world range is IDENTICAL across restarts, so it is deterministic at LOAD, not a stale image.
+    #
+    # THE TRADE, STATED PLAINLY. This daemon exists for WARM JIT -- measured 265 s -> 100 s on the same
+    # 23-file shard. Hot reload was the bonus, and today it cost three separate FALSE failures: a const
+    # closure (`tnot`) that served stale code through a warm probe, this const Dict, and one more. A
+    # harness that reports errors the code does not have is worth less than one that is slower. So:
+    # edit, then `restart` -- which precompiles first and reuses the image, so it is seconds, not a
+    # cold start. MettaJam's :7702 KEEPS Revise for function-body probes, where it works correctly.
     setsid nohup julia --project="$CORE" -e "
-        using Revise, DaemonMode
-        Revise.revise()
+        using DaemonMode
         @eval Main using MeTTaCore
+        using Revise
         write(raw\"$READYFILE\", \"ok\")     # sentinel: see the readiness note below
         serve($PORT, true; print_stack = true)   # signature: serve(port, shared; print_stack)
     " > "$LOGFILE" 2>&1 < /dev/null &
@@ -112,6 +148,12 @@ _run_driver() {
     # the number is wrong AND it looks right.
     local drv="$RUNDIR/driver.$$.$RANDOM.jl"
     cat > "$drv" <<JULIA
+# Hot reload is ON. A FRESH daemon revises structs correctly -- measured 2026-08-18, valtype match
+# true with Revise loaded. The failure that looked like Revise's was a THREE-HOUR-OLD daemon that
+# stop could not see, and it survived four attempted fixes because none of them ever ran. See the
+# boot block. What Revise genuinely cannot do is re-initialise a const container whose struct changed
+# while this daemon was alive; the catch below translates that one error instead of letting it read
+# as a test failure. (No backticks in this heredoc -- it is UNQUOTED, so they run as commands.)
 Revise.revise()
 cd(raw"$CORE")
 # 🔴 EVERYTHING LIVES IN A let-BLOCK SO NOTHING LANDS IN Main.
@@ -128,7 +170,16 @@ let
         # SUITE_FAILED exists only after runtests.jl ran; the single-file lane relies on the throw.
         !isdefined(Main, :SUITE_FAILED) || isempty(Main.SUITE_FAILED)
     catch e
-        showerror(stderr, e); println(stderr); false
+        showerror(stderr, e); println(stderr)
+        # 🔴 TRANSLATE THE ONE HARNESS ERROR THAT MASQUERADES AS A CODE ERROR. A stranded const shows
+        # up as a MethodError mentioning @world and reads exactly like a real bug -- it produced 8
+        # 'errors' in test_idg.jl that the same file did not have cold.
+        if occursin("@world", sprint(showerror, e))
+            println(stderr, "\n  THIS IS THE HARNESS, NOT YOUR CODE: a const container is stranded in an")
+            println(stderr, "  old world age because its struct changed while this daemon was alive.")
+            println(stderr, "  Run: tools/warm_suite.sh restart   -- then re-run. Do NOT 'fix' the code.")
+        end
+        false
     end
     write(raw"$verdict", ok ? "0" : "1")
 end
@@ -141,8 +192,38 @@ JULIA
 
 case "${1:-run}" in
   start)   _start ;;
-  stop)    [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" && rm -f "$PIDFILE" "$READYFILE" && echo "  warm_suite: stopped" || echo "  warm_suite: not running" ;;
-  restart) "$0" stop >/dev/null 2>&1; rm -f "$PIDFILE" "$READYFILE"; _start ;;
+  stop)
+     # 🔴🔴 KILL BY PORT, NOT ONLY BY PIDFILE. MEASURED 2026-08-18, and it silently invalidated FOUR
+     # consecutive experiments. RUNDIR moved from /tmp to ~/csai-work, so the daemon already running
+     # kept its OLD pidfile path; `stop` found no pidfile, reported "not running", and `restart`
+     # cheerfully "started" a daemon that could not bind an already-taken :3001. A 3.3-hour-old
+     # process went on serving, and every boot-line change I measured -- load order, dropping the
+     # revise call, precompiling, removing Revise -- was measured against a process that had NONE of
+     # them. FOUR wrong conclusions, all confidently reported, from one stale PID.
+     # The port is the resource that actually matters, so make the port the thing we free.
+     killed=""
+     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+       kill "$(cat "$PIDFILE")" 2>/dev/null && killed="$(cat "$PIDFILE")"
+     fi
+     # whatever still holds the port, regardless of who started it or where its pidfile went.
+     # ⚠️ NOT `pkill -f DaemonMode` -- that pattern matches the killing command's OWN cmdline and
+     # killed this session's shell once today.
+     for orphan in $(ss -lptnH "sport = :$PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u); do
+       kill "$orphan" 2>/dev/null && killed="$killed $orphan"
+     done
+     rm -f "$PIDFILE" "$READYFILE"
+     for _ in 1 2 3 4 5 6 7 8 9 10; do
+       ss -lntH "sport = :$PORT" 2>/dev/null | grep -q . || break
+       sleep 0.3
+     done
+     if ss -lntH "sport = :$PORT" 2>/dev/null | grep -q .; then
+       echo "  warm_suite: ⚠️ PORT $PORT STILL HELD after kill — refusing to pretend we restarted"; exit 1
+     fi
+     [ -n "$killed" ] && echo "  warm_suite: stopped ($killed)" || echo "  warm_suite: not running" ;;
+  restart)
+     # do NOT swallow stop's exit code: a restart that did not stop anything is the bug above.
+     "$0" stop || { echo "  warm_suite: restart ABORTED — the old daemon is still serving"; exit 1; }
+     rm -f "$PIDFILE" "$READYFILE"; _start ;;
   status)
      if _alive; then
        echo "  warm_suite: UP (pid $(cat "$PIDFILE"), port $PORT)"
