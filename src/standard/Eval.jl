@@ -384,7 +384,14 @@ function unify_op(f::Frame, b::Bindings)
     # answer — converting "we do not know" into "we know it is the else case". Every other strict op
     # propagates the bottom; this one decided on it. `unify` is in MINIMAL_OPS, so it is reachable
     # from any program, not just tabled ones.
-    (_u = propagated_undefined(Atom[satom])) === nothing || return finished_result(_u, b, f.prev)
+    # 🔴 …BUT ONLY WHEN NOTHING MATCHES. Narrowed 2026-08-18: this used to propagate ⊥ BEFORE
+    # attempting the match, and that is too strong. Unifying ⊥ against a BARE VARIABLE pattern
+    # SUCCEEDS — binding `\$x` to a bottom is a legitimate match, not a laundering — and `let` is
+    # defined as exactly that (`stdlib.metta:153`: `(= (let \$pattern \$atom \$template)
+    # (unify \$atom \$pattern \$template Empty))`). Propagating first made every `let` over an
+    # undefined value collapse, which truncated rule bodies at their first undefined literal.
+    # The anti-laundering property is preserved BELOW instead: if nothing matched AND the atom is a
+    # bottom, we return the bottom rather than deciding the `else` branch.
     out = Tuple{Frame,Bindings}[]
     # hyperon: a Grounded Space implements a custom match_ → `unify` QUERIES the space (used by get-doc)
     if satom isa Grounded && satom.value isa Space
@@ -398,7 +405,15 @@ function unify_op(f::Frame, b::Bindings)
             append!(out, finished_result(subst(then, mb), mb, f.prev))
         end
     end
-    isempty(out) ? finished_result(subst(else_, b), b, f.prev) : out
+    if isempty(out)
+        # NOTHING MATCHED. If the atom is a WFS bottom we cannot conclude the `else` branch — that is
+        # the laundering the audit caught: turning "we do not know" into "we know it is the else
+        # case". Return the bottom, WITH its delay condition, instead of deciding.
+        (_u = propagated_undefined(Atom[satom])) === nothing ||
+            return finished_result(_u, b, f.prev)
+        return finished_result(subst(else_, b), b, f.prev)
+    end
+    out
 end
 
 # decons-atom (interpreter.rs:843): non-empty expr → (head (tail...)); empty → error
@@ -420,8 +435,22 @@ function cons_atom(f::Frame, b::Bindings)
     (a isa Expression && length(a.children) == 3) ||
         return finished_result(error_atom(a, "expected (cons-atom <head> <tail>)"), b, f.prev)
     head = subst(a.children[2], b); tail = subst(a.children[3], b)
-    (_u = propagated_undefined(Atom[head, tail])) === nothing ||
-        return finished_result(_u, b, f.prev)                    # WFS bottom contagious, WITH its condition
+    # 🔴 `cons-atom` IS A CONSTRUCTOR, NOT A STRICT OPERATION — it must NOT absorb a ⊥ element.
+    # It used to run `propagated_undefined` here, and that single line is why a rule body stopped at
+    # its first undefined literal. The minimal-MeTTa interpreter REBUILDS a reduced expression with
+    # `cons-atom`, so one undefined argument collapsed the whole rebuilt expression before the rule
+    # could be applied — measured with a stack trace:
+    #     (cons-atom undefined ())          -> undefined
+    #     (cons-atom ignore1 undefined)     -> undefined
+    # and `(= (ignore1 $x) (marker))` returned `undefined` even though it never uses `$x`.
+    # `(f ⊥)` is a perfectly good TERM; contagion belongs to strict ops (arithmetic: `1 + ⊥ = ⊥`,
+    # `CoreMathOps.jl`), not to building an expression. `decons-atom` above keeps its check, because
+    # taking a BOTTOM apart is genuinely undefined — that is the argument BEING ⊥, not containing one.
+    #
+    # WHY IT MATTERS BEYOND TIDINESS: a truncated body never calls the literals after the undefined
+    # one, so the tables they would have reached are never DISCOVERED, the SLG component splits, and
+    # `tnot` on a member of the other half falls through and returns ⊥. Four XSB WFS gold programs
+    # (p15/p17/p26/p27) were wrong because of it.
     (tail isa Expression) ||
         return finished_result(error_atom(a, "expected: (cons-atom <head> (: <tail> Expression))"), b, f.prev)
     finished_result(Expression(Atom[head; tail.children]), b, f.prev)

@@ -234,6 +234,11 @@ module StandardMeTTaTests
     # A gate rather than prose in `docs/src/language/grammar.md`, because enumerations in prose go
     # stale on the first addition.
     Main.@suite("standard/test_grounded_payloads.jl")
+    # How a WFS bottom travels through the INTERPRETER: constructors and control forms must not
+    # absorb one (a rule that ignores its argument must still fire), while strict ops must, and
+    # `unify` must not launder ⊥ into its `else` branch. Both properties were wrong until
+    # 2026-08-18 and cost four XSB gold programs.
+    Main.@suite("standard/test_wfs_propagation.jl")
     # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
     # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
     # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global

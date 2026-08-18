@@ -34,54 +34,36 @@ using Test
 
 const _XW = Eval
 
-"""Programs whose WFS verdict we get WRONG, and the one cause behind all four.
+"""FIXED 2026-08-18 — kept as the record of what was wrong and how it was found.
 
-🔴 A DEFECT, NOT AN "EXPECTED DIFFERENCE", AND `@test_broken` SO A FIX ANNOUNCES ITSELF. Julia reports
-an unexpectedly-passing `@test_broken` as an error, which is exactly the alert we want the day this is
-fixed — an exemption that cannot go stale.
+p15/p17/p26/p27 reported every atom UNDEFINED where upstream says some are TRUE and the rest FALSE.
+All 57 translated programs now match; this dict is empty and the loop below has no exemption branch.
 
-⚠️ THE FIRST WRITTEN EXPLANATION OF THIS WAS WRONG, and the wrong one was plausible enough to survive
-review, so it is recorded here rather than quietly replaced. It said we fail to take the greatest
-unfounded set inside an SCC that carries negative edges. Instrumenting the fixpoint refuted that: K and
-U come back holding ⊥ for EVERY member including `s`, so the alternating fixpoint never had a chance —
-it was handed the wrong component.
+⚠️ THE FIRST TWO EXPLANATIONS WERE WRONG, and both were plausible. Recorded because the wrong ones
+survived review and only instrumentation killed them.
+  1. "we fail to take the greatest unfounded set inside an SCC with negative edges" — refuted by
+     tracing the fixpoint: K and U came back holding ⊥ for EVERY member including `s`, so the
+     alternating fixpoint never had a chance. It was handed the wrong component.
+  2. "§7.6.1 simplification is missing" — the neighbouring explanation. Simplification recovers an
+     answer that BECAME unconditional; here no conditional answer was ever justified.
 
-THE ACTUAL CAUSE, measured in three steps.
+THE ACTUAL CAUSE was two absorbing sites in the INTERPRETER, not in the SLG engine at all:
+  · `cons_atom` ran `propagated_undefined` on its arguments. The minimal-MeTTa interpreter REBUILDS
+    a reduced expression with `cons-atom`, so ONE undefined argument collapsed the whole rebuilt
+    expression before the rule could be applied — `(= (ignore1 \$x) (marker))` returned `undefined`
+    even though it never uses `\$x`. `cons-atom` is a CONSTRUCTOR: `(f ⊥)` is a good term.
+  · `unify_op` propagated ⊥ BEFORE attempting the match. Unifying ⊥ against a BARE VARIABLE succeeds
+    — and `let` is defined as exactly that (`stdlib.metta:153`) — so every `let` over an undefined
+    value collapsed. Narrowed to fire only when nothing matched, which preserves the anti-laundering
+    property the audit added it for: ⊥ against a CONCRETE pattern still returns ⊥ rather than
+    silently concluding the `else` branch.
 
-(1) The SCC is SPLIT. Tracing `_wfs_complete!` on p15 shows two components completing separately:
-        [WFS] members=["(p)", "(s)"]
-        [WFS] members=["(q)", "(r)"]
-    when all four are mutually dependent and must be one. A `tnot` on a member of the OTHER half then
-    finds its key absent from `_WFS_BOUND`, falls through to the in-progress branch, and returns ⊥.
-
-(2) The split happens because CONJUNCTION IS STRICT IN ⊥. Our encoding of `A, B` is
-    `(let \$c A B)`, and a ⊥ from A absorbs — B never runs:
-        (= (p) (tnot (p)))  (= (marker) True)
-        (= (probe) (let \$x (tnot (p)) (marker)))
-        !(probe)  ->  undefined        # `marker` is never called
-    So a rule body STOPS at its first undefined literal.
-
-(3) Therefore the tables the remaining literals would have called are never DISCOVERED, and the SCC is
-    only as large as the prefix of each body that ran before hitting a ⊥.
-
-Prolog does not do this: an undefined literal is DELAYED and evaluation continues, which is the entire
-purpose of delay lists. We have the delay machinery — `Delays.jl`'s `DelayDNF`, and answers do carry
-conditions — but the CONJUNCTION path does not use it; it absorbs instead of delaying.
-
-⚠️ WHICH ALSO EXPLAINS WHY ONLY FOUR PROGRAMS FAIL. Absorbing is indistinguishable from delaying
-whenever the truncated remainder could not have changed the verdict — p22 has `(let \$c1 (tnot (p)) (b))`
-and passes. It breaks precisely when continuing would have DISCOVERED more of the component, which is
-what p15/p17/p26/p27 all do.
-
-⚠️ AND IT IS NOT THE §7.6.1 SIMPLIFICATION GAP, the neighbouring and wrong explanation. Simplification
-recovers an answer that BECAME unconditional; here the answer was never collected in the first place.
+Consequence, and why the SLG engine looked guilty: a truncated body never calls the literals after
+the undefined one, so the tables they would have reached are never DISCOVERED, the component splits
+(`_wfs_complete!` ran twice, on {p,s} then {q,r}, for four mutually-dependent atoms), and `tnot` on a
+member of the other half fell through and returned ⊥. The fixpoint was correct throughout.
 """
-const _XW_KNOWN_WRONG = Dict{String,String}(
-    "p15" => "conjunction absorbs ⊥, so p's body stops at tnot(s) and never discovers q/r; SCC splits",
-    "p17" => "same, five-fold: p1..p5 / q1..q5 / r1..r5 / s1..s5",
-    "p26" => "same, with an extra layer (l, m, n)",
-    "p27" => "same, via ns; gold s TRUE",
-)
+const _XW_KNOWN_WRONG = Dict{String,String}()
 
 """One row of the corpus: the program, what to table, the goals asked, and the gold verdict.
 
@@ -189,15 +171,11 @@ const _XW_HAND = XsbCase[
         @testset "$(c.name)" begin
             try
                 (got_true, got_undef) = _xw_run(c)
-                if haskey(_XW_KNOWN_WRONG, c.name)
-                    # KNOWN DEFECT — see `_XW_KNOWN_WRONG`. `@test_broken` turns a FIX into a loud
-                    # error here, so the exemption cannot quietly outlive the bug.
-                    @test_broken got_true  == sort(c.true_set)
-                    @test_broken got_undef == sort(c.undef_set)
-                else
-                    @test got_true  == sort(c.true_set)
-                    @test got_undef == sort(c.undef_set)
-                end
+                # No exemptions. `_XW_KNOWN_WRONG` is empty and kept as documentation; when it held
+                # four entries the `@test_broken` reported the FIX as an error (`test_unbroken` ×8),
+                # which is exactly how an exemption should end.
+                @test got_true  == sort(c.true_set)
+                @test got_undef == sort(c.undef_set)
             finally
                 _XW.untable_all!(); _XW.abolish_all_tables!()
             end
