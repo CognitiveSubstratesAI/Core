@@ -34,38 +34,53 @@ using Test
 
 const _XW = Eval
 
-"""Programs whose WFS verdict we get WRONG, with the shape they share.
+"""Programs whose WFS verdict we get WRONG, and the one cause behind all four.
 
-🔴 A DEFECT, NOT AN "EXPECTED DIFFERENCE", AND `@test_broken` SO A FIX ANNOUNCES ITSELF. Julia
-reports an unexpectedly-passing `@test_broken` as an error, which is exactly the alert we want the
-day the fixpoint improves — an exemption that cannot go stale.
+🔴 A DEFECT, NOT AN "EXPECTED DIFFERENCE", AND `@test_broken` SO A FIX ANNOUNCES ITSELF. Julia reports
+an unexpectedly-passing `@test_broken` as an error, which is exactly the alert we want the day this is
+fixed — an exemption that cannot go stale.
 
-THE SHAPE, isolated by probe rather than inferred from the failure text. A POSITIVE cycle interleaved
-with `tnot`:
+⚠️ THE FIRST WRITTEN EXPLANATION OF THIS WAS WRONG, and the wrong one was plausible enough to survive
+review, so it is recorded here rather than quietly replaced. It said we fail to take the greatest
+unfounded set inside an SCC that carries negative edges. Instrumenting the fixpoint refuted that: K and
+U come back holding ⊥ for EVERY member including `s`, so the alternating fixpoint never had a chance —
+it was handed the wrong component.
 
-    s :- tnot(p), tnot(q), tnot(r).
-    p :- tnot(s), tnot(r), q.      q :- tnot(p), r.      r :- tnot(q), p.
+THE ACTUAL CAUSE, measured in three steps.
 
-`p` needs `q`, `q` needs `r`, `r` needs `p` — a positive cycle with NO base case. Even in the
-alternating fixpoint's optimistic phase, where every negative literal is assumed to hold, nothing
-derives any of them; so p/q/r are FALSE and `s` is TRUE. Upstream says exactly that. We report all
-four UNDEFINED.
+(1) The SCC is SPLIT. Tracing `_wfs_complete!` on p15 shows two components completing separately:
+        [WFS] members=["(p)", "(s)"]
+        [WFS] members=["(q)", "(r)"]
+    when all four are mutually dependent and must be one. A `tnot` on a member of the OTHER half then
+    finds its key absent from `_WFS_BOUND`, falls through to the in-progress branch, and returns ⊥.
 
-It is NOT a general positive-cycle bug. Measured directly:
-    (= (p) (q)) (= (q) (p))                 ->  p FALSE, q FALSE   ✓
-    (= (p) (q)) (= (q) (p)) (= (q) True)    ->  p TRUE,  q TRUE    ✓
-Plain unfounded sets are computed correctly. What is missing is doing that computation INSIDE an SCC
-that also carries negative edges: we stop at "this component has a negative loop" and return ⊥ for
-all of it, instead of first taking the greatest unfounded set of the optimistic phase.
+(2) The split happens because CONJUNCTION IS STRICT IN ⊥. Our encoding of `A, B` is
+    `(let \$c A B)`, and a ⊥ from A absorbs — B never runs:
+        (= (p) (tnot (p)))  (= (marker) True)
+        (= (probe) (let \$x (tnot (p)) (marker)))
+        !(probe)  ->  undefined        # `marker` is never called
+    So a rule body STOPS at its first undefined literal.
 
-⚠️ AND IT IS NOT THE §7.6.1 SIMPLIFICATION GAP, which is the neighbouring explanation and the wrong
-one. Simplification turns an answer that BECAME unconditional back into a definite one; here no
-conditional answer is ever justified, because the optimistic phase already refutes p/q/r."""
+(3) Therefore the tables the remaining literals would have called are never DISCOVERED, and the SCC is
+    only as large as the prefix of each body that ran before hitting a ⊥.
+
+Prolog does not do this: an undefined literal is DELAYED and evaluation continues, which is the entire
+purpose of delay lists. We have the delay machinery — `Delays.jl`'s `DelayDNF`, and answers do carry
+conditions — but the CONJUNCTION path does not use it; it absorbs instead of delaying.
+
+⚠️ WHICH ALSO EXPLAINS WHY ONLY FOUR PROGRAMS FAIL. Absorbing is indistinguishable from delaying
+whenever the truncated remainder could not have changed the verdict — p22 has `(let \$c1 (tnot (p)) (b))`
+and passes. It breaks precisely when continuing would have DISCOVERED more of the component, which is
+what p15/p17/p26/p27 all do.
+
+⚠️ AND IT IS NOT THE §7.6.1 SIMPLIFICATION GAP, the neighbouring and wrong explanation. Simplification
+recovers an answer that BECAME unconditional; here the answer was never collected in the first place.
+"""
 const _XW_KNOWN_WRONG = Dict{String,String}(
-    "p15" => "positive cycle p->q->r->p interleaved with tnot; gold s TRUE / p,q,r FALSE",
-    "p17" => "same shape, five-fold: p1..p5 / q1..q5 / r1..r5 / s1..s5",
-    "p26" => "same shape with an extra layer (l, m, n)",
-    "p27" => "same shape via ns; gold s TRUE",
+    "p15" => "conjunction absorbs ⊥, so p's body stops at tnot(s) and never discovers q/r; SCC splits",
+    "p17" => "same, five-fold: p1..p5 / q1..q5 / r1..r5 / s1..s5",
+    "p26" => "same, with an extra layer (l, m, n)",
+    "p27" => "same, via ns; gold s TRUE",
 )
 
 """One row of the corpus: the program, what to table, the goals asked, and the gold verdict.

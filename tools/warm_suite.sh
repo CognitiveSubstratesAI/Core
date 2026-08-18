@@ -46,14 +46,36 @@
 set -uo pipefail
 
 CORE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${CORE_WARM_SUITE_PORT:-3001}"
+# 🔴🔴 TWO DAEMONS, AND THE SPLIT IS THE WHOLE POINT — 2026-08-18.
+# `file` is for PROBES; `run` is the GATE. They must not share a process, and the day they did it
+# cost 26 minutes of confusion. MEASURED, same suite, 92 files / 0 failed every time:
+#     cold, fresh daemon .................. 575 s
+#     warm, nothing run since ............. 161 s
+#     warm, after ~15 diagnostic probes ... 26 min and still going when killed
+# The probes were ordinary debugging — tabling traces, an instrumented build, a couple of one-off
+# spaces — and each left tables, spaces and IDG nodes behind. While `run` restarted unconditionally it
+# was immune; making it warm for the 3.5x speedup handed it every probe's residue.
+# `[[feedback_warm_server_probes_not_suites]]` said this about MettaJam's :7702 and it is the same
+# hazard one level down: the answer is not "remember to restart", it is SEPARATE PORTS.
+PORT="${CORE_WARM_SUITE_PORT:-3001}"          # probe lane   (`file`)
+SUITE_PORT="${CORE_WARM_SUITE_GATE_PORT:-3002}"  # gate lane (`run`, `run-warm`, `run-cold`)
 # ⚠️ NOT /tmp — a reboot wipes it, taking the pidfile, the readiness sentinel and the verdict file
 # with it, so a live daemon becomes unreachable and `run` reports a failure that never happened.
 # $HOME survives. (User instruction 2026-08-18.)
-RUNDIR="${CORE_WARM_SUITE_DIR:-$HOME/csai-work/run}/core_warm_suite"
-PIDFILE="$RUNDIR/daemon.pid"
-LOGFILE="$RUNDIR/daemon.log"
-READYFILE="$RUNDIR/ready"
+RUNROOT="${CORE_WARM_SUITE_DIR:-$HOME/csai-work/run}"
+
+# Point every path at one lane. Called by the run* verbs to switch to the gate daemon; everything
+# else stays on the probe lane. Keeping the paths PORT-SUFFIXED is what stops the two lanes from
+# reading each other's pidfile — the class of bug that let a 3.3 h daemon survive `stop` this morning.
+_use_lane() {
+    PORT="$1"
+    RUNDIR="$RUNROOT/core_warm_suite_$1"
+    PIDFILE="$RUNDIR/daemon.pid"
+    LOGFILE="$RUNDIR/daemon.log"
+    READYFILE="$RUNDIR/ready"
+    mkdir -p "$RUNDIR"
+}
+_use_lane "$PORT"
 mkdir -p "$RUNDIR"
 
 # ⚠️ "ALIVE" MEANS ANSWERS, NOT "THE PID EXISTS". A daemon whose serve() threw leaves the process up
@@ -219,6 +241,14 @@ JULIA
 
 case "${1:-run}" in
   start)   _start ;;
+  stop-all)
+     # BOTH lanes. `stop` alone leaves the other daemon holding its port and its memory — and the
+     # gate daemon is the bigger one (~950 MB RSS on this 17 GB box).
+     "$0" stop; "$0" stop-gate ;;
+  stop-gate)
+     _use_lane "$SUITE_PORT"
+     "$0" stop 2>/dev/null || true
+     CORE_WARM_SUITE_PORT="$SUITE_PORT" "$0" stop ;;
   stop)
      # 🔴🔴 KILL BY PORT, NOT ONLY BY PIDFILE. MEASURED 2026-08-18, and it silently invalidated FOUR
      # consecutive experiments. RUNDIR moved from /tmp to ~/csai-work, so the daemon already running
@@ -272,6 +302,7 @@ case "${1:-run}" in
      case "$2" in /*) tgt="$2" ;; *) tgt="$CORE/$2" ;; esac
      _run_driver "include(raw\"$tgt\")" ;;
   run)
+     _use_lane "$SUITE_PORT"
      # 🟢 THE SUITE LANE IS NOW WARM BY DEFAULT — 2026-08-18. It restarted on every invocation for a
      # year of sessions, and the reason was real: the suite leaked state, so a second run in one
      # process invented failures, and a harness that invents failures is worse than a slow one.
@@ -308,6 +339,7 @@ case "${1:-run}" in
        _run_driver "isdefined(Main, :SUITE_FAILED) && empty!(Main.SUITE_FAILED); delete!(ENV, \"CORE_SUITE_SHARD\"); include(raw\"$CORE/test/runtests.jl\")"
      fi ;;
   run-cold)
+     _use_lane "$SUITE_PORT"
      # The old behaviour, kept as the arbiter. Use it to confirm a suspicious `run` failure, or when
      # you have just added a test that touches shared/global state.
      "$0" restart >/dev/null 2>&1
@@ -319,6 +351,7 @@ case "${1:-run}" in
        _run_driver "delete!(ENV, \"CORE_SUITE_SHARD\"); include(raw\"$CORE/test/runtests.jl\")"
      fi ;;
   run-warm)
+     _use_lane "$SUITE_PORT"
      # 🔬 THE SAME SUITE, IN THE DAEMON THAT IS ALREADY UP — no restart. This is the MEASUREMENT that
      # tells us whether `run` still needs to restart: anything that fails here and passed under `run`
      # is state some file LEAKS into the next one.
