@@ -1537,7 +1537,18 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
                isempty(S)       ? ExecOk(Atom[Sym("True")]) :            #     G∈I definite ⇒ ¬G false (Empty)
                                   ExecOk(Atom[und])                     #     G∉I empty    ⇒ ¬G true
     end                                                                 #     I[G] only-undef ⇒ ¬G undefined
-    key in _TABLE_INPROG && return ExecOk(Atom[und])                      # live negative loop ⇒ WFS bottom
+    # 🔴 CHECK FOR A DEFINITE ANSWER BEFORE SUSPENDING — audit 2026-08-18.
+    # This returned the bottom the moment G's table was in progress. But an in-progress table can
+    # ALREADY hold a definite answer, and if it does then G is provably true and `tnot(G)` is FALSE,
+    # not undefined — no fixpoint round can retract a derived answer. Upstream tests the table's
+    # answers before it suspends, for the same reason. Returning ⊥ here was sound but needlessly
+    # imprecise, and it propagates: every consumer of that ⊥ inherits an undefined it need not have.
+    # Reading `_PARTIAL` is a CONSUMER READ and must be flagged as one, exactly as `tabled_eval` does.
+    if key in _TABLE_INPROG
+        push!(_PARTIAL_READ, key)
+        _wfs_definite(get(_PARTIAL, key, Atom[])) && return ExecOk(Atom[])   # G provably true ⇒ ¬G false
+        return ExecOk(Atom[und])                                            # else: live negative loop ⇒ ⊥
+    end
     saved = copy(_NEG_BARRIER); union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
     st = _NEG_TAINT[]; _NEG_TAINT[] = false; _NEG_DEPTH[] += 1            #   a consumer reading a barrier key
     local A::Vector{Atom} = Atom[]; local tainted::Bool = false          #   ⇒ a positive edge crossed the tnot

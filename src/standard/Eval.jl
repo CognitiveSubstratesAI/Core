@@ -378,6 +378,13 @@ function unify_op(f::Frame, b::Bindings)
         return finished_result(error_atom(a, "expected (unify <atom> <pattern> <then> <else>)"), b, f.prev)
     atom, pattern, then, else_ = a.children[2], a.children[3], a.children[4], a.children[5]
     satom = subst(atom, b)
+    # 🔴 A WFS BOTTOM MUST NOT BE LAUNDERED INTO A DEFINITE ANSWER — audit 2026-08-18.
+    # `unify` is a CONTROL instruction: it picks `then` or `else`. Given ⊥ as the atom, nothing
+    # matches, so it silently took the `else` branch and returned that branch's value as a DEFINITE
+    # answer — converting "we do not know" into "we know it is the else case". Every other strict op
+    # propagates the bottom; this one decided on it. `unify` is in MINIMAL_OPS, so it is reachable
+    # from any program, not just tabled ones.
+    (_u = propagated_undefined(Atom[satom])) === nothing || return finished_result(_u, b, f.prev)
     out = Tuple{Frame,Bindings}[]
     # hyperon: a Grounded Space implements a custom match_ → `unify` QUERIES the space (used by get-doc)
     if satom isa Grounded && satom.value isa Space
