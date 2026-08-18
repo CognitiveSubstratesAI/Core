@@ -152,23 +152,63 @@ arriving, and filtering a partial set would silently under-answer. Upstream's ot
 on that case (`shift_for_copy`), which needs the consumer path — so for now we fall through to
 ordinary tabling instead, which is correct but does more work.
 """
-function subsumptive_answers(goal::Atom)
+function subsumptive_answers(goal::Atom, space = nothing)
     g = more_general_table(goal)
     g === nothing && return nothing
     (genkey, t) = g
     is_complete(t) || return nothing               # not complete ⇒ fall through, do not under-answer
+
+    # 🔴🔴 THIS RETURNED THE EMPTY SET FOR EVERY VALUE TABLE — MEASURED 2026-08-18, warm probe:
+    #     (= (f a) 1)  (= (f b) 2)   table!(:f)   driven by !(f $z)
+    #     more_general_table((f a))  = (f $_v#1)      answers ["1", "2"]
+    #     subsumptive_answers((f a)) = Atom[]          ← upstream gives 1
+    # And `Atom[]` is LOADED here: per this function's own contract an empty vector means "a general
+    # table exists, is complete, and genuinely has no answer matching this call". So it was not a
+    # slow path, it was a WRONG ANSWER, latent only because §7.5 is unwired.
+    #
+    # CAUSE — THE THIRD ASSUMPTION, for the third time. The old body did `match_atoms(a, goal)`:
+    # unify the ANSWER against the GOAL. Upstream can, because a Prolog answer IS a substitution over
+    # the goal skeleton, so `'$tbl_table_status'(ATrie, complete, Wrapper, Skeleton)`
+    # (boot/tabling.pl:438-440) binds the caller's wrapper INTO the skeleton and the answer rides
+    # along. Ours is a VALUE — `1` never unifies with `(f a)` — so every answer was rejected.
+    #
+    # FIX: bind the GENERAL VARIANT against the SPECIFIC CALL, then substitute into each answer.
+    # That is exactly `Abstract.abstract_answers`, and it is deliberately the same shape: §7.5 and
+    # §7.11.1 are upstream's own "merge between variant and subsumptive tabling", so they should not
+    # have two different answers to one question. `[[feedback_recurring_defect_derive_the_rule]]`
+    bs = match_atoms(genkey, goal)
+    answers = trie_answers(t)
+    isempty(bs) && return copy(answers)             # cannot specialise ⇒ the general set, unfiltered
+
+    # 🔑 AND THE PRECISION IS RECOVERABLE, SOUNDLY — reusing §7.11.1's gate rather than repeating its
+    # mistake. Filtering by recorded INSTANCE was shipped for abstraction, found to DROP ANSWERS, and
+    # is sound exactly on heads that cannot reduce into themselves (`_self_reaching_heads`): the
+    # recorded instance is the goal AT THE POINT THE RULE MATCHED, which for a reducing head is a
+    # different term from the call. `f` above is facts-only, so the filter applies and the answer is
+    # EXACT (`1`, not `1` and `2`); a recursive head over-approximates instead, which is sound.
+    filterable = space !== nothing && (h = head_name(goal)) !== nothing &&
+                 !(h in _self_reaching_heads(all_atoms(space)))
     out = Atom[]
-    for a in trie_answers(t)
-        # 🔴 RETURN THE ANSWER INSTANTIATED TO THE CALL, NOT THE STORED ONE — FIXED 2026-08-17.
-        # This was `isempty(match_atoms(a, goal)) || push!(out, a)`: it used the unifier as a FILTER
-        # and then discarded its bindings, pushing the GENERAL atom. For a general table holding a
-        # non-ground `p($X)` and a specific call `p(a)`, upstream yields `p(a)` and we yielded
-        # `p($X)`. Upstream unifies the general variant against the CALLER's Wrapper and then
-        # `'$tbl_answer_update_dl'(ATrie, Skeleton)` unifies each trie answer INTO that partly-bound
-        # skeleton (`boot/tabling.pl:439-441`) — the bindings are the point, not a side effect.
-        # This also makes §7.5 and §7.11.3 interact correctly: the maximally-general answer that
-        # `generalise_answer_substitution` inserts is exactly the shape that went wrong.
-        for b in match_atoms(a, goal)
+    for a in answers
+        # 🔴 TWO ANSWER SHAPES LIVE IN THE SAME TRIE, AND THEY NEED DIFFERENT TREATMENT.
+        # An answer that is an INSTANCE OF THE TABLE'S OWN GOAL PATTERN (Prolog-shaped: the table
+        # `(p $x)` holding `(p a)`, which is what `generalise_answer_substitution` and the §7.11.3
+        # restraint produce) can be filtered by unifying it against the specific call — that is
+        # upstream's test and it is exact. A VALUE answer (`(f a)` holding `1`) cannot: it does not
+        # unify with any goal, and rejecting it on that basis is what made this function return the
+        # empty set for every value table.
+        #
+        # `match_atoms(a, genkey)` is the discriminator: it asks "is this answer an instance of the
+        # goal pattern this table is keyed on?". Fixing only the value case, as the first cut did,
+        # broke the goal-shaped case in the opposite direction — it stopped filtering and returned
+        # every answer. Both shapes are real and both are tested.
+        if !isempty(match_atoms(a, genkey))                 # goal-shaped ⇒ upstream's exact filter
+            isempty(match_atoms(a, goal)) && continue
+        elseif filterable                                   # value-shaped ⇒ the §7.11.1 gated filter
+            insts = trie_instances(t, a)
+            isempty(insts) || any(i -> !isempty(match_atoms(i, goal)), insts) || continue
+        end
+        for b in bs
             inst = subst(a, b)
             any(x -> variant_eq(x, inst), out) || push!(out, inst)
         end

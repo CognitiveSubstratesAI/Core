@@ -109,7 +109,7 @@ _run_driver() {
     cat > "$drv" <<JULIA
 Revise.revise()
 cd(raw"$CORE")
-# 🔴 EVERYTHING LIVES IN A `let` SO NOTHING LANDS IN `Main`.
+# 🔴 EVERYTHING LIVES IN A let-BLOCK SO NOTHING LANDS IN Main.
 # A driver-local `ok = try … end` looks harmless and is not: test/test_types.jl:19 defines a FUNCTION
 # named `ok`, and Julia refuses with "cannot define function ok; it already has a value" once Main
 # holds a binding of that name. One file out of 23 failed for no reason but the harness, and it would
@@ -152,7 +152,10 @@ case "${1:-run}" in
      # poisoned every later `run` in the same daemon. That is the warm-session state-pollution hazard
      # in miniature (`[[feedback_warm_server_probes_not_suites]]`), and the fix is to not share the
      # name at all: a failing `@testset` THROWS, so `include` raising IS the failure signal here.
-     _run_driver "include(raw\"$CORE/$2\")" ;;
+     # ⚠️ an ABSOLUTE path must not be prefixed with $CORE — it produced
+     #    "$CORE/home/shivaji1012/..." and a SystemError that read like a missing file.
+     case "$2" in /*) tgt="$2" ;; *) tgt="$CORE/$2" ;; esac
+     _run_driver "include(raw\"$tgt\")" ;;
   run)
      # 🔴🔴 THE SUITE LANE ALWAYS RESTARTS, AND THAT IS A CORRECTNESS DECISION THAT COSTS THE SPEEDUP.
      # MEASURED 2026-08-17: run test/test_spaces_registry.jl twice in ONE daemon and the second run

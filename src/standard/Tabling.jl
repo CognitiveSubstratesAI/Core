@@ -116,6 +116,33 @@ const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key un
 # untouched ⇒ 234-conformance byte-identical.
 const _WFS_BOUND  = Ref(Dict{Atom,Vector{Atom}}())   # SCC-member key ↦ bound answer-set I (read-only in a phase)
 const _WFS_ACTIVE = Ref(false)                        # true only inside an `_S_P!` phase
+"""Which NEGATIVE literals each in-progress goal's derivation is stuck on.
+
+🔴 WITHOUT THIS THE RESIDUAL IS LOST WHEN THE SCC ROUTES TO THE ALTERNATING FIXPOINT. `tnot` records
+`delay_negative(callee)` on the ⊥ it returns, but `_wfs_complete!` REBUILDS the bottom from the
+optimistic answer set (`_wfs_bottom_for`), and those answers are ordinary values carrying no delay —
+so the reason evaporated and `answer_residual` reported `True`, the value that means UNCONDITIONAL.
+Caught by `test_delays.jl`'s end-to-end paradox assertion the moment the SCC fix landed, which is
+exactly what that anti-vacuity test was written for."""
+const _NEG_DELAYS = Dict{Atom,Set{Atom}}()            # stuck goal ⇒ the callees it delayed on
+
+"Record that the goal currently being derived delays on `callee` — call it wherever `tnot` yields ⊥."
+function _record_neg_delay!(callee::Atom)
+    # 🔴 THE OWNER IS `_CURRENT_TARGET`, NOT `_GEN_STACK[end]` — MEASURED. The generator stack's top
+    # is the innermost goal being TABLED, which during a drive is the CALLEE, not the caller. On the
+    # pure paradox both delays were attributed to `(q)`:
+    #     [REC] callee=(p) gen_stack=["(p)","(q)"]   → correct, (q) delays on (p)
+    #     [REC] callee=(q) gen_stack=["(p)","(q)"]   → WRONG, this is (p) delaying on (q)
+    # so `(p)` had no recorded reason and its residual came back `True`. `_CURRENT_TARGET[]` is the
+    # goal whose WORKER is running — `_leader_pass` sets it for exactly this question, and
+    # `record_dependency!` already keys off it.
+    owner = _CURRENT_TARGET[]
+    owner === nothing && (owner = isempty(_GEN_STACK) ? nothing : _GEN_STACK[end])
+    owner === nothing && return nothing
+    push!(get!(_NEG_DELAYS, owner::Atom, Set{Atom}()), callee)
+    nothing
+end
+
 const _SCC_NEG    = Set{Atom}()                       # in-progress goals re-entered ACROSS a tnot barrier (a
 #   positive edge closing a cycle through negation) ⇒ their SCC needs `_wfs_complete!`. Set at the source in
 #   `tabled_eval`'s consumer path; the routing checks whether any SCC member is marked. Replaces the old
@@ -235,10 +262,30 @@ indistinguishable from here, which is why `delays_of` returning empty must never
 answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
-                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_DEPS);
+                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_NEG_DELAYS); empty!(_DEPS);
                    _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_idg!(); clear_mono!();  # §1.0 3-4 + §7.7 + §7.8
                    _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
 _scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
+
+"""
+    _union_scc!(key)
+
+Merge every generator from `key` to the top of `_GEN_STACK` into ONE scheduling component.
+
+🔴 EXTRACTED 2026-08-18 SO THE NEGATIVE PATH CAN SHARE IT. It lived inline in `tabled_eval`'s positive
+consumer branch, and `tnot`'s in-progress branch did not do it — which is the whole of the WFS
+order-dependence bug documented at that branch. Four-sites-one-meaning is the shape that produced the
+last audit's worst findings, so this is a function, not a second copy.
+"""
+function _union_scc!(key::Atom)
+    ki = findfirst(g -> g == key, _GEN_STACK)
+    ki === nothing && return nothing
+    root = _scc_root(key)
+    for j in ki+1:length(_GEN_STACK)
+        _COMPONENT[_scc_root(_GEN_STACK[j])] = root
+    end
+    nothing
+end
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
@@ -1180,9 +1227,18 @@ Its reason is the DISJUNCTION of whatever the optimistic answers were conditiona
 optimistic derivations, several alternative conditions, which is exactly upstream's `delay_info`
 shape. Empty when none of them carried a delay, and that reads as "reason not recorded", never as
 unconditional."""
-function _wfs_bottom_for(um::Vector{Atom})::Atom
+function _wfs_bottom_for(um::Vector{Atom}, member::Union{Atom,Nothing} = nothing)::Atom
     dnf = DelayDNF()
     for a in um; dnf = dnf_or(dnf, delays_of(a)); end
+    # ⚠️ FALL BACK TO THE RECORDED NEGATIVE DEPENDENCIES. The optimistic answers are ordinary values
+    # and carry no delay, so disjoining them yields the EMPTY DNF — which `answer_residual` renders
+    # as `True`, i.e. UNCONDITIONAL. That is the opposite of what a paradox means, and it is what
+    # this function produced the moment negative edges started routing SCCs here.
+    if isempty(dnf) && member !== nothing
+        for callee in get(_NEG_DELAYS, member, Set{Atom}())
+            dnf = dnf_or(dnf, DelayDNF([DelaySet([delay_negative(callee)])]))
+        end
+    end
     undefined_with(dnf)
 end
 
@@ -1248,7 +1304,7 @@ function _wfs_complete!(members::Vector{Atom}, typ::Atom, space::Space, key::Ato
         # conditional on, disjoined. When none of them carried a delay the DNF is empty, which reads
         # correctly as "undefined, reason not recorded" rather than as unconditional.
         _PARTIAL[m] = _wfs_definite(km) ? km :                   # TRUE  — well-founded definite answers
-                      !isempty(um)      ? Atom[_wfs_bottom_for(um)] :   # UNDEFINED — in U, unfounded in K
+                      !isempty(um)      ? Atom[_wfs_bottom_for(um, m)] :   # UNDEFINED — in U, unfounded in K
                                           Atom[]                  # FALSE — not even in the optimistic U
     end
     return nothing
@@ -1410,13 +1466,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             _NEG_TAINT[] = true                                                   #   ⇒ recursion-through-negation:
             push!(_SCC_NEG, key)                                                  #   mark this SCC → `_wfs_complete!`
         end
-        ki = findfirst(g -> g == key, _GEN_STACK)                                #   union key..top into one SCC
-        if ki !== nothing
-            root = _scc_root(key)
-            for j in ki+1:length(_GEN_STACK)
-                _COMPONENT[_scc_root(_GEN_STACK[j])] = root
-            end
-        end
+        _union_scc!(key)                                                         #   union key..top into one SCC
         record_dependency!(key, b, prev, red)                                    #   §4.2: THIS is the shift
                                         # ↑ `(b, prev)` here IS the suspended remainder of the target's
                                         # worker — the same pair `_replay` resumes immediately below.
@@ -1535,7 +1585,7 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
         S = _WFS_BOUND[][key]                                            #   alternating fixpoint — read the phase-
         return _wfs_definite(S) ? ExecOk(Atom[]) :                       #   FIXED bound I (no drive/taint/inprog):
                isempty(S)       ? ExecOk(Atom[Sym("True")]) :            #     G∈I definite ⇒ ¬G false (Empty)
-                                  ExecOk(Atom[und])                     #     G∉I empty    ⇒ ¬G true
+                                  (_record_neg_delay!(key); ExecOk(Atom[und]))   # I[G] only-undef ⇒ ¬G undef
     end                                                                 #     I[G] only-undef ⇒ ¬G undefined
     # 🔴 CHECK FOR A DEFINITE ANSWER BEFORE SUSPENDING — audit 2026-08-18.
     # This returned the bottom the moment G's table was in progress. But an in-progress table can
@@ -1547,7 +1597,30 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
     if key in _TABLE_INPROG
         push!(_PARTIAL_READ, key)
         _wfs_definite(get(_PARTIAL, key, Atom[])) && return ExecOk(Atom[])   # G provably true ⇒ ¬G false
-        return ExecOk(Atom[und])                                            # else: live negative loop ⇒ ⊥
+        # 🔴🔴 NEGATIVITY IS A PROPERTY OF THE COMPONENT, NOT OF THIS CALL — FIXED 2026-08-18.
+        # This returned ⊥ and returned IMMEDIATELY, so it did none of what the POSITIVE consumer
+        # branch does in `tabled_eval`: no `_SCC_NEG`, no `_union_scc!`. The callee therefore
+        # completed as its OWN SCC and its ⊥ was written into `_ANSWER_TABLE` and mirrored into the
+        # trie as a COMPLETED answer — never revisited by the alternating fixpoint that exists to
+        # decide exactly this.
+        #
+        # MEASURED, live engine, same program and same space, only the QUERY ORDER differing:
+        #     (= (q) (r))  (= (q) 1)  (= (r) (p))  (= (p) (tnot (q)))
+        #     ask q first -> q=[undefined,1]  p=[undefined]  r=[undefined]   ← all three WRONG
+        #     ask p first -> q=[1]            p=[]           r=[]            ← all three right
+        # WFS has a UNIQUE model, so order-dependence is not a tie-break — it is a wrong answer.
+        #
+        # Upstream cannot reach this state: `tnot/1` SUSPENDS rather than answering
+        # (`negation_suspend/3`, boot/tabling.pl:897-901), and `worklist_negative`
+        # (pl-tabling.c:3006-3016) sets `neg_status` on the COMPONENT. Marking the SCC here is the
+        # minimal Julia analogue: the ⊥ still flows, but the component is now routed to
+        # `_wfs_complete!`, which re-derives it under the alternating fixpoint instead of freezing it.
+        push!(_SCC_NEG, key)
+        _union_scc!(key)
+        # the goal whose derivation is stuck is the innermost generator — record what it waits on, so
+        # `_wfs_bottom_for` can still name it after the fixpoint rebuilds the bottom.
+        _record_neg_delay!(key)
+        return ExecOk(Atom[und])
     end
     saved = copy(_NEG_BARRIER); union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
     st = _NEG_TAINT[]; _NEG_TAINT[] = false; _NEG_DEPTH[] += 1            #   a consumer reading a barrier key
@@ -1558,12 +1631,16 @@ const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
         _NEG_DEPTH[] -= 1; tainted = _NEG_TAINT[]; _NEG_TAINT[] = st
         empty!(_NEG_BARRIER); union!(_NEG_BARRIER, saved)
     end
-    tainted                     && return ExecOk(Atom[und])               # crossed the negation ⇒ can't decide
+    # ⚠️ RECORD ON EVERY ⊥-YIELDING BRANCH. Keying only the in-progress one associated the delay with
+    # the WRONG member: in the pure paradox `p :- tnot(q), q :- tnot(p)`, p's own `tnot` DRIVES q
+    # rather than finding it in progress, so p got no record and its residual came back `True`.
+    tainted                     && (_record_neg_delay!(key); return ExecOk(Atom[und]))
     any(a -> !is_undefined(a), A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
     # G only-undefined ⇒ ¬G undefined. The reason is OUR negative delay CONJOINED with whatever made
     # G's own answers undefined — the residual must reach THROUGH the negation, or it names only the
     # last link of the chain while reading as complete.
     if (_u = propagated_undefined(A)) !== nothing
+        _record_neg_delay!(key)
         return ExecOk(Atom[undefined_with(dnf_and(delays_of(und), delays_of(_u)))])
     end
     ExecOk(Atom[Sym("True")])                                            # G false ⇒ ¬G true

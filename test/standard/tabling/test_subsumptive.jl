@@ -99,3 +99,53 @@ const _SB_Z = Var("z", UInt64(3))
         _SB.clear_subsumptive!()
     end
 end
+
+@testset "🔴🔴 §7.5 LOST EVERY ANSWER OF A VALUE TABLE — measured, fixed 2026-08-18" begin
+    # The existing testsets above hand-insert GOAL-SHAPED answers like `(p a)`, which is a shape the
+    # live mirror never produces — and that is exactly how this survived. A real table stores VALUES.
+    #
+    # MEASURED before the fix, on the warm server:
+    #     (= (f a) 1)  (= (f b) 2)   table!(:f)   driven by !(f $z)
+    #     more_general_table((f a))  = (f $_v#1)      answers ["1", "2"]
+    #     subsumptive_answers((f a)) = Atom[]          ← upstream gives 1
+    # `Atom[]` is LOADED: this function's own contract says empty means "a complete general table
+    # exists and genuinely has no answer matching this call". It was a WRONG ANSWER, not a slow path.
+    #
+    # CAUSE: it unified the ANSWER against the GOAL. Upstream can — a Prolog answer IS a substitution
+    # over the goal skeleton — but `1` never unifies with `(f a)`. The THIRD ASSUMPTION, third time.
+    _SB.untable_all!(); _SB.abolish_all_tables!()
+    try
+        s = Space(); load_core_stdlib!(s)
+        load_metta!(s, raw"(= (f a) 1)" * "\n" * raw"(= (f b) 2)" * "\n")
+        _SB.table!(:f)
+        load_metta!(s, raw"!(f $z)" * "\n")               # drive the GENERAL variant
+        goal = _SB.parse_from(_SB.tokenize("(f a)"), Ref(1), s.tokens)
+
+        g = _SB.more_general_table(goal)
+        @test g !== nothing                                # ANTI-VACUITY: the general table exists…
+        @test length(_SB.trie_answers(g[2])) == 2          # …and really holds two VALUES
+
+        got = _SB.subsumptive_answers(goal)
+        @test got !== nothing
+        @test !isempty(got)                                # the defect: this was Atom[]
+        @test Grounded(1) in got                           # …and the right answer is present
+
+        # 🔑 GATED PRECISION, reusing §7.11.1's soundness gate rather than repeating its mistake.
+        # `f` is facts-only, so it cannot reduce into itself, so filtering by the recorded INSTANCE
+        # is sound — and exact.
+        exact = _SB.subsumptive_answers(goal, s)
+        @test exact == Atom[Grounded(1)]                   # EXACT, as upstream
+    finally
+        _SB.untable_all!(); _SB.abolish_all_tables!()
+    end
+end
+
+@testset "…and a REDUCING head stays coarse rather than losing an answer" begin
+    # The gate must refuse to filter where the instance is meaningless. `e` reduces into itself, so
+    # a recorded instance is the goal AT THE POINT THE RULE MATCHED, not the call — the exact
+    # reasoning that made the §7.11.1 filter drop answers before it was gated.
+    s = Space(); load_core_stdlib!(s)
+    load_metta!(s, raw"(= (e (f a)) v)" * "\n" * raw"(= (e (f (g $x))) (e (f $x)))" * "\n")
+    sr = _SB._self_reaching_heads(_SB.all_atoms(s))
+    @test :e in sr                                         # detected as reducing ⇒ filter OFF
+end

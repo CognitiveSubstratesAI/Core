@@ -126,3 +126,45 @@ end
     @test _wfs("", "!(not True)") == Atom[Sym("False")]
     @test _wfs("", "!(size-atom (a b c))") == Atom[Grounded(3)]
 end
+
+@testset "🔴🔴 WFS was ORDER-DEPENDENT — three wrong answers, fixed 2026-08-18" begin
+    # MEASURED on the live engine, same program and same space, only the QUERY ORDER differing:
+    #     (= (q) (r))  (= (q) 1)  (= (r) (p))  (= (p) (tnot (q)))
+    #     ask q first -> q=[undefined,1]  p=[undefined]  r=[undefined]   ← ALL THREE WRONG
+    #     ask p first -> q=[1]            p=[]           r=[]            ← all three right
+    # WFS has a UNIQUE model, so order-dependence is not a tie-break — it is a wrong answer.
+    #
+    # CAUSE: `tnot`'s in-progress branch returned ⊥ and returned IMMEDIATELY, doing none of what the
+    # POSITIVE consumer branch does — no `_SCC_NEG`, no SCC union. The callee completed as its OWN
+    # component and its ⊥ was written into the answer table as a COMPLETED answer, never revisited by
+    # the alternating fixpoint that exists to decide exactly this.
+    #
+    # UPSTREAM: `tnot/1` (boot/tabling.pl:851-882) has four arms; the incomplete one is
+    # `negation_suspend/3` (:897-902), which calls `'$tbl_wkl_negative'` -> `worklist_negative`
+    # (pl-tabling.c:3006-3017), and that sets `wl->component->neg_status = SCC_NEG_DELAY` — on the
+    # COMPONENT. We record the same fact; we do not port the suspension itself (upstream shifts and
+    # resumes, we return ⊥ and let `_wfs_complete!` re-derive).
+    #
+    # 🔑 THE ASSERTION IS ORDER-INDEPENDENCE, NOT A LITERAL. A test that only checked one order would
+    # have passed on the broken engine, since one order was already right.
+    prog = raw"(= (q) (r))" * "\n" * raw"(= (q) 1)" * "\n" *
+           raw"(= (r) (p))" * "\n" * raw"(= (p) (tnot (q)))" * "\n"
+    runs = Dict{String,Vector{String}}[]
+    for order in (["!(q)", "!(p)", "!(r)"], ["!(p)", "!(q)", "!(r)"])
+        Eval.untable_all!(); Eval.abolish_all_tables!()
+        s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+        for h in (:p, :q, :r); Eval.table!(h); end
+        d = Dict{String,Vector{String}}()
+        for qq in order
+            d[qq] = sort(String[string(x) for y in load_metta!(s, qq * "\n")
+                                for x in (y isa AbstractVector ? y : [y])])
+        end
+        push!(runs, d)
+    end
+    Eval.untable_all!(); Eval.abolish_all_tables!()
+
+    @test runs[1] == runs[2]                     # ORDER-INDEPENDENT — the property WFS guarantees
+    @test runs[1]["!(q)"] == ["1"]               # …and the unique model, not merely agreement
+    @test runs[1]["!(p)"] == String[]
+    @test runs[1]["!(r)"] == String[]
+end
