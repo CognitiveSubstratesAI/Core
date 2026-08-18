@@ -172,3 +172,137 @@ _residual_literal(d::Delay)::Atom =
     d.kind == DELAY_POSITIVE ? d.variant :
     d.kind == DELAY_NEGATIVE ? Expression(Atom[Sym(:not), d.variant]) :
         Expression(Atom[Sym(:not), Expression(Atom[Sym(Symbol("==")), d.variant, d.answer::Atom])])
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# THE CONDITION ACCESSOR — `'$tbl_answer'/3`'s THIRD ARGUMENT.
+#
+# `library(tables)`'s three delay-list predicates (`get_returns_and_tvs/3`, `get_returns_and_dls/3`,
+# `get_residual/2`) all consume ONE thing: the `Condition` that `'$tbl_answer'(Trie, Answer, Cond)`
+# (`pl-tabling.c:5391-5399`) yields alongside each answer. That primitive is a `trie_gen` whose
+# per-answer unifier is `unify_delay_info` (`:5342-5375`) — so the accessor below is the whole of
+# the "missing C primitive", and it is missing NOTHING: the enumeration half is `trie_answers` and
+# the condition half is `delays_of`, both already here.
+#
+# ⚠️ `'$tbl_answer_update_dl'` (`pl-tabling.c:5505-5535`) CANNOT BE PORTED AS A UNIT, and that is a
+# structural fact rather than a to-do. Its return value is the same condition this accessor gives;
+# its PURPOSE is the SIDE EFFECT at `:5520`, `tbl_push_delay(...)` onto `LD->tabling.delay_list` —
+# the trail-scoped thread-global delay register. That register is EXACTLY what roadmap 7.A replaces
+# by putting the condition ON the value (see the header of this file: with no "current derivation"
+# at insertion time, a literal port leaks value #1's condition onto value #2). Porting the side
+# effect would re-introduce the register the design removed; porting only the return value is
+# `answer_condition` under a second name. So it is neither stubbed nor listed as a gap.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+# 🔴 `:true` IS NOT A SYMBOL IN JULIA — IT IS THE `Bool`. `true` and `false` are LITERALS, so `:true`
+# quotes the literal and evaluates to `true::Bool`; every other bare word (`:undefined`) quotes to a
+# `Symbol` as expected. Writing the trichotomy as `:true | :undefined | DelayDNF` therefore compiles
+# and then returns a `Bool` from the unconditional branch — caught here only because
+# `answer_condition` carries a `::Union{Symbol,DelayDNF}` return annotation, which turned it into a
+# `MethodError: Cannot convert Bool to Union{Symbol, Vector{Vector{Delay}}}` on the FIRST
+# unconditional answer instead of a silent `=== :true` that is false forever. The named constants
+# below make the mistake unspellable, and they keep upstream's atom names (`ATOM_true`,
+# `ATOM_undefined`) visible at the call site.
+"`ATOM_true` (`pl-tabling.c:5373`) — the condition of an UNCONDITIONAL answer. `Symbol(\"true\")`, NOT `:true`."
+const COND_TRUE = Symbol("true")
+
+"`ATOM_undefined` (`pl-tabling.c:5371`) — conditional with NO delay sets recorded (`DL_UNDEFINED`)."
+const COND_UNDEFINED = Symbol("undefined")
+
+"""
+    answer_condition(a) -> Union{Symbol,DelayDNF}
+
+The condition under which answer `a` holds — `unify_delay_info` (`pl-tabling.c:5342-5375`).
+
+🔴 IT IS A TRICHOTOMY, NOT A BOOLEAN, and upstream spells all three out:
+
+| upstream (`unify_delay_info`)                         | here            |
+|-------------------------------------------------------|-----------------|
+| no `delay_info` on the node ⇒ `ATOM_true` (`:5373`)    | `COND_TRUE`     |
+| `delay_info` present but not a delay list (`DL_UNDEFINED`) ⇒ `ATOM_undefined` (`:5371`) | `COND_UNDEFINED` |
+| a real delay list ⇒ the `;`/`,` term built by `put_delay_set` (`:5233-5336`) | the `DelayDNF` |
+
+🔴🔴 BUILT ON `is_undefined`, NEVER ON `answer_residual` — THE SOUNDNESS INVERSION THIS EXISTS TO
+PREVENT. `answer_residual` maps a REASON-LESS bottom to `Sym("True")` deliberately (empty DNF means
+"no information", see `dnf_residual`), so the shortest plausible implementation —
+`answer_residual(a) == Sym("True") ? COND_TRUE : …` — reports UNCONDITIONAL for an answer that is
+UNDEFINED. Upstream's `answer_is_conditional` (`pl-tabling.c:764-770`) is explicitly TRUE for that
+case: `di == DL_UNDEFINED || !isEmptyBuffer(&di->delay_sets)`. Reason-less bottoms are REACHABLE —
+`_wfs_bottom_for` yields an empty DNF whenever no optimistic answer carried a delay — so this is a
+live inversion, not a hypothetical one. The truth value is decided by `is_undefined`, which is a TYPE
+test on the value, and only the SHAPE of the reason is read from the DNF.
+"""
+function answer_condition(a::Atom)::Union{Symbol,DelayDNF}
+    is_undefined(a) || return COND_TRUE        # no delay info at all ⇒ unconditional (`:5373`)
+    dnf = delays_of(a)
+    isempty(dnf) ? COND_UNDEFINED : dnf        # DL_UNDEFINED (`:5371`) vs a real delay list
+end
+
+"""
+    answer_is_conditional(a) -> Bool
+
+`answer_is_conditional` (`pl-tabling.c:764-770`) — is `a` a CONDITIONAL answer?
+
+True for BOTH non-`COND_TRUE` cases, exactly as upstream's
+`di == DL_UNDEFINED || !isEmptyBuffer(&di->delay_sets)`. This is the predicate the truth value
+`t`/`u` is read off, and it is `is_undefined` under upstream's name — recorded because reaching for
+"has a non-trivial residual" instead is the inversion documented on `answer_condition`.
+"""
+answer_is_conditional(a::Atom)::Bool = answer_condition(a) !== COND_TRUE
+
+"""
+    delay_lists(a) -> Vector{Vector{Atom}}
+
+`condition_delay_lists/3` (`library/tables.pl:230-238`): the condition as a LIST OF LISTS — inner
+list a conjunction, outer list a disjunction. This is `get_returns_and_dls/3`'s payload.
+
+Upstream's three clauses map onto `answer_condition`'s three cases:
+
+  * `condition_delay_lists(true, _, [])` (`:230`) ⇒ `COND_TRUE` gives the EMPTY outer list.
+  * `(A;B)` (`:232`) ⇒ `semicolon_list//1` splits the disjunction, `conj_list/3` flattens each
+    conjunct ⇒ one inner list per `DelaySet`.
+  * anything else (`:236`) ⇒ `[List]`, a ONE-disjunct outer list. `undefined` lands here, and
+    `comma_list//2`'s catch-all clause (`:302-303`) passes the atom through ⇒ `[[undefined]]`.
+
+🔴 SO `COND_UNDEFINED` DOES NOT GIVE `[]`. `[]` is the UNCONDITIONAL answer's value, and collapsing the
+reason-less bottom onto it would make an undefined answer indistinguishable from a true one at the
+only API a user reads. `[[undefined]]` is upstream's own rendering, arrived at by its own clause
+order, and it keeps the outer list non-empty — which is the property every consumer branches on.
+
+⚠️ Literals are rendered by `_residual_literal`, so a NEGATIVE delay prints `(not g)` where upstream
+prints `tnot(G)` (`comma_list//2`, `library/tables.pl:298-300`; `FUNCTOR_tnot1`,
+`pl-tabling.c:5323`). That divergence is inherited from `dnf_residual`, deliberately NOT forked here
+— two renderings of one condition is worse than one wrong-named rendering — and it is a REAL
+divergence to fix at the renderer: in MeTTa `not` is a different, TRUTH-FUNCTIONAL operator (Bool →
+Bool), while `tnot` is negation of PROVABILITY. See `Eval.jl`'s `tnot` comment, which draws exactly
+that distinction. Changing it means updating the `"(not p)"` assertions pinned in `test_delays.jl`.
+"""
+function delay_lists(a::Atom)::Vector{Vector{Atom}}
+    cond = answer_condition(a)
+    cond === COND_TRUE      && return Vector{Atom}[]
+    cond === COND_UNDEFINED && return Vector{Atom}[Atom[Sym("undefined")]]
+    Vector{Atom}[Atom[_residual_literal(d) for d in s] for s in cond::DelayDNF]
+end
+
+"""
+    delay_list_disjuncts(a) -> Vector{Vector{Atom}}
+
+`condition_delay_list/3` (`library/tables.pl:274-286`) — the NONDETERMINISTIC form, one solution per
+DISJUNCT. `get_residual/2`'s payload.
+
+🔴 THIS IS NOT `delay_lists` WITH A DIFFERENT NAME, and the difference is the ONLY thing separating
+`get_residual/2` from `get_returns_and_dls/3`. Upstream's clause for a disjunction is
+`( condition_delay_list(A, M, List) ; condition_delay_list(B, M, List) )` (`:280-283`) — a Prolog
+CHOICE POINT, so a 2-disjunct condition succeeds TWICE with a conjunction each time, where
+`condition_delay_lists/3` succeeds ONCE with a list of both. The Julia analogue of "succeeds N times"
+is N elements, so both return a `Vector{Vector{Atom}}` and the two happen to coincide element-wise;
+they are kept as separate names because the CALLER's row count differs, and collapsing them makes
+both predicates wrong (`get_residual` would under-report, or `get_returns_and_dls` over-report).
+
+The `true` clause (`:274-276`) still yields ONE solution whose list is `[]` — an unconditional answer
+appears in `get_residual/2`, it is not filtered out.
+"""
+function delay_list_disjuncts(a::Atom)::Vector{Vector{Atom}}
+    cond = answer_condition(a)
+    cond === COND_TRUE && return Vector{Atom}[Atom[]]  # `:274` — ONE solution, the EMPTY conjunction
+    delay_lists(a)                                     # COND_UNDEFINED ⇒ 1 row; a DNF ⇒ 1 row PER disjunct
+end

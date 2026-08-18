@@ -260,6 +260,19 @@ undefined_with(dnf::DelayDNF)::Atom = Grounded(WFSBottom(dnf))
 indistinguishable from here, which is why `delays_of` returning empty must never be read as "false".
 """
 answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
+
+# ── §7.6.1's REPORTING SURFACE — deliberately NOT an answer-taking op ────────────────────────────
+# 🔴 AN OP THAT TAKES THE *ANSWER* CANNOT WORK, AND THE REASON IS STRUCTURAL. `Eval.jl`'s frame loop
+# has a generic contagion guard — `is_undefined(e) && return finished_result(e, b, f.prev)` — so when
+# an argument evaluates to a WFS bottom the ENCLOSING application is short-circuited and never runs.
+# MEASURED: `!(answer-residual 42)` and `!(answer-residual (f))` both reached the op, while
+# `!(answer-residual (p))` (a bottom) returned `undefined` and the op was never entered at all.
+#
+# That guard is CORRECT for every strict operation, so the fix is not to punch a hole in it. Upstream
+# already shows the right shape: `get_residual(:CallTerm, -DelayList)` takes a **GOAL**, not an
+# answer (library/tables.pl:262-274), evaluating it itself. The reporting surface therefore belongs
+# with `get_residual` in `tabling/Inspect.jl`, not here.
+
 _table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
                    empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
                    _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_NEG_DELAYS); empty!(_DEPS);

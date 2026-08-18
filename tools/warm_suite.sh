@@ -105,7 +105,12 @@ _start() {
 _run_driver() {
     local body="$1" verdict="$RUNDIR/verdict"
     rm -f "$verdict"
-    local drv="$RUNDIR/driver.jl"
+    # 🔴 UNIQUE PER INVOCATION — a FIXED path RACES. Two agents running this concurrently
+    # overwrote each other's driver, and one run silently EXECUTED THE OTHER AGENT'S PROBE and
+    # reported its exit status as its own (observed 2026-08-18, by the agent it happened to).
+    # A harness that reports a result for work it did not run is worse than one that fails:
+    # the number is wrong AND it looks right.
+    local drv="$RUNDIR/driver.$$.$RANDOM.jl"
     cat > "$drv" <<JULIA
 Revise.revise()
 cd(raw"$CORE")
@@ -129,6 +134,7 @@ let
 end
 JULIA
     julia -e "using DaemonMode; runfile(raw\"$drv\"; port=$PORT)"
+    rm -f "$drv"
     [ -f "$verdict" ] && exit "$(cat "$verdict")"
     echo "  warm_suite: NO VERDICT WRITTEN — treating as FAILURE (daemon died?)"; exit 1
 }

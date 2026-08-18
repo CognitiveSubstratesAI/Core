@@ -2212,12 +2212,28 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     # required by the contract the op's stdlib semantics specify. So it aliases new-space here.
     "new-mork-space" => NEW_SPACE,
     "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
-    "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL, "tnot" => TNOT)
+    "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL, "tnot" => TNOT,
+    "get-residual" => GET_RESIDUAL)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
 # atom is stored as-is, not reduced. Atom-typed 2nd arg ⇒ the driver passes it unevaluated. Intrinsic
 # (kept out of the space). Defined here, after the ops exist.
 _GROUNDED_OP_TYPES[ADD_ATOM]    = "(-> %Undefined% Atom (->))"
 _GROUNDED_OP_TYPES[REMOVE_ATOM] = "(-> %Undefined% Atom (->))"
+
+# 🔴 `get-residual` TAKES THE GOAL UNEVALUATED, AND THAT IS LOAD-BEARING, NOT STYLISTIC.
+# An ANSWER-taking reporting op is unreachable for exactly the inputs it exists to describe: a ⊥
+# argument short-circuits the ENCLOSING application through the strict-op contagion guard a few
+# hundred lines above (`is_undefined(e) && return finished_result(e, b, f.prev)`).
+# MEASURED 2026-08-18, with a println inside a trial op:
+#     !(answer-residual 42)    -> op CALLED    -> "True"
+#     !(answer-residual (f))   -> op CALLED    -> "True"        (tabled, value 7)
+#     !(answer-residual (p))   -> NEVER CALLED -> "undefined"   (tabled, ⊥)
+# That guard is CORRECT for every strict operation, so the answer is not to punch a hole in it —
+# upstream already takes a GOAL for this reason (`get_residual(:CallTerm, -DelayList)`,
+# library/tables.pl:262-274). An Atom-typed ARG makes the driver pass the goal unreduced, the same
+# mechanism `add-atom` uses; an Atom-typed RETURN keeps the reported rows INERT DATA, without which
+# a row like `(residual 1 ())` is re-metta'd as an application. See `tabling/Inspect.jl`.
+_GROUNDED_OP_TYPES[GET_RESIDUAL] = "(-> Atom Atom)"
 # get-atoms returns the space's atoms as INERT DATA (hyperon GetAtomsOp::type_ = (-> Space Atom),
 # interpreter.rs:1005 `typ == Atom ⇒ return result verbatim`). Without this the result took the untyped
 # path and was re-mettad under the caller's %Undefined% type — so an enumerated stored rule like
