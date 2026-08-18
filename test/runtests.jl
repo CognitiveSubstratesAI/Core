@@ -217,6 +217,12 @@ module StandardMeTTaTests
     # dynamic-predicate edge and is still unbuilt — this lands the re-evaluation half, NOT
     # incremental tabling end to end. The tests supply the trigger directly.
     Main.@suite("standard/tabling/test_reeval.jl")
+    # 🔴 SCENARIOS PORTED FROM UPSTREAM'S OWN SUITE, not written by us. Every other tabling test here
+    # was authored from the same reading of `pl-tabling.c` that produced the code it grades — a
+    # closed loop in which a misreading becomes both the implementation and the assertion.
+    # `swipl-devel/tests/tabling/test_reeval.pl` supplies the claims; all 18 upstream tabling files
+    # (165 tests) pass against the live binary — `workflows/swipl_tabling_oracle.sh`.
+    Main.@suite("standard/tabling/upstream/test_upstream_reeval.jl")
     # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
     # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
     # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global
