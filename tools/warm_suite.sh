@@ -40,7 +40,10 @@ set -uo pipefail
 
 CORE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${CORE_WARM_SUITE_PORT:-3001}"
-RUNDIR="${TMPDIR:-/tmp}/core_warm_suite"
+# ⚠️ NOT /tmp — a reboot wipes it, taking the pidfile, the readiness sentinel and the verdict file
+# with it, so a live daemon becomes unreachable and `run` reports a failure that never happened.
+# $HOME survives. (User instruction 2026-08-18.)
+RUNDIR="${CORE_WARM_SUITE_DIR:-$HOME/csai-work/run}/core_warm_suite"
 PIDFILE="$RUNDIR/daemon.pid"
 LOGFILE="$RUNDIR/daemon.log"
 READYFILE="$RUNDIR/ready"

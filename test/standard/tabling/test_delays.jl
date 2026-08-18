@@ -200,6 +200,30 @@ _dl_key(n::Symbol) = Sym(n)
         end
     end
 
+    @testset "🔴 7.C HOLDS IN THE AGGREGATING HALF TOO — a refuted finding that was real" begin
+        # A WFS bottom is not a mode-aggregable value: it carries a CONDITION, not a keyed payload, so
+        # the moded merge path skipped it and two bottoms with different reasons became TWO ANSWERS —
+        # the same user-visible defect as the non-aggregating half (`!(goal)` -> [undefined, undefined]),
+        # surviving in the branch the 7.C fix did not touch.
+        #
+        # ⚠️ THE ADVERSARIAL PASS REFUTED THIS FINDING. It is real, and one command showed it.
+        # Refutation has false NEGATIVES as well as positives: when a rejected finding names a
+        # mechanism that is cheap to execute, execute it rather than trusting the verdict.
+        modes = _DL.TableMode[_DL.ModeIndex(), _DL.UPDATE_ALIAS[:min]]
+        b1 = _DL.undefined_with(_DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(Sym(:p))])]))
+        b2 = _DL.undefined_with(_DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(Sym(:q))])]))
+        (out, ch) = _DL.merge_answers(Atom[b1], Atom[b2], modes)
+        @test length(out) == 1                          # ONE answer, not two
+        @test ch                                        # …and the new derivation IS a change
+        res = string(_DL.answer_residual(out[1]))
+        @test occursin("or", res)                       # disjoined, as 7.C requires
+        @test occursin("p", res) && occursin("q", res)
+
+        # re-merging the SAME bottom must not report a change, or the moded fixpoint never converges
+        (out2, ch2) = _DL.merge_answers(out, Atom[b1], modes)
+        @test length(out2) == 1 && !ch2
+    end
+
     @testset "an UNCONDITIONAL answer has residual True — and so does an unrecorded bottom" begin
         # The two are indistinguishable from `answer_residual`, deliberately: empty means NO
         # INFORMATION, never "unsatisfiable". A consumer that reads empty as false would call a real

@@ -301,6 +301,31 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
 
     changed = false
     for a in incoming
+        # 🔴 7.C APPLIES TO THE AGGREGATING HALF TOO — added 2026-08-18 after MEASURING it.
+        # A WFS bottom is not a mode-aggregable value: it carries a CONDITION, not a keyed payload,
+        # and `(cur isa Expression && a isa Expression) || continue` below skips it entirely. So two
+        # bottoms with different reasons became TWO ANSWERS on a mode-directed table — the same
+        # user-visible defect fixed in the non-aggregating branch (`!(goal)` printing
+        # `[undefined, undefined]`), surviving in the half that was not swept.
+        #
+        # ⚠️ AND THIS FINDING WAS REFUTED BY THE ADVERSARIAL PASS. It is real: measured with
+        # `merge_answers([⊥p], [⊥q], [index, min])` -> 2 answers, residuals `(not p)` and `(not q)`.
+        # Refutation has false NEGATIVES as well as positives; a rejected finding whose mechanism is
+        # cheap to run is worth running. `[[feedback_run_the_check_before_making_the_claim]]`
+        if is_undefined(a)
+            bi = findfirst(k -> is_undefined(bykey[k]), order)
+            if bi === nothing
+                push!(order, a); bykey[a] = a; changed = true
+            else
+                bk = order[bi]
+                prev = delays_of(bykey[bk])
+                merged = dnf_or(prev, delays_of(a))
+                if length(merged) != length(prev)          # a genuinely NEW derivation
+                    bykey[bk] = undefined_with(merged); changed = true
+                end
+            end
+            continue
+        end
         k = mode_key(a, modes)
         if !haskey(bykey, k)
             push!(order, k); bykey[k] = a; changed = true
