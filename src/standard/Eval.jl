@@ -1972,7 +1972,11 @@ const CASE = Grounded(SpaceOp("case", function (xs, space)
     # order, so iterate reversed to emit forward (cf. COLLAPSE above).
     for res in reverse(results)
         if is_undefined(res)                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
-            push!(out, UNDEFINED); push!(binds, Bindings())
+            # 🔴 PROPAGATE `res`, NOT THE BARE CONSTANT — the ELEVENTH site of the residuation sweep,
+            # missed because this one does not match the `ExecOk(Atom[UNDEFINED])` shape the sweep
+            # rewrote. Pushing the module constant ERASES the incoming bottom's delay condition, so a
+            # `case` anywhere in a derivation silently reduced its residual to `True` (= unconditional).
+            push!(out, res); push!(binds, Bindings())
             continue
         end
         for clause in xs[2].children

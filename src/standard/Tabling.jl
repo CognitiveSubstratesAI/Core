@@ -144,6 +144,24 @@ struct WFSBottom
     delays::DelayDNF
 end
 WFSBottom() = WFSBottom(DelayDNF())
+# 🔴🔴 EQUALITY AND HASH ARE NOT OPTIONAL ONCE THE BOTTOM CARRIES A FIELD — AUDIT 2026-08-18.
+# `WFSBottom` gained a `DelayDNF` field and no `==`/`hash`. Julia's default for a struct holding a
+# Vector compares that vector by IDENTITY, so two bottoms carrying the SAME reason were DIFFERENT
+# ANSWERS. Measured before the fix:
+#     b1 == b2                -> false        (content-identical, distinct vectors)
+#     Set([b1, b2])           -> 2 elements
+#     issetequal([b1], [b2])  -> false        ← `_wfs_complete!`'s convergence test
+# ⇒ the alternating fixpoint could NOT CONVERGE whenever a member re-derived a residuated bottom, and
+# every Dict/Set keyed on answers double-counted them. `_variant_unique` happened to be safe only
+# because `merge_bottom_into!` intercepts bottoms before the equality test is reached — which is
+# exactly the kind of accidental cover that makes a defect survive a green suite.
+#
+# ⚠️ HASH MUST STAY CONSISTENT WITH `==`, and `==` is SET equality over a set of sets, which has no
+# stable order to hash. Hashing the DISJUNCT COUNT is the strongest order-independent key available;
+# equal conditions always agree on it, and collisions merely fall through to `==`. Bottoms are few.
+Base.:(==)(a::WFSBottom, b::WFSBottom) = dnf_equiv(a.delays, b.delays)
+Base.hash(w::WFSBottom, h::UInt) = hash(length(w.delays), hash(:WFSBottom, h))
+
 Base.show(io::IO, w::WFSBottom) =
     print(io, isempty(w.delays) ? "undefined" : "undefined")   # the RESIDUAL is asked for explicitly,
                                                                # via `answer_residual` — printing it
@@ -266,6 +284,11 @@ function untable!(head::Symbol)::Bool
     restraint!(head, :max_answers, -1)   # the attribute-shaped state — tabling/Tripwires.jl
     untable_subsumptive!(head)           # §7.5 mode — tabling/Subsumptive.jl
     clear_table_options!(head)           # the parsed `as ...` record — tabling/Options.jl
+    # 🔴 …AND §7.11.1's, WHICH WAS MISSED WHEN THAT REGISTRY WAS ADDED (audit 2026-08-18). A RETRACTED
+    # declaration that keeps abstracting does not merely leak state — it CHANGES ANSWERS, because the
+    # head is then tabled under a generalised key on its next `table!`. Every registry a feature adds
+    # has to be torn down here; the list is the contract.
+    subgoal_abstract!(head, -1)          # §7.11.1 bound — tabling/Abstract.jl
     true
 end
 
@@ -929,7 +952,10 @@ function fire_dependencies!(source::Atom, answers::Vector{Atom}, space)::Dict{At
             end
         end
     end
-    for (k, v) in out; out[k] = unique(v); end
+    # `_variant_unique`, not `unique`: the twin sites (`_leader_pass`, `_merge_partial`) were moved off
+    # `==` on 2026-08-17 because it does not terminate on non-ground answers, and this one was missed.
+    # It also routes bottoms through `merge_bottom_into!`, which `unique` cannot do.
+    for (k, v) in out; out[k] = _variant_unique(v); end
     out
 end
 
@@ -1142,6 +1168,10 @@ end
 
 # "definite" = has ≥1 REAL (non-UNDEFINED) answer — mirrors the provably-true test at TNOT (`any(!is_undefined(a))`),
 # so an only-UNDEFINED set is NOT treated as membership (keeps the layered-undefined case sound).
+"Set equality on answer sets under VARIANT identity — `issetequal`'s `==` does not terminate here."
+_answer_sets_equiv(a::Vector{Atom}, b::Vector{Atom})::Bool =
+    length(a) == length(b) && all(x -> any(y -> variant_eq(x, y), b), a)
+
 @inline _wfs_definite(S)::Bool = any(a -> !is_undefined(a), S)
 
 """The bottom to emit for a goal the alternating fixpoint classified UNDEFINED.
@@ -1201,8 +1231,12 @@ function _wfs_complete!(members::Vector{Atom}, typ::Atom, space::Space, key::Ato
         U     = _S_P!(members, typ, space, key, K)               # Upper = S_P(K)        (optimistic step)
         Knext = _S_P!(members, typ, space, key, U)               # T(K)  = S_P(S_P(K))   (pessimistic step)
         members = comp()
+        # 🔴 VARIANT-AWARE CONVERGENCE (audit 2026-08-18). `issetequal` compares with `isequal`/`hash`,
+        # i.e. the same `==` identity that made the completion fixpoint non-terminating on non-ground
+        # answers (finding #1 of the previous audit) — the twin sites were converted and this one was
+        # not. Two answer sets equal up to variable renaming ARE the same set here.
         converged = length(Knext) == length(K) &&
-            all(m -> haskey(K, m) && issetequal(K[m], Knext[m]), keys(Knext))
+            all(m -> haskey(K, m) && _answer_sets_equiv(K[m], Knext[m]), keys(Knext))
         K = Knext
         converged && break                                       # at break: U = S_P(K) (the true upper bound)
     end

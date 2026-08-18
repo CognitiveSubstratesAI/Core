@@ -91,6 +91,17 @@ delay_eq(a::Delay, b::Delay)::Bool =
     ((a.answer === nothing) == (b.answer === nothing)) &&
     (a.answer === nothing || variant_eq(a.answer::Atom, b.answer::Atom))
 
+"""Are two conditions the same CONDITION? Set equality on the disjunction, set equality within each
+conjunction — because a DNF is a set of sets and neither level has a meaningful order.
+
+🔴 THIS IS WHAT `WFSBottom`'s `==` IS BUILT ON, and without it two bottoms carrying the SAME reason
+were different answers: Julia's default `==` for a struct holding a `Vector` compares the vector by
+IDENTITY, so `dnf_or` returning a fresh vector produced an answer that never compared equal to the
+one already stored. Measured: `Set([b1, b2])` held 2 elements and `issetequal([b1],[b2])` was false —
+the latter being the alternating fixpoint's own convergence test."""
+dnf_equiv(a::DelayDNF, b::DelayDNF)::Bool =
+    length(a) == length(b) && all(x -> any(y -> set_eq(x, y), b), a)
+
 "Conjoin one literal into a conjunction, dropping an exact repeat (`A ∧ A = A`)."
 function delayset_add(s::DelaySet, d::Delay)::DelaySet
     any(x -> delay_eq(x, d), s) && return s
