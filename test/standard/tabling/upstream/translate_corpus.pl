@@ -27,9 +27,10 @@
 :- initialization(main, main).
 
 :- dynamic tabled/2.
+:- dynamic has_rule/2.
 
 main([File]) :-
-    retractall(tabled(_,_)),
+    retractall(tabled(_,_)), retractall(has_rule(_,_)),
     catch(run(File), E, (message_to_codes(E), fail)).
 main(_) :- true.
 
@@ -38,6 +39,7 @@ message_to_codes(E) :- print_message(error, E).
 run(File) :-
     read_clauses(File, Clauses),
     collect_tabled(Clauses),
+    collect_rules(Clauses),
     findall(S, (member(C, Clauses), clause_metta(C, S)), Ss),
     ( memberchk(refused(Why), Ss)
     -> format("REFUSED\t~w~n", [Why])
@@ -72,6 +74,15 @@ read_all(S, Out) :-
 collect_tabled(Cs) :-
     forall(( member((:- table Spec), Cs), spec_member(Spec, N/A) ),
            ( tabled(N,A) -> true ; assertz(tabled(N,A)) )).
+
+% 🔴 "IS IT DATA?" IS NOT "IS IT TABLED" — corrected 2026-08-19 while generalising the match form.
+% A predicate with only FACTS (`q(a,b).`) is DATA: a body literal on it BINDS by lookup, so it becomes
+% `(match &self ...)`. A predicate with a RULE is a CALL even when it is not tabled — p31's
+% `p(_A) :- r.` is exactly that, and matching it would look for facts that do not exist and silently
+% find nothing. Tabling is an orthogonal DECLARATION, not what makes something callable.
+collect_rules(Cs) :-
+    forall(( member(C, Cs), C = (H :- _), callable(H), functor(H, N, A) ),
+           ( has_rule(N,A) -> true ; assertz(has_rule(N,A)) )).
 spec_member((A,B), X) :- !, ( spec_member(A, X) ; spec_member(B, X) ).
 spec_member(N/A, N/A).
 
@@ -84,35 +95,80 @@ clause_metta(Clause, Out) :-
     numbervars(H2-B2, 0, _),
     (  contains_fail(B2)
     -> Out = skip                                   % `p :- fail.` contributes nothing
-    ;  head_metta(H2, HS)
-    -> ( body_metta(B2, BS)
-       -> format(atom(Out), "(= ~w ~w)", [HS, BS])
-       ;  Out = refused('body literal on a non-tabled predicate (data), needs the match form') )
-    ;  Out = refused('head is not a tabled predicate') ).
+    ;  is_data_pred(H2), B2 == true
+    -> term_metta(H2, Out)                          % a DATA fact: emit the atom itself, not a rule
+    ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars)
+    -> term_metta(H2, HS), format(atom(Out), "(= ~w ~w)", [HS, BS])
+    ;  Out = refused('clause shape not handled') ).
+
+% DATA = NOT tabled AND has no rule anywhere in the program.
+% ⚠️ BOTH CONDITIONS. A first cut tested only "has no rule" and broke p06: `q.` is a TABLED fact, so
+% it was emitted as the bare atom `(q)` instead of the rule `(= (q) True)`, and a tabled call to it
+% then had nothing to reduce. A tabled predicate is ALWAYS a call — that is what `:- table` declares.
+is_data_pred(H) :- callable(H), functor(H, N, A), \+ tabled(N, A), \+ has_rule(N, A).
 
 contains_fail((A,B)) :- !, ( contains_fail(A) ; contains_fail(B) ).
 contains_fail(fail).
 
 head_metta(H, S) :- functor(H, N, A), tabled(N, A), term_metta(H, S).
 
-body_metta(true, "True") :- !.                      % a bare fact: `q.` -> (= (q) True)
-body_metta(B, S) :-
+body_metta(true, "True", _) :- !.                   % a bare fact: `q.` -> (= (q) True)
+body_metta(B, S, HeadVars) :-
     conj_list(B, Ls),
-    lits_metta(Ls, 1, S).
+    lits_metta(Ls, 1, HeadVars, S).
 
 conj_list((A,B), [A|T]) :- !, conj_list(B, T).
 conj_list(A, [A]).
 
-lits_metta([L], _, S) :- !, lit_metta(L, S).
-lits_metta([L|Ls], N, S) :-
-    lit_metta(L, LS),
+% ─── the body, left to right, threading the set of ALREADY-BOUND variables ───────────────────────
+% 🔴 THIS IS WHAT THE TRANSLATOR REFUSED TO GUESS AT until 2026-08-19. A body literal on a NON-tabled
+% predicate is DATA: `q(A,C)` does not CALL anything, it looks a fact up and BINDS `C`. So it becomes
+% a binding `match` whose `let` binder carries the newly-bound variables, not a call.
+%
+% Which variables are new is the whole difficulty, and it is why goals are asked GROUND: with a ground
+% goal every head variable is already bound, so the ONLY new variables come from data literals, and a
+% single left-to-right pass with a seen-set is exact. (Upstream's gold rows list per-instance goals —
+% `r(a,b)`, `r(a,c)` — so nothing is lost by asking them ground.)
+lits_metta([L], N, Seen, S) :- !, lit_metta(L, N, Seen, _, S).
+lits_metta([L|Ls], N, Seen, S) :-
+    lit_metta(L, N, Seen, Seen1, LS),
     N1 is N+1,
-    lits_metta(Ls, N1, RS),
-    format(atom(S), "(let $c~w ~w ~w)", [N, LS, RS]).
+    lits_metta(Ls, N1, Seen1, RS),
+    ( binder_of(L, Seen, Pat), Pat \== none
+    -> format(atom(S), "(let ~w ~w ~w)", [Pat, LS, RS])
+    ;  format(atom(S), "(let $c~w ~w ~w)", [N, LS, RS]) ).
 
-lit_metta(tnot(G), S) :- !, term_metta(G, GS), format(atom(S), "(tnot ~w)", [GS]).
-lit_metta(L, S) :- functor(L, N, A), tabled(N, A), term_metta(L, S).
-%  anything else is DATA and needs the binding match form — deliberately unhandled, see the header.
+% tnot: a call, binds nothing (our `tnot` requires a ground goal anyway)
+lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(tnot ~w)", [GS]).
+% anything with a RULE is a CALL — tabled or not (p31's `p(_A) :- r.`)
+lit_metta(L, _, Seen, Seen, S) :- functor(L, N, A), (tabled(N,A) ; has_rule(N,A)), !, term_metta(L, S).
+% DATA: a binding `match`. New variables become the binder AND the match template.
+lit_metta(L, _, Seen, Seen1, S) :-
+    term_metta(L, LS),
+    new_vars(L, Seen, New),
+    append(Seen, New, Seen1),
+    ( New == []
+    -> format(atom(S), "(match &self ~w True)", [LS])      % no new vars ⇒ a pure TEST
+    ;  pat_of(New, Pat), format(atom(S), "(match &self ~w ~w)", [LS, Pat]) ).
+
+% the `let` binder for a literal: its new variables, or `none` when it binds nothing
+binder_of(tnot(_), _, none) :- !.
+binder_of(L, _, none) :- functor(L, N, A), (tabled(N,A) ; has_rule(N,A)), !.
+binder_of(L, Seen, Pat) :- new_vars(L, Seen, New),
+    ( New == [] -> Pat = none ; pat_of(New, Pat) ).
+
+pat_of([V], S) :- !, var_metta(V, S).
+pat_of(Vs, S) :- findall(X, (member(V, Vs), var_metta(V, X)), Xs),
+                 atomic_list_concat(Xs, ' ', Inner), format(atom(S), "(~w)", [Inner]).
+
+var_metta(N, S) :- format(atom(S), "$v~w", [N]).
+
+% every '\$VAR'(N) number in a term, in order, without duplicates
+term_var_nums(T, Ns) :- findall(N, sub_var_num(T, N), Ns0), list_to_set(Ns0, Ns).
+sub_var_num('$VAR'(N), N).
+sub_var_num(T, N) :- compound(T), T \= '$VAR'(_), arg(_, T, A), sub_var_num(A, N).
+
+new_vars(L, Seen, New) :- term_var_nums(L, Ns), subtract(Ns, Seen, New).
 
 % a term becomes a MeTTa expression; '$VAR'(N) becomes a MeTTa variable
 term_metta('$VAR'(N), S) :- !, format(atom(S), "$v~w", [N]).

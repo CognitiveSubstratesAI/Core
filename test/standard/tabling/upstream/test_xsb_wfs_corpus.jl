@@ -20,13 +20,18 @@
 # ─── HOW THE PROGRAMS GET HERE ───────────────────────────────────────────────────────────────────
 # `translate_corpus.sh` -> `wfs_programs.tsv`, one row per program: MeTTa source, the predicates to
 # table, and the gold sets IN THE SAME NOTATION, all emitted from a single Prolog pass so a program
-# and its expectation cannot drift apart. The translator REFUSES what it cannot handle (15 of 72,
-# mostly the `win/1` graphs whose bodies read DATA and need a binding `match`) rather than guessing:
+# and its expectation cannot drift apart. The translator REFUSES what it cannot handle (2 of 72, down
+# from 15 once it learned the binding-`match` form) rather than guessing:
 # a wrong translator produces confident wrong conformance, the worst artifact available here. The
 # refusals are recorded as `# REFUSED` lines in the TSV, so the count that ran is the count we quote.
 #
-# The three `win/1` graphs are hand-translated below — the highest-value refusals, because they
-# exercise the second translation path entirely and p12/p13 differ by ONE edge.
+# 🔑 THE THREE `win/1` GRAPHS ARE NOW A TRANSLATOR CROSS-CHECK, NOT A GAP-FILLER. They were
+# hand-translated on 2026-08-18 because the translator refused them; on 2026-08-19 it learned the
+# binding-`match` form and generates them itself — producing, for p13, EXACTLY the hand-written form:
+#     (= (win $v0) (let $v1 (match &self (m $v0 $v1) $v1) (tnot (win $v1))))
+# So they are deliberately kept and run TWICE: once as the translator emits them, once as a human
+# wrote and verified them. A translator that silently drifts is the failure mode this corpus cannot
+# otherwise see — its output would still look like conformance evidence.
 
 using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
@@ -63,7 +68,28 @@ the undefined one, so the tables they would have reached are never DISCOVERED, t
 (`_wfs_complete!` ran twice, on {p,s} then {q,r}, for four mutually-dependent atoms), and `tnot` on a
 member of the other half fell through and returned ⊥. The fixpoint was correct throughout.
 """
-const _XW_KNOWN_WRONG = Dict{String,String}()
+const _XW_KNOWN_WRONG = Dict{String,String}(
+    # 🔴 p31 IS THE FIRST PROGRAM IN THIS CORPUS THAT REQUIRES ROADMAP 7.B — answer-level delay.
+    # Found 2026-08-19 when the translator learned the binding-`match` form and 13 more programs
+    # became runnable. It is NOT a regression of the 2026-08-18 fix; it is the next layer down.
+    #
+    #     q(A) :- p(A), eq(A,b).    p(a).    p(_A) :- r.    r :- tnot(r).
+    #
+    # `p(b)` holds only via `p(_A) :- r`, and `r` is undefined — so `q(b)` is `true ∧ undefined`,
+    # which Kleene (and upstream) call UNDEFINED. We answer TRUE. Isolated directly:
+    #     (= (para) (tnot (para)))   (= (tru) True)   (= (conj) (let \$c (para) (tru)))
+    #     !(para) -> UNDEFINED   !(tru) -> TRUE   !(conj) -> TRUE      ← must be UNDEFINED
+    #
+    # WHY IT IS NOT A SMALL FIX, and why it is not `unify_op` again. Yesterday's fix made ⊥ stop
+    # ABSORBING, so a body continues past an undefined literal and the SLG component is discovered —
+    # that part is right and p15/p17/p26/p27 depend on it. What is missing is the other half: the
+    # answer must then be derived CONDITIONALLY, carrying a delay on the undefined literal. Marking it
+    # inside `unify_op` would mark the UNEVALUATED `then` term, not the answer. The hook belongs at
+    # answer PRODUCTION — which is exactly what `Tabling.jl:1803` records as unbuilt: "7.B's
+    # answer-level kind has no producer yet, and the tests assert that rather than let it look wired."
+    # Our delays are TABLE-level (`tnot` on an empty table); this needs ANSWER-level.
+    "p31" => "true ∧ undefined = true; needs roadmap 7.B answer-level delay, which has no producer",
+)
 
 """One row of the corpus: the program, what to table, the goals asked, and the gold verdict.
 
@@ -163,19 +189,23 @@ const _XW_HAND = XsbCase[
 
     # ANTI-VACUITY. A regenerated TSV that came out empty — missing swipl, a renamed upstream path —
     # would otherwise make every claim below hold over nothing at all.
-    @test length(generated) == 57
-    @test length(cases) == 60
+    @test length(generated) == 70
+    @test length(cases) == 73
     @test any(!isempty(c.undef_set) for c in cases)      # …and UNDEFINED is genuinely exercised
 
     for c in cases
         @testset "$(c.name)" begin
             try
                 (got_true, got_undef) = _xw_run(c)
-                # No exemptions. `_XW_KNOWN_WRONG` is empty and kept as documentation; when it held
-                # four entries the `@test_broken` reported the FIX as an error (`test_unbroken` ×8),
-                # which is exactly how an exemption should end.
-                @test got_true  == sort(c.true_set)
-                @test got_undef == sort(c.undef_set)
+                if haskey(_XW_KNOWN_WRONG, c.name)
+                    # `@test_broken` reports a FIX as an error, so the exemption cannot outlive the
+                    # bug — that is how the previous four entries ended (`test_unbroken` ×8).
+                    @test_broken got_true  == sort(c.true_set)
+                    @test_broken got_undef == sort(c.undef_set)
+                else
+                    @test got_true  == sort(c.true_set)
+                    @test got_undef == sort(c.undef_set)
+                end
             finally
                 _XW.untable_all!(); _XW.abolish_all_tables!()
             end
