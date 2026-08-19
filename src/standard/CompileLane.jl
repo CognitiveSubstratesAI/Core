@@ -204,6 +204,25 @@ end
 """
     compile_run(program; fallback=true) -> (; answers, compiled, fell_back, space)
 
+🔴 `fell_back` IS NOT A COVERAGE MISS — READ THIS BEFORE QUOTING A PERCENTAGE. `compile_definition`
+returns `nothing` for THREE different situations and the counter conflates them: a genuine decline,
+an unparseable form, and — overwhelmingly the common case — a form that is simply DATA. A ground fact
+like `(edge a b)` yields no `(=)` definition, so it returns `nothing` and is loaded verbatim; that is
+correct behaviour, not a compiler failure, and this docstring says so 40 lines below.
+
+MEASURED over the LeaTTa corpus, 2026-08-19, classifying each non-query form:
+    definitions COMPILED ............ 105
+    definitions DECLINED ............   5      <- the real gap
+    non-definitions (DATA) .......... 153      <- counted in `fell_back`, not a failure
+    coverage over DEFINITIONS ....... 95.5%
+Dividing by all forms instead gives ~40%, and that is the number that had been quoted as "the
+compiler handles 35%". It is an artifact of the denominator.
+
+The five real declines are two tight categories, not a long tail:
+  · `(=)` inside a HEAD or a match PATTERN — `(= (= \$type T) …)`, `(match &self (= (eq \$x \$y) T) \$x)`
+  · deeply nested minimal-MeTTa control — `if-decons-expr` with nested `unify`/`let`, `foldl-atom`
+    with a tuple accumulator
+
 Run `program` COMPILER-FIRST: each definition is lowered to minimal MeTTa and loaded as IL; declined
 definitions load as source. Queries are answered against the accumulated space, region by region, so
 Invariant 1 holds.
