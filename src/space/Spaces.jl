@@ -317,8 +317,29 @@ const _CAPS_MORK = SpaceCaps(
                                # public entry point. A conjunction capability joins two or more
                                # patterns; there is nothing public to call. MORK's own header says
                                # "ADR-056 Lever A, P1" — unary-first is deliberate phasing.
-                               # ⇒ exposing this needs a BINARY entry point in MORK first, not a
-                               # wire-up in Core. Unlike `bindings`, which really was one layer down.
+                               # ⇒ MORK offers no join to expose. But ⚠️ THAT IS NOT THE SAME AS
+                               # "wait for MORK", which is what an earlier draft of this comment said
+                               # and what I had to correct the same hour — see the CeTTa row below.
+                               # 🔑 CORROBORATED BY AN INDEPENDENT CONSUMER (2026-08-19):
+                               # `dev-zone/mork_ffi` is PeTTa's ENTIRE MORK integration — one foreign
+                               # predicate `mork/3` over a STRING protocol with exactly SEVEN commands
+                               # (add-atoms · queue-atom · remove-atoms · match · get-atoms · mm2-exec
+                               # · flush) and ZERO join/conjunction/intersect. A second engine reaching
+                               # for MORK arrived at the same surface, which is far better evidence
+                               # than reading our own exports: the join is not withheld from Core, it
+                               # is not offered to anyone.
+                               #
+                               # 🔑 AND CeTTa SHOWS THE THIRD OPTION — it BUILT one. `dev-zone/CeTTa`
+                               # reaches MORK through its OWN Rust crates (`cetta-space-bridge`,
+                               # dlopened as `libcetta_space_bridge.so`), and there
+                               # `mork_product_cursor_new(spaces, count>=2)` makes a
+                               # `BridgeProductCursor { snapshots: Vec<PathMap<()>>, path: Vec<u8> }`
+                               # — N space snapshots walked along ONE shared byte path, i.e. a
+                               # prefix-synchronised multi-trie join assembled over PathMap, not a
+                               # MORK call. PathMap is OUR dependency too and is native Julia here.
+                               # ⇒ conjunction is buildable in our own layer over PathMap whenever it
+                               # is wanted; it is not blocked on upstream. Declared false because
+                               # nothing builds it YET, which is a different sentence from "cannot".
     #= persist =# true,        # snapshot_space_to_act! / load_act_source. Returns false for an EMPTY
                                # region (n_atoms == 0), NOT for a root prefix — a root snapshot works
                                # and is merely slower, as CoreSpaceActIO's own comment says.
