@@ -955,6 +955,12 @@ function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
             for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
                 is_empty_atom(at) && continue
                 v = subst(at, bnd)
+                # 🔴 7.B: `true ∧ undefined = undefined`. `_leader_pass` calls `interpret` DIRECTLY,
+                # not `metta_run`, so the conditional-answer rule has to be applied here too — this
+                # is the tabled half, and without it a tabled consumer of an undefined subgoal
+                # answers definitely. MEASURED: the identical program answers UNDEFINED untabled and
+                # TRUE tabled, which is how the loss was localised to this boundary.
+                (bnd.delay !== nothing && !is_undefined(v)) && (v = bnd.delay::Atom)
                 push!(out, v)
                 # ── roadmap 7.A: RECORD THE GOAL INSTANCE THAT PRODUCED THIS ANSWER ──────────────
                 # 🔑 THIS IS THE ONLY PLACE THE INSTANCE STILL EXISTS. `bnd` binds `key`'s variables

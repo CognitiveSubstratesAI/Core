@@ -232,6 +232,10 @@ function narrow_bindings(b::Bindings, live)::Bindings
     end
     any_drop || return b                                   # nothing dead → no allocation (fast path)
     nb = Bindings()
+    # 🔴 7.B: CARRY THE DERIVATION'S ⊥ ACROSS THE NARROWING. This function drops dead VARIABLES; the
+    # delay is not a variable and must survive, or an answer stops being conditional the moment a
+    # frame narrows — which is most of them.
+    nb.delay = b.delay
     @inbounds for k in eachindex(roots)
         root = roots[k]; vars = groups[k]
         val = resolve(b, root)
@@ -402,6 +406,15 @@ function unify_op(f::Frame, b::Bindings)
     end
     for m in match_atoms(satom, subst(pattern, b))
         for mb in merge_bindings(b, m)
+            # 🔴 7.B: THIS DERIVATION JUST CONSUMED A ⊥. Binding it to a variable is a legitimate
+            # match (that is why the propagate-before-matching guard was narrowed on 2026-08-18), but
+            # WFS says the answer built on it is CONDITIONAL. Record it here — per derivation, on the
+            # bindings that travel with exactly this one — and answer production makes it undefined.
+            # CONJOIN rather than overwrite: two bottoms in one body mean the answer depends on both.
+            if is_undefined(satom)
+                mb.delay = mb.delay === nothing ? satom :
+                           undefined_with(dnf_and(delays_of(mb.delay::Atom), delays_of(satom)))
+            end
             append!(out, finished_result(subst(then, mb), mb, f.prev))
         end
     end
@@ -1621,8 +1634,21 @@ function _reduce(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_RES
 end
 
 "Public entry: fully evaluate `atom` in `space`; result set (final bindings applied, Empty filtered)."
-metta_run(atom::Atom, space::Space, b::Bindings=Bindings()) =
-    Atom[subst(at, bnd) for (at, bnd) in metta_results(atom, space, b) if !is_empty_atom(at)]
+function metta_run(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{Atom}
+    out = Atom[]
+    for (at, bnd) in metta_results(atom, space, b)
+        is_empty_atom(at) && continue
+        r = subst(at, bnd)
+        # 🔴 7.B: `true ∧ undefined = undefined`. A derivation that consumed a ⊥ yields a CONDITIONAL
+        # answer, and with no simplification pass to discharge the condition, conditional reads as
+        # undefined. Without this, `(let $c ⊥ True)` answers True and XSB gold p31 is wrong.
+        # ⚠️ ONLY when the answer is not ALREADY a bottom — otherwise the derivation's accumulated
+        # condition would replace the answer's own, which is a strictly worse residual.
+        (bnd.delay !== nothing && !is_undefined(r)) && (r = bnd.delay::Atom)
+        push!(out, r)
+    end
+    out
+end
 "Fully evaluate `atom`; returns (atom, bindings) result set."
 function metta_results(atom::Atom, space::Space, b::Bindings=Bindings())::Vector{_RESULT}
     interpret(_metta(atom, UNDEF), space, b)          # routed to the iterative stack machine (no overflow)

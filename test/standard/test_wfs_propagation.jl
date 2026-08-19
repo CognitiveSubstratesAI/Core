@@ -53,9 +53,20 @@ _wp_undef(xs) = !isempty(xs) && all(_WP.is_undefined, xs)
         @test _wp_undef(_wp_run(s, raw"!(+ 1 (para))"))
 
         # `let` is `(unify $atom $pattern $template Empty)` (stdlib.metta:153), so a bottom bound to a
-        # bare variable must bind and the body must run. This is Prolog's "delay and continue" for the
-        # conjunction encoding, and without it a body stops at its first undefined literal.
-        @test _wp_run(s, raw"!(let $x (para) (marker))") == Atom[Sym("True")]
+        # bare variable must bind and the body must RUN — without that a body stops at its first
+        # undefined literal and the SLG component is never discovered (p15/p17/p26/p27 depend on it).
+        #
+        # 🔴 BUT THE ANSWER IS UNDEFINED, NOT TRUE — CORRECTED 2026-08-19 when roadmap 7.B landed.
+        # This line asserted `True` for one day and that was WRONG: `let` IS Prolog's conjunction, and
+        # `true ∧ undefined = undefined` (Kleene, and upstream). Yesterday's change fixed TRUNCATION
+        # and I over-corrected the assertion along with it — running the body and returning a DEFINITE
+        # answer are different claims, and only the first was the fix.
+        #
+        # ⚠️ THE DISCRIMINATION ABOVE IS THE POINT, AND IT IS NOT ACCIDENTAL. `(ignore1 (para))` still
+        # answers True: a ⊥ arriving through RULE-HEAD unification is argument passing, and arguments
+        # are terms. A ⊥ arriving through `let` is a CONJUNCT — a goal that must hold. Same bottom,
+        # different position, different verdict. XSB gold p31 is the case that needs it.
+        @test _wp_undef(_wp_run(s, raw"!(let $x (para) (marker))"))
     finally
         _WP.untable_all!(); _WP.abolish_all_tables!()
     end
@@ -75,9 +86,20 @@ end
         # written with `chain` passes while testing nothing.
         @test _wp_undef(_wp_run(s, raw"!(let $b (para) (unify $b (SomeConcreteThing) Then Else))"))
 
-        # …while a BARE VARIABLE pattern matches a bottom, which is a legitimate binding, not a
-        # laundering. These two assertions are the whole boundary.
-        @test _wp_run(s, raw"!(let $b (para) (unify $b $v Then Else))") == Atom[Sym("Then")]
+        # …and a BARE VARIABLE pattern also comes back undefined now — NOT because the branch choice
+        # changed, but because the OUTER `let` is a conjunction and 7.B makes it conditional.
+        #
+        # 🔴 A REAL LOSS OF TEST POWER, RECORDED RATHER THAN HIDDEN. Until 2026-08-19 these two lines
+        # DISCRIMINATED: concrete-pattern → ⊥ (no laundering), bare-variable → `Then` (legitimate
+        # binding). After 7.B both are ⊥, because the only route to reach `unify` with a genuine
+        # bottom is through `let` — `unify` takes its arguments UNEVALUATED and `chain` binds the
+        # UNREDUCED atom — and that route now colours the whole expression.
+        #
+        # So the branch-level property is no longer observable from MeTTa surface syntax. It is still
+        # COVERED, by XSB gold p31 in `tabling/upstream/`: p31 needs `unify` to bind a ⊥ to a variable
+        # and keep going, and it fails if the guard reverts to propagating before the match. That is
+        # weaker than a direct assertion and it is worth knowing which one you have.
+        @test _wp_undef(_wp_run(s, raw"!(let $b (para) (unify $b $v Then Else))"))
 
         # definite values are untouched by any of this
         @test _wp_run(s, raw"!(unify (Foo) (Foo) Then Else)") == Atom[Sym("Then")]

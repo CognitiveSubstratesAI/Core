@@ -68,28 +68,7 @@ the undefined one, so the tables they would have reached are never DISCOVERED, t
 (`_wfs_complete!` ran twice, on {p,s} then {q,r}, for four mutually-dependent atoms), and `tnot` on a
 member of the other half fell through and returned ⊥. The fixpoint was correct throughout.
 """
-const _XW_KNOWN_WRONG = Dict{String,String}(
-    # 🔴 p31 IS THE FIRST PROGRAM IN THIS CORPUS THAT REQUIRES ROADMAP 7.B — answer-level delay.
-    # Found 2026-08-19 when the translator learned the binding-`match` form and 13 more programs
-    # became runnable. It is NOT a regression of the 2026-08-18 fix; it is the next layer down.
-    #
-    #     q(A) :- p(A), eq(A,b).    p(a).    p(_A) :- r.    r :- tnot(r).
-    #
-    # `p(b)` holds only via `p(_A) :- r`, and `r` is undefined — so `q(b)` is `true ∧ undefined`,
-    # which Kleene (and upstream) call UNDEFINED. We answer TRUE. Isolated directly:
-    #     (= (para) (tnot (para)))   (= (tru) True)   (= (conj) (let \$c (para) (tru)))
-    #     !(para) -> UNDEFINED   !(tru) -> TRUE   !(conj) -> TRUE      ← must be UNDEFINED
-    #
-    # WHY IT IS NOT A SMALL FIX, and why it is not `unify_op` again. Yesterday's fix made ⊥ stop
-    # ABSORBING, so a body continues past an undefined literal and the SLG component is discovered —
-    # that part is right and p15/p17/p26/p27 depend on it. What is missing is the other half: the
-    # answer must then be derived CONDITIONALLY, carrying a delay on the undefined literal. Marking it
-    # inside `unify_op` would mark the UNEVALUATED `then` term, not the answer. The hook belongs at
-    # answer PRODUCTION — which is exactly what `Tabling.jl:1803` records as unbuilt: "7.B's
-    # answer-level kind has no producer yet, and the tests assert that rather than let it look wired."
-    # Our delays are TABLE-level (`tnot` on an empty table); this needs ANSWER-level.
-    "p31" => "true ∧ undefined = true; needs roadmap 7.B answer-level delay, which has no producer",
-)
+const _XW_KNOWN_WRONG = Dict{String,String}()   # ✅ EMPTY — p31 FIXED 2026-08-19 (roadmap 7.B)
 
 """One row of the corpus: the program, what to table, the goals asked, and the gold verdict.
 

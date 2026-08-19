@@ -98,9 +98,24 @@ struct Binding
 end
 mutable struct Bindings
     entries::Vector{Binding}
+    # 🔴 ROADMAP 7.B — THE ⊥ THIS DERIVATION CONSUMED, or `nothing`. WFS says `true ∧ undefined` is
+    # UNDEFINED, but our conjunction encoding is `(let $c A B)`: when A yields a bottom, `unify` binds
+    # it to `$c` and B's value is returned, so the undefinedness VANISHES. XSB gold program p31 is the
+    # measured case — `q(A) :- p(A), eq(A,b)` with `p(b)` undefined answered TRUE.
+    #
+    # ⚠️ WHY A FIELD ON *BINDINGS* AND NOT AN AMBIENT REGISTER. The scope has to be PER DERIVATION.
+    # Measured: `p :- para.` + `p :- True.` correctly yields `[undefined, True]` ⇒ TRUE, because
+    # distinct derivations put distinct answers in one set. A register read at answer production would
+    # mark BOTH and break that. `Bindings` is already the per-derivation channel — `finished_result`
+    # carries `mb` along exactly the derivation that bound the ⊥.
+    #
+    # ⚠️ AND WHY `Atom`, NOT `DelayDNF`. `Delays.jl` is included long after this file; a typed DNF
+    # field here would invert the layering. A WFSBottom atom already CARRIES its DNF, so the bottom
+    # itself is the carrier and `Atom` is all this layer needs to know.
+    delay::Union{Atom,Nothing}
 end
-Bindings() = Bindings(Binding[])
-Base.copy(b::Bindings) = Bindings(copy(b.entries))
+Bindings() = Bindings(Binding[], nothing)
+Base.copy(b::Bindings) = Bindings(copy(b.entries), b.delay)
 
 # canonical (min id,name) representative of v's equality class: follow forwarding edges to the root.
 function canonical_var(b::Bindings, v::Var)::Var
