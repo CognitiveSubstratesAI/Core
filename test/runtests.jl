@@ -239,6 +239,9 @@ module StandardMeTTaTests
     # `unify` must not launder ⊥ into its `else` branch. Both properties were wrong until
     # 2026-08-18 and cost four XSB gold programs.
     Main.@suite("standard/test_wfs_propagation.jl")
+    # §7.11.2 is WIRED: `answer_abstract(N)` fires at the answer-PRODUCTION site, not the completion
+    # mirror — the mirror cannot work, because the programs this restraint exists for never complete.
+    Main.@suite("standard/tabling/test_answer_restraint_wiring.jl")
     # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
     # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
     # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global

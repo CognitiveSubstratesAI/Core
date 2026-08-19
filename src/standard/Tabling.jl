@@ -891,8 +891,50 @@ end
 # dup-free and the merge only ever ADDS, "a new element appeared" and "the length grew" coincide
 # exactly. Order also coincides (existing first, then new in arrival order). ⇒ the gate set is a
 # real oracle for this change: identical answers, or the equivalence claim is wrong.
+"""
+    _restrain_answers(incoming, key) -> Vector{Atom}
+
+§7.11.2 `answer_abstract(N)` — applied where answers are PRODUCED, which is the only site that can
+do the job.
+
+🔴 WHY NOT THE COMPLETION MIRROR, the obvious place. The mirror inserts `_PARTIAL[m]` into the trie
+AFTER the table completes, and this restraint exists to bound a derivation that GROWS WITHOUT BOUND —
+so on exactly the programs it is for, completion never happens and the mirror never runs. MEASURED
+2026-08-19: `(= (p) 0)` + `(= (p) (s (p)))` under `answer_abstract(2)` spun for over twenty minutes
+without terminating, because the declared restraint had no live caller anywhere on the derivation
+path. Abstracting at completion would also be abstracting after the term growth it exists to prevent.
+
+`_merge_partial` is where every newly-derived answer enters the table (`_leader_pass`'s initial pass,
+the fixpoint rounds, and the consumer resume all funnel through it — the file says so at the merge
+point itself), so it is the production site.
+
+⚠️ NO-OP UNLESS DECLARED. Both `_ANSWER_ABSTRACT[head]` and the global `max_table_answer_size()`
+default to `NO_RESTRAINT`, so the guard below returns `incoming` untouched on every ordinary table —
+this adds a dictionary lookup to the hot loop and nothing else.
+
+⚠️ AND IT MAY THROW, WHICH IS UPSTREAM-CORRECT. SWI's DEFAULT action for this restraint is `error`
+(`resource_error(tripwire(max_table_answer_size, …))`), not abstraction; storing a generalised
+CONDITIONAL answer requires `set_max_table_answer_size_action!(TW_BOUNDED_RATIONALITY)`. Verified
+directly against the mechanism before wiring: depths 0-3 insert, depth 4 raises under the default and
+becomes `(s (s (s \$_sa#1)))` with `disposition = :conditional` under bounded-rationality.
+"""
+function _restrain_answers(incoming::Vector{Atom}, key::Atom)::Vector{Atom}
+    # cheap global gate first: nothing declared anywhere ⇒ not even a head lookup
+    (isempty(_ANSWER_ABSTRACT) && max_table_answer_size() == NO_RESTRAINT) && return incoming
+    h = head_name(key)
+    answer_abstract_for(h) == NO_RESTRAINT && return incoming
+    t = answer_trie_for(key)
+    out = Atom[]
+    for a in incoming
+        ins = trie_insert_answer_restrained!(t, h, a)
+        # `stored === nothing` is TW_FAIL's drop — the answer is deliberately not in the table.
+        ins.stored === nothing || push!(out, ins.stored::Atom)
+    end
+    out
+end
+
 _merge_partial(existing::Vector{Atom}, incoming::Vector{Atom}, key::Atom)::Tuple{Vector{Atom},Bool} =
-    merge_answers(existing, incoming, table_modes(head_name(key)))
+    merge_answers(existing, _restrain_answers(incoming, key), table_modes(head_name(key)))
 
 # Suspend-on-variant via NAIVE FIXPOINT — the simplification of SWI completion (boot/tabling.pl
 # run_leader/`completion` resumes a delimited continuation off a worklist; we re-run the leader pass instead:
