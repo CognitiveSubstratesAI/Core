@@ -38,14 +38,27 @@
 # a later query with no definition between them. MEASURED cost when it does run: ~1.3 ms of an 8.9 ms
 # call (~14%, noisy). Not free; bought for soundness.
 function purity_may_mutate(program::AbstractString)
+    # 🔴 ONE CLOSURE TYPE, NOT TWO — JET, 2026-08-19. This used to `return (_) -> false` on the
+    # trivial path and a different closure on the other, so the RETURN TYPE was a Union of two
+    # distinct closure types and every call through the returned predicate was a runtime dispatch at
+    # every call site. Measured: `Base.return_types(purity_may_mutate, (String,))` came back as a
+    # 2-way Union. Capturing the decision as a Bool instead makes the return concrete.
+    #
+    # ⚠️ THE EMPTY-SET SHORTCUT IS WRONG AND WAS THE FIRST THING TRIED: with `pure = Set{Symbol}()`,
+    # `!(head in pure)` is `true` — the OPPOSITE of the `false` the trivial path must return. The flag
+    # has to be part of the predicate, not smuggled into the data it closes over.
     forms = mm2_split_forms(program)
-    any(i -> forms[i][1] && forms[i + 1][1], 1:length(forms) - 1) || return (_::AbstractString) -> false
-    sp = Eval.Space(); Eval.load_core_stdlib!(sp)
-    for (bang, f) in forms
-        bang || Eval.load_metta!(sp, f)
+    needed = any(i -> forms[i][1] && forms[i + 1][1], 1:length(forms) - 1)
+    pure = if needed
+        sp = Eval.Space(); Eval.load_core_stdlib!(sp)
+        for (bang, f) in forms
+            bang || Eval.load_metta!(sp, f)
+        end
+        Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sp)))
+    else
+        Set{Symbol}()
     end
-    pure = Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sp)))
-    (f::AbstractString) -> !(Base.Symbol(mm2_head(f)) in pure)
+    (f::AbstractString) -> needed && !(Base.Symbol(mm2_head(f)) in pure)
 end
 
 """

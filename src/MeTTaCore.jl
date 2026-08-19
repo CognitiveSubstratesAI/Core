@@ -336,4 +336,42 @@ export register_core_primitives!, load_stdlib!
 export register_grounded!, is_grounded, GROUNDED_REGISTRY
 export mork_unify, mork_apply, mork_rule_rewrite   # E1.0 native-engine bridge
 
+# ── Precompile workload II: THE COMPILER LANE ────────────────────────────────────────────────────
+# 🔴 WHY A SECOND WORKLOAD, AND WHY HERE. `Eval.jl`'s workload is included at line 109 of this file;
+# `CompileLane.jl` at 170. The compiler modules DO NOT EXIST when that workload runs, so it cannot
+# trace them however it is written — the entire lane (Frontend → IR/ANormal → EmitIL → Emit,
+# ~5,700 lines across 12 files) had ZERO precompile coverage, structurally rather than by oversight.
+# Found 2026-08-19 while extending the other workload, from the observation that `load_metta!` runs
+# the INTERPRETER and the compiler is nominally the primary lane — so the lane being optimised was
+# the fallback.
+#
+# ⚠️ SAME DISCIPLINE AS THE FIRST WORKLOAD, because it earned it: the region is `try/catch`-guarded so
+# a failure cannot break the build, which means a trace that never runs and one that runs perfectly
+# look IDENTICAL from outside. The first workload's `tnot` lines were inert for exactly this reason
+# (`stdlib.metta` alone does not make `tnot` reduce). So these calls are executed standalone and
+# checked for a real result before being trusted — `[[feedback_parses_is_not_fires]]`.
+#
+# 📏 MEASURED A/B, back to back, cold process, first `compile_run`:
+#     WITHOUT this workload:  25.95 s, 27.01 s
+#     WITH this workload:      0.03 s, 0.02 s
+# ⇒ ~26 s saved per cold process, against ~50 s added to each precompile (57 s → 106 s).
+# Break-even at TWO cold processes per source change; a day of this port routinely uses ten or more.
+# It does NOT help a warm session — that is `tools/warm_suite.sh`, the complementary lever, never an
+# alternative (`[[feedback_revise_vs_precompiletools]]`).
+#
+# ⚠️ KEEP IT CHEAP. A workload runs on EVERY precompile. Three tiny programs covering the shapes the
+# lane actually compiles — rule rewrite, a grounded call, and a `let` — are enough to trace the
+# specializations; the cost is first-call compilation, not answer count.
+using PrecompileTools: @compile_workload
+@compile_workload begin
+    try
+        for src in ("(= (f \$x) (g \$x))\n(= (g \$x) \$x)\n!(f 7)\n",
+                    "(= (inc \$x) (+ \$x 1))\n!(inc 41)\n",
+                    "(= (h \$x) (let \$y \$x (pair \$y \$y)))\n!(h 3)\n")
+            compile_run(src)
+        end
+    catch
+    end
+end
+
 end # module MeTTaCore

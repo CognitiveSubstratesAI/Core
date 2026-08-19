@@ -2501,7 +2501,18 @@ using PrecompileTools: @setup_workload, @compile_workload
             # (`[[feedback_parses_is_not_fires]]`): a `catch end` makes "never ran" and "ran
             # perfectly" look identical from the outside.
             let ts = Space()
-                isempty(stdlib) || load_metta!(ts, stdlib)
+                # 🔴 `load_core_stdlib!`, NOT `load_metta!(ts, stdlib)` — FIXED 2026-08-19, and the bug
+                # it fixes is this block's own warning coming true. `stdlib.metta` ALONE does not make
+                # `tnot` reduce (CoreExtensions.metta is the other half), so the p/q paradox below
+                # returned an EMPTY answer set and the line commented "tnot + WFS + the delay/residual
+                # path" traced NONE of it. Measured side by side:
+                #     stdlib.metta only  -> !(para) = Atom[]           (no bottom, tnot inert)
+                #     load_core_stdlib!  -> !(para) = Atom[undefined]  (WFS actually runs)
+                # The `try/catch` around this workload made the difference invisible: a trace that
+                # never happens and one that happens perfectly look identical from outside, which is
+                # what the header says and what caught this only when the added restraint/IDG lines
+                # were executed standalone (`[[feedback_parses_is_not_fires]]`).
+                load_core_stdlib!(ts)
                 load_metta!(ts, "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 2)))))")
                 table!(:fib)
                 load_metta!(ts, "!(fib 6)")                      # memo + completion + trie insert/read
@@ -2514,6 +2525,38 @@ using PrecompileTools: @setup_workload, @compile_workload
                 load_metta!(ts, "(= (q) (tnot (p)))")
                 table!(:p); table!(:q)
                 load_metta!(ts, "!(p)")                          # tnot + WFS + the delay/residual path
+
+                # ── ADDED 2026-08-19, for paths that did not exist when the block above was written ──
+                # 🔴 A ⊥ THAT SURVIVES A CONJUNCTION. `cons_atom` and `unify_op` stopped absorbing
+                # bottoms on 2026-08-18, which put the `let`-over-undefined path (bind ⊥ to a variable,
+                # keep evaluating) on the live route for the first time. Nothing above reaches it: the
+                # p/q paradox produces a ⊥ but never CARRIES one through a binder.
+                load_metta!(ts, "(= (mk) True)")
+                load_metta!(ts, "!(let \$u (p) (mk))")           # ⊥ bound, body still runs
+
+                # 🔴 THE RESTRAINT PATH (§7.11.2), wired at `_merge_partial` on 2026-08-19 —
+                # `_restrain_answers` → `trie_insert_answer_restrained!` → `answer_size_abstract` and
+                # the tripwire dispatch. Ground facts only: the GROWING program that motivates this
+                # feature must never appear in a precompile workload, because if the wiring regresses
+                # it does not error, it HANGS — and this block's own header records that a hang here
+                # cannot be rescued by `try/catch`.
+                load_metta!(ts, "(= (g) 0) (= (g) (s 0)) (= (g) (s (s (s (s 0)))))")
+                table_as!(:g, :answer_abstract => 2)
+                set_max_table_answer_size_action!(TW_BOUNDED_RATIONALITY)
+                load_metta!(ts, "!(g)")                          # abstraction + conditional answer
+                set_max_table_answer_size_action!(TW_ERROR)      # ⚠️ process-global: restore the default
+                clear_answer_abstract!()
+
+                # 🔴 THE IDG PATH (§7.7's invalidation entry, 2026-08-18) — `dyn_read!`/`dyn_changed!`/
+                # `idg_node_for`. Gated behind `_IDG_RECORD[]`, so it is compiled ONLY if traced with
+                # the flag ON, which nothing else here does.
+                _IDG_RECORD[] = true
+                load_metta!(ts, "(fact a)")
+                load_metta!(ts, "(= (rd) (match &self (fact \$z) True))")
+                table!(:rd)
+                load_metta!(ts, "!(rd)")                         # dyn_read! + node creation
+                load_metta!(ts, "!(add-atom &self (fact b))")    # dyn_changed! + propagation
+                _IDG_RECORD[] = false                            # ⚠️ restore; default is OFF
                 untable_all!(); abolish_all_tables!()
             end
         catch

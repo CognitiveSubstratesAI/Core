@@ -128,6 +128,11 @@ _start() {
     # belonged to a THREE-HOUR-OLD daemon that `stop` could not see, because RUNDIR had moved and its
     # pidfile was at the old path. Four "fixes" were measured against a process that had none of them.
     # BEFORE BELIEVING A WARM RESULT, CHECK WHICH PROCESS SERVED IT. That is why `stop` kills by PORT.
+    # ⚠️ NEVER PRECOMPILE WHILE A DAEMON IS LIVE AGAINST THAT IMAGE. This line runs inside `_start`,
+    # i.e. with the lane STOPPED, and that ordering matters. Measured 2026-08-19: repeatedly running
+    # `Pkg.precompile()` by hand while the gate daemon stayed up produced a suite run that emitted
+    # 26 MILLION blank lines (24 MB of log, 8 non-empty lines) and had to be killed. Re-run with the
+    # daemon stopped first: 41 KB, 95 files, 0 failed. Stop the lane, then precompile, then boot.
     julia --project="$CORE" -e 'using Pkg; Pkg.precompile(io=devnull)' >/dev/null 2>&1
     setsid nohup julia --project="$CORE" -e "
         using Revise, DaemonMode
