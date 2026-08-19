@@ -303,7 +303,22 @@ const _CAPS_MORK = SpaceCaps(
                                # `space_query_multi_at`'s indexed descent and returns
                                # Dict{Symbol,SExprConvertible} per match. `core_match` still FILTERS —
                                # both exist; the KIND can now bind, which is what this column declares.
-    #= evaluate =# false, #= conjunction =# false,
+    #= evaluate =# false,
+    #= conjunction =# false,   # ⚠️ CORRECT, and now it says WHY — verified 2026-08-19. This was the
+                               # one decline in this ledger with no stated reason, sitting between two
+                               # that had one, which reads as an oversight and is not.
+                               # `docs/specs/metta grammar/space design.txt` calls it "conjunction =
+                               # false at this API, with TrieJoin.jl (46 KB) sitting in the same
+                               # kernel" — file-exists is true, ready-to-expose is not. MORK IS a Core
+                               # dependency and TrieJoin IS exported, but the export is
+                               # `trie_argset, trie_join_unary` — UNARY. TrieJoin.jl has 2 public
+                               # functions and 25 `_`-prefixed private ones, and the binary path
+                               # (`_classify_binary_join`, `_bin_keymap`, `_trie_join_emit!`) has NO
+                               # public entry point. A conjunction capability joins two or more
+                               # patterns; there is nothing public to call. MORK's own header says
+                               # "ADR-056 Lever A, P1" — unary-first is deliberate phasing.
+                               # ⇒ exposing this needs a BINARY entry point in MORK first, not a
+                               # wire-up in Core. Unlike `bindings`, which really was one layer down.
     #= persist =# true,        # snapshot_space_to_act! / load_act_source. Returns false for an EMPTY
                                # region (n_atoms == 0), NOT for a root prefix — a root snapshot works
                                # and is merely slower, as CoreSpaceActIO's own comment says.
