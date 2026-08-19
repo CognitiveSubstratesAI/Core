@@ -173,7 +173,11 @@ include("standard/LangDefPack.jl")   # reflectable HE small-step rule-table (CeT
 include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): MeTTa-IL → MM2 → MORK
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
 include("standard/DualTrack.jl")     # RESTORED 2026-08-14 — mc_run + the ZAM readback
-include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS via the compiler lane
+include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS straight off the trie
+                                     # ⚠️ NOT "via the compiler lane" — that was this line until
+                                     # 2026-08-19 and LibPolicy contains ZERO compiler calls. Its
+                                     # own docstring says so: "one call to `core_rules`, the
+                                     # space's own rule scanner. There is no executor in the path."
 # ── RESTORED 2026-08-14 (`4b54e71` deleted these; the deletion was RIGHT about the ARROW and WRONG
 # about the MECHANISM) ─────────────────────────────────────────────────────────────────────────────
 # `mm2_route!` lowers MeTTa -> MM2 DIRECTLY, an edge Figure 2 does not have; do NOT build on it and do
