@@ -742,3 +742,56 @@ and it may make 1.1/1.4 much cheaper than the ~8 600-vs-250 line comparison sugg
 2. **The LeaTTa PROVED corpus** (`test_compile_lane_corpus.jl`) for anything touching purity, region splitting or emission — it caught both `\|-` attempts.
 3. **`Core/bin/health` 5/5** — but see `[[feedback_primus_health_gate_obsolete]]`: it is a MeTTa front-end gate, NOT a substrate gate.
 4. **A mutation check** — flip the assertion and confirm it fails. A test that cannot fail is not evidence.
+
+---
+
+## 7.B — ANSWER-LEVEL DELAY: the design constraint, measured 2026-08-19
+
+**Status: unbuilt, with a concrete failing case.** XSB gold program `p31` is marked `@test_broken` in
+`test/standard/tabling/upstream/test_xsb_wfs_corpus.jl`; it is the only one of 70 translated programs
+we get wrong.
+
+    q(A) :- p(A), eq(A,b).    p(a).    p(_A) :- r.    r :- tnot(r).
+
+`p(b)` holds only via `p(_A) :- r`, and `r` is undefined, so `q(b)` is `true ∧ undefined` — UNDEFINED
+by Kleene and by upstream. We answer TRUE.
+
+### What is already correct — and constrains the fix
+
+Measured directly, three cases:
+
+| case | our result | verdict |
+|---|---|---|
+| `p :- para.` + `p :- True.` (disjunction) | `[undefined, True]` ⇒ TRUE | ✅ correct |
+| `p :- para.` (sole derivation) | `[undefined]` ⇒ UNDEFINED | ✅ correct |
+| `p :- (let $c (para) True)` (conjunction) | `[True]` ⇒ TRUE | ❌ must be UNDEFINED |
+
+Disjunction is right for a real reason, not by accident: distinct derivations produce distinct
+answers into the same set, and the classifier takes "any definite ⇒ true", which IS
+`true ∨ undefined = true`. **Do not break this while fixing conjunction.**
+
+### 🔴 WHY THE OBVIOUS FIX DOES NOT WORK
+
+`propagated_undefined`'s docstring notes that upstream conjoins delays "implicitly from pushing onto
+one ambient register". An ambient register is TOO COARSE HERE. Case 1 shows a single `_leader_pass`
+producing BOTH a `⊥` and a `True` answer; a register read at `_merge_partial` would mark every answer
+that pass produced, turning the correct disjunction result into UNDEFINED. The register must be
+scoped **per derivation**, and our answer production is per PASS.
+
+Nor is the site `unify_op`. It knows it bound a ⊥ to a variable, but it returns a FRAME for the
+machine to continue evaluating — the answer does not exist yet, so there is nothing there to mark.
+(Marking the unevaluated `then` term was tried in analysis and rejected for this reason.)
+
+### The shape that could work
+
+`Bindings` is already a per-derivation channel: `finished_result(subst(then, mb), mb, f.prev)` carries
+`mb` along exactly the derivation that bound the ⊥. Carrying the accumulated `DelayDNF` there would
+give per-derivation scope for free, and `_merge_partial` could then conjoin the binding's delay onto
+the answers that derivation produced.
+
+⚠️ That is a field on `Bindings`, i.e. an eval-core struct change:
+`[[reference_core_interpreter_perf_findings]]` applies (`Bindings` is opt-target #1, risk HIGH), and
+a struct change strands `const` containers under Revise
+([[reference_revise_binding_bugs_and_world_partitioning]]). Design it, measure it, and expect a
+daemon restart — do not start it as a quick fix.
+
