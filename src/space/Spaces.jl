@@ -304,42 +304,38 @@ const _CAPS_MORK = SpaceCaps(
                                # Dict{Symbol,SExprConvertible} per match. `core_match` still FILTERS —
                                # both exist; the KIND can now bind, which is what this column declares.
     #= evaluate =# false,
-    #= conjunction =# false,   # ⚠️ CORRECT, and now it says WHY — verified 2026-08-19. This was the
-                               # one decline in this ledger with no stated reason, sitting between two
-                               # that had one, which reads as an oversight and is not.
-                               # `docs/specs/metta grammar/space design.txt` calls it "conjunction =
-                               # false at this API, with TrieJoin.jl (46 KB) sitting in the same
-                               # kernel" — file-exists is true, ready-to-expose is not. MORK IS a Core
-                               # dependency and TrieJoin IS exported, but the export is
-                               # `trie_argset, trie_join_unary` — UNARY. TrieJoin.jl has 2 public
-                               # functions and 25 `_`-prefixed private ones, and the binary path
-                               # (`_classify_binary_join`, `_bin_keymap`, `_trie_join_emit!`) has NO
-                               # public entry point. A conjunction capability joins two or more
-                               # patterns; there is nothing public to call. MORK's own header says
-                               # "ADR-056 Lever A, P1" — unary-first is deliberate phasing.
-                               # ⇒ MORK offers no join to expose. But ⚠️ THAT IS NOT THE SAME AS
-                               # "wait for MORK", which is what an earlier draft of this comment said
-                               # and what I had to correct the same hour — see the CeTTa row below.
-                               # 🔑 CORROBORATED BY AN INDEPENDENT CONSUMER (2026-08-19):
-                               # `dev-zone/mork_ffi` is PeTTa's ENTIRE MORK integration — one foreign
-                               # predicate `mork/3` over a STRING protocol with exactly SEVEN commands
-                               # (add-atoms · queue-atom · remove-atoms · match · get-atoms · mm2-exec
-                               # · flush) and ZERO join/conjunction/intersect. A second engine reaching
-                               # for MORK arrived at the same surface, which is far better evidence
-                               # than reading our own exports: the join is not withheld from Core, it
-                               # is not offered to anyone.
+    #= conjunction =# false,   # ⚠️ THE FLAG IS CORRECT; the REASON committed in 5a9b97a was WRONG and
+                               # is replaced here. That comment said "MORK offers no join to expose …
+                               # there is nothing public to call … the join is not offered to anyone."
+                               # Every clause of that is false, and the error is the one the VISIBILITY
+                               # PROTOCOL names: I read `TrieJoin.jl`'s exports (`trie_argset,
+                               # trie_join_unary` — unary, binary path private), found no BINARY entry
+                               # there, and concluded a capability-wide absence. The n-way join does not
+                               # live in TrieJoin. It ships as `space_query_multi` in
+                               # `MORK/src/kernel/Space.jl:625` — public, N-factor ("remaining children
+                               # are the sources"), re-exported from `MeTTaCore.jl:34`, and CALLED by
+                               # `PatternMiner.jl:40`. `MORK/test/integration/trie_join.jl:68-90` pins a
+                               # binary key-rotation join AND an n-ary chain join against hand-computed
+                               # truth: `(, (edge $x $y) (edge $y $z))` over 5 edges yields exactly 3.
+                               # A ported, tested, publicly-callable join is not an absent one.
                                #
-                               # 🔑 AND CeTTa SHOWS THE THIRD OPTION — it BUILT one. `dev-zone/CeTTa`
-                               # reaches MORK through its OWN Rust crates (`cetta-space-bridge`,
-                               # dlopened as `libcetta_space_bridge.so`), and there
-                               # `mork_product_cursor_new(spaces, count>=2)` makes a
-                               # `BridgeProductCursor { snapshots: Vec<PathMap<()>>, path: Vec<u8> }`
-                               # — N space snapshots walked along ONE shared byte path, i.e. a
-                               # prefix-synchronised multi-trie join assembled over PathMap, not a
-                               # MORK call. PathMap is OUR dependency too and is native Julia here.
-                               # ⇒ conjunction is buildable in our own layer over PathMap whenever it
-                               # is wanted; it is not blocked on upstream. Declared false because
-                               # nothing builds it YET, which is a different sentence from "cannot".
+                               # 🔑 SO WHAT IS ACTUALLY FALSE HERE — read the column's contract: "native
+                               # n-way join AT THIS API". Core's binding entry point `core_match_bind`
+                               # (`CoreSpace.jl:843`) takes ONE `pattern` and wraps it `(, P)` — a
+                               # single factor. The store can join N; the Core signature only ever hands
+                               # it 1. That is the whole gap.
+                               # ⇒ Exposing conjunction is a CORE-SIDE SIGNATURE CHANGE — accept a
+                               # Vector of patterns and wrap `(, p1 p2 …)`, which `space_query_multi_at`
+                               # already consumes. It is NOT blocked on upstream, and it is NOT a new
+                               # join to build over PathMap. The primitive is ported and under test.
+                               #
+                               # ⚠️ AND THE CORROBORATION I CITED FLATTERED THE WRONG ANSWER. PeTTa's
+                               # `dev-zone/mork_ffi` really does expose seven string commands with no
+                               # join, and CeTTa really did build its own `BridgeProductCursor` over
+                               # PathMap snapshots. Both facts are true; neither is evidence about what
+                               # OUR port exposes, and citing them made a conclusion drawn from the
+                               # wrong file look independently confirmed. Opening
+                               # `MORK/src/kernel/Space.jl` refuted it in one read.
     #= persist =# true,        # snapshot_space_to_act! / load_act_source. Returns false for an EMPTY
                                # region (n_atoms == 0), NOT for a root prefix — a root snapshot works
                                # and is merely slower, as CoreSpaceActIO's own comment says.
