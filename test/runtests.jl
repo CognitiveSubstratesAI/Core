@@ -275,6 +275,10 @@ module StandardMeTTaTests
     Main.@suite("compiler/test_gslt_reduce.jl")        # the ENGINE — a presentation that RUNS, so its R can be wrong out loud
     Main.@suite("compiler/test_gslt_context.jl")       # closure under CONTEXT + PREMISED rules firing
     Main.@suite("compiler/test_gslt_multicategory.jl")  # Def 5.1: interfaces · contexts · plugging
+    # Def 2.2: bisimilarity over the UNLABELLED one-step relation + the bisimilarity-preserving term
+    # map. A DIFFERENT, weaker morphism than 5.1 — no labels, no contexts, no multicategory — and
+    # buildable from `GPresentation` + `reducts`, which 5.1 is not.
+    Main.@suite("compiler/test_gslt_bisimulation.jl")
     Main.@suite("compiler/test_coverage_ratchet.jl")
     Main.@suite("standard/test_stdlib.jl")
     Main.@suite("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
