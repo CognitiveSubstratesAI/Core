@@ -1,5 +1,14 @@
 # EmitIL.jl — the Core MeTTa compiler, stage 4a: A-normal goal lists → MINIMAL MeTTa (the MeTTa-IL).
 #
+# 🧭 THERE ARE TWO FILES NAMED FOR MeTTa-IL AND THEY RUN IN OPPOSITE DIRECTIONS. This one PRODUCES the
+# IL; `standard/MeTTaIL.jl` CONSUMES it (IL rewrites → MM2 → MORK, the F1R3FLY layered track). Neither
+# referenced the other until 2026-08-19, and a reader landing on one of them has no way to tell it is
+# half the story — which is exactly how the question got asked.
+#     surface MeTTa ──Frontend→IR/ANormal→[EmitIL]──▶ MeTTa-IL ──[standard/MeTTaIL.jl]──▶ MM2 ─▶ MORK
+# Figure 2's `compile` edge is the FIRST half only. The second half is legitimate because it starts
+# from the IR — lowering to MM2 from SURFACE syntax with no IR between is the defect that got the
+# MeTTa→MM2 arrow deleted (`MM2Router.jl:9`, Core `4b54e71`).
+#
 # ─── THIS IS THE ARROW FIGURE 2 HAS ──────────────────────────────────────────────────────────────
 # Hyperon Deep-Dive Whitepaper v5 §3.1 Fig 2 has exactly ONE compile arrow, MeTTa → MeTTa-IL. MM2
 # kernels reach a node by a DASHED "runs on" edge — a peer, never a compilation target. Until now the

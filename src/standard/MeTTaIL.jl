@@ -1,5 +1,13 @@
 # MeTTaIL.jl — MeTTa-IL rewrite-reduction → MM2 → MORK (F1R3FLY layered track).
 #
+# 🧭 THIS FILE CONSUMES MeTTa-IL; IT DOES NOT PRODUCE IT. The producer is `compiler/EmitIL.jl`
+# (surface MeTTa → IR → MeTTa-IL), which is Figure 2's `compile` edge. Two files are named for the IL
+# and they run in OPPOSITE directions:
+#     surface MeTTa ──Frontend→IR/ANormal→[EmitIL]──▶ MeTTa-IL ──[THIS FILE]──▶ MM2 ─▶ MORK
+# Whitepaper §3.2 licenses this half: MeTTa-IL is "the distributed/optimized/compiled artifact
+# targeting MORK, Rholang, JAX, Rust kernels", and MM2 is a MORK-level language. What is NOT licensed
+# is reaching MM2 from surface syntax — see the "no surface→IR rewrite" note below.
+#
 # RE-GROUNDED 2026-06-19 in the ACTUAL upstream MeTTa-IL (F1R3FLY/MeTTaIL `GSLT/.module` +
 # mettail-rust `language!`), NOT the scalable-infra paper §9.1 `def/match/emit` sketch (that was a
 # mislabel — corrected). The real MeTTa-IL: a Theory has `Terms` (BNF grammar), `Equations`,
