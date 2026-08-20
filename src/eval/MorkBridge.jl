@@ -16,12 +16,17 @@
 
 Robinson MGU (with occurs-check) of `query` (source 0) against `data` (source 1) via MORK's
 `expr_unify`. Accepts `MORK.Expr`s or MORK-syntax s-expression strings (dollar-variable syntax). Returns the
-bindings `Dict{ExprVar,ExprEnv}` on success, `nothing` on no match.
+bindings (an `AbstractDict{ExprVar,ExprEnv}` — MORK's `Bindings` slab) on success, `nothing` on no match.
 """
 function mork_unify(query::MORK.Expr, data::MORK.Expr)
     r = MORK.expr_unify([(MORK.ExprEnv(UInt8(0), UInt8(0), UInt32(0), query),
                           MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), data))])
-    r isa Dict ? r : nothing
+    # ⚠️ TEST THE FAILURE TYPE, NOT THE SUCCESS TYPE. This read `r isa Dict`, which broke silently
+    # on 2026-08-20 when `expr_unify` began returning MORK's `Bindings` (a direct-indexed slab).
+    # `Bindings <: AbstractDict` but NOT `<: Dict`, so every SUCCESSFUL unification would have
+    # returned `nothing` — a wrong ANSWER, not a crash, across the whole bridge. The failure type is
+    # the stable half of the contract; the success representation is MORK's to change.
+    r isa MORK.UnificationFailure ? nothing : r
 end
 mork_unify(q::AbstractString, d::AbstractString) =
     mork_unify(MORK.sexpr_to_expr(String(q)), MORK.sexpr_to_expr(String(d)))
@@ -53,7 +58,7 @@ function mork_rule_rewrite(rule::MORK.Expr, data::MORK.Expr)
     length(args) >= 3 || return nothing                 # not (= head body)
     head_ee, body_ee = args[2], args[3]                 # both source 0 ⇒ shared var indices
     b = MORK.expr_unify([(head_ee, MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), data))])
-    b isa Dict || return nothing
+    b isa MORK.UnificationFailure && return nothing   # see mork_unify: never test `isa Dict` here
     mork_apply(rule, body_ee.offset, b)
 end
 function mork_rule_rewrite(rule::AbstractString, data::AbstractString)
