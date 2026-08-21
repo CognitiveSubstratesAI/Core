@@ -28,13 +28,17 @@ jobs:
       # (transitively, via MorkSupercompiler) HPC + MORKTensorNetworks. Clone ALL of them as
       # siblings before instantiation. AdaptiveCompression is a url-source (Pkg fetches it);
       # MPI/Random are registered. NOTE: MorkSupercompiler (repo "Supercompiler") and HPC are
-      # still on sivaji1012 — repoint to CognitiveSubstratesAI when they migrate.
+      # ⭐ MorkSupercompiler HAS MIGRATED (repointed 2026-08-21), per this note's own
+      # instruction. Its live remote is `CognitiveSubstratesAI/MorkSupercompiler` — READ FROM
+      # THE REMOTE, not assumed. The rename changed BOTH owner AND repo name (it was
+      # `Supercompiler`), so a redirect may or may not have covered it: exactly the silent CI
+      # breakage a stale clone URL produces. HPC is STILL on sivaji1012.
       - name: Clone path [sources] dependencies as siblings
         run: |
           git clone --depth 1 https://github.com/CognitiveSubstratesAI/PathMap.git ../PathMap
           git clone --depth 1 https://github.com/CognitiveSubstratesAI/MORK.git ../MORK
           git clone --depth 1 https://github.com/CognitiveSubstratesAI/MORKTensorNetworks.git ../MORKTensorNetworks
-          git clone --depth 1 https://github.com/sivaji1012/Supercompiler.git ../MorkSupercompiler
+          git clone --depth 1 https://github.com/CognitiveSubstratesAI/MorkSupercompiler.git ../MorkSupercompiler
           git clone --depth 1 https://github.com/sivaji1012/HPC.git ../HPC
       - uses: julia-actions/setup-julia@v2
         with:
