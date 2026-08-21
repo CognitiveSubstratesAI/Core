@@ -90,7 +90,7 @@ println("""
   Kinds are OPEN: a package that owns a backend registers it itself via `register_space_kind!`, so
   Core never has to depend on it. Nothing outside Core registers a kind yet, so these are absent:
 
-    :neural / :vsa   FactorVSA holds the store (DualIndex{Id,V,B<:ReverseBackend} — already the exact
+    :neural / :vsa   FactorVSA holds the store (VectorArena{Id,V,B<:ReverseBackend} — already the exact
                      swappable-backend-as-type-parameter shape the Space store seam prescribes) and HMH
                      holds the ENCODERS (Column / RoleBook / Episode). HMH is our exact counterpart of
                      upstream rhoHDC, which the Space survey §6.3 classed as "the encoding half of a

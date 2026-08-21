@@ -225,14 +225,14 @@ and MORK are the **same Julia process**, so these vanish: call `expr_unify`/`exp
 
 2. **Grounded objects: CeTTa `GV_FOREIGN` and FactorVSA's handle-arena CONVERGE — adopt it (new E1
    concern).** Foreign/grounded values must NOT enter the symbolic trie. The proven pattern: keep the
-   Julia object in a **process-global handle-arena** (FactorVSA's `DualIndex` + `ReentrantLock`,
+   Julia object in a **process-global handle-arena** (FactorVSA's `VectorArena` + `ReentrantLock`,
    `FactorVSA.jl:142`), put only a symbolic handle atom `(VecRef h)` into MORK, and register a
    **grounded handler** (`register_grounded!`, `MeTTaShim.jl:120`) that derefs the handle, computes in
    Julia, and returns a fresh handle. CeTTa does the same with `void* GV_FOREIGN` + symbol→C-fn
    dispatch (`grounded.c:207`). **Core already has `GROUNDED_REGISTRY`** (`Eval.jl:158`); when E1 moves
    terms onto byte-`Expr`s, grounded literals (numbers — the §9 "Number model" item — and any Julia
    objects) need this handle-arena treatment so they survive as byte-trie atoms. **Reuse FactorVSA's
-   `DualIndex` rather than reinventing.** This belongs in E1.0's bridge or as an E1.1.5 step.
+   `VectorArena` rather than reinventing.** This belongs in E1.0's bridge or as an E1.1.5 step.
 
 3. **Multi-result = bulk-enumerate then caller-iterate** (validates the deferred B phase). PeTTa
    returns all matches as a newline-delimited string and backtracks via `member/2`; CeTTa returns a v3

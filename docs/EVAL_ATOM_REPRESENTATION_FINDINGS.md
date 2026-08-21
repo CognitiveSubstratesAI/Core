@@ -45,7 +45,7 @@ reasons. **The seam is a layer boundary, not debt.**
 - **eval-on-content-handles / id-based evaluator** (the CeTTa model): NOT a target.
   It would *reverse* the stated "no UUID atoms" principle, not "finish" anything. The
   mechanism is buildable — FactorVSA ships content-addressed identity over MORK
-  (`FVSA_EMBED`, `DualIndex`, `HandleRef`), and CeTTa runs a full id-based evaluator —
+  (`FVSA_EMBED`, `VectorArena`, `HandleRef`), and CeTTa runs a full id-based evaluator —
   but *buildable ≠ warranted*. Core's authors knew it was buildable (they cite CeTTa)
   and chose structs for faithfulness/readability. **FactorVSA's `(VecRef h)` handles
   reference opaque heavy payloads (vectors/codebooks) that can't be strings; it keeps
