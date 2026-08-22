@@ -48,10 +48,30 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
 
-  # NOTE: a JET static-analysis job was tried here (install JET in-job, run report_package) but
-  # JET currently FAILS TO PRECOMPILE on Julia 1.12 (MethodError: add_active_gotos! — JET tracks
-  # compiler internals and lags new Julia releases). Re-add a `jet` job when JET supports 1.12.
-  # This is also why JET was dropped from [deps]: unused AND a latent precompile-breakage risk.
+  # ── NO jet JOB HERE, AND THE OLD REASON GIVEN FOR THAT WAS WRONG ──────────────────────────────
+  # This note used to read "JET currently FAILS TO PRECOMPILE on Julia 1.12 (MethodError:
+  # add_active_gotos!)". 🔴 THAT IS FALSE as of 2026-08-22 and was re-measured both ways on
+  # julia 1.12.7 before deleting it — note that `version: '1.12'` above is a RANGE that setup-julia
+  # resolves to the newest 1.12.x, so "on Julia 1.12" never named a version anything was tested at:
+  #     global env, JET 0.12.1 tracking git master   -> using JET OK in 1.1 s
+  #     clean env, Pkg.add("JET") from the registry  -> resolves 0.12.1, using JET OK in 1.3 s
+  # (`add_active_gotos!` is not even in Core.Compiler any more.) The registry row is the one that
+  # matters, because an in-job `Pkg.add("JET")` gets the REGISTERED release, not our master pin.
+  #
+  # ── THE POLICY, which is the real reason JET is not in [deps] ─────────────────────────────────
+  # ANALYSIS TOOLS LIVE IN THE GLOBAL @v1.12 ENV AND ARE NEVER PACKAGE DEPENDENCIES. JET · Aqua ·
+  # JuliaFormatter · AllocCheck · BenchmarkTools · Cthulhu are installed once, shared by every
+  # package, and reached with `Base.require(Main, :JET)` from workflows/agent_check.jl — which is
+  # package-agnostic, so Core uses it exactly like the other eleven. VERIFIED UNIFORM 2026-08-22:
+  # all twelve Project.tomls carry ZERO tool entries. Keeping JET out of [deps] is therefore correct
+  # and stays; only the breakage rationale was wrong.
+  #
+  # ── WHY STILL NO CI JOB ───────────────────────────────────────────────────────────────────────
+  # Not because JET cannot run, but because `report_package` is a FIREHOSE: 189 reports on MORK.
+  # A gate nobody can get to zero is a gate everybody learns to ignore. The intended gate is the
+  # RATCHETED `@report_opt` over a curated hot-path list in workflows/agent_check.jl (tier JET-HOT),
+  # which reports NOT RUN until workflows/baselines/Core_jet.txt exists. Add the job when there is a
+  # baseline to ratchet against — a count going UP — not a count being nonzero.
 
   format:
     name: Format (Blue)
