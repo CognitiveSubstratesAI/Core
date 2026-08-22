@@ -48,9 +48,10 @@ function purity_may_mutate(program::AbstractString)
     # `!(head in pure)` is `true` — the OPPOSITE of the `false` the trivial path must return. The flag
     # has to be part of the predicate, not smuggled into the data it closes over.
     forms = mm2_split_forms(program)
-    needed = any(i -> forms[i][1] && forms[i + 1][1], 1:length(forms) - 1)
+    needed = any(i -> forms[i][1] && forms[i + 1][1], 1:(length(forms) - 1))
     pure = if needed
-        sp = Eval.Space(); Eval.load_core_stdlib!(sp)
+        sp = Eval.Space()
+        Eval.load_core_stdlib!(sp)
         for (bang, f) in forms
             bang || Eval.load_metta!(sp, f)
         end
@@ -84,7 +85,9 @@ would resolve those too, and the text path is the baseline this must not deviate
 function _resolve_tokens(a::StandardMeTTa.Atom, sp)::StandardMeTTa.Atom
     if a isa StandardMeTTa.Expression
         ch = (a::StandardMeTTa.Expression).children
-        return StandardMeTTa.Expression(StandardMeTTa.Atom[_resolve_tokens(c, sp) for c in ch])
+        return StandardMeTTa.Expression(
+            StandardMeTTa.Atom[_resolve_tokens(c, sp) for c in ch]
+        )
     elseif a isa StandardMeTTa.Sym
         n = String((a::StandardMeTTa.Sym).name)
         haskey(sp.tokens, n) && return sp.tokens[n]
@@ -94,7 +97,7 @@ function _resolve_tokens(a::StandardMeTTa.Atom, sp)::StandardMeTTa.Atom
 end
 
 const ILForm = @NamedTuple{atoms::Vector{StandardMeTTa.Atom}, clauses::Vector{String},
-                           wire::Union{Nothing, String}}
+    wire::Union{Nothing, String}}
 
 """
     compile_definition(sp, form) -> Union{ILForm, Nothing}
@@ -110,7 +113,8 @@ is simply data, and it returns `nothing` so the caller loads it verbatim.
 
 function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     atoms = try
-        toks = Eval.tokenize(form); i = Ref(1)
+        toks = Eval.tokenize(form)
+        i = Ref(1)
         out = StandardMeTTa.Atom[]
         while i[] <= length(toks)
             toks[i[]] == "!" && (i[] += 1)
@@ -135,11 +139,23 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     # makes it the distributed artifact — so its verdict is now REPORTED on the ILForm instead of
     # silently dropping the definition.
     wire_verdict = _unroundtrippable(atoms, sp)
-    prog = try CompilerFrontend.lower_program(atoms) catch; return nothing end
+    prog = try
+        CompilerFrontend.lower_program(atoms)
+    catch
+        return nothing
+    end
     isempty(prog.definitions) && return nothing        # a fact, not a definition — not a decline
-    cls = try CompilerANormal.translate_program(prog) catch; return nothing end
+    cls = try
+        CompilerANormal.translate_program(prog)
+    catch
+        return nothing
+    end
     isempty(cls) && return nothing
-    r = try CompilerEmitIL.emit_il_program(cls) catch; return nothing end
+    r = try
+        CompilerEmitIL.emit_il_program(cls)
+    catch
+        return nothing
+    end
     # ALL-OR-NOTHING per form. A form can lower to several clauses; if any is declined, loading the
     # compiled subset plus the whole source form would double the surviving answers (Invariant 6).
     (r.emitted == length(cls) && isempty(r.declined)) || return nothing
@@ -158,7 +174,7 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     # `TOKEN_REGISTRY`), so the atoms are now what parsing produces — and for a Space, `parse("&self")
     # === sp`, so it is the SAME OBJECT rather than an equal one. `clauses` stays available and is
     # still the artifact that gets written out; nothing downstream of the wire changes.
-    (atoms = r.atoms, clauses = r.clauses, wire = wire_verdict)
+    (atoms=r.atoms, clauses=r.clauses, wire=wire_verdict)
 end
 
 """
@@ -180,7 +196,8 @@ declines strictly more often than `compile_definition`. Measured scope, not a de
 """
 function compile_mm2(sp, form::AbstractString)
     atoms = try
-        toks = Eval.tokenize(form); i = Ref(1)
+        toks = Eval.tokenize(form)
+        i = Ref(1)
         out = StandardMeTTa.Atom[]
         while i[] <= length(toks)
             toks[i[]] == "!" && (i[] += 1)
@@ -192,13 +209,25 @@ function compile_mm2(sp, form::AbstractString)
         return nothing
     end
     atoms = _name_spaces(atoms, sp)
-    prog = try CompilerFrontend.lower_program(atoms) catch; return nothing end
+    prog = try
+        CompilerFrontend.lower_program(atoms)
+    catch
+        return nothing
+    end
     isempty(prog.definitions) && return nothing        # a fact, not a definition — not a decline
-    cls = try CompilerANormal.translate_program(prog) catch; return nothing end
+    cls = try
+        CompilerANormal.translate_program(prog)
+    catch
+        return nothing
+    end
     isempty(cls) && return nothing
-    r = try CompilerEmit.emit_program(cls) catch; return nothing end
+    r = try
+        CompilerEmit.emit_program(cls)
+    catch
+        return nothing
+    end
     (r.emitted == length(cls) && isempty(r.declined)) || return nothing
-    (rules = String[String(x) for x in r.rules], emitted = r.emitted)
+    (rules=String[String(x) for x in r.rules], emitted=r.emitted)
 end
 
 """
@@ -232,8 +261,8 @@ Invariant 1 holds.
 compiled path alone produced an answer, since a fallback that silently rescues the result is how a
 compiler comes to look complete.
 """
-function compile_run(program::AbstractString; fallback::Bool = true,
-                     max_steps::Int = 512_000, backend::Symbol = :eval)
+function compile_run(program::AbstractString; fallback::Bool=true,
+    max_steps::Int=512_000, backend::Symbol=:eval)
     # ── METER IT (the cost account) ──────────────────────────────────────────────────────────────
     # `gslt_mettail_summary_spec.md` §8, the C monad: "Every interaction is gated on consuming a
     # token… the token stack drains in step with the reductions actually performed." A GSLT gives
@@ -308,9 +337,14 @@ function _name_spaces(atoms::Vector{StandardMeTTa.Atom}, sp)::Vector{StandardMeT
 
     rewrite(a::StandardMeTTa.Atom)::StandardMeTTa.Atom = begin
         if a isa StandardMeTTa.Expression
-            StandardMeTTa.Expression(StandardMeTTa.Atom[rewrite(c)
-                                                        for c in (a::StandardMeTTa.Expression).children])
-        elseif a isa StandardMeTTa.Grounded && (a::StandardMeTTa.Grounded).value isa Eval.Space
+            StandardMeTTa.Expression(
+                StandardMeTTa.Atom[
+                    rewrite(c)
+                    for c in (a::StandardMeTTa.Expression).children
+                ]
+            )
+        elseif a isa StandardMeTTa.Grounded &&
+            (a::StandardMeTTa.Grounded).value isa Eval.Space
             nm = get(names, (a::StandardMeTTa.Grounded).value, nothing)
             nm === nothing ? a : StandardMeTTa.Sym(nm)
         else
@@ -363,11 +397,15 @@ function _unroundtrippable(atoms::Vector{StandardMeTTa.Atom}, sp)::Union{Nothing
     walk(a::StandardMeTTa.Atom) = begin
         why === nothing || return nothing
         if a isa StandardMeTTa.Expression
-            for c in (a::StandardMeTTa.Expression).children; walk(c); end
+            for c in (a::StandardMeTTa.Expression).children
+                walk(c)
+            end
         elseif a isa StandardMeTTa.Grounded
             v = (a::StandardMeTTa.Grounded).value
             if v isa Eval.Space
-                v === sp || (why = "a named space other than &self (prints as `&self`, re-parses to &self)")
+                v === sp || (
+                    why = "a named space other than &self (prints as `&self`, re-parses to &self)"
+                )
             elseif v isa Eval.StateCell
                 why = "a state cell (prints as `(State …)`, re-parses as an Expression — type lost)"
             elseif v isa Eval.WFSBottom
@@ -381,14 +419,18 @@ function _unroundtrippable(atoms::Vector{StandardMeTTa.Atom}, sp)::Union{Nothing
                 # property in `test/compiler/test_il_wire_roundtrip.jl`. Now that the verdict annotates
                 # rather than declines, saying so costs no coverage.
                 why = "a grounded Bool (prints as `true`/`false`, re-parses as a symbol — MeTTa booleans are the symbols True/False)"
-            elseif !(v isa Eval.Operation || v isa Eval.SpaceOp ||
-                     v isa Number || v isa AbstractString)
+            elseif !(
+                v isa Eval.Operation || v isa Eval.SpaceOp ||
+                v isa Number || v isa AbstractString
+            )
                 why = "a grounded $(typeof(v)) with no faithful textual form"
             end
         end
         nothing
     end
-    for a in atoms; walk(a); end
+    for a in atoms
+        walk(a)
+    end
     why
 end
 
@@ -428,7 +470,8 @@ function _program_introspects_rules(program::AbstractString)::Bool
     for (bang, f) in mm2_split_forms(program)
         bang || continue
         a = try
-            toks = Eval.tokenize(String(f)); i = Ref(1)
+            toks = Eval.tokenize(String(f))
+            i = Ref(1)
             Eval.parse_from(toks, i, sp.tokens)
         catch
             continue
@@ -444,14 +487,20 @@ function _reads_rules(a)::Bool
     ch = (a::StandardMeTTa.Expression).children
     if length(ch) >= 3
         h = ch[1]
-        hname = h isa StandardMeTTa.Sym ? String((h::StandardMeTTa.Sym).name) :
-                h isa StandardMeTTa.Grounded && hasfield(typeof((h::StandardMeTTa.Grounded).value), :name) ?
-                    String(getfield((h::StandardMeTTa.Grounded).value, :name)) : ""
+        hname = if h isa StandardMeTTa.Sym
+            String((h::StandardMeTTa.Sym).name)
+        elseif h isa StandardMeTTa.Grounded &&
+            hasfield(typeof((h::StandardMeTTa.Grounded).value), :name)
+            String(getfield((h::StandardMeTTa.Grounded).value, :name))
+        else
+            ""
+        end
         if hname == "match"
             pat = ch[3]
             # a bare VARIABLE pattern matches everything, rules included
             pat isa StandardMeTTa.Var && return true
-            if pat isa StandardMeTTa.Expression && !isempty((pat::StandardMeTTa.Expression).children)
+            if pat isa StandardMeTTa.Expression &&
+                !isempty((pat::StandardMeTTa.Expression).children)
                 ph = (pat::StandardMeTTa.Expression).children[1]
                 if ph isa StandardMeTTa.Sym
                     n = (ph::StandardMeTTa.Sym).name
@@ -488,13 +537,20 @@ end
 # ⚠️ Root-prefix only: `core_calculus!` raises on a prefixed CoreSpace pending
 # `space_metta_calculus_in_prefix!` upstream.
 function _compile_run_mork(program::AbstractString, steps::Int)
-    sp = Eval.Space(); Eval.load_core_stdlib!(sp)
-    rules = String[]; declined = String[]; queries = String[]; ncompiled = 0
+    sp = Eval.Space()
+    Eval.load_core_stdlib!(sp)
+    rules = String[]
+    declined = String[]
+    queries = String[]
+    ncompiled = 0
     for r in split_program_regions(program, purity_may_mutate(program))
         for d in r.defs
             m = compile_mm2(sp, d)
-            m === nothing ? push!(declined, String(d)) :
-                            (append!(rules, m.rules); ncompiled += 1)
+            if m === nothing
+                push!(declined, String(d))
+            else
+                (append!(rules, m.rules); ncompiled += 1)
+            end
         end
         append!(queries, String[String(q) for q in r.queries])
     end
@@ -509,7 +565,9 @@ function _compile_run_mork(program::AbstractString, steps::Int)
     #   3. 🔴 if the REDEX IS STILL PRESENT, or nothing came back at all, NOTHING FIRED — report it as
     #      a fallback rather than as an answer. Without this a non-reduction is indistinguishable from
     #      a successful one, which is the silent-wrong-answer shape this lane exists to avoid.
-    answers = Tuple{String, Vector{String}}[]; unreduced = String[]; total = 0
+    answers = Tuple{String, Vector{String}}[]
+    unreduced = String[]
+    total = 0
     for q in queries
         cs = new_core_space()
         for rule in rules
@@ -517,10 +575,14 @@ function _compile_run_mork(program::AbstractString, steps::Int)
         end
         space_add_all_sexpr!(cs.inner, q)
         total += core_calculus!(cs, steps)
-        dump = String[String(strip(l)) for l in split(space_dump_all_sexpr(cs.inner), '\n')
-                      if !isempty(strip(l))]
-        reduct = sort(String[x for x in dump
-                             if !(startswith(x, "(") && mm2_head(x) == "exec")])
+        dump = String[
+            String(strip(l)) for l in split(space_dump_all_sexpr(cs.inner), '\n')
+            if !isempty(strip(l))
+        ]
+        reduct = sort(
+            String[x for x in dump
+                         if !(startswith(x, "(") && mm2_head(x) == "exec")]
+        )
         if strip(q) in reduct || isempty(reduct)
             # NOTHING FIRED. 🔴 The answer is the REDEX ITSELF, not the empty set —
             # `metta_language_spec.md` §2.5: `NotReducible` "returns the unchanged function call".
@@ -536,14 +598,16 @@ function _compile_run_mork(program::AbstractString, steps::Int)
             push!(answers, (q, reduct))
         end
     end
-    (; answers, compiled = ncompiled, fell_back = length(declined), exhausted = String[],
-       introspects = false, space = nothing, declined, unreduced, steps_run = total)
+    (; answers, compiled=ncompiled, fell_back=length(declined), exhausted=String[],
+        introspects=false, space=nothing, declined, unreduced, steps_run=total)
 end
 
 function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Symbol)
     backend === :mork && return _compile_run_mork(program, 1_000_000)
-    backend === :eval || error("compile_run: unknown backend `:$backend` — expected :eval or :mork")
-    sp = Eval.Space(); Eval.load_core_stdlib!(sp)
+    backend === :eval ||
+        error("compile_run: unknown backend `:$backend` — expected :eval or :mork")
+    sp = Eval.Space()
+    Eval.load_core_stdlib!(sp)
     # A program that reads its own rules must run on SOURCE rules — see `_program_introspects_rules`.
     introspects = _program_introspects_rules(program)
     answers = Tuple{String, Vector{String}}[]
@@ -554,7 +618,8 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
         for d in r.defs
             il = introspects ? nothing : compile_definition(sp, d)
             if il === nothing
-                fallback || error("compile_run: declined and fallback=false — $(first(d, 80))")
+                fallback ||
+                    error("compile_run: declined and fallback=false — $(first(d, 80))")
                 Eval.load_metta!(sp, d)
                 nfallback += 1
             else
@@ -582,9 +647,14 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
                 end
                 rethrow()
             end
-            push!(answers, (String(q),
-                  String[string(x) for y in res for x in (y isa AbstractVector ? y : [y])]))
+            push!(
+                answers,
+                (String(q),
+                    String[
+                        string(x) for y in res for x in (y isa AbstractVector ? y : [y])
+                    ])
+            )
         end
     end
-    (; answers, compiled = ncompiled, fell_back = nfallback, exhausted, introspects, space = sp)
+    (; answers, compiled=ncompiled, fell_back=nfallback, exhausted, introspects, space=sp)
 end

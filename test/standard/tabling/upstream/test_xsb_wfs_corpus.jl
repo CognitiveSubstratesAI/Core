@@ -68,7 +68,7 @@ the undefined one, so the tables they would have reached are never DISCOVERED, t
 (`_wfs_complete!` ran twice, on {p,s} then {q,r}, for four mutually-dependent atoms), and `tnot` on a
 member of the other half fell through and returned ⊥. The fixpoint was correct throughout.
 """
-const _XW_KNOWN_WRONG = Dict{String,String}()   # ✅ EMPTY — p31 FIXED 2026-08-19 (roadmap 7.B)
+const _XW_KNOWN_WRONG = Dict{String, String}()   # ✅ EMPTY — p31 FIXED 2026-08-19 (roadmap 7.B)
 
 """One row of the corpus: the program, what to table, the goals asked, and the gold verdict.
 
@@ -95,10 +95,13 @@ function _xw_load(path::AbstractString)::Vector{XsbCase}
         startswith(line, "#") && continue
         f = split(line, '\t')
         length(f) == 6 || continue
-        push!(out, XsbCase(String(f[1]),
-                           replace(String(f[3]), "\\n" => "\n") * "\n",
-                           Symbol[Symbol(t) for t in _xw_split(f[2])],
-                           _xw_split(f[4]), _xw_split(f[5]), _xw_split(f[6])))
+        push!(
+            out,
+            XsbCase(String(f[1]),
+                replace(String(f[3]), "\\n" => "\n") * "\n",
+                Symbol[Symbol(t) for t in _xw_split(f[2])],
+                _xw_split(f[4]), _xw_split(f[5]), _xw_split(f[6]))
+        )
     end
     out
 end
@@ -113,14 +116,17 @@ function _xw_answers(s::Space, goal::AbstractString)::Vector{Atom}
 end
 
 "Classify each goal as TRUE / UNDEFINED / FALSE and return the first two as sorted sets."
-function _xw_run(c::XsbCase)::Tuple{Vector{String},Vector{String}}
-    _XW.untable_all!(); _XW.abolish_all_tables!()
-    s = Space(); load_core_stdlib!(s)
+function _xw_run(c::XsbCase)::Tuple{Vector{String}, Vector{String}}
+    _XW.untable_all!()
+    _XW.abolish_all_tables!()
+    s = Space()
+    load_core_stdlib!(s)
     isempty(strip(c.program)) || load_metta!(s, c.program)
     for t in c.tabled
         _XW.table!(t)
     end
-    got_true = String[]; got_undef = String[]
+    got_true = String[]
+    got_undef = String[]
     for g in c.goals
         a = _xw_answers(s, g)
         if isempty(a)
@@ -140,26 +146,29 @@ end
 # BINDING `match` whose `let` binder carries the successor rather than being discarded.
 # Goals are asked GROUND because our `tnot` raises instantiation_error otherwise; the gold sets are
 # per-position, so nothing is lost.
-const _XW_WIN_RULE = raw"(= (win $a) (let $b (match &self (m $a $b) $b) (tnot (win $b))))" * "\n"
+const _XW_WIN_RULE =
+    raw"(= (win $a) (let $b (match &self (m $a $b) $b) (tnot (win $b))))" * "\n"
 
 const _XW_HAND = XsbCase[
     # p11: m(a,b). m(b,c). m(c,d). m(b,d).  — a DAG, so everything is decided.
     #      d has no move -> lost; c->d -> won; b->d -> won; a->b(won) only -> lost.
     XsbCase("p11", "(m a b)\n(m b c)\n(m c d)\n(m b d)\n" * _XW_WIN_RULE,
-            [:win], ["(win a)", "(win b)", "(win c)", "(win d)"], ["(win b)", "(win c)"], String[]),
+        [:win], ["(win a)", "(win b)", "(win c)", "(win d)"], ["(win b)", "(win c)"],
+        String[]),
 
     # p12: m(a,b). m(b,a). m(b,c).  — a 2-cycle a<->b PLUS an escape b->c. c is lost, so b is WON via
     #      c, and a's only move is to b (won), so a is lost. The cycle does NOT make these undefined:
     #      the escape decides them, which is the point of the case.
     XsbCase("p12", "(m a b)\n(m b a)\n(m b c)\n" * _XW_WIN_RULE,
-            [:win], ["(win a)", "(win b)", "(win c)"], ["(win b)"], String[]),
+        [:win], ["(win a)", "(win b)", "(win c)"], ["(win b)"], String[]),
 
     # p13: m(a,b). m(b,a). m(b,c). m(c,d).  — the SAME 2-cycle, but the escape now leads to a WON
     #      position. d lost -> c won; b's moves are a (undecided) and c (won); the a<->b cycle no
     #      longer has an escape that settles it, so BOTH are UNDEFINED while c stays TRUE.
     #      One extra edge flips two atoms from decided to undefined — the tightest discriminator here.
     XsbCase("p13", "(m a b)\n(m b a)\n(m b c)\n(m c d)\n" * _XW_WIN_RULE,
-            [:win], ["(win a)", "(win b)", "(win c)", "(win d)"], ["(win c)"], ["(win a)", "(win b)"]),
+        [:win], ["(win a)", "(win b)", "(win c)", "(win d)"], ["(win c)"],
+        ["(win a)", "(win b)"])
 ]
 
 @testset "XSB wfs_tests corpus — our engine vs upstream's gold rows" begin
@@ -179,14 +188,15 @@ const _XW_HAND = XsbCase[
                 if haskey(_XW_KNOWN_WRONG, c.name)
                     # `@test_broken` reports a FIX as an error, so the exemption cannot outlive the
                     # bug — that is how the previous four entries ended (`test_unbroken` ×8).
-                    @test_broken got_true  == sort(c.true_set)
+                    @test_broken got_true == sort(c.true_set)
                     @test_broken got_undef == sort(c.undef_set)
                 else
-                    @test got_true  == sort(c.true_set)
+                    @test got_true == sort(c.true_set)
                     @test got_undef == sort(c.undef_set)
                 end
             finally
-                _XW.untable_all!(); _XW.abolish_all_tables!()
+                _XW.untable_all!()
+                _XW.abolish_all_tables!()
             end
         end
     end

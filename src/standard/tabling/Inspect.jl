@@ -73,9 +73,9 @@ end
 Upstream enumerates on backtracking; the Julia analogue is a vector, since a caller that wants
 laziness can iterate it. `[[feedback_native_julia_not_transliteration]]`
 """
-function get_calls(head::Symbol)::Vector{Tuple{Atom,AnswerTrie,Symbol}}
-    out = Tuple{Atom,AnswerTrie,Symbol}[]
-    for key in sort!(collect(keys(_ANSWER_TRIES)); by = string)
+function get_calls(head::Symbol)::Vector{Tuple{Atom, AnswerTrie, Symbol}}
+    out = Tuple{Atom, AnswerTrie, Symbol}[]
+    for key in sort!(collect(keys(_ANSWER_TRIES)); by=string)
         head_name(key) === head || continue
         t = answer_trie_for(key)
         push!(out, (key, t, table_status(t)))
@@ -102,16 +102,18 @@ get_returns(t::AnswerTrie)::Vector{Atom} = trie_answers(t)
 Upstream's NodeID is what lets a caller mutate or delete a specific answer. Returning the node
 itself is the Julia form; there is no id table to index through.
 """
-function get_returns_with_nodes(t::AnswerTrie)::Vector{Tuple{Atom,TrieNode}}
-    out = Tuple{Int,Atom,TrieNode}[]
+function get_returns_with_nodes(t::AnswerTrie)::Vector{Tuple{Atom, TrieNode}}
+    out = Tuple{Int, Atom, TrieNode}[]
     stack = TrieNode[t.root]
     while !isempty(stack)
         n = pop!(stack)
         n.answer === nothing || push!(out, (n.seq, n.answer::Atom, n))
-        for (_, c) in n.children; push!(stack, c); end
+        for (_, c) in n.children
+            push!(stack, c)
+        end
     end
-    sort!(out; by = first)
-    Tuple{Atom,TrieNode}[(a, nd) for (_, a, nd) in out]
+    sort!(out; by=first)
+    Tuple{Atom, TrieNode}[(a, nd) for (_, a, nd) in out]
 end
 
 """
@@ -164,8 +166,10 @@ table stores `Skeleton` and `Moded` separately and `extend_return/3` has to re-a
 `trie_insert_moded!` stores the already-merged answer AT the node, so `get_returns` is already the
 aggregated answer and one clause covers both — the same reason `get_returns/2` needs no branch.
 """
-get_returns_and_tvs(t::AnswerTrie)::Vector{Tuple{Atom,Symbol}} =
-    Tuple{Atom,Symbol}[(a, answer_condition(a) === COND_TRUE ? :t : :u) for a in get_returns(t)]
+get_returns_and_tvs(t::AnswerTrie)::Vector{Tuple{Atom, Symbol}} =
+    Tuple{Atom, Symbol}[
+        (a, answer_condition(a) === COND_TRUE ? :t : :u) for a in get_returns(t)
+    ]
 
 """
     get_returns_and_dls(t) -> Vector{Tuple{Atom,Vector{Vector{Atom}}}}
@@ -178,8 +182,8 @@ ONE row per ANSWER. An unconditional answer appears with an EMPTY outer list —
 out, matching `condition_delay_lists(true, _, [])` (`:230`). Contrast `get_residual`, which splits
 the outer list across rows.
 """
-get_returns_and_dls(t::AnswerTrie)::Vector{Tuple{Atom,Vector{Vector{Atom}}}} =
-    Tuple{Atom,Vector{Vector{Atom}}}[(a, delay_lists(a)) for a in get_returns(t)]
+get_returns_and_dls(t::AnswerTrie)::Vector{Tuple{Atom, Vector{Vector{Atom}}}} =
+    Tuple{Atom, Vector{Vector{Atom}}}[(a, delay_lists(a)) for a in get_returns(t)]
 
 """
     get_residual(goal) -> Vector{Tuple{Atom,Vector{Atom}}}
@@ -208,8 +212,8 @@ matching table. We resolve through `get_call`, which is the exact variant key �
 `get_returns_for_call` already makes, kept consistent deliberately rather than diverging within one
 file. `get_calls(head)` is the enumeration entry point when several tables are wanted.
 """
-function get_residual(goal::Atom)::Vector{Tuple{Atom,Vector{Atom}}}
-    out = Tuple{Atom,Vector{Atom}}[]
+function get_residual(goal::Atom)::Vector{Tuple{Atom, Vector{Atom}}}
+    out = Tuple{Atom, Vector{Atom}}[]
     c = get_call(goal)
     c === nothing && return out                      # no table ⇒ no solutions, as upstream: `trie_gen` fails
     for a in get_returns(c[2]), dl in delay_list_disjuncts(a)
@@ -229,8 +233,9 @@ declaration and clears the predicate's attributes, so the predicate stops being 
 "clear the cache" silently mean "stop memoising".
 """
 function abolish_table_pred!(head::Symbol)::Bool
-    had = any(k -> head_name(k) === head, keys(_ANSWER_TRIES)) ||
-          any(k -> head_name(k) === head, keys(_ANSWER_TABLE))
+    had =
+        any(k -> head_name(k) === head, keys(_ANSWER_TRIES)) ||
+        any(k -> head_name(k) === head, keys(_ANSWER_TABLE))
     abolish_table_subgoals!(head)
     had
 end
@@ -247,11 +252,21 @@ function abolish_all_tables!()
     # them was the dangling-`_DEPS` class `abolish_table_subgoals!` is careful about — a resumption
     # firing into a table that no longer exists — and it made the two "clear everything" entry points
     # disagree, since `_table_reset!` already cleared all of them.
-    empty!(_IDG); empty!(_MONO_DEPS); empty!(_MONO_QUEUE); empty!(_DEPS)
-    empty!(_TABLE_INPROG); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_SCC_NEG)
+    empty!(_IDG)
+    empty!(_MONO_DEPS)
+    empty!(_MONO_QUEUE)
+    empty!(_DEPS)
+    empty!(_TABLE_INPROG)
+    empty!(_GEN_STACK)
+    empty!(_COMPONENT)
+    empty!(_SCC_NEG)
     _CURRENT_TARGET[] = nothing
-    empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_PARTIAL); empty!(_PARTIAL_READ)
-    clear_answer_tries!(); clear_worklists!()
+    empty!(_ANSWER_TABLE)
+    empty!(_ANSWER_STAMP)
+    empty!(_PARTIAL)
+    empty!(_PARTIAL_READ)
+    clear_answer_tries!()
+    clear_worklists!()
     nothing
 end
 
@@ -306,14 +321,23 @@ predicate that calls first. Forcing evaluation here would silently make an inspe
 caller runs `!(r)` and then `!(get-residual (r))`. This matches `get_call` / `get_returns_for_call`,
 which do not drive either.
 """
-const GET_RESIDUAL = Grounded(SpaceOp("get-residual", function (xs, space)
-    length(xs) == 1 || return ExecNoReduce()
-    g = xs[1]
-    (g isa Expression && !isempty(g.children)) || return ExecNoReduce()
-    # `_reduced_goal` normalises the ARGUMENTS (`(fib (+ 4 4))` → `(fib 8)`) without evaluating the
-    # goal itself — the same canonicalisation `tabled_eval` keys tables by, so a caller need not know
-    # the internal key form. `get_residual` then applies `_variant_rename` on top.
-    goal = _reduced_goal(g, space, Bindings())
-    ExecOk(Atom[Expression(Atom[Sym("residual"), a, Expression(dl)])
-                for (a, dl) in get_residual(goal)])
-end))
+const GET_RESIDUAL = Grounded(
+    SpaceOp(
+        "get-residual",
+        function (xs, space)
+            length(xs) == 1 || return ExecNoReduce()
+            g = xs[1]
+            (g isa Expression && !isempty(g.children)) || return ExecNoReduce()
+            # `_reduced_goal` normalises the ARGUMENTS (`(fib (+ 4 4))` → `(fib 8)`) without evaluating the
+            # goal itself — the same canonicalisation `tabled_eval` keys tables by, so a caller need not know
+            # the internal key form. `get_residual` then applies `_variant_rename` on top.
+            goal = _reduced_goal(g, space, Bindings())
+            ExecOk(
+                Atom[
+                    Expression(Atom[Sym("residual"), a, Expression(dl)])
+                    for (a, dl) in get_residual(goal)
+                ]
+            )
+        end
+    )
+)

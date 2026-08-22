@@ -26,17 +26,21 @@ const _FA = Eval
 # A Julia closure IS a struct; its captured environment IS `fieldtypes(typeof(f))`. Flag any captured
 # slot that could HOLD a Frame — the type itself, an abstract/Any slot a Frame fits in, or a container.
 _captures_frame_type(T::Type)::Bool = any(fieldtypes(T)) do t
-    t === _FA.Frame || t === Any || t === Union{_FA.Frame,Nothing} ||
-        (isabstracttype(t) && _FA.Frame <: t) || (t <: AbstractArray) || (t <: AbstractDict)
+    t === _FA.Frame || t === Any || t === Union{_FA.Frame, Nothing} ||
+        (isabstracttype(t) && _FA.Frame <: t) || (t <: AbstractArray) ||
+        (t <: AbstractDict)
 end
 _captures_a_frame(f)::Bool = _captures_frame_type(typeof(f))
 
-_fa_parse(src, sp) = (toks = _FA.tokenize(src); _FA.parse_from(toks, Ref(1), sp.tokens))
+_fa_parse(src, sp) = (toks=_FA.tokenize(src); _FA.parse_from(toks, Ref(1), sp.tokens))
 
 # Sweep a real evaluation and collect every distinct `ret` closure TYPE the machine builds.
 function _fa_sweep!(seen::Set{Any}, goal::Atom, space)
-    plan = Tuple{_FA.Frame,_FA.Bindings}[
-        (_FA.Frame(goal, _FA.collect_vars(goal), nothing, _FA.no_handler, false, 0), _FA.Bindings())]
+    plan = Tuple{_FA.Frame, _FA.Bindings}[
+        (
+        _FA.Frame(goal, _FA.collect_vars(goal), nothing, _FA.no_handler, false, 0),
+        _FA.Bindings()
+    )]
     guard = 0
     while !isempty(plan) && (guard += 1) < 50_000
         f, fb = pop!(plan)
@@ -54,12 +58,16 @@ end
 
     # ── THE INVARIANT, over every closure a real run constructs ──────────────────────────────────
     @testset "no ret closure captures a Frame" begin
-        s = Space(); load_core_stdlib!(s)
-        load_metta!(s, raw"""
-            (= (g $x) (Result $x))  (= (mark) M1)  (= (mark) M2)
-            (= (f2 $x) (function (return (W $x))))
-            (= (rec 0) done)  (= (rec $n) (rec (- $n 1)))
-        """)
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(
+            s,
+            raw"""
+    (= (g $x) (Result $x))  (= (mark) M1)  (= (mark) M2)
+    (= (f2 $x) (function (return (W $x))))
+    (= (rec 0) done)  (= (rec $n) (rec (- $n 1)))
+"""
+        )
         seen = Set{Any}()
         for q in ("(g (mark))", "(f2 q)", "(rec 3)")
             _fa_sweep!(seen, _FA._metta(_fa_parse(q, s), _FA.UNDEF), s)
@@ -70,7 +78,7 @@ end
         # THE INVARIANT, per closure type, so a failure names the offender
         for T in seen
             @test !_captures_frame_type(T) ||
-                  (@info "ret closure CAPTURES A FRAME" type=T fields=fieldtypes(T); false)
+                (@info "ret closure CAPTURES A FRAME" type=T fields=fieldtypes(T); false)
         end
     end
 
@@ -97,7 +105,12 @@ end
         # CONTROLS — shaped like the real closures; must NOT be flagged, or the guard is unusable
         good = let depth = 3, templ = Sym("t")
             (self::_FA.Frame, r::Atom, rb::_FA.Bindings) ->
-                (_FA.Frame(templ, _FA.EMPTY_VARS, self.prev, _FA.no_handler, true, depth), rb)
+                (
+                    _FA.Frame(
+                        templ, _FA.EMPTY_VARS, self.prev, _FA.no_handler, true, depth
+                    ),
+                    rb
+                )
         end
         @test !_captures_a_frame(good)
         @test !_captures_a_frame(_FA.no_handler)
@@ -118,14 +131,16 @@ end
         # the representation rather than the contract. The AST also subsumes the character-offset
         # exclusions this replaced (`::Frame`, `Tuple{Frame,`) for free: an annotation is not a call.
         parsed = Meta.parseall(src)
-        sites = Tuple{Int,String}[]
+        sites = Tuple{Int, String}[]
         _isframe(f) = f === :Frame || (Meta.isexpr(f, :curly) && f.args[1] === :Frame)
         function _walk(x, line)
             x isa LineNumberNode && return x.line
             x isa Expr || return line
             if Meta.isexpr(x, :call) && _isframe(x.args[1])
-                sig = any(a -> Meta.isexpr(a, :(::)) && length(a.args) == 2 && a.args[2] === :Atom,
-                          x.args[2:end])
+                sig = any(
+                    a ->
+                        Meta.isexpr(a, :(::)) && length(a.args) == 2 && a.args[2] === :Atom,
+                    x.args[2:end])
                 push!(sites, (line, sig ? "a::Atom" : "construction"))
             end
             for a in x.args
@@ -135,11 +150,14 @@ end
         end
         _walk(parsed, 0)
         # 9 = 8 real constructions + the inner constructor's own definition (`Frame(a::Atom,…)`)
-        ctor  = [s for s in sites if s[2] == "a::Atom"]
+        ctor = [s for s in sites if s[2] == "a::Atom"]
         built = [s for s in sites if s[2] != "a::Atom"]
         @test length(ctor) == 1
         @test length(built) == 8 ||
-              (@info "Frame( construction count MOVED — confirm each new closure is frame-agnostic, then update this pin" built; false)
+            (
+            @info "Frame( construction count MOVED — confirm each new closure is frame-agnostic, then update this pin" built;
+            false
+        )
     end
 end
 

@@ -34,11 +34,16 @@ using MeTTaCore.StandardMeTTa
 using Test
 
 "Run a MeTTa program then one query on a fresh space, with `heads` tabled. Tabling state is global."
-function _tab_run(prog::AbstractString, query::AbstractString, heads::Vector{Symbol})::Vector{Atom}
+function _tab_run(
+    prog::AbstractString, query::AbstractString, heads::Vector{Symbol}
+)::Vector{Atom}
     Eval.untable_all!()
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     load_metta!(s, prog)
-    for h in heads; Eval.table!(h); end
+    for h in heads
+        Eval.table!(h)
+    end
     try
         load_metta!(s, query)
     finally
@@ -50,8 +55,8 @@ end
 
 Returns an EMPTY dict on ANY failure (missing binary, non-zero exit, unparseable output) — the
 caller's positive control turns that into a visible failure rather than a silent pass."""
-function _swipl_pairs(pl_file::AbstractString)::Dict{String,String}
-    out = Dict{String,String}()
+function _swipl_pairs(pl_file::AbstractString)::Dict{String, String}
+    out = Dict{String, String}()
     swipl = Sys.which("swipl")
     swipl === nothing && return out
     txt = try
@@ -107,11 +112,11 @@ end
         # holding on the Prolog side.
         oracle = _swipl_pairs(pl)
         @test haskey(oracle, "count()") || haskey(oracle, "count( )") ||
-              any(startswith(k, "count") for k in keys(oracle)) ||
-              begin  # the program prints `count => 16`, which has no parens — read it directly
-                  txt = read(`$swipl -q $pl`, String)
-                  occursin(r"count\s*=>\s*16", txt)
-              end
+            any(startswith(k, "count") for k in keys(oracle)) ||
+            begin  # the program prints `count => 16`, which has no parens — read it directly
+                txt = read(`$swipl -q $pl`, String)
+                occursin(r"count\s*=>\s*16", txt)
+            end
 
         # ── CORE: the §7.2 SHAPE — a directly LEFT-RECURSIVE tabled rule. Untabled this cannot
         # terminate; tabled, suspend-on-variant must complete it and answer.

@@ -34,7 +34,9 @@ const MK = MeTTaCore.MORK
 
         # Encoding: first occurrence -> NewVar (0xC0); repeat -> VarRef (0x80|k). Two DISTINCT
         # variables must get distinct ordinals, which is what the 2-var case depends on.
-        two = MC.mork_native_vars(MK.sexpr_to_expr("(= (swap __var_a __var_b) (pair __var_b __var_a))"))
+        two = MC.mork_native_vars(
+            MK.sexpr_to_expr("(= (swap __var_a __var_b) (pair __var_b __var_a))")
+        )
         @test count(==(0xC0), two.buf) == 2                    # exactly two NewVars (a, b)
         @test 0x81 in two.buf                                  # VarRef(1) — the back-reference to b
         r2 = MC.mork_rule_rewrite(two, MK.sexpr_to_expr("(swap X Y)"))
@@ -48,17 +50,20 @@ const MK = MeTTaCore.MORK
 
     @testset "core_rule_exprs — reads BYTE PATHS, so bindings survive" begin
         cs = MC.new_core_space()
-        MC.load_metta!(cs, raw"(= (dbl $x) (plus $x $x))" * "\n" *
-                           raw"(= (swap $a $b) (pair $b $a))" * "\n" *
-                           raw"(= (idf $z) $z)")
+        MC.load_metta!(
+            cs,
+            raw"(= (dbl $x) (plus $x $x))" * "\n" *
+            raw"(= (swap $a $b) (pair $b $a))" * "\n" *
+            raw"(= (idf $z) $z)"
+        )
         rules = MC.core_rule_exprs(cs)
         @test length(rules) == 3
 
-        rw(q) = (r = MC.core_rewrite_step(rules, MK.sexpr_to_expr(q));
-                 r === nothing ? nothing : strip(MK.expr_serialize(r.buf)))
-        @test rw("(dbl N)")    == "(plus N N)"     # repeated var substituted, NOT left as _1
+        rw(q) = (r=MC.core_rewrite_step(rules, MK.sexpr_to_expr(q));
+            r === nothing ? nothing : strip(MK.expr_serialize(r.buf)))
+        @test rw("(dbl N)") == "(plus N N)"     # repeated var substituted, NOT left as _1
         @test rw("(swap X Y)") == "(pair Y X)"     # 2-var rule — the case the text path could not do
-        @test rw("(idf Q)")    == "Q"
+        @test rw("(idf Q)") == "Q"
         @test rw("(nomatch A)") === nothing        # no rule matches ⇒ nothing, not a wrong answer
     end
 
@@ -92,10 +97,11 @@ const MK = MeTTaCore.MORK
         # multi-clause head resolves byte-lexicographically instead. Pinned because the first version
         # of `core_rewrite_step`'s docstring claimed the opposite ("first match wins, source order").
         src_a = raw"(= (f $n) nonzero)" * "\n" * raw"(= (f 0) zero)"
-        src_b = raw"(= (f 0) zero)"     * "\n" * raw"(= (f $n) nonzero)"   # SAME rules, reversed
+        src_b = raw"(= (f 0) zero)" * "\n" * raw"(= (f $n) nonzero)"   # SAME rules, reversed
 
         step(src) = begin
-            cs = MC.new_core_space(); MC.load_metta!(cs, src)
+            cs = MC.new_core_space()
+            MC.load_metta!(cs, src)
             r = MC.core_rewrite_step(MC.core_rule_exprs(cs), MK.sexpr_to_expr("(f 0)"))
             r === nothing ? nothing : strip(MK.expr_serialize(r.buf))
         end
@@ -106,7 +112,8 @@ const MK = MeTTaCore.MORK
         # matches, and their order follows the source. This is the gap a single store has to close.
         IN = MC.Eval
         interp(src) = begin
-            sp = IN.Space(); IN.load_metta!(sp, src)
+            sp = IN.Space()
+            IN.load_metta!(sp, src)
             [string(a) for a in IN.metta_run(IN.parse_program("!(f 0)")[1][2], sp)]
         end
         @test interp(src_a) == ["zero", "nonzero"]
@@ -123,7 +130,12 @@ const MK = MeTTaCore.MORK
         @test occursin("__var_q", dump)            # stored form keeps the NAME
         @test !occursin(raw"$", dump)              # and is NOT de-Bruijn
         atoms = MC.core_atoms(cs)                  # Core still reads it as a proper variable
-        @test any(a -> a isa AbstractVector && any(x -> x === Symbol("\$q"), Iterators.flatten(
-                      (y isa AbstractVector ? y : [y]) for y in a)), atoms)
+        @test any(
+            a ->
+                a isa AbstractVector && any(
+                    x -> x === Symbol("\$q"),
+                    Iterators.flatten(
+                        (y isa AbstractVector ? y : [y]) for y in a)
+                ), atoms)
     end
 end

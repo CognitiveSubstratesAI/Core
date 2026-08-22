@@ -62,7 +62,7 @@
 
 Keyed by head symbol, like the other per-predicate registries. `NO_RESTRAINT` (absent) = unlimited,
 which is upstream's `size = (size_t)-1`."""
-const _SUBGOAL_ABSTRACT = Dict{Symbol,Int}()
+const _SUBGOAL_ABSTRACT = Dict{Symbol, Int}()
 
 """
     subgoal_abstract!(head, n)
@@ -95,7 +95,7 @@ is what `start_abstract_tabling` branches on.
     size_abstract((p (s (s (s a)))), 1)  ->  ((p (s \$_sa1)), true)
     size_abstract((p (s (s (s a)))), 9)  ->  ((p (s (s (s a)))), false)
 """
-function size_abstract(goal::Atom, n::Int)::Tuple{Atom,Bool}
+function size_abstract(goal::Atom, n::Int)::Tuple{Atom, Bool}
     n < 0 && return (goal, false)
     goal isa Expression || return (goal, false)     # a non-compound goal has nothing to abstract
     hit = Ref{Bool}(false)
@@ -152,7 +152,7 @@ Apply the calling head's declared `subgoal_abstract(N)` to a reduced goal. Retur
 unchanged with `false` when the head has no such declaration — the "simple variant tabling" arm of
 `start_abstract_tabling`.
 """
-function abstract_subgoal(red::Atom)::Tuple{Atom,Bool}
+function abstract_subgoal(red::Atom)::Tuple{Atom, Bool}
     h = head_name(red)
     h === nothing && return (red, false)
     n = subgoal_abstract_for(h)
@@ -198,7 +198,7 @@ delay lists need (conditions must ride WITH the value). Recorded in the roadmap 
 papered over here: an over-approximating restraint that looked exact would be the worse failure.
 """
 function abstract_answers(general::Vector{Atom}, gen::Atom, specific::Atom,
-                          trie::Union{AnswerTrie,Nothing} = nothing)::Vector{Atom}
+    trie::Union{AnswerTrie, Nothing}=nothing)::Vector{Atom}
     bs = match_atoms(gen, specific)                 # what the abstraction's variables stood for
     isempty(bs) && return general                   # cannot specialise ⇒ the general set, unfiltered
     out = Atom[]
@@ -246,7 +246,9 @@ may consume them, and because deleting it would erase the evidence of why the fi
 future caller must not treat a `false` here as "this answer does not hold for this call": the
 reproduction in `abstract_answers` shows a correct answer whose only recorded instance does not
 unify with the call, because the call REDUCES into that instance."""
-function _abstract_instance_admits(trie::Union{AnswerTrie,Nothing}, a::Atom, specific::Atom)::Bool
+function _abstract_instance_admits(
+    trie::Union{AnswerTrie, Nothing}, a::Atom, specific::Atom
+)::Bool
     trie === nothing && return true
     insts = trie_instances(trie, a)
     isempty(insts) && return true
@@ -334,7 +336,7 @@ end
 
 Keyed by head symbol. Absent = defer to the global `max_table_answer_size` flag; see
 `answer_abstract_for`, which is upstream's `pred_max_table_answer_size` (`pl-tabling.c:3563-3572`)."""
-const _ANSWER_ABSTRACT = Dict{Symbol,Int}()
+const _ANSWER_ABSTRACT = Dict{Symbol, Int}()
 
 """
     answer_abstract!(head, n)
@@ -400,7 +402,7 @@ answer stays UNCONDITIONAL. A restraint that marked the whole table would fail b
 ⚠️ Abstracted positions are named `\$_sa…`, from the shared walk. The prefix says *size-abstract*,
 not *subgoal*; renaming it per side would fork a function whose whole point is that it did not fork.
 """
-answer_size_abstract(a::Atom, n::Int)::Tuple{Atom,Bool} = size_abstract(a, n)
+answer_size_abstract(a::Atom, n::Int)::Tuple{Atom, Bool} = size_abstract(a, n)
 
 # ─── NODE-SEATED CONDITIONALITY ──────────────────────────────────────────────────────────────────
 
@@ -416,7 +418,7 @@ call (alongside `clear_answer_tries!`), so a reset frees them with the nodes the
 previously said the call site did not exist — it was written while the patch was still proposed and
 was not updated when the patch landed, which is the same stale-prose defect this file's own
 `answer_abstract` refusal suffered for weeks. Verify the caller, not the comment."""
-const _ANSWER_DELAYS = IdDict{TrieNode,DelayDNF}()
+const _ANSWER_DELAYS = IdDict{TrieNode, DelayDNF}()
 
 """The delayed literal `add_radial_restraint()` pushes — `pl-tabling.c:8989`, `boot/tabling.pl:2317`.
 
@@ -517,10 +519,10 @@ clear_answer_delays!() = (empty!(_ANSWER_DELAYS); nothing)
 insert, positionally encoded, is how a caller reads `stored` as `added`."""
 struct AnswerInsert
     added::Bool                        # did the trie gain an answer?
-    stored::Union{Atom,Nothing}        # WHICH term it gained — `gen`, not the candidate
+    stored::Union{Atom, Nothing}        # WHICH term it gained — `gen`, not the candidate
     abstracted::Bool                   # did the §7.11.2 budget blow? (upstream's TRIE_ABSTRACTED)
     disposition::Symbol                # :none | :conditional | :store | :drop
-    count_action::Union{TripwireAction,Symbol,Nothing}   # whatever §7.11.3 did on the same insert
+    count_action::Union{TripwireAction, Symbol, Nothing}   # whatever §7.11.3 did on the same insert
 end
 
 """
@@ -569,12 +571,15 @@ function trie_insert_answer_restrained!(t::AnswerTrie, head::Symbol, a::Atom)::A
     (added, act) = trie_insert_restrained!(t, head, gen)
     # WHICH term landed? `gen` normally; §7.11.3's own generalisation of `gen` when its count bound
     # fired on this same insert; nothing at all when §7.11.3 dropped it.
-    stored::Union{Atom,Nothing} =
-        trie_contains(t, gen) ? gen :
-        act == TW_BOUNDED_RATIONALITY ?
-            (i = findfirst(x -> _is_general_variant(x, gen), trie_answers(t));
-             i === nothing ? nothing : trie_answers(t)[i]) :
+    stored::Union{Atom, Nothing} =
+        if trie_contains(t, gen)
+            gen
+        elseif act == TW_BOUNDED_RATIONALITY
+            (i=findfirst(x -> _is_general_variant(x, gen), trie_answers(t));
+                i === nothing ? nothing : trie_answers(t)[i])
+        else
             nothing
+        end
     # 🔴 A DUPLICATE THAT IS ALREADY UNCONDITIONAL STAYS UNCONDITIONAL — `pl-tabling.c:3618-3628`.
     # The C reaches `update_delay_list` on the duplicate path ONLY inside
     # `if ( answer_is_conditional(node) )`, and otherwise `return false` without touching the delays.
@@ -587,8 +592,9 @@ function trie_insert_answer_restrained!(t::AnswerTrie, head::Symbol, a::Atom)::A
     # `tv=:u` — an unconditional answer demoted to undefined by a restraint that added nothing. The
     # rule was already written into `answer_is_conditional`'s docstring one screen above and simply
     # not implemented, which is the shape of defect a docstring cannot catch on its own.
-    mark = disp === :conditional && stored !== nothing &&
-           !(act === :duplicate && !answer_is_conditional(t, stored::Atom))
+    mark =
+        disp === :conditional && stored !== nothing &&
+        !(act === :duplicate && !answer_is_conditional(t, stored::Atom))
     mark && add_radial_restraint!(t, stored::Atom)   # `add_radial_restraint()` + `update_delay_list`
     AnswerInsert(added, stored, true, disp, act)
 end

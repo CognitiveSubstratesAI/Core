@@ -23,8 +23,8 @@ using Test
     @testset "parse: base / extends / union / replacements" begin
         @test Set(keys(env)) == Set(["Base", "Ext", "A", "B", "U", "Q"])
         @test env["Base"].base == (:none, String[])
-        @test env["Ext"].base  == (:extends, ["Base"])
-        @test env["U"].base    == (:union, ["A", "B"])
+        @test env["Ext"].base == (:extends, ["Base"])
+        @test env["U"].base == (:union, ["A", "B"])
         @test env["Q"].replacements == [("reach", "connected")]
         @test env["Base"].terms == [raw"(: edge (-> Node Node Bool))"]
     end
@@ -56,12 +56,15 @@ using Test
     end
 
     @testset "theory_run! ≡ MeTTa-IL on flattened rewrites (bisimulation)" begin
-        cs1 = MC.new_core_space(); R_theory = theory_run!(cs1, facts, prog, "Ext")
-        cs2 = MC.new_core_space(); R_flat = metta_il_run!(cs2, facts, join(theory_rewrites("Ext", env), "\n"))
+        cs1 = MC.new_core_space()
+        R_theory = theory_run!(cs1, facts, prog, "Ext")
+        cs2 = MC.new_core_space()
+        R_flat = metta_il_run!(cs2, facts, join(theory_rewrites("Ext", env), "\n"))
         @test R_theory == R_flat                                          # theory lane ≡ flattened MeTTa-IL
         @test "(reach 0 1)" in R_theory && "(hop2 0 2)" in R_theory
         # replacement end-to-end: theory Q derives `connected`, never `reach`
-        cs3 = MC.new_core_space(); R_q = theory_run!(cs3, facts, prog, "Q")
+        cs3 = MC.new_core_space()
+        R_q = theory_run!(cs3, facts, prog, "Q")
         @test "(connected 0 1)" in R_q && !any(s -> occursin("reach", s), R_q)
     end
 end
@@ -103,14 +106,19 @@ end
 
     @testset "Group: extends Monoid + Inv" begin
         @test Set(theory_flatten("Group", env).terms) ==
-              Set([raw"(: One Elem)", raw"(: Mult (-> Elem Elem Elem))", raw"(: Inv (-> Elem Elem))"])
+            Set([
+            raw"(: One Elem)",
+            raw"(: Mult (-> Elem Elem Elem))",
+            raw"(: Inv (-> Elem Elem))"
+        ])
     end
 
     @testset "Rig: union has BOTH additive (Zero/Plus) and multiplicative (One/Mult) structure" begin
         f = theory_flatten("Rig", env)
         @test Set(f.terms) == Set([raw"(: Zero Elem)", raw"(: Plus (-> Elem Elem Elem))",
-                                   raw"(: One Elem)",  raw"(: Mult (-> Elem Elem Elem))"])
-        @test raw"(= (Mult $x (Plus $y $z)) (Plus (Mult $x $y) (Mult $x $z)))" in f.equations  # distributivity
+            raw"(: One Elem)", raw"(: Mult (-> Elem Elem Elem))"])
+        @test raw"(= (Mult $x (Plus $y $z)) (Plus (Mult $x $y) (Mult $x $z)))" in
+            f.equations  # distributivity
     end
 end
 
@@ -126,22 +134,22 @@ end
     env = load_theories(prog)
 
     @testset "param parse: base references the PARAM name" begin
-        @test env["Generic"].params  == [("p", "PA")]
+        @test env["Generic"].params == [("p", "PA")]
         @test env["Combined"].params == [("a", "PA"), ("b", "PB")]
-        @test env["Generic"].base    == (:extends, ["p"])
+        @test env["Generic"].base == (:extends, ["p"])
     end
 
     @testset "default binding: param → its declared type" begin
         @test theory_rewrites("Generic", env) == [raw"(~> (edge $x $y) (ra $x $y))"]      # p defaults PA
         @test Set(theory_flatten("Combined", env).rewrites) ==
-              Set([raw"(~> (edge $x $y) (ra $x $y))", raw"(~> (edge $x $y) (rb $x $y))"])
+            Set([raw"(~> (edge $x $y) (ra $x $y))", raw"(~> (edge $x $y) (rb $x $y))"])
     end
 
     @testset "instantiation override: bind a param to a different theory" begin
         @test theory_instantiate("Generic", env, Dict("p" => "PB")).rewrites ==
-              [raw"(~> (edge $x $y) (rb $x $y))"]                                          # p := PB
+            [raw"(~> (edge $x $y) (rb $x $y))"]                                          # p := PB
         @test theory_instantiate("Combined", env, Dict("a" => "PB")).rewrites ==
-              [raw"(~> (edge $x $y) (rb $x $y))"]                                          # a:=PB, b=PB → dedup
+            [raw"(~> (edge $x $y) (rb $x $y))"]                                          # a:=PB, b=PB → dedup
     end
 end
 
@@ -154,8 +162,12 @@ end
       (rewrites (~> (, (path $x $y) (edge $y $z)) (path $x $z))))
     """
     cs = MC.new_core_space()
-    R = theory_run!(cs, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)", prog, "TransGraph"; saturate = true)
-    @test R == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
+    R = theory_run!(
+        cs, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)", prog, "TransGraph"; saturate=true
+    )
+    @test R == [
+        "(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"
+    ]
 end
 
 # Equation orientation (a-tail): orient the terminating fragment, flag the rest honestly.

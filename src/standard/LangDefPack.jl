@@ -43,20 +43,111 @@ end
 # (PRIMUS impl: GroundedDispatch=is_executable/interpret grounded; EquationMatch=interpret_function rule
 #  match; Eval/Chain/Let/LetStar/Case/Switch=the special-form dispatch in standard/Eval.jl.)
 const HE_SMALL_STEP_RULES = LangDefRule[
-    LangDefRule("HES_GroundedDispatch",       HES_GROUNDED_DISPATCH,        "he he-extended", "M_Expression IE_FuncType IF_* MC_Grounded", "rule-sound", true),
-    LangDefRule("HES_LeftmostExprCongruence", HES_LEFTMOST_EXPR_CONGRUENCE, "he he-extended", "IA_Start_* M_Expression IE_* IF_*", "rule-sound-on-fragment", true),
-    LangDefRule("HES_EquationMatch",          HES_EQUATION_MATCH,           "he he-extended", "MC_Equation", "rule-sound", true),
-    LangDefRule("HES_Eval",                   HES_EVAL,                     "he he-extended", "minimal.eval", "rule-sound", true),
-    LangDefRule("HES_Chain",                  HES_CHAIN,                    "he he-extended", "minimal.chain (incl. arity error)", "rule-sound-on-fragment", true),
-    LangDefRule("HES_Let",                    HES_LET,                      "he he-extended", "minimal.let (chain/unify sugar)", "bag-tested-adequate", true),
-    LangDefRule("HES_LetStar",                HES_LET_STAR,                 "he he-extended", "minimal.let* (nested let sugar)", "bag-tested-adequate", true),
-    LangDefRule("HES_Case",                   HES_CASE,                     "he he-extended", "minimal.case (incl. arity error)", "bag-tested-adequate", true),
-    LangDefRule("HES_Switch",                 HES_SWITCH,                   "he he-extended", "stdlib.switch (evaluated scrutinee; incl. arity error)", "bag-tested-adequate", true),
-    LangDefRule("HES_SwitchMinimal",          HES_SWITCH_MINIMAL,           "he he-extended", "stdlib.switch-minimal (structural; incl. arity error)", "bag-tested-adequate", true),
-    LangDefRule("HES_QuoteQuiescent",         HES_QUOTE_QUIESCENT,          "he he-extended", "M_SymbolOrGrounded (quote surface)", "bag-tested-adequate", false),
-    LangDefRule("HES_ReturnQuiescent",        HES_RETURN_QUIESCENT,         "he he-extended", "IF_AfterArgs_Call return surface", "bag-tested-adequate", false),
-    LangDefRule("HES_EmptyQuiescent",         HES_EMPTY_QUIESCENT,          "he he-extended", "M_Empty", "bag-tested-adequate", false),
-    LangDefRule("HES_ErrorQuiescent",         HES_ERROR_QUIESCENT,          "he he-extended", "M_Error", "bag-tested-adequate", false),
+    LangDefRule(
+        "HES_GroundedDispatch",
+        HES_GROUNDED_DISPATCH,
+        "he he-extended",
+        "M_Expression IE_FuncType IF_* MC_Grounded",
+        "rule-sound",
+        true
+    ),
+    LangDefRule(
+        "HES_LeftmostExprCongruence",
+        HES_LEFTMOST_EXPR_CONGRUENCE,
+        "he he-extended",
+        "IA_Start_* M_Expression IE_* IF_*",
+        "rule-sound-on-fragment",
+        true
+    ),
+    LangDefRule(
+        "HES_EquationMatch",
+        HES_EQUATION_MATCH,
+        "he he-extended",
+        "MC_Equation",
+        "rule-sound",
+        true
+    ),
+    LangDefRule("HES_Eval", HES_EVAL, "he he-extended", "minimal.eval", "rule-sound", true),
+    LangDefRule(
+        "HES_Chain",
+        HES_CHAIN,
+        "he he-extended",
+        "minimal.chain (incl. arity error)",
+        "rule-sound-on-fragment",
+        true
+    ),
+    LangDefRule(
+        "HES_Let",
+        HES_LET,
+        "he he-extended",
+        "minimal.let (chain/unify sugar)",
+        "bag-tested-adequate",
+        true
+    ),
+    LangDefRule(
+        "HES_LetStar",
+        HES_LET_STAR,
+        "he he-extended",
+        "minimal.let* (nested let sugar)",
+        "bag-tested-adequate",
+        true
+    ),
+    LangDefRule(
+        "HES_Case",
+        HES_CASE,
+        "he he-extended",
+        "minimal.case (incl. arity error)",
+        "bag-tested-adequate",
+        true
+    ),
+    LangDefRule(
+        "HES_Switch",
+        HES_SWITCH,
+        "he he-extended",
+        "stdlib.switch (evaluated scrutinee; incl. arity error)",
+        "bag-tested-adequate",
+        true
+    ),
+    LangDefRule(
+        "HES_SwitchMinimal",
+        HES_SWITCH_MINIMAL,
+        "he he-extended",
+        "stdlib.switch-minimal (structural; incl. arity error)",
+        "bag-tested-adequate",
+        true
+    ),
+    LangDefRule(
+        "HES_QuoteQuiescent",
+        HES_QUOTE_QUIESCENT,
+        "he he-extended",
+        "M_SymbolOrGrounded (quote surface)",
+        "bag-tested-adequate",
+        false
+    ),
+    LangDefRule(
+        "HES_ReturnQuiescent",
+        HES_RETURN_QUIESCENT,
+        "he he-extended",
+        "IF_AfterArgs_Call return surface",
+        "bag-tested-adequate",
+        false
+    ),
+    LangDefRule(
+        "HES_EmptyQuiescent",
+        HES_EMPTY_QUIESCENT,
+        "he he-extended",
+        "M_Empty",
+        "bag-tested-adequate",
+        false
+    ),
+    LangDefRule(
+        "HES_ErrorQuiescent",
+        HES_ERROR_QUIESCENT,
+        "he he-extended",
+        "M_Error",
+        "bag-tested-adequate",
+        false
+    )
 ]
 
 struct LangDefPack
@@ -71,7 +162,7 @@ end
 
 # ── FNV-1a64 over the canonical rule-descriptor text (mirrors langdef_pack.c exactly) ──
 const _FNV_OFFSET = 0xcbf29ce484222325
-const _FNV_PRIME  = 0x00000100000001b3
+const _FNV_PRIME = 0x00000100000001b3
 function _fnv_field(h::UInt64, s::AbstractString)::UInt64
     for b in codeunits(s)
         h = (h ⊻ UInt64(b)) * _FNV_PRIME      # UInt64 * wraps mod 2^64 like C uint64_t
@@ -81,7 +172,7 @@ end
 _fnv_u32(h::UInt64, v::Integer)::UInt64 = _fnv_field(h, string(UInt32(v)))
 
 function langdef_digest(language_id, profile_id, granularity, schema_version::Integer,
-                        rules::Vector{LangDefRule})::UInt64
+    rules::Vector{LangDefRule})::UInt64
     h = _FNV_OFFSET
     h = _fnv_field(h, language_id)
     h = _fnv_field(h, profile_id)
@@ -99,23 +190,29 @@ end
 
 # ── disabled mask from the env (comma-separated rule names) ──
 function langdef_disabled_mask(rules::Vector{LangDefRule};
-                               env::AbstractString = get(ENV, "CORE_LANGDEF_DISABLED_RULES", ""))::UInt32
+    env::AbstractString=get(ENV, "CORE_LANGDEF_DISABLED_RULES", ""))::UInt32
     mask = UInt32(0)
     isempty(env) && return mask
     for name in split(env, ',')
-        nm = strip(name); isempty(nm) && continue
+        nm = strip(name)
+        isempty(nm) && continue
         idx = findfirst(r -> r.name == nm, rules)
-        idx === nothing ? @warn("CORE_LANGDEF_DISABLED_RULES: unknown rule '$nm' (ignored)") :
+        if idx === nothing
+            @warn("CORE_LANGDEF_DISABLED_RULES: unknown rule '$nm' (ignored)")
+        else
             (mask |= (UInt32(1) << UInt32(Int(rules[idx].rule_id))))
+        end
     end
     mask
 end
 
 "The HE small-step pack singleton (digest + env disabled-mask computed at first use)."
-function he_small_step_pack(; env::AbstractString = get(ENV, "CORE_LANGDEF_DISABLED_RULES", ""))::LangDefPack
+function he_small_step_pack(;
+    env::AbstractString=get(ENV, "CORE_LANGDEF_DISABLED_RULES", "")
+)::LangDefPack
     LangDefPack("HE", "he-extended", "small-step", UInt32(2), HE_SMALL_STEP_RULES,
-                langdef_digest("HE", "he-extended", "small-step", 2, HE_SMALL_STEP_RULES),
-                langdef_disabled_mask(HE_SMALL_STEP_RULES; env = env))
+        langdef_digest("HE", "he-extended", "small-step", 2, HE_SMALL_STEP_RULES),
+        langdef_disabled_mask(HE_SMALL_STEP_RULES; env=env))
 end
 
 """True iff the rule is live AND not disabled. (When welded into Eval.jl, covered branches must
@@ -131,10 +228,12 @@ end
 """Reflection: the rule table as an s-expression string (mirrors CeTTa's step-rules atom):
 `(step-rules HE small-step "fnv1a64:<hex>" (schema N) (rules (<name> <claim>)…) (disabled <name>…))`."""
 function langdef_step_rules_atom(pack::LangDefPack)::String
-    digest = "fnv1a64:" * string(pack.source_digest; base = 16, pad = 16)
+    digest = "fnv1a64:" * string(pack.source_digest; base=16, pad=16)
     rules = join(["($(r.name) $(r.claim))" for r in pack.rules], " ")
-    dis = [r.name for r in pack.rules
-           if (pack.disabled_mask & (UInt32(1) << UInt32(Int(r.rule_id)))) != 0]
+    dis = [
+        r.name for r in pack.rules
+        if (pack.disabled_mask & (UInt32(1) << UInt32(Int(r.rule_id)))) != 0
+    ]
     disabled = isempty(dis) ? "(disabled)" : "(disabled $(join(dis, " ")))"  # CeTTa: empty ⇒ (disabled)
     "(step-rules $(pack.language_id) $(pack.granularity) \"$digest\" " *
     "(schema $(pack.schema_version)) (rules $rules) $disabled)"

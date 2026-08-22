@@ -27,7 +27,7 @@ using Test
     end
     @test length(files) > 20                       # ANTI-VACUITY: a walk that found nothing passes
 
-    offenders = Tuple{String,Int,String}[]
+    offenders = Tuple{String, Int, String}[]
     for path in files
         lines = split(read(path, String), '\n')
         indoc = false
@@ -38,7 +38,7 @@ using Test
             body = ln
             if indoc || fences > 0
                 # strip a leading `#` comment line: `$` there is inert
-                startswith(lstrip(ln), "#") && (indoc = xor(indoc, isodd(fences)); continue)
+                startswith(lstrip(ln), "#") && (indoc=xor(indoc, isodd(fences)); continue)
                 # an unescaped `$` FOLLOWED BY an identifier char is interpolation.
                 for m in eachmatch(r"(?<!\\)\$([A-Za-z_(])", body)
                     push!(offenders, (relpath(path, root), i, strip(ln)[1:min(90, end)]))

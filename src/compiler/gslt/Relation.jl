@@ -35,8 +35,9 @@
 module CompilerGSLTRelation
 
 using ..StandardMeTTa: Atom, Sym, Var, Expression
-using ..CompilerGSLTPresentation: GPresentation, GRewriteDecl, GHyp,
-                                  premises_of, conclusion_of
+using ..CompilerGSLTPresentation:
+    GPresentation, GRewriteDecl, GHyp,
+    premises_of, conclusion_of
 using ..CompilerGSLTReduce: Bnds, match_pat, inst
 using ..CompilerGSLTContext: step_with, normalize_with
 
@@ -76,13 +77,14 @@ way the whole premise list can be satisfied; `[]` means the rule does not apply.
 `PremisesHold.nil` is `bnds` unchanged; `PremisesHold.cons` is the loop body.
 """
 function premises_hold(p::GPresentation, hyps::AbstractVector{GHyp}, bnds::Bnds,
-                       depth::Int)::Vector{Bnds}
+    depth::Int)::Vector{Bnds}
     isempty(hyps) && return Bnds[bnds]                      # PremisesHold.nil
     h = hyps[1]
     src = inst(bnds, Var(String(h.src)))
     out = Bnds[]
     for b in _reducts_inner(p, src, depth - 1)              # Reduces p (inst bnds (.var h.src)) B
-        ext = copy(bnds); ext[h.tgt] = b                    # (h.tgt.baseName, B) :: bnds
+        ext = copy(bnds)
+        ext[h.tgt] = b                    # (h.tgt.baseName, B) :: bnds
         append!(out, premises_hold(p, (@view hyps[2:end]), ext, depth))
     end
     out
@@ -98,7 +100,9 @@ survives.
 Note the order, which is upstream's: match the CONCLUSION first, then discharge premises under those
 bindings. Reversing it would discharge premises for a rule that was never going to apply.
 """
-function apply_rewrite(p::GPresentation, rd::GRewriteDecl, t::Atom, depth::Int)::Vector{Atom}
+function apply_rewrite(
+    p::GPresentation, rd::GRewriteDecl, t::Atom, depth::Int
+)::Vector{Atom}
     lhs, rhs = conclusion_of(rd.rw)
     b = match_pat(lhs, t)
     b === nothing && return Atom[]
@@ -128,7 +132,7 @@ where `base_reducts` skips a premised rule, this discharges it.
 
 Clears the exhaustion flag on entry, so `reducts_exhausted()` describes THIS call.
 """
-function reducts(p::GPresentation, t::Atom; depth::Int = DEFAULT_DEPTH)::Vector{Atom}
+function reducts(p::GPresentation, t::Atom; depth::Int=DEFAULT_DEPTH)::Vector{Atom}
     depth > 0 || throw(ArgumentError("reducts: depth must be positive, got $depth"))
     _EXHAUSTED[] = false
     _reducts_inner(p, t, depth)
@@ -141,7 +145,9 @@ One leftmost-outermost step with premised rules ENABLED: `Context.jl`'s traversa
 root instead of `base_reducts`. The same traversal, so there is no second copy to drift from the
 ported one.
 """
-function cond_step(p::GPresentation, t::Atom; depth::Int = DEFAULT_DEPTH)::Union{Atom, Nothing}
+function cond_step(
+    p::GPresentation, t::Atom; depth::Int=DEFAULT_DEPTH
+)::Union{Atom, Nothing}
     _EXHAUSTED[] = false
     step_with(x -> _reducts_inner(p, x, depth), t)
 end
@@ -152,10 +158,10 @@ end
 `Context.normalize` with premised rules enabled. Returns the term and the residual fuel, for the
 reason given there: a normal form and an exhausted budget must not look alike.
 """
-function cond_normalize(p::GPresentation, t::Atom; fuel::Int = 1024,
-                        depth::Int = DEFAULT_DEPTH)::Tuple{Atom, Int}
+function cond_normalize(p::GPresentation, t::Atom; fuel::Int=1024,
+    depth::Int=DEFAULT_DEPTH)::Tuple{Atom, Int}
     _EXHAUSTED[] = false
-    normalize_with(x -> _reducts_inner(p, x, depth), t; fuel = fuel)
+    normalize_with(x -> _reducts_inner(p, x, depth), t; fuel=fuel)
 end
 
 end # module CompilerGSLTRelation

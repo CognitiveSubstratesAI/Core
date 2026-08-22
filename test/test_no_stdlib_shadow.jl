@@ -15,43 +15,53 @@ const _LINT_ROOT = normpath(joinpath(@__DIR__, ".."))
 
 # Deliberate, documented overrides allowed to shadow a Core-provided name.
 const _SHADOW_ALLOWLIST = Set([
-    "trace!",   # PLN stubs trace! to identity (quiet PLN runs) — pln_core_logic.metta.
+    "trace!"   # PLN stubs trace! to identity (quiet PLN runs) — pln_core_logic.metta.
 ])
 
-_metta_files(dir) = (fs = String[]; for (r, _, files) in walkdir(dir), f in files
-                        endswith(f, ".metta") && push!(fs, joinpath(r, f)); end; fs)
+_metta_files(dir) = (fs=String[]; for (r, _, files) in walkdir(dir), f in files
+        endswith(f, ".metta") && push!(fs, joinpath(r, f))
+    end; fs)
 
 function _heads(files, rx)
     s = Set{String}()
     for f in files, line in eachline(f)
-        m = match(rx, line); m === nothing || push!(s, m.captures[1])
+        m = match(rx, line)
+        m === nothing || push!(s, m.captures[1])
     end
     s
 end
 
 @testset "lint — no lib/ definition shadows a Core-provided name" begin
-    srcfiles    = filter(f -> endswith(f, ".jl"), readdir(joinpath(_LINT_ROOT, "src", "primitives"); join = true))
+    srcfiles = filter(
+        f -> endswith(f, ".jl"),
+        readdir(joinpath(_LINT_ROOT, "src", "primitives"); join=true)
+    )
     # The LIVE StandardMeTTa stdlib is src/standard/{stdlib,CoreExtensions}.metta (what load_core_stdlib!
     # loads) — NOT the dead top-level stdlib/ (only the retired CoreSpace lane ever read that). Scanning the
     # dead dir produced phantom-name false positives (e.g. `nth`) that forced packages to duplicate/rename to
     # dodge a shadow of something the engine never loads. Point the lint at the real canonical source.
-    stdlibfiles = filter(f -> endswith(f, ".metta"), readdir(joinpath(_LINT_ROOT, "src", "standard"); join = true))
-    libfiles    = _metta_files(joinpath(_LINT_ROOT, "lib"))
+    stdlibfiles = filter(
+        f -> endswith(f, ".metta"),
+        readdir(joinpath(_LINT_ROOT, "src", "standard"); join=true)
+    )
+    libfiles = _metta_files(joinpath(_LINT_ROOT, "lib"))
 
-    grounded   = _heads(srcfiles, r"register_grounded!\(\"([^\"]+)\"")
+    grounded = _heads(srcfiles, r"register_grounded!\(\"([^\"]+)\"")
     stdlibdefs = _heads(stdlibfiles, r"^\(=\s+\(([^\s()]+)")
-    corenames  = union(grounded, stdlibdefs)
+    corenames = union(grounded, stdlibdefs)
 
     offenders = Dict{String, Vector{String}}()
     for f in libfiles, line in eachline(f)
-        m = match(r"^\(=\s+\(([^\s()]+)", line); m === nothing && continue
+        m = match(r"^\(=\s+\(([^\s()]+)", line)
+        m === nothing && continue
         name = m.captures[1]
         (name in corenames && !(name in _SHADOW_ALLOWLIST)) || continue
         push!(get!(offenders, name, String[]), relpath(f, _LINT_ROOT))
     end
 
     for (n, fs) in offenders
-        @warn "lib/ definition shadows a Core-provided name — move it to Core, delegate, or allowlist" name = n files = unique(fs)
+        @warn "lib/ definition shadows a Core-provided name — move it to Core, delegate, or allowlist" name =
+            n files = unique(fs)
     end
     @test isempty(offenders)
 end

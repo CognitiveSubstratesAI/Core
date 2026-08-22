@@ -27,33 +27,44 @@ const _GFG = joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.mett
 const _GML = "(message A (stv 0.95 0.95)) (message AB (stv 0.99 0.80)) (message BC (stv 0.95 0.60)) (factor f1 hmp (premises A AB) (conclusion B)) (factor f2 hmp (premises B BC) (conclusion C)) (produces B f1) (produces C f2)"
 const _GG2 = "(message X (stv 0.9 0.95)) (message Y (stv 0.6 0.3)) (message Xn (stv 0.1 0.95)) (message Yn (stv 0.4 0.3)) (factor f1 conjunction (premises X Y) (conclusion Q)) (factor fx negation (premises Xn) (conclusion X)) (factor fy negation (premises Yn) (conclusion Y)) (produces Q f1) (produces X fx) (produces Y fy)"
 
-_gerrs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+_gerrs(rs) = filter(
+    r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+)
 function _gscen(graph, call, asserts)
-    sp = Space(); load_core_stdlib!(sp)
-    load_metta!(sp, read(_GFG, String)); load_metta!(sp, graph)
-    load_metta!(sp, call); load_metta!(sp, asserts)
+    sp = Space()
+    load_core_stdlib!(sp)
+    load_metta!(sp, read(_GFG, String))
+    load_metta!(sp, graph)
+    load_metta!(sp, call)
+    load_metta!(sp, asserts)
 end
 
 @testset "§4.7 gated demand expansion — active-set semantics vs oracle" begin
     @testset "T1 no-op (tau=0 ⇒ all active)" begin
         rs = _gscen(_GML, "!(gated-demand-field! C 0.0 True)",
-            "!(assertEqual (is-active A) True)\n!(assertEqual (is-active BC) True)\n!(assertEqual (is-active f1) True)")
-        @test isempty(_gerrs(rs)); @test length(rs) == 3
+            "!(assertEqual (is-active A) True)\n!(assertEqual (is-active BC) True)\n!(assertEqual (is-active f1) True)"
+        )
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 3
     end
     @testset "T3 DC#2 retains halted boundaries" begin
         rs = _gscen(_GML, "!(gated-demand-field! C 0.20 True)",
             "!(assertEqual (is-active A) True)\n!(assertEqual (is-active AB) True)")
-        @test isempty(_gerrs(rs)); @test length(rs) == 2
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 2
     end
     @testset "T3-off retain=False drops them (DC#2 load-bearing)" begin
         rs = _gscen(_GML, "!(gated-demand-field! C 0.20 False)",
             "!(assertEqual (is-active A) False)\n!(assertEqual (is-active AB) False)")
-        @test isempty(_gerrs(rs)); @test length(rs) == 2
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 2
     end
     @testset "T2 prune low branch, keep high (+ arity dispatch)" begin
         rs = _gscen(_GG2, "!(gated-demand-field! Q 0.20 True)",
-            "!(assertEqual (is-active Y) True)\n!(assertEqual (is-active Yn) True)\n!(assertEqual (is-active Xn) False)\n!(assertEqual (is-active fx) False)")
-        @test isempty(_gerrs(rs)); @test length(rs) == 4
+            "!(assertEqual (is-active Y) True)\n!(assertEqual (is-active Yn) True)\n!(assertEqual (is-active Xn) False)\n!(assertEqual (is-active fx) False)"
+        )
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 4
     end
     # T-DAG  §4.4 max-join under gating: diamond C<-f0(P,Q); P<-f1(S,X); Q<-f2(S,Y); S shared.
     # S reached via 2 paths must keep ONE (dem S _) atom = max over paths, and the gated walk
@@ -63,8 +74,10 @@ end
         rs = _gscen(_GDIA, "!(gated-demand-field! C 0.0 True)",
             "!(assertEqual (size-atom (collapse (match &self (dem S \$d) \$d))) 1)\n" *
             "!(assertEqual (is-active S) True)\n" *
-            "!(assertEqual (match &self (dem S \$d) \$d) (max (dp-1 (factor-demand-pair P (match &self (dem P \$e) \$e))) (dp-1 (factor-demand-pair Q (match &self (dem Q \$g) \$g)))))")
-        @test isempty(_gerrs(rs)); @test length(rs) == 3
+            "!(assertEqual (match &self (dem S \$d) \$d) (max (dp-1 (factor-demand-pair P (match &self (dem P \$e) \$e))) (dp-1 (factor-demand-pair Q (match &self (dem Q \$g) \$g)))))"
+        )
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 3
     end
     # T-ARITY  §4.1 arity-complete gated path: a deduction (4-premise) factor must expand in
     # the GATED walk too (premises get demand + active), and recursion must reach a premise's
@@ -74,10 +87,14 @@ end
         rs = _gscen(gded, "!(gated-demand-field! G 0.0 True)",
             "!(assertEqual (match &self (dem B \$d) \$d) (dq-1 (factor-demand-quad G 1.0)))\n" *
             "!(assertEqual (is-active C) True)\n!(assertEqual (is-active BC) True)")
-        @test isempty(_gerrs(rs)); @test length(rs) == 3
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 3
         gmh = "(message C (stv 0.7 0.7)) (message AB (stv 0.9 0.9)) (message BC (stv 0.85 0.85)) (message x1 (stv 0.9 0.9)) (message x2 (stv 0.8 0.8)) (factor fd deduction (premises B C AB BC) (conclusion G)) (factor fb hmp (premises x1 x2) (conclusion B)) (produces G fd) (produces B fb)"
-        rs2 = _gscen(gmh, "!(gated-demand-field! G 0.0 True)", "!(assertEqual (is-active x1) True)")
-        @test isempty(_gerrs(rs2)); @test length(rs2) == 1
+        rs2 = _gscen(
+            gmh, "!(gated-demand-field! G 0.0 True)", "!(assertEqual (is-active x1) True)"
+        )
+        @test isempty(_gerrs(rs2))
+        @test length(rs2) == 1
     end
     # T-ARITY-GATED  the gated inversion/induction/abduction clauses (gated-inv!/ind!/abd!) had ZERO
     # coverage. At tau=0 the gate never halts, so gated demand == plain — cross-check vs the
@@ -88,23 +105,35 @@ end
             "!(assertEqual (match &self (dem iA \$d) \$d) (dt-1 (factor-demand-triple GI 1.0)))\n" *
             "!(assertEqual (match &self (dem iBA \$d) \$d) (dt-3 (factor-demand-triple GI 1.0)))\n" *
             "!(assertEqual (is-active iB) True)")
-        @test isempty(_gerrs(rs)); @test length(rs) == 3
+        @test isempty(_gerrs(rs))
+        @test length(rs) == 3
         gind = "(message uA (stv 0.7 0.7)) (message uB (stv 0.6 0.7)) (message uC (stv 0.5 0.7)) (message uBA (stv 0.8 0.7)) (message uBC (stv 0.75 0.7)) (factor fu induction (premises uA uB uC uBA uBC) (conclusion GU)) (produces GU fu)"
         rs2 = _gscen(gind, "!(gated-demand-field! GU 0.0 True)",
             "!(assertEqual (match &self (dem uA \$d) \$d) (dn-1 (factor-demand-induction GU 1.0)))\n" *
             "!(assertEqual (is-active uBC) True)")
-        @test isempty(_gerrs(rs2)); @test length(rs2) == 2
+        @test isempty(_gerrs(rs2))
+        @test length(rs2) == 2
         gabd = "(message aA (stv 0.7 0.7)) (message aB (stv 0.6 0.7)) (message aC (stv 0.5 0.7)) (message aAB (stv 0.8 0.7)) (message aCB (stv 0.75 0.7)) (factor fa abduction (premises aA aB aC aAB aCB) (conclusion GA)) (produces GA fa)"
         rs3 = _gscen(gabd, "!(gated-demand-field! GA 0.0 True)",
             "!(assertEqual (match &self (dem aA \$d) \$d) 0.0)\n" *
-            "!(assertEqual (match &self (dem aB \$d) \$d) (dn-2 (factor-demand-abduction GA 1.0)))")
-        @test isempty(_gerrs(rs3)); @test length(rs3) == 2
+            "!(assertEqual (match &self (dem aB \$d) \$d) (dn-2 (factor-demand-abduction GA 1.0)))"
+        )
+        @test isempty(_gerrs(rs3))
+        @test length(rs3) == 2
         # real-tau gate DECISION for a 4-premise rule (was untested): high tau ⇒ premise sub-tau ⇒ halt;
         # retain=True keeps it active (DC#2), retain=False drops it.
         gded2 = "(message B (stv 0.8 0.8)) (message C (stv 0.7 0.7)) (message AB (stv 0.9 0.9)) (message BC (stv 0.85 0.85)) (factor fd deduction (premises B C AB BC) (conclusion G)) (produces G fd)"
-        rsr = _gscen(gded2, "!(gated-demand-field! G 0.99 True)", "!(assertEqual (is-active C) True)")
-        @test isempty(_gerrs(rsr)); @test length(rsr) == 1
-        rsd = _gscen(gded2, "!(gated-demand-field! G 0.99 False)", "!(assertEqual (is-active C) False)")
-        @test isempty(_gerrs(rsd)); @test length(rsd) == 1
+        rsr = _gscen(
+            gded2, "!(gated-demand-field! G 0.99 True)", "!(assertEqual (is-active C) True)"
+        )
+        @test isempty(_gerrs(rsr))
+        @test length(rsr) == 1
+        rsd = _gscen(
+            gded2,
+            "!(gated-demand-field! G 0.99 False)",
+            "!(assertEqual (is-active C) False)"
+        )
+        @test isempty(_gerrs(rsd))
+        @test length(rsd) == 1
     end
 end

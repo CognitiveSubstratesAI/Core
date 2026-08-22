@@ -126,7 +126,7 @@ choosing deliberately is the Julia-side decision, and it is stated rather than i
 function more_general_table(goal::Atom)
     key = _variant_rename(goal)
     best = nothing
-    for k in sort!(collect(keys(_ANSWER_TRIES)); by = string)
+    for k in sort!(collect(keys(_ANSWER_TRIES)); by=string)
         k == key && continue                       # not the exact variant — see the note above
         subsumes(k, goal) || continue
         # MOST SPECIFIC wins: the one that is itself subsumed by every other candidate.
@@ -152,7 +152,7 @@ arriving, and filtering a partial set would silently under-answer. Upstream's ot
 on that case (`shift_for_copy`), which needs the consumer path — so for now we fall through to
 ordinary tabling instead, which is correct but does more work.
 """
-function subsumptive_answers(goal::Atom, space = nothing)
+function subsumptive_answers(goal::Atom, space=nothing)
     g = more_general_table(goal)
     g === nothing && return nothing
     (genkey, t) = g
@@ -186,8 +186,9 @@ function subsumptive_answers(goal::Atom, space = nothing)
     # recorded instance is the goal AT THE POINT THE RULE MATCHED, which for a reducing head is a
     # different term from the call. `f` above is facts-only, so the filter applies and the answer is
     # EXACT (`1`, not `1` and `2`); a recursive head over-approximates instead, which is sound.
-    filterable = space !== nothing && (h = head_name(goal)) !== nothing &&
-                 !(h in _self_reaching_heads(all_atoms(space)))
+    filterable =
+        space !== nothing && (h = head_name(goal)) !== nothing &&
+        !(h in _self_reaching_heads(all_atoms(space)))
     out = Atom[]
     for a in answers
         # 🔴 TWO ANSWER SHAPES LIVE IN THE SAME TRIE, AND THEY NEED DIFFERENT TREATMENT.

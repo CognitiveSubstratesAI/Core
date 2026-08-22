@@ -8,7 +8,7 @@ const MC = MeTTaCore
 
 @testset "MorkSupercompiler tier-2 → Core (sc_execute!)" begin
     facts = raw"(edge 0 1) (edge 1 2) (edge 2 3)"
-    prog  = raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (trans $x $z)))"
+    prog = raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (trans $x $z)))"
     # join: (0,1)+(1,2)→(trans 0 2); (1,2)+(2,3)→(trans 1 3)
 
     @testset "tier-2 default: plans, decomposes, executes on the MORK trie" begin
@@ -24,7 +24,8 @@ const MC = MeTTaCore
     end
 
     @testset "correctness parity vs direct MORK calculus" begin
-        ssc = new_core_space(); MC.space_add_all_sexpr!(ssc.inner, facts)
+        ssc = new_core_space()
+        MC.space_add_all_sexpr!(ssc.inner, facts)
         sc_execute!(ssc, prog)
         sc_dump = MC.space_dump_all_sexpr(ssc.inner)
 
@@ -41,8 +42,9 @@ const MC = MeTTaCore
     end
 
     @testset "tier-2-only stage: §6 supercompilation driver engages" begin
-        s = new_core_space(); MC.space_add_all_sexpr!(s.inner, facts)
-        r = sc_execute!(s, prog; opts = SCOptions(supercompile = true, drive_steps = 100))
+        s = new_core_space()
+        MC.space_add_all_sexpr!(s.inner, facts)
+        r = sc_execute!(s, prog; opts=SCOptions(supercompile=true, drive_steps=100))
         @test !isempty(r.drive_results)                   # tier-1 plan! never produces these
         @test haskey(r.timings, :supercompile)
         for dr in r.drive_results
@@ -51,8 +53,9 @@ const MC = MeTTaCore
     end
 
     @testset "tier-2-only stage: KB saturation reports counts" begin
-        s = new_core_space(); MC.space_add_all_sexpr!(s.inner, facts)
-        r = sc_execute!(s, prog; opts = SCOptions(saturate = true))
+        s = new_core_space()
+        MC.space_add_all_sexpr!(s.inner, facts)
+        r = sc_execute!(s, prog; opts=SCOptions(saturate=true))
         @test haskey(r.timings, :saturate)
         @test r.n_kb_facts >= 0
     end
@@ -64,8 +67,13 @@ const MC = MeTTaCore
         # `match` atoms were inert (added verbatim, never fired) so nothing in lib/ could be optimized.
         match_prog = raw"(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))"
         trans(p) = begin
-            sp = new_core_space(); MC.space_add_all_sexpr!(sp.inner, facts); sc_execute!(sp, p)
-            sort([strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n') if occursin("trans", l)])
+            sp = new_core_space()
+            MC.space_add_all_sexpr!(sp.inner, facts)
+            sc_execute!(sp, p)
+            sort([
+                strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n') if
+                occursin("trans", l)
+            ])
         end
         @test trans(match_prog) == trans(prog)             # match-form ≡ exec-form
         @test trans(match_prog) == ["(trans 0 2)", "(trans 1 3)"]
@@ -78,14 +86,26 @@ const MC = MeTTaCore
         SM = MeTTaCore.Eval
         match_q = raw"(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))"
         # interpreter oracle: run (match …) on a tree-walker space with the same facts
-        isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
+        isp = SM.Space()
+        SM.load_core_stdlib!(isp)
+        SM.load_metta!(isp, facts)
         res = SM.load_metta!(isp, "!" * match_q)
-        R_interp = sort(unique(filter(s -> occursin("trans", s),
-                       [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        R_interp = sort(
+            unique(
+                filter(s -> occursin("trans", s),
+                    [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
+            )
+        )
         # supercompiler: the lowered match → exec → MORK
-        sp = new_core_space(); MC.space_add_all_sexpr!(sp.inner, facts); sc_execute!(sp, match_q)
-        R_sc = sort(unique(filter(s -> occursin("trans", s),
-                  [strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')])))
+        sp = new_core_space()
+        MC.space_add_all_sexpr!(sp.inner, facts)
+        sc_execute!(sp, match_q)
+        R_sc = sort(
+            unique(
+                filter(s -> occursin("trans", s),
+                    [strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')])
+            )
+        )
         @test R_interp == ["(trans 0 2)", "(trans 1 3)"]   # the Eval actually produces this
         @test R_sc == R_interp                              # supercompiler is faithful to the Eval
     end
@@ -95,20 +115,32 @@ const MC = MeTTaCore
         # a 3-source join (where Rule-of-64 decomposition engages) must each equal the Eval.
         SM = MeTTaCore.Eval
         function ovs(facts_s, query, tag)
-            isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts_s)
+            isp = SM.Space()
+            SM.load_core_stdlib!(isp)
+            SM.load_metta!(isp, facts_s)
             res = SM.load_metta!(isp, "!" * query)
-            ri = sort(unique(filter(s -> occursin(tag, s),
-                     [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
-            sp = new_core_space(); MC.space_add_all_sexpr!(sp.inner, facts_s); sc_execute!(sp, query)
-            rs = sort(unique(filter(s -> occursin(tag, s),
-                     [strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')])))
+            ri = sort(
+                unique(
+                    filter(s -> occursin(tag, s),
+                        [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
+                )
+            )
+            sp = new_core_space()
+            MC.space_add_all_sexpr!(sp.inner, facts_s)
+            sc_execute!(sp, query)
+            rs = sort(
+                unique(
+                    filter(s -> occursin(tag, s),
+                        [strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')])
+                )
+            )
             return ri, rs
         end
         ri, rs = ovs("(p 1) (p 2) (p 3)", raw"(match &self (p $x) (found $x))", "found")     # single-source
         @test ri == ["(found 1)", "(found 2)", "(found 3)"]
         @test rs == ri
         ri, rs = ovs("(a 1 2) (b 2 3) (c 3 4)",
-                     raw"(match &self (, (a $x $y) (b $y $z) (c $z $w)) (out $x $w))", "out")  # 3-source join
+            raw"(match &self (, (a $x $y) (b $y $z) (c $z $w)) (out $x $w))", "out")  # 3-source join
         @test ri == ["(out 1 4)"]
         @test rs == ri
     end
@@ -122,16 +154,27 @@ const MC = MeTTaCore
         (==> (edge $x $y) (path $x $y))
         (==> (, (path $x $y) (edge $y $z)) (path $x $z))
         """
-        getp(sp) = sort([strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')
-                         if startswith(strip(l), "(path ")])
+        getp(sp) = sort([
+            strip(l) for l in split(MC.space_dump_all_sexpr(sp.inner), '\n')
+            if startswith(strip(l), "(path ")
+        ])
         # acyclic chain → full transitive closure, exactly 6 (value-deduped, not 9)
-        sa = new_core_space(); MC.space_add_all_sexpr!(sa.inner, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)")
-        ra = sc_execute!(sa, rules; opts = SCOptions(saturate = true))
-        @test getp(sa) == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
+        sa = new_core_space()
+        MC.space_add_all_sexpr!(sa.inner, "(edge 0 1)\n(edge 1 2)\n(edge 2 3)")
+        ra = sc_execute!(sa, rules; opts=SCOptions(saturate=true))
+        @test getp(sa) == [
+            "(path 0 1)",
+            "(path 0 2)",
+            "(path 0 3)",
+            "(path 1 2)",
+            "(path 1 3)",
+            "(path 2 3)"
+        ]
         @test ra.n_facts_derived == 6
         # cyclic → MUST TERMINATE with the correct closure (a NodeID-only gate would loop forever)
-        scyc = new_core_space(); MC.space_add_all_sexpr!(scyc.inner, "(edge 0 1)\n(edge 1 0)")
-        sc_execute!(scyc, rules; opts = SCOptions(saturate = true))
+        scyc = new_core_space()
+        MC.space_add_all_sexpr!(scyc.inner, "(edge 0 1)\n(edge 1 0)")
+        sc_execute!(scyc, rules; opts=SCOptions(saturate=true))
         @test getp(scyc) == ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
     end
 end

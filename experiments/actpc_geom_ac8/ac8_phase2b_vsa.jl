@@ -18,37 +18,66 @@ import FactorVSA: HV, BipolarMAP, Codebook, random_codebook, bind, bundle, clean
 # ---------------- task (path-integral drift in proto space) ----------------
 nextsym(s, δ, K) = mod(s - 1 + δ, K) + 1
 function make_data(rng; nseq, T, K, Dy, δ, φscale, noise, proto, ddir, φ)
-    Y = zeros(Float32, nseq * T, Dy); S = zeros(Int, nseq * T); seqid = zeros(Int, nseq * T)
-    seeds = rand(rng, 1:K, nseq); r = 1
+    Y = zeros(Float32, nseq * T, Dy)
+    S = zeros(Int, nseq * T)
+    seqid = zeros(Int, nseq * T)
+    seeds = rand(rng, 1:K, nseq)
+    r = 1
     for b in 1:nseq
-        s = seeds[b]; z = 0.0f0
+        s = seeds[b]
+        z = 0.0f0
         for t in 1:T
-            S[r] = s; seqid[r] = b
+            S[r] = s
+            seqid[r] = b
             Y[r, :] = proto[s, :] .+ z .* ddir .+ noise .* randn(rng, Float32, Dy)
-            z += φ[s]; s = nextsym(s, δ, K); r += 1
+            z += φ[s]
+            s = nextsym(s, δ, K)
+            r += 1
         end
     end
     (; Y, S, seeds, seqid)
 end
 proto_rows(P, idx) = reduce(vcat, (transpose(@view P[idx[i], :]) for i in eachindex(idx)))
-clean_proto(P, M) = [argmin([sum((@view(P[k, :]) .- @view(M[i, :])) .^ 2) for k in 1:size(P, 1)]) for i in 1:size(M, 1)]
+clean_proto(P, M) = [
+    argmin([sum((@view(P[k, :]) .- @view(M[i, :])) .^ 2) for k in 1:size(P, 1)]) for
+    i in 1:size(M, 1)
+]
 function histfeat(track, seqid, K)
-    n = length(track); F = zeros(Float32, n, K)
+    n = length(track)
+    F = zeros(Float32, n, K)
     for r in 2:n
-        (seqid[r] == seqid[r-1]) && (F[r, :] = F[r-1, :]; F[r, track[r-1]] += 1)
+        (seqid[r] == seqid[r - 1]) && (F[r, :]=F[r - 1, :]; F[r, track[r - 1]] += 1)
     end
     F
 end
-posfeat(seqid, T) = reshape(Float32[(((r - 1) % T) + 1) / T for r in 1:length(seqid)], length(seqid), 1)
+posfeat(seqid, T) =
+    reshape(Float32[(((r - 1) % T) + 1) / T for r in 1:length(seqid)], length(seqid), 1)
 
 # ---------------- neural half (FabricPC PC, Linear ⇒ autodiff-free) ----------------
-function build_net(Kin, Dy; H = 10)
-    cin = Linear((Kin,), "c"); h = Linear((H,), "h"; activation = TanhActivation()); out = Linear((Dy,), "out")
-    g = graph([cin, h, out], [Edge(cin, h), Edge(h, out)], TaskMap(; x = cin, y = out), InferenceSGD(; eta_infer = 0.1, infer_steps = 15))
+function build_net(Kin, Dy; H=10)
+    cin = Linear((Kin,), "c")
+    h = Linear((H,), "h"; activation=TanhActivation())
+    out = Linear((Dy,), "out")
+    g = graph(
+        [cin, h, out],
+        [Edge(cin, h), Edge(h, out)],
+        TaskMap(; x=cin, y=out),
+        InferenceSGD(; eta_infer=0.1, infer_steps=15)
+    )
     g, initialize_params(g, MersenneTwister(7))
 end
-train_net!(g, p, X, Tgt; epochs = 30) = first(train_pcn(p, g, [Dict("x" => X, "y" => Tgt)], AdamW(p; lr = 0.02); num_epochs = epochs, rng = MersenneTwister(7), verbose = false))
-predict_net(g, p, X) = predict(p, g, Dict("x" => X), MersenneTwister(7); output_task = "y")
+train_net!(g, p, X, Tgt; epochs=30) = first(
+    train_pcn(
+        p,
+        g,
+        [Dict("x" => X, "y" => Tgt)],
+        AdamW(p; lr=0.02);
+        num_epochs=epochs,
+        rng=MersenneTwister(7),
+        verbose=false
+    )
+)
+predict_net(g, p, X) = predict(p, g, Dict("x" => X), MersenneTwister(7); output_task="y")
 
 # ---------------- symbolic half: FactorVSA associative rule memory ----------------
 cw(V, s) = HV{BipolarMAP}(V.atoms[:, s])
@@ -56,63 +85,103 @@ cw(V, s) = HV{BipolarMAP}(V.atoms[:, s])
 # encodes the ORDERED edge c→n (else querying v(s) retrieves BOTH successor and predecessor).
 function learn_vsa_rule(estS, seqid, V)        # T = ⊕ ρ(v(c)) ⊗ v(n) over within-sequence transitions
     bs = HV{BipolarMAP}[]
-    for r in 2:length(estS); seqid[r] == seqid[r-1] && push!(bs, bind(permute(cw(V, estS[r-1])), cw(V, estS[r]))); end
+    for r in 2:length(estS)
+        seqid[r] == seqid[r - 1] &&
+            push!(bs, bind(permute(cw(V, estS[r - 1])), cw(V, estS[r])))
+    end
     isempty(bs) ? cw(V, 1) : bundle(bs...)
 end
 vsa_next(T, V, s) = argmax(V.atoms' * bind(permute(cw(V, s)), T).data)   # cleanup(ρ(v(s)) ⊗ T)
 function vsa_track(T, V, seed, Tt)
-    o = zeros(Int, Tt); s = seed
-    for t in 1:Tt; o[t] = s; s = vsa_next(T, V, s); end
+    o = zeros(Int, Tt)
+    s = seed
+    for t in 1:Tt
+        o[t] = s
+        s = vsa_next(T, V, s)
+    end
     o
 end
-function heldout_acc(T, V, K, δ; Ttest = 30, testseeds = 1:K)
+function heldout_acc(T, V, K, δ; Ttest=30, testseeds=1:K)
     accs = Float64[]
     for sd in testseeds
-        truth = Int[]; s = sd; for _ in 1:Ttest; push!(truth, s); s = nextsym(s, δ, K); end
+        truth = Int[]
+        s = sd
+        for _ in 1:Ttest
+            push!(truth, s)
+            s = nextsym(s, δ, K)
+        end
         push!(accs, mean(vsa_track(T, V, sd, Ttest) .== truth))
     end
     mean(accs)
 end
 
-function run(; K = 5, Dy = 10, N = 512, T = 14, nseq = 12, δ = 1, φscale = 2.0f0, noise = 0.1f0, rounds = 4, epochs = 25, seed = 0)
+function run(;
+    K=5,
+    Dy=10,
+    N=512,
+    T=14,
+    nseq=12,
+    δ=1,
+    φscale=2.0f0,
+    noise=0.1f0,
+    rounds=4,
+    epochs=25,
+    seed=0
+)
     rng = MersenneTwister(seed)
-    proto = randn(rng, Float32, K, Dy); ddir = randn(rng, Float32, Dy); ddir ./= sqrt(sum(ddir .^ 2))
+    proto = randn(rng, Float32, K, Dy)
+    ddir = randn(rng, Float32, Dy)
+    ddir ./= sqrt(sum(ddir .^ 2))
     φ = φscale .* randn(rng, Float32, K)
-    V = random_codebook(BipolarMAP, N, K; rng = MersenneTwister(seed + 1))
+    V = random_codebook(BipolarMAP, N, K; rng=MersenneTwister(seed + 1))
     d = make_data(rng; nseq, T, K, Dy, δ, φscale, noise, proto, ddir, φ)
 
     rawS = clean_proto(proto, d.Y)                               # symbolic-only: VSA on drift-corrupted tokens
     W_sym = learn_vsa_rule(rawS, d.seqid, V)
 
-    g, p = build_net(K, Dy); W_cpl = W_sym                       # coupled: bridge bootstrap
+    g, p = build_net(K, Dy)
+    W_cpl = W_sym                       # coupled: bridge bootstrap
     for _ in 1:rounds
         track = vcat([vsa_track(W_cpl, V, d.seeds[b], T) for b in 1:nseq]...)
-        F = histfeat(track, d.seqid, K); resid = d.Y .- proto_rows(proto, track)
+        F = histfeat(track, d.seqid, K)
+        resid = d.Y .- proto_rows(proto, track)
         p = train_net!(g, p, F, resid; epochs)                  # neural learns drift(history)
         estS = clean_proto(proto, d.Y .- predict_net(g, p, F))  # de-drift → re-cleanup
         W_cpl = learn_vsa_rule(estS, d.seqid, V)
     end
 
-    gp, pp = build_net(1, Dy); Xp = posfeat(d.seqid, T)         # parallel: rule-blind de-drift, VSA once
+    gp, pp = build_net(1, Dy)
+    Xp = posfeat(d.seqid, T)         # parallel: rule-blind de-drift, VSA once
     pp = train_net!(gp, pp, Xp, d.Y; epochs)
     parS = clean_proto(proto, d.Y .- predict_net(gp, pp, Xp))
     W_par = learn_vsa_rule(parS, d.seqid, V)
 
     acc(W) = heldout_acc(W, V, K, δ)
-    cpl, sym_, par = acc(W_cpl), acc(W_sym), acc(W_par); neu = 1.0 / K
-    (; S1 = cpl > sym_ + 0.1 && cpl > neu + 0.1, S2 = cpl > par + 0.1, cpl, sym_, neu, par)
+    cpl, sym_, par = acc(W_cpl), acc(W_sym), acc(W_par)
+    neu = 1.0 / K
+    (; S1=cpl > sym_ + 0.1 && cpl > neu + 0.1, S2=cpl > par + 0.1, cpl, sym_, neu, par)
 end
 
 println("AC8 Phase-2b-VSA — FabricPC PC ↔ FactorVSA rule memory (path-integral drift)")
 # SHORT sequences (T<K): symbol histories are seed-specific ⇒ drift is NOT position-predictable,
 # so parallel's rule-blind positional de-drift should FAIL and only the history-aware bridge wins.
-println("T<K (short, seed-specific histories) — drift sweep × 6 seeds (S1=coupled≫singles; S2=bridge≫no-bridge):")
+println(
+    "T<K (short, seed-specific histories) — drift sweep × 6 seeds (S1=coupled≫singles; S2=bridge≫no-bridge):"
+)
 const NSEED = 6
 for φs in (2.0f0, 3.0f0, 4.0f0)
-    s1 = 0; s2 = 0; cs = Float64[]; ss = Float64[]; ps = Float64[]
-    for sd in 0:NSEED-1
-        r = run(; K = 8, T = 6, nseq = 16, φscale = φs, seed = sd, rounds = 6, epochs = 35); s1 += r.S1; s2 += r.S2
-        push!(cs, r.cpl); push!(ss, r.sym_); push!(ps, r.par)
+    s1 = 0
+    s2 = 0
+    cs = Float64[]
+    ss = Float64[]
+    ps = Float64[]
+    for sd in 0:(NSEED - 1)
+        r = run(; K=8, T=6, nseq=16, φscale=φs, seed=sd, rounds=6, epochs=35)
+        s1 += r.S1
+        s2 += r.S2
+        push!(cs, r.cpl)
+        push!(ss, r.sym_)
+        push!(ps, r.par)
     end
     @printf("  φscale=%.1f | acc coupled=%.2f sym=%.2f par=%.2f | S1 %d/%d  S2 %d/%d\n",
         φs, mean(cs), mean(ss), mean(ps), s1, NSEED, s2, NSEED)

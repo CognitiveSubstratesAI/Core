@@ -21,8 +21,8 @@ const _AG = Eval
 
 "Parse `name(args) => value` lines from a swipl run. Empty dict on ANY failure — the positive
 control below turns that into a visible failure rather than a silent pass."
-function agg_pairs(pl_file::AbstractString)::Dict{String,String}
-    out = Dict{String,String}()
+function agg_pairs(pl_file::AbstractString)::Dict{String, String}
+    out = Dict{String, String}()
     swipl = Sys.which("swipl")
     swipl === nothing && return out
     txt = try
@@ -38,10 +38,12 @@ function agg_pairs(pl_file::AbstractString)::Dict{String,String}
     out
 end
 
-const _AGG_ORACLE = normpath(joinpath(@__DIR__, "..", "..", "oracle", "tabling", "modes_73.pl"))
+const _AGG_ORACLE = normpath(
+    joinpath(@__DIR__, "..", "..", "oracle", "tabling", "modes_73.pl")
+)
 
 _mode(spec::Atom) = _AG.update_goal(spec)
-_idx()  = _mode(Sym(:index))
+_idx() = _mode(Sym(:index))
 _ans(head::Symbol, key::Symbol, v) = Expression(Atom[Sym(head), Sym(key), Grounded(v)])
 
 "Fold `vals` (the derivations upstream produced for one key) under `modes`, return the value slot."
@@ -66,33 +68,35 @@ end
         oracle = agg_pairs(_AGG_ORACLE)
 
         # ── POSITIVE CONTROL: every goal must be present before any agreement is claimed.
-        want = ["path(a,b)", "path(a,c)", "path(a,d)", "tot(k)", "tot(m)", "best(k)", "keep(k)"]
+        want = [
+            "path(a,b)", "path(a,c)", "path(a,d)", "tot(k)", "tot(m)", "best(k)", "keep(k)"
+        ]
         @test sort(collect(keys(oracle))) == sort(want)
 
         # ── lattice(min): the shortest-path example. a→c derives 9 directly and 3 via b; upstream
         # keeps 3, which is the whole point of §7.3 — the direct edge is subsumed.
         @test _fold(:path, :c, [9, 3], _AG.TableMode[_idx(), _mode(Sym(:min))]) ==
-              Grounded(parse(Int, oracle["path(a,c)"]))
-        @test _fold(:path, :b, [1],    _AG.TableMode[_idx(), _mode(Sym(:min))]) ==
-              Grounded(parse(Int, oracle["path(a,b)"]))
+            Grounded(parse(Int, oracle["path(a,c)"]))
+        @test _fold(:path, :b, [1], _AG.TableMode[_idx(), _mode(Sym(:min))]) ==
+            Grounded(parse(Int, oracle["path(a,b)"]))
         @test _fold(:path, :d, [10, 4], _AG.TableMode[_idx(), _mode(Sym(:min))]) ==
-              Grounded(parse(Int, oracle["path(a,d)"]))
+            Grounded(parse(Int, oracle["path(a,d)"]))
 
         # ── lattice(sum): 1+2+4 on key k, and a single derivation on key m.
         @test _fold(:tot, :k, [1, 2, 4], _AG.TableMode[_idx(), _mode(Sym(:sum))]) ==
-              Grounded(parse(Int, oracle["tot(k)"]))
-        @test _fold(:tot, :m, [10],      _AG.TableMode[_idx(), _mode(Sym(:sum))]) ==
-              Grounded(parse(Int, oracle["tot(m)"]))
+            Grounded(parse(Int, oracle["tot(k)"]))
+        @test _fold(:tot, :m, [10], _AG.TableMode[_idx(), _mode(Sym(:sum))]) ==
+            Grounded(parse(Int, oracle["tot(m)"]))
 
         # ── lattice(max)
         @test _fold(:best, :k, [1, 2, 4], _AG.TableMode[_idx(), _mode(Sym(:max))]) ==
-              Grounded(parse(Int, oracle["best(k)"]))
+            Grounded(parse(Int, oracle["best(k)"]))
 
         # ── po(leq/2): upstream expands to `(Call -> S2 = S0 ; S2 = S1)`, i.e. KEEP THE STORED value
         # when the test holds. Getting that branch backwards yields `last` and still type-checks.
         @test _fold(:keep, :k, [1, 2, 4],
-                    _AG.TableMode[_idx(), _mode(Expression(Atom[Sym(:po), Sym(:leq)]))]) ==
-              Grounded(parse(Int, oracle["keep(k)"]))
+            _AG.TableMode[_idx(), _mode(Expression(Atom[Sym(:po), Sym(:leq)]))]) ==
+            Grounded(parse(Int, oracle["keep(k)"]))
     end
 end
 
@@ -103,8 +107,8 @@ end
     # `changed` computed from values for exactly this reason; assert the two DISAGREE here, because
     # a test that only checked `changed == true` would pass even on a cardinality implementation.
     ms = _AG.TableMode[_idx(), _mode(Sym(:sum))]
-    before, _   = _AG.merge_answers(Atom[], Atom[_ans(:p, :k, 1)], ms)
-    after, chg  = _AG.merge_answers(before, Atom[_ans(:p, :k, 2)], ms)
+    before, _ = _AG.merge_answers(Atom[], Atom[_ans(:p, :k, 1)], ms)
+    after, chg = _AG.merge_answers(before, Atom[_ans(:p, :k, 2)], ms)
     @test length(after) == length(before)      # cardinality: NO growth
     @test chg                                   # value: CHANGED — the disagreement is the point
     @test after[1] == _ans(:p, :k, 3)
@@ -113,27 +117,45 @@ end
     # arbitrary terms. A numeric implementation throws here instead of ordering.
     symmodes = _AG.TableMode[_idx(), _mode(Sym(:min))]
     got, _ = _AG.merge_answers(Atom[Expression(Atom[Sym(:q), Sym(:k), Sym(:zed)])],
-                               Atom[Expression(Atom[Sym(:q), Sym(:k), Sym(:alpha)])], symmodes)
+        Atom[Expression(Atom[Sym(:q), Sym(:k), Sym(:alpha)])], symmodes)
     @test got == Atom[Expression(Atom[Sym(:q), Sym(:k), Sym(:alpha)])]
 
     # ── the standard-order ladder itself: Var @< Number @< String @< Atom @< Term (pl-prims.c:1788).
-    xs = Atom[Expression(Atom[Sym(:f), Sym(:a)]), Sym(:zed), Grounded("s"), Grounded(3), Var("x", UInt64(1))]
+    xs = Atom[
+        Expression(Atom[Sym(:f), Sym(:a)]),
+        Sym(:zed),
+        Grounded("s"),
+        Grounded(3),
+        Var("x", UInt64(1))
+    ]
     @test sort(xs, lt=_AG.standard_lt) ==
-          Atom[Var("x", UInt64(1)), Grounded(3), Grounded("s"), Sym(:zed), Expression(Atom[Sym(:f), Sym(:a)])]
+        Atom[
+        Var("x", UInt64(1)),
+        Grounded(3),
+        Grounded("s"),
+        Sym(:zed),
+        Expression(Atom[Sym(:f), Sym(:a)])
+    ]
     @test _AG.standard_lt(Grounded(1.0), Grounded(1))        # equal value ⇒ FLOAT first (pl-prims.c:1777)
     # compounds compare on ARITY before name — a name-first implementation disagrees here.
-    @test _AG.standard_lt(Expression(Atom[Sym(:z), Sym(:a)]), Expression(Atom[Sym(:a), Sym(:a), Sym(:b)]))
+    @test _AG.standard_lt(
+        Expression(Atom[Sym(:z), Sym(:a)]), Expression(Atom[Sym(:a), Sym(:a), Sym(:b)])
+    )
 
     # ── an all-`index` declaration must be a NO-OP, degrading to plain set semantics.
     noagg = _AG.TableMode[_idx(), _idx()]
     @test !_AG.has_aggregation(noagg)
-    kept, _ = _AG.merge_answers(Atom[_ans(:p, :a, 1)], Atom[_ans(:p, :a, 2), _ans(:p, :a, 1)], noagg)
+    kept, _ = _AG.merge_answers(
+        Atom[_ans(:p, :a, 1)], Atom[_ans(:p, :a, 2), _ans(:p, :a, 1)], noagg
+    )
     @test kept == Atom[_ans(:p, :a, 1), _ans(:p, :a, 2)]
 
     # ── an unknown mode is a DOMAIN ERROR (boot/tabling.pl:1512), never a silent fallback to index —
     # a mistyped mode that quietly becomes a key argument reads as "aggregation did nothing".
     @test_throws ArgumentError _AG.update_goal(Sym(:bogus))
-    @test_throws ArgumentError _AG.update_goal(Expression(Atom[Sym(:lattice), Sym(:nosuch)]))
+    @test_throws ArgumentError _AG.update_goal(
+        Expression(Atom[Sym(:lattice), Sym(:nosuch)])
+    )
 end
 
 @testset "§7.3 re-seated onto the ANSWER TRIE — same oracle, merge at insertion" begin
@@ -150,19 +172,22 @@ end
         end
         t
     end
-    _val(t) = (as = _AG.trie_answers(t); length(as) == 1 ?
-               (as[1]::Expression).children[3] : nothing)
+    _val(t) = (
+        as=_AG.trie_answers(t);
+        length(as) == 1 ?
+        (as[1]::Expression).children[3] : nothing
+    )
 
     if Sys.which("swipl") !== nothing && isfile(_AGG_ORACLE)
         oracle = agg_pairs(_AGG_ORACLE)
         @test length(oracle) == 7                      # positive control before any comparison
         # the shortest-path case: 9 direct vs 3 via b — the trie must subsume exactly as swipl did
         @test _val(_ins(:path, :c, [9, 3], _AG.TableMode[_idx(), _mode(Sym(:min))])) ==
-              Grounded(parse(Int, oracle["path(a,c)"]))
+            Grounded(parse(Int, oracle["path(a,c)"]))
         @test _val(_ins(:tot, :k, [1, 2, 4], _AG.TableMode[_idx(), _mode(Sym(:sum))])) ==
-              Grounded(parse(Int, oracle["tot(k)"]))
+            Grounded(parse(Int, oracle["tot(k)"]))
         @test _val(_ins(:best, :k, [1, 2, 4], _AG.TableMode[_idx(), _mode(Sym(:max))])) ==
-              Grounded(parse(Int, oracle["best(k)"]))
+            Grounded(parse(Int, oracle["best(k)"]))
     else
         @test_skip "swipl NOT ON PATH — the trie-path §7.3 differential did not run. NOT a pass."
     end
@@ -170,19 +195,21 @@ end
     # AGREEMENT WITH THE IMPLEMENTATION IT REPLACES, on every built-in lattice.
     for m in (:min, :max, :sum, :first, :last)
         modes = _AG.TableMode[_idx(), _mode(Sym(m))]
-        vals  = [5, 1, 9]
-        trie  = _val(_ins(:p, :k, vals, modes))
-        vec   = Atom[]
-        for v in vals; vec, _ = _AG.merge_answers(vec, Atom[_ans(:p, :k, v)], modes); end
+        vals = [5, 1, 9]
+        trie = _val(_ins(:p, :k, vals, modes))
+        vec = Atom[]
+        for v in vals
+            vec, _ = _AG.merge_answers(vec, Atom[_ans(:p, :k, v)], modes)
+        end
         @test trie == (vec[1]::Expression).children[3]
     end
 
     # ── the ACTION vocabulary is upstream's (`update/7`), not ours: :new / :delete / :unchanged.
     modes = _AG.TableMode[_idx(), _mode(Sym(:min))]
     t = _AG.AnswerTrie()
-    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 3), modes) == (true,  :new)
+    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 3), modes) == (true, :new)
     @test _AG.trie_insert_moded!(t, _ans(:q, :k, 9), modes) == (false, :unchanged)  # `Agg \=@= Next` fails
-    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 1), modes) == (true,  :delete)     # old REPLACED
+    @test _AG.trie_insert_moded!(t, _ans(:q, :k, 1), modes) == (true, :delete)     # old REPLACED
     @test length(t) == 1                                    # a moded table is a MAP, one row per key
 
     # ── 🔴 THE CHANGED SIGNAL IS VARIANT INEQUALITY, NOT STRUCTURAL. `merge_answers` used `!=`; for
@@ -194,11 +221,13 @@ end
     @test _AG.variant_eq(f(vx, vx), f(vy, vy))              # renaming only ⇒ SAME
     @test !_AG.variant_eq(f(vx, vx), f(vx, vz))             # repeated vs distinct ⇒ different
     @test f(vx, vx) != f(vy, vy)                            # …and structurally they are NOT equal,
-                                                            #    which is exactly the trap
+    #    which is exactly the trap
 
     # ── an all-`index` declaration must behave as no declaration at all.
     noagg = _AG.TableMode[_idx(), _idx()]
     t2 = _AG.AnswerTrie()
-    for v in (1, 2, 1); _AG.trie_insert_moded!(t2, _ans(:r, :a, v), noagg); end
+    for v in (1, 2, 1)
+        _AG.trie_insert_moded!(t2, _ans(:r, :a, v), noagg)
+    end
     @test length(t2) == 2                                   # duplicate dropped, both keys kept
 end

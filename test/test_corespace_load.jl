@@ -31,7 +31,7 @@ const MC = MeTTaCore
         # Counts are pinned so a silent drop (a directive quietly skipped, a form lost in the
         # splitter) shows up as a number change rather than as nothing at all.
         expected = ["quantale" => 31, "subrep" => 58, "hyperseed" => 13,
-                    "metamo" => 130, "ecan" => 132, "pln" => 128, "MOSES" => 258]
+            "metamo" => 130, "ecan" => 132, "pln" => 128, "MOSES" => 258]
         for (lib, n) in expected
             cs = MC.new_core_space()
             MC.load_core_lib!(cs, lib)
@@ -63,7 +63,8 @@ const MC = MeTTaCore
         # Neither may appear.
         cs2 = MC.new_core_space()
         MC.load_core_lib!(cs2, "quantale")
-        anysym(f, x) = x isa AbstractVector ? any(y -> anysym(f, y), x) : (x isa Symbol && f(x))
+        anysym(f, x) =
+            x isa AbstractVector ? any(y -> anysym(f, y), x) : (x isa Symbol && f(x))
         bare_newvar(s) = s === Symbol("\$")
         debruijn_ref(s) = occursin(r"^_\d+$", String(s))
         atoms2 = MC.core_atoms(cs2)
@@ -122,7 +123,7 @@ const MC = MeTTaCore
         before = MC.Eval.atom_count(isp)
         @test before > 0                                          # stdlib really did load
         @test isempty(MC.Eval.load_metta!(isp, "!(q-prob-times 0.5 0.5)")) ||
-              true                                                # (call shape is irrelevant …)
+            true                                                # (call shape is irrelevant …)
         # … the real assertion: loading a lib into the CoreSpace added NOTHING to the interpreter.
         @test MC.Eval.atom_count(isp) == before
     end
@@ -145,7 +146,8 @@ const MC = MeTTaCore
     #   the storage form changes. If someone flips storage to real variables first, (2) starts
     #   handing back `_1` as a ground symbol. THESE ASSERTIONS FAIL AT THAT MOMENT, by design.
     @testset "storage form: core_add! rules are INERT to a ground query (pins the fix ORDER)" begin
-        ask(cs, q) = MC.space_query_multi(cs.inner.btm, MC.sexpr_to_expr(q), (_b, _loc) -> true)
+        ask(cs, q) =
+            MC.space_query_multi(cs.inner.btm, MC.sexpr_to_expr(q), (_b, _loc) -> true)
         ground, wild = "(, (= (f 5) \$r))", "(, (= (f \$y) \$r))"
 
         # A — the CoreSpace write path.
@@ -153,19 +155,19 @@ const MC = MeTTaCore
         MC.core_add!(csA, [:(=), [:f, Symbol("\$x")], Symbol("\$x")])
         @test strip(MC.space_dump_all_sexpr(csA.inner)) == "(= (f __var_x) __var_x)"
         @test ask(csA, ground) == 0        # INERT: `5` cannot unify with the ground symbol __var_x
-        @test ask(csA, wild)   == 1        # control — the atom IS there; only ground queries miss it
+        @test ask(csA, wild) == 1        # control — the atom IS there; only ground queries miss it
 
         # B — the same rule with REAL MORK variables. Identical trie, identical matcher.
         csB = MC.new_core_space()
         MC.space_add_all_sexpr!(csB.inner, "(= (f \$x) \$x)")
         @test ask(csB, ground) == 1        # FIRES ⇒ the STORAGE FORM is the whole cause
-        @test ask(csB, wild)   == 1
+        @test ask(csB, wild) == 1
 
         # The read-path tripwire: two serializers disagree on the SAME trie.
         @test strip(MC.space_dump_all_sexpr(csB.inner)) == "(= (f \$a) \$a)"   # faithful: co-reference kept
         lossy = String[]
         MC.space_query_multi(csB.inner.btm, MC.sexpr_to_expr(wild),
-                             (_b, loc) -> (push!(lossy, strip(MC.expr_serialize(loc))); true))
+            (_b, loc) -> (push!(lossy, strip(MC.expr_serialize(loc))); true))
         @test length(lossy) == 1
         @test occursin("_1", lossy[1])     # VarRef rendered as a GROUND symbol — what core_match_bind reads
         @test !occursin("\$a", lossy[1])   # the faithful form is NOT what the query callback sees

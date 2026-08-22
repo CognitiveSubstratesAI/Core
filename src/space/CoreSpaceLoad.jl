@@ -67,7 +67,8 @@ function _cs_split_top_level(text::AbstractString)::Vector{String}
             if ch == '\n'
                 in_comment = false
                 # a comment cannot end a form; only depth 0 + whitespace does that
-                started && depth == 0 && (push!(forms, strip(String(take!(buf)))); started = false)
+                started && depth == 0 &&
+                    (push!(forms, strip(String(take!(buf)))); started=false)
             end
             continue
         end
@@ -150,7 +151,8 @@ end
 "Pull the module name out of `(import! &self (library metamo))` / `(import! &self \"config.metta\")`."
 function _cs_import_target(body::AbstractString)
     inner = strip(body)
-    startswith(inner, "(") && (inner = inner[nextind(inner, 1):prevind(inner, lastindex(inner))])
+    startswith(inner, "(") &&
+        (inner = inner[nextind(inner, 1):prevind(inner, lastindex(inner))])
     toks = _cs_split_top_level(inner)
     length(toks) < 3 && return nothing
     tgt = toks[3]
@@ -190,7 +192,7 @@ then `core_atoms` on a library-loaded space returns library atoms too — docume
 hidden.
 """
 function load_metta!(cs::CoreSpace, text::AbstractString;
-                     as_library::Bool = false, imported::Set{String} = Set{String}())
+    as_library::Bool=false, imported::Set{String}=Set{String}())
     as_library  # accepted for signature parity; see the docstring — deliberately not honoured yet
     pending = String[]
     # ⚠️ PARSE WITH CORE'S PARSER, then add the parsed EXPRESSION — never hand raw source text to
@@ -217,14 +219,23 @@ function load_metta!(cs::CoreSpace, text::AbstractString;
             continue
         end
         flush!()                                  # keep directive ordering vs surrounding atoms
-        head = first(_cs_split_top_level(startswith(body, "(") ?
-                     body[nextind(body, 1):prevind(body, lastindex(body))] : body), 1)
+        head = first(
+            _cs_split_top_level(
+                if startswith(body, "(")
+                    body[nextind(body, 1):prevind(body, lastindex(body))]
+                else
+                    body
+                end
+            ), 1)
         h = isempty(head) ? "" : head[1]
         if h == "import!"
             tgt = _cs_import_target(body)
-            tgt === nothing && error("load_metta!(CoreSpace): cannot parse import target in `$form`")
+            tgt === nothing &&
+                error("load_metta!(CoreSpace): cannot parse import target in `$form`")
             path = _cs_resolve_module(tgt)
-            path === nothing && error("load_metta!(CoreSpace): module `$tgt` not found on Eval._MODULE_PATH")
+            path === nothing && error(
+                "load_metta!(CoreSpace): module `$tgt` not found on Eval._MODULE_PATH"
+            )
             rp = realpath(path)
             if !(rp in imported)                  # cycle / re-import guard
                 push!(imported, rp)
@@ -232,14 +243,17 @@ function load_metta!(cs::CoreSpace, text::AbstractString;
                 pushed = !(d in Eval._MODULE_PATH[])
                 pushed && push!(Eval._MODULE_PATH[], d)
                 try
-                    load_metta!(cs, read(rp, String); as_library = true, imported = imported)
+                    load_metta!(cs, read(rp, String); as_library=true, imported=imported)
                 finally
                     pushed && filter!(!=(d), Eval._MODULE_PATH[])
                 end
             end
         elseif h == "remove-atom"
-            parts = _cs_split_top_level(body[nextind(body, 1):prevind(body, lastindex(body))])
-            length(parts) >= 3 || error("load_metta!(CoreSpace): malformed remove-atom in `$form`")
+            parts = _cs_split_top_level(
+                body[nextind(body, 1):prevind(body, lastindex(body))]
+            )
+            length(parts) >= 3 ||
+                error("load_metta!(CoreSpace): malformed remove-atom in `$form`")
             # Parse for the same reason `flush!` does: a raw string is re-encoded by MORK's reader,
             # so an atom containing a variable would be looked up at a byte path that can never
             # match the one `core_add!` wrote. (The single real occurrence in lib/ is ground, so
@@ -248,9 +262,11 @@ function load_metta!(cs::CoreSpace, text::AbstractString;
                 core_remove!(cs, e)
             end
         else
-            error("load_metta!(CoreSpace): directive `$h` is not supported on a MORK-backed space " *
-                  "(form: `$form`). Only import! and remove-atom appear in lib/; add explicit " *
-                  "support rather than letting it be skipped.")
+            error(
+                "load_metta!(CoreSpace): directive `$h` is not supported on a MORK-backed space " *
+                "(form: `$form`). Only import! and remove-atom appear in lib/; add explicit " *
+                "support rather than letting it be skipped."
+            )
         end
     end
     flush!()
@@ -276,11 +292,13 @@ function load_core_lib!(cs::CoreSpace, name::Union{Symbol, AbstractString})
         dir = nothing
         for d in Eval._MODULE_PATH[]
             cand = joinpath(d, n)
-            isdir(cand) && (dir = cand; break)
+            isdir(cand) && (dir=cand; break)
         end
-        dir === nothing && error("load_core_lib!: library `$n` is neither a module on " *
-                                 "Eval._MODULE_PATH nor a directory on it")
-        sort(filter(f -> endswith(f, ".metta"), readdir(dir; join = true)))
+        dir === nothing && error(
+            "load_core_lib!: library `$n` is neither a module on " *
+            "Eval._MODULE_PATH nor a directory on it"
+        )
+        sort(filter(f -> endswith(f, ".metta"), readdir(dir; join=true)))
     end
 
     for f in files
@@ -294,7 +312,7 @@ function load_core_lib!(cs::CoreSpace, name::Union{Symbol, AbstractString})
         pushed = !(d in Eval._MODULE_PATH[])
         pushed && push!(Eval._MODULE_PATH[], d)
         try
-            load_metta!(cs, read(rp, String); as_library = true, imported = imported)
+            load_metta!(cs, read(rp, String); as_library=true, imported=imported)
         finally
             pushed && filter!(!=(d), Eval._MODULE_PATH[])
         end

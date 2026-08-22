@@ -34,12 +34,22 @@ function _rt_interp(program::AbstractString)
     prev = _RT_V._INTERPRET_MAX[]
     _RT_V.interpret_max_steps!(4_000)
     try
-        sp = _RT_V.Space(); _RT_V.load_core_stdlib!(sp)
+        sp = _RT_V.Space()
+        _RT_V.load_core_stdlib!(sp)
         out = String[]
         for (bang, f) in MeTTaCore.mm2_split_forms(program)
-            rs = try _RT_V.load_metta!(sp, bang ? "!" * f : f) catch; continue end
-            bang && append!(out, sort(String[string(x) for y in rs
-                                             for x in (y isa AbstractVector ? y : [y])]))
+            rs = try
+                _RT_V.load_metta!(sp, bang ? "!" * f : f)
+            catch
+                continue
+            end
+            bang && append!(
+                out,
+                sort(
+                    String[string(x) for y in rs
+                        for x in (y isa AbstractVector ? y : [y])]
+                )
+            )
         end
         out
     finally
@@ -50,9 +60,10 @@ end
 @testset "IL text round-trip — `show` is a wire format, and some values do not survive it" begin
 
     @testset "the PROPERTY: which Grounded values survive parse(show(v))" begin
-        sp = _RT_V.Space(); _RT_V.load_core_stdlib!(sp)
-        reparse(txt) = (toks = _RT_V.tokenize(txt); i = Ref(1);
-                        _RT_V.parse_from(toks, i, sp.tokens))
+        sp = _RT_V.Space()
+        _RT_V.load_core_stdlib!(sp)
+        reparse(txt) = (toks=_RT_V.tokenize(txt); i=Ref(1);
+            _RT_V.parse_from(toks, i, sp.tokens))
 
         # A STATE CELL LOSES ITS TYPE. `(State (A B))` is a display convenience; re-parsed it is an
         # ordinary Expression, and a state cell is MUTABLE IDENTITY, so no textual form could be
@@ -83,11 +94,12 @@ end
         # The witness is four lines and the compiler used to produce the wrong answer with
         # `compiled=1 fell_back=0`: the write went to whatever space the re-parsed `&self` named, so
         # the later match found nothing.
-        prog = "!(bind! &kb (new-space))\n" *
-               "(= (put \$x) (add-atom &kb (Green \$x)))\n" *
-               "!(put Fritz)\n" *
-               "!(match &kb (Green \$y) \$y)\n"
-        r = MeTTaCore.compile_run(prog; max_steps = 4_000)
+        prog =
+            "!(bind! &kb (new-space))\n" *
+            "(= (put \$x) (add-atom &kb (Green \$x)))\n" *
+            "!(put Fritz)\n" *
+            "!(match &kb (Green \$y) \$y)\n"
+        r = MeTTaCore.compile_run(prog; max_steps=4_000)
         got = sort(vcat([a for (_, a) in r.answers]...))
         @test got == _rt_interp(prog)          # agrees with the interpreter…
         @test "Fritz" in got                   # …and specifically FINDS the atom it wrote
@@ -101,10 +113,11 @@ end
         # itself and never has to survive `(State (A B))` re-parsing as an Expression. It now COMPILES
         # and is still correct — which is the coverage the split was for, demonstrated on the exact case
         # that motivated the old guard.
-        prog2 = "!(bind! &tok (new-state (A B)))\n" *
-                "(= (get-token) &tok)\n" *
-                "!(get-state (get-token))\n"
-        r2 = MeTTaCore.compile_run(prog2; max_steps = 4_000)
+        prog2 =
+            "!(bind! &tok (new-state (A B)))\n" *
+            "(= (get-token) &tok)\n" *
+            "!(get-state (get-token))\n"
+        r2 = MeTTaCore.compile_run(prog2; max_steps=4_000)
         got2 = sort(vcat([a for (_, a) in r2.answers]...))
         @test got2 == _rt_interp(prog2)
         @test "(A B)" in got2
@@ -127,10 +140,11 @@ end
         # `&self` round-trips by construction: the text re-parses to the space being loaded into,
         # which is exactly what the source meant. Rejecting `Grounded{Space}` wholesale would close
         # the bug by giving back coverage that was never broken.
-        prog = "(= (put2 \$x) (add-atom &self (Green \$x)))\n" *
-               "!(put2 Fritz)\n" *
-               "!(match &self (Green \$y) \$y)\n"
-        r = MeTTaCore.compile_run(prog; max_steps = 4_000)
+        prog =
+            "(= (put2 \$x) (add-atom &self (Green \$x)))\n" *
+            "!(put2 Fritz)\n" *
+            "!(match &self (Green \$y) \$y)\n"
+        r = MeTTaCore.compile_run(prog; max_steps=4_000)
         @test r.compiled >= 1                                  # it STILL compiles
         got = sort(vcat([a for (_, a) in r.answers]...))
         @test got == _rt_interp(prog)

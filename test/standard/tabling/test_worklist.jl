@@ -20,9 +20,13 @@ using Test
 const _WL = Eval
 
 _wl_key() = Sym(:q)
-_wl_dep(k::Atom, n::Int) = _WL.Dependency(k, _WL.Continuation(nothing, _WL.Bindings(), Sym(Symbol("c$n"))), k)
+_wl_dep(k::Atom, n::Int) =
+    _WL.Dependency(k, _WL.Continuation(nothing, _WL.Bindings(), Sym(Symbol("c$n"))), k)
 "Compact shape, e.g. \"A3 S2\" — answer/suspension clusters left to right with their sizes."
-_wl_shape(wl) = join([string(c.kind == _WL.CLUSTER_ANSWERS ? "A" : "S", length(c)) for c in wl.clusters], " ")
+_wl_shape(wl) = join(
+    [string(c.kind == _WL.CLUSTER_ANSWERS ? "A" : "S", length(c)) for c in wl.clusters],
+    " "
+)
 
 @testset "worklist — answers LEFT, dependencies RIGHT, combining is a SWAP (§1.0 step 3)" begin
     k = _wl_key()
@@ -32,21 +36,30 @@ _wl_shape(wl) = join([string(c.kind == _WL.CLUSTER_ANSWERS ? "A" : "S", length(c
         @test isempty(wl)
         @test _WL.wkl_get_work!(wl) === nothing         # nothing to do, and it must not throw
 
-        _WL.wkl_add_answer!(wl, Grounded(1));      @test _wl_shape(wl) == "A1"
-        _WL.wkl_add_suspension!(wl, _wl_dep(k, 1)); @test _wl_shape(wl) == "A1 S1"
+        _WL.wkl_add_answer!(wl, Grounded(1))
+        @test _wl_shape(wl) == "A1"
+        _WL.wkl_add_suspension!(wl, _wl_dep(k, 1))
+        @test _wl_shape(wl) == "A1 S1"
         # a later answer goes LEFT — it has not been combined with the dependency already present
-        _WL.wkl_add_answer!(wl, Grounded(2));      @test _wl_shape(wl) == "A2 S1"
+        _WL.wkl_add_answer!(wl, Grounded(2))
+        @test _wl_shape(wl) == "A2 S1"
         # …and consecutive same-kind insertions MERGE rather than appending a new cluster. Without
         # this every element is its own cluster and the batch design degenerates to element-wise.
-        _WL.wkl_add_suspension!(wl, _wl_dep(k, 2)); @test _wl_shape(wl) == "A2 S2"
-        _WL.wkl_add_answer!(wl, Grounded(3));      @test _wl_shape(wl) == "A3 S2"
+        _WL.wkl_add_suspension!(wl, _wl_dep(k, 2))
+        @test _wl_shape(wl) == "A2 S2"
+        _WL.wkl_add_answer!(wl, Grounded(3))
+        @test _wl_shape(wl) == "A3 S2"
         @test length(wl.clusters) == 2                  # still TWO clusters, not five
     end
 
     @testset "taking work swaps the pair, so it is not work twice" begin
         wl = _WL.Worklist(k)
-        for v in (1, 2, 3); _WL.wkl_add_answer!(wl, Grounded(v)); end
-        for n in (1, 2);    _WL.wkl_add_suspension!(wl, _wl_dep(k, n)); end
+        for v in (1, 2, 3)
+            _WL.wkl_add_answer!(wl, Grounded(v))
+        end
+        for n in (1, 2)
+            _WL.wkl_add_suspension!(wl, _wl_dep(k, n))
+        end
         @test _WL.wkl_riac(wl) == 1 && _WL.wkl_has_work(wl)
 
         w = _WL.wkl_get_work!(wl)
@@ -71,8 +84,12 @@ _wl_shape(wl) = join([string(c.kind == _WL.CLUSTER_ANSWERS ? "A" : "S", length(c
 
     @testset "termination: a drained worklist stays drained" begin
         wl = _WL.Worklist(k)
-        for v in 1:4; _WL.wkl_add_answer!(wl, Grounded(v)); end
-        for n in 1:3; _WL.wkl_add_suspension!(wl, _wl_dep(k, n)); end
+        for v in 1:4
+            _WL.wkl_add_answer!(wl, Grounded(v))
+        end
+        for n in 1:3
+            _WL.wkl_add_suspension!(wl, _wl_dep(k, n))
+        end
         n = 0
         while _WL.wkl_get_work!(wl) !== nothing
             n += 1
@@ -84,12 +101,16 @@ _wl_shape(wl) = join([string(c.kind == _WL.CLUSTER_ANSWERS ? "A" : "S", length(c
 
     @testset "dependencies with no answers, and answers with no dependencies, are not work" begin
         wl = _WL.Worklist(k)
-        for n in 1:3; _WL.wkl_add_suspension!(wl, _wl_dep(k, n)); end
+        for n in 1:3
+            _WL.wkl_add_suspension!(wl, _wl_dep(k, n))
+        end
         @test !_WL.wkl_has_work(wl)                     # nothing to feed them yet
         @test _WL.wkl_get_work!(wl) === nothing
 
         wl2 = _WL.Worklist(k)
-        for v in 1:3; _WL.wkl_add_answer!(wl2, Grounded(v)); end
+        for v in 1:3
+            _WL.wkl_add_answer!(wl2, Grounded(v))
+        end
         @test !_WL.wkl_has_work(wl2)                    # nobody waiting
         @test _WL.wkl_get_work!(wl2) === nothing
 
@@ -107,7 +128,7 @@ _wl_shape(wl) = join([string(c.kind == _WL.CLUSTER_ANSWERS ? "A" : "S", length(c
         @test _WL.has_worklist(k)
         @test _WL.worklist_for(k) === w1                # get!, not a fresh one each call
         _WL.wkl_add_answer!(_WL.worklist_for(k2), Grounded(1))
-        @test _wl_shape(_WL.worklist_for(k))  == ""     # …and the two do not share state
+        @test _wl_shape(_WL.worklist_for(k)) == ""     # …and the two do not share state
         @test _wl_shape(_WL.worklist_for(k2)) == "A1"
         _WL.drop_worklist!(k)
         @test !_WL.has_worklist(k) && _WL.has_worklist(k2)

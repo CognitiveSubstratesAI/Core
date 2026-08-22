@@ -40,7 +40,11 @@ const SM = MeTTaCore.StandardMeTTa
     end
 
     @testset "unknown kind names what IS available" begin
-        err = try MC.make_space(:no_such_kind); catch e; e; end
+        err = try
+            MC.make_space(:no_such_kind)
+        catch e
+            e
+        end
         @test err isa ArgumentError
         # An unknown kind is nearly always a typo or an unloaded provider package; both are diagnosed
         # by seeing the list, so the message must carry it.
@@ -51,7 +55,7 @@ const SM = MeTTaCore.StandardMeTTa
         k = MC.space_kind(:vector)
         @test_throws ArgumentError MC.register_space_kind!(
             MC.SpaceKind(:vector, "SomeOtherPackage", EV.Space, [MC.Private], MC.Native,
-                         (; kwargs...) -> nothing, k.caps))
+                (; kwargs...) -> nothing, k.caps))
         @test MC.space_kind(:vector).provider == "MeTTaCore"   # original survives the rejected attempt
     end
 
@@ -61,7 +65,7 @@ const SM = MeTTaCore.StandardMeTTa
         # make_space call with a confusing message.
         @test_throws ArgumentError MC.register_space_kind!(
             MC.SpaceKind(:modeless, "MeTTaCore", EV.Space, MC.AccessMode[], MC.Native,
-                         (; kwargs...) -> nothing, k.caps))
+                (; kwargs...) -> nothing, k.caps))
         @test :modeless ∉ MC.space_kinds()
     end
 
@@ -86,7 +90,7 @@ const SM = MeTTaCore.StandardMeTTa
     @testset ":vector; parent = … — a fork is a SEEDED PRIVATE region, not a kind" begin
         parent = MC.make_space(:vector)
         EV.load_metta!(parent, "(A)")
-        fork = MC.make_space(:vector; parent = parent)
+        fork = MC.make_space(:vector; parent=parent)
         @test fork isa EV.Space
         @test fork !== parent
         EV.load_metta!(fork, "(B)")
@@ -101,7 +105,11 @@ const SM = MeTTaCore.StandardMeTTa
 
     @testset ":vector rejects a CoreSpace parent, and says what to use instead" begin
         cs = MC.make_space(:mork)
-        err = try MC.make_space(:vector; parent = cs); catch e; e; end
+        err = try
+            MC.make_space(:vector; parent=cs)
+        catch e
+            e
+        end
         @test err isa ArgumentError
         # A CoreSpace has no snapshot-fork — its isolation comes from disjoint prefixes — so the message
         # must point at what DOES provide independence rather than merely refusing.
@@ -111,7 +119,7 @@ const SM = MeTTaCore.StandardMeTTa
     @testset ":vector rejects parent AND atoms together" begin
         p = MC.make_space(:vector)
         # Supplying both would silently discard one seed; better to refuse than to pick.
-        @test_throws ArgumentError MC.make_space(:vector; parent = p, atoms = SM.Atom[])
+        @test_throws ArgumentError MC.make_space(:vector; parent=p, atoms=SM.Atom[])
     end
 
     @testset ":mork at Private — an isolated trie, and its atoms are its own" begin
@@ -128,8 +136,8 @@ const SM = MeTTaCore.StandardMeTTa
     @testset ":mork at Private refuses a name/prefix" begin
         # A private MORK space owns its whole trie at the root; accepting a name here would silently
         # produce something that is not what the caller asked for.
-        @test_throws ArgumentError MC.make_space(:mork; name = Symbol("&nope"))
-        @test_throws ArgumentError MC.make_space(:mork; prefix = Vector{UInt8}("nope/"))
+        @test_throws ArgumentError MC.make_space(:mork; name=Symbol("&nope"))
+        @test_throws ArgumentError MC.make_space(:mork; prefix=Vector{UInt8}("nope/"))
     end
 
     @testset "🔴 :mork DECLINES evaluate — and the decline is real (compile-arrow 6)" begin
@@ -184,8 +192,8 @@ const SM = MeTTaCore.StandardMeTTa
     end
 
     @testset ":mork binding is REGION-SCOPED — a sibling's atoms stay invisible" begin
-        a = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("bind_iso_a/"))
-        b = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("bind_iso_b/"))
+        a = MC.make_space(:mork; mode=MC.Shared, prefix=Vector{UInt8}("bind_iso_a/"))
+        b = MC.make_space(:mork; mode=MC.Shared, prefix=Vector{UInt8}("bind_iso_b/"))
         MC.core_add!(a, [:belief, :mine, 1])
         MC.core_add!(b, [:belief, :theirs, 2])
         # The indexed descent must honour s.prefix exactly as the filtering walk does — otherwise the
@@ -196,14 +204,14 @@ const SM = MeTTaCore.StandardMeTTa
     end
 
     @testset ":mork at Shared — siblings co-reside in ONE trie and do not bleed (whitepaper Fig. 4)" begin
-        games  = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/games"))
-        social = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/social"))
+        games = MC.make_space(:mork; mode=MC.Shared, name=Symbol("&app/games"))
+        social = MC.make_space(:mork; mode=MC.Shared, name=Symbol("&app/social"))
         # ONE trie, two regions — that is the whole model, and it is what Private cannot do. Same KIND,
         # different ACCESS MODE: exactly the axis separation this registry exists to hold.
         @test games.inner === social.inner
         @test games.inner === MC.get_node_shared()
         @test games.prefix != social.prefix
-        MC.core_add!(games,  [:score, 10])
+        MC.core_add!(games, [:score, 10])
         MC.core_add!(social, [:score, 99])
         @test [:score, 10] ∈ MC.core_atoms(games)
         @test [:score, 99] ∉ MC.core_atoms(games)
@@ -216,7 +224,7 @@ const SM = MeTTaCore.StandardMeTTa
         nm = Symbol("&common")
         MC.unregister_prefix!(nm)                       # start from a known state
         @test MC.lookup_prefix(nm) === nothing
-        s = MC.make_space(:mork; mode = MC.Shared, name = nm)
+        s = MC.make_space(:mork; mode=MC.Shared, name=nm)
         # The name→prefix half of the Figure-4 model had ZERO callers before this registry existed:
         # register_prefix!/derive_prefix_from_name/lookup_prefix were exported and never used, and
         # `_resolve_space` — their docstrings' named consumer — is 0 across all 9 live repos.
@@ -228,16 +236,20 @@ const SM = MeTTaCore.StandardMeTTa
     @testset ":mork at Shared rejects a name it cannot derive a prefix from" begin
         # No leading `&` ⇒ not a space reference at all (it would bind as an ordinary atom), so there is
         # no prefix to derive and guessing one would invent a region silently.
-        err = try MC.make_space(:mork; mode = MC.Shared, name = :plain_name); catch e; e; end
+        err = try
+            MC.make_space(:mork; mode=MC.Shared, name=:plain_name)
+        catch e
+            e
+        end
         @test err isa ArgumentError
         @test occursin("&", err.msg)
         # ...and neither argument at all is an error too, rather than a silent root-prefix space that
         # would alias the whole shared trie.
-        @test_throws ArgumentError MC.make_space(:mork; mode = MC.Shared)
+        @test_throws ArgumentError MC.make_space(:mork; mode=MC.Shared)
     end
 
     @testset ":mork at Shared accepts an explicit prefix, bypassing name derivation" begin
-        s = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("explicit_region/"))
+        s = MC.make_space(:mork; mode=MC.Shared, prefix=Vector{UInt8}("explicit_region/"))
         @test s.prefix == Vector{UInt8}("explicit_region/")
         @test s.inner === MC.get_node_shared()
     end
@@ -247,7 +259,11 @@ const SM = MeTTaCore.StandardMeTTa
         # isolation — the worst available outcome, so the refusal must be loud and name what IS
         # supported.
         @test MC.Shared ∉ MC.space_modes(:vector)
-        err = try MC.make_space(:vector; mode = MC.Shared); catch e; e; end
+        err = try
+            MC.make_space(:vector; mode=MC.Shared)
+        catch e
+            e
+        end
         @test err isa ArgumentError
         @test occursin("Private", err.msg)
         # CopyOnWrite is in the enum and implemented by NOTHING — reserved, not offered.
@@ -277,7 +293,7 @@ const SM = MeTTaCore.StandardMeTTa
         # fresh region — while removing the dependence on global freshness. `mktempdir` already gives
         # us a unique name, so we reuse it rather than inventing a counter that would itself be state.
         pfx = Vector{UInt8}("persist_probe_" * basename(dir) * "/")
-        s = MC.make_space(:mork; mode = MC.Shared, prefix = pfx)
+        s = MC.make_space(:mork; mode=MC.Shared, prefix=pfx)
         # An EMPTY region returns false — the guard is `n_atoms == 0`, not "root prefix".
         @test MC.snapshot_space_to_act!(s, "empty_probe") === false
         MC.core_add!(s, [:durable, 1])
@@ -300,7 +316,9 @@ const SM = MeTTaCore.StandardMeTTa
         # shipped as kinds, which is the first generation of `:neural_shared_readonly`. Mechanical, so
         # it fires on whoever adds the next kind rather than on a reviewer who happens to notice
         # (`[[feedback_enforcement_works_prose_memory_does_not]]`).
-        banned = ("shared", "private", "readonly", "read_only", "cow", "copyonwrite", "fork")
+        banned = (
+            "shared", "private", "readonly", "read_only", "cow", "copyonwrite", "fork"
+        )
         for k in MC.space_kinds()
             s = lowercase(string(k))
             for b in banned
@@ -316,7 +334,7 @@ const SM = MeTTaCore.StandardMeTTa
         nm = Symbol("&resolve_probe")
         MC.unregister_prefix!(nm)
         @test MC._resolve_space(nm) === nothing        # unregistered resolves to nothing, never mints
-        g = MC.make_space(:mork; mode = MC.Shared, name = nm)
+        g = MC.make_space(:mork; mode=MC.Shared, name=nm)
         MC.core_add!(g, [:score, 10])
         # BY NAME — this is what `register_prefix!` existed for and had no caller of.
         @test [:score, 10] ∈ MC.core_atoms(MC._resolve_space(nm))
@@ -338,18 +356,30 @@ const SM = MeTTaCore.StandardMeTTa
         # ✅ MEASURED: name-derived regions CANNOT nest. The `:/` suffix makes `&app` -> "app:/" and
         # `&app/games` -> "app/games:/" diverge at `:` vs `/`, so they are SHARING, not PREFIX_OF. The
         # suffix its docstring calls "human-debuggable" is doing load-bearing structural work.
-        @test MC.prefix_compare(Vector{UInt8}("app:/"), Vector{UInt8}("app/games:/"))[1] === MC.PREFIX_SHARING
+        @test MC.prefix_compare(Vector{UInt8}("app:/"), Vector{UInt8}("app/games:/"))[1] ===
+            MC.PREFIX_SHARING
         # ...so the policy only governs HAND-PASSED prefixes, which genuinely can nest.
-        @test MC.prefix_compare(Vector{UInt8}("app/"), Vector{UInt8}("app/games/"))[1] === MC.PREFIX_OF
+        @test MC.prefix_compare(Vector{UInt8}("app/"), Vector{UInt8}("app/games/"))[1] ===
+            MC.PREFIX_OF
         MC.register_prefix!(:policy_parent, Vector{UInt8}("polp/"))
         try
-            err = try MC.check_prefix_free(:policy_child, Vector{UInt8}("polp/kid/")); nothing catch e; e end
+            err = try
+                MC.check_prefix_free(:policy_child, Vector{UInt8}("polp/kid/"))
+                nothing
+            catch e
+                e
+            end
             @test err isa ArgumentError
             @test occursin("NESTS", err.msg)
             # a genuine sibling must still be accepted — that IS Figure 4
             @test MC.check_prefix_free(:policy_sib, Vector{UInt8}("pols/")) === nothing
             # and one region may not have two names
-            err2 = try MC.check_prefix_free(:policy_alias, Vector{UInt8}("polp/")); nothing catch e; e end
+            err2 = try
+                MC.check_prefix_free(:policy_alias, Vector{UInt8}("polp/"))
+                nothing
+            catch e
+                e
+            end
             @test err2 isa ArgumentError
         finally
             MC.unregister_prefix!(:policy_parent)
@@ -360,12 +390,15 @@ const SM = MeTTaCore.StandardMeTTa
         # This pins the measurement that decided step 3 is a VIEW object rather than a REGION object.
         # `space_query_multi_at` takes ONE prefix for the WHOLE pattern, so a conjunction split across
         # two regions cannot be satisfied from either. Measured 2026-08-14.
-        mk(pfx) = MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}(pfx))
+        mk(pfx) = MC.make_space(:mork; mode=MC.Shared, prefix=Vector{UInt8}(pfx))
         pat = MC.sexpr_to_expr("(, (likes \$who \$food) (healthy \$food))")
-        nhits(sp, pre) = (n = Ref(0);
-            MC.space_query_multi_at(sp.inner.btm, pre, pat, UInt8(0), (_b, _l) -> (n[] += 1; true)); n[])
+        nhits(sp, pre) = (n=Ref(0);
+            MC.space_query_multi_at(
+                sp.inner.btm, pre, pat, UInt8(0), (_b, _l) -> (n[] += 1; true)
+            ); n[])
 
-        a = mk("xr_a/"); b = mk("xr_b/")
+        a = mk("xr_a/")
+        b = mk("xr_b/")
         MC.core_add!(a, [:likes, :alice, :pizza])
         MC.core_add!(b, [:healthy, :pizza])
         @test nhits(a, a.prefix) == 0
@@ -374,15 +407,18 @@ const SM = MeTTaCore.StandardMeTTa
         # CONTROL — load-bearing. Both conjuncts in ONE region must match, otherwise the zeros above
         # would only show the pattern was malformed.
         c = mk("xr_c/")
-        MC.core_add!(c, [:likes, :alice, :pizza]); MC.core_add!(c, [:healthy, :pizza])
+        MC.core_add!(c, [:likes, :alice, :pizza])
+        MC.core_add!(c, [:healthy, :pizza])
         @test nhits(c, c.prefix) >= 1
 
         # 🔴 AND WIDENING DOES NOT UNION. Querying at ROOT — which spans both regions — finds nothing,
         # because region bytes are part of the stored PATH, not a filter over it. Even a SINGLE
         # conjunct fails at root:
         single = MC.sexpr_to_expr("(, (likes \$w \$f))")
-        n1(pre) = (n = Ref(0);
-            MC.space_query_multi_at(a.inner.btm, pre, single, UInt8(0), (_b, _l) -> (n[] += 1; true)); n[])
+        n1(pre) = (n=Ref(0);
+            MC.space_query_multi_at(
+                a.inner.btm, pre, single, UInt8(0), (_b, _l) -> (n[] += 1; true)
+            ); n[])
         @test n1(a.prefix) == 1
         @test n1(UInt8[]) == 0
         # ...and the reason, confirmed by the decoder itself: a region prefix's first byte lands in
@@ -407,7 +443,8 @@ const SM = MeTTaCore.StandardMeTTa
         @test g["space-ref"]([nm]) == "(SpaceRef $nm)"
         # the handle RESOLVES to live storage, which is what region-count exists to prove
         cs = MC._resolve_space(Symbol(nm))
-        MC.core_add!(cs, [:fact, 1]); MC.core_add!(cs, [:fact, 2])
+        MC.core_add!(cs, [:fact, 1])
+        MC.core_add!(cs, [:fact, 2])
         @test g["region-count"](["(SpaceRef $nm)"]) == "2"
         # a name with no `&` has no derivable prefix — refuse rather than invent a region
         @test occursin("must begin with &", g["new-region!"](["nodollar"]))

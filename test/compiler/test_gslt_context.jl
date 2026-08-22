@@ -32,7 +32,8 @@ const _CV = MeTTaCore.Eval
 
 function _ct(src::AbstractString)
     sp = _CV.Space()
-    toks = _CV.tokenize(src); i = Ref(1)
+    toks = _CV.tokenize(src)
+    i = Ref(1)
     _CV.parse_from(toks, i, sp.tokens)
 end
 _clang(src::AbstractString) = _CA.parse_presentation(_ct(src))
@@ -61,8 +62,10 @@ const _UNWRAP = _clang(
     @testset "OUTERMOST first, then LEFTMOST — the order `oneStep_sound` is proved against" begin
         # OUTERMOST: the root redex wins over the one nested inside it. `(f (f a))` could step to
         # `(f a)` (root) or to `(f a)` (inner) — indistinguishable, so use a rule that keeps a marker.
-        p = _clang("(language O (types T) (terms (: f (-> T T)) (: h (-> T T))) " *
-                   "(rewrites (rewrite R () (~> (f \$X) (h \$X)))))")
+        p = _clang(
+            "(language O (types T) (terms (: f (-> T T)) (: h (-> T T))) " *
+            "(rewrites (rewrite R () (~> (f \$X) (h \$X)))))"
+        )
         @test _CC.one_step(p, _ct("(f (f a))")) == _ct("(h (f a))")     # ROOT stepped, not the inner
 
         # LEFTMOST: with two sibling redexes, the first argument goes first.
@@ -84,15 +87,17 @@ const _UNWRAP = _clang(
         @test _CC.one_step(_UNWRAP, _ct("(Subst (f a) r x)")) == _ct("(Subst a r x)")
         @test _CC.one_step(_UNWRAP, _ct("(Subst b (f a) x)")) == _ct("(Subst b a x)")
         # body BEFORE replacement, as upstream orders it
-        @test _CC.one_step(_UNWRAP, _ct("(Subst (f a) (f b) x)")) == _ct("(Subst a (f b) x)")
+        @test _CC.one_step(_UNWRAP, _ct("(Subst (f a) (f b) x)")) ==
+            _ct("(Subst a (f b) x)")
         # the substituted variable is not a position — `(f a)` there would be a malformed Subst, so
         # the case that matters is that a matching NAME in slot 4 is left alone
         @test _CC.one_step(_UNWRAP, _ct("(Subst p q f)")) === nothing
     end
 
     @testset "has_redex AGREES with one_step — upstream's `oneStep_isSome_eq_hasRedex`" begin
-        for src in ("(g (f a) b)", "(f a)", "(g a b)", "a", "((f a) b)", "(Subst (f a) r x)",
-                    "(Subst p q x)", "()", "(g (g (f a) b) c)")
+        for src in
+            ("(g (f a) b)", "(f a)", "(g a b)", "a", "((f a) b)", "(Subst (f a) r x)",
+            "(Subst p q x)", "()", "(g (g (f a) b) c)")
             t = _ct(src)
             @test _CC.has_redex(_UNWRAP, t) == (_CC.one_step(_UNWRAP, t) !== nothing)
             @test _CC.is_normal(_UNWRAP, t) == !_CC.has_redex(_UNWRAP, t)
@@ -105,17 +110,20 @@ const _UNWRAP = _clang(
         @test left > 0                       # STOPPED BECAUSE NORMAL
 
         # Exactly three steps were available, so a budget of 3 suffices and 2 does not.
-        @test _CC.normalize(_UNWRAP, _ct("(g (f (f a)) (f b))"); fuel = 3) == (_ct("(g a b)"), 0)
-        t2, left2 = _CC.normalize(_UNWRAP, _ct("(g (f (f a)) (f b))"); fuel = 2)
+        @test _CC.normalize(_UNWRAP, _ct("(g (f (f a)) (f b))"); fuel=3) ==
+            (_ct("(g a b)"), 0)
+        t2, left2 = _CC.normalize(_UNWRAP, _ct("(g (f (f a)) (f b))"); fuel=2)
         @test left2 == 0
         @test t2 != _ct("(g a b)")           # STOPPED BECAUSE OUT OF FUEL — and it is visible
 
         # A NON-TERMINATING presentation must return, not hang. `(f $X) ~> (f (f $X))` grows forever.
-        loop = _clang("(language Loop (types T) (terms (: f (-> T T))) " *
-                      "(rewrites (rewrite R () (~> (f \$X) (f (f \$X))))))")
-        _, lf = _CC.normalize(loop, _ct("(f a)"); fuel = 8)
+        loop = _clang(
+            "(language Loop (types T) (terms (: f (-> T T))) " *
+            "(rewrites (rewrite R () (~> (f \$X) (f (f \$X))))))"
+        )
+        _, lf = _CC.normalize(loop, _ct("(f a)"); fuel=8)
         @test lf == 0
-        @test_throws ArgumentError _CC.normalize(_UNWRAP, _ct("(f a)"); fuel = -1)
+        @test_throws ArgumentError _CC.normalize(_UNWRAP, _ct("(f a)"); fuel=-1)
     end
 
     # ── Relation.jl — THE ADDITION. Everything below is beyond what upstream executes. ─────────────
@@ -123,17 +131,19 @@ const _UNWRAP = _clang(
     @testset "reducts — a PREMISED rule fires, which `base_reducts` cannot do" begin
         # Beta plus a congruence rule: `AppCong` may only fire when its premise `$M0 ~> $M1` holds,
         # i.e. when the function position itself reduces.
-        p = _clang("""
-        (language Cong
-          (types T)
-          (terms (: Lam (-> (bind x T) (scope x T) T)) (: App (-> T T T)))
-          (equations)
-          (rewrites
-            (rewrite Beta    ()             (~> (App (Lam \$x \$body) \$arg) (Subst \$body \$arg \$x)))
-            (rewrite AppCong ((~> \$M0 \$M1)) (~> (App \$M0 \$N) (App \$M1 \$N)))))
-        """)
-        redex   = _ct("(App (Lam \$v \$v) c)")            # ⇝ c by Beta
-        nested  = _ct("(App (App (Lam \$v \$v) c) d)")    # AppCong's premise is the Beta step above
+        p = _clang(
+            """
+ (language Cong
+   (types T)
+   (terms (: Lam (-> (bind x T) (scope x T) T)) (: App (-> T T T)))
+   (equations)
+   (rewrites
+     (rewrite Beta    ()             (~> (App (Lam \$x \$body) \$arg) (Subst \$body \$arg \$x)))
+     (rewrite AppCong ((~> \$M0 \$M1)) (~> (App \$M0 \$N) (App \$M1 \$N)))))
+ """
+        )
+        redex = _ct("(App (Lam \$v \$v) c)")            # ⇝ c by Beta
+        nested = _ct("(App (App (Lam \$v \$v) c) d)")    # AppCong's premise is the Beta step above
 
         @test isempty(_CR.base_reducts(p, nested))         # the OLD behaviour, still true
         @test _CL.reducts(p, nested) == [_ct("(App c d)")] # the NEW one: the premise discharged
@@ -177,21 +187,23 @@ const _UNWRAP = _clang(
         # A congruence rule whose premise is discharged by the SAME rule one level in. Premise
         # discharge is structurally decreasing — the source is always a bound SUBTERM — so the only
         # way to exhaust the budget is a term nested deeper than it, which is exactly this.
-        deep = _clang("(language Deep (types T) (terms (: c (-> T T))) " *
-                      "(rewrites (rewrite C ((~> \$S \$T2)) (~> (c \$S) (c \$T2)))))")
+        deep = _clang(
+            "(language Deep (types T) (terms (: c (-> T T))) " *
+            "(rewrites (rewrite C ((~> \$S \$T2)) (~> (c \$S) (c \$T2)))))"
+        )
         nest(n) = "(c "^n * "x" * ")"^n
-        @test isempty(_CL.reducts(deep, _ct(nest(8)); depth = 3))
+        @test isempty(_CL.reducts(deep, _ct(nest(8)); depth=3))
         @test _CL.reducts_exhausted()                      # ← the distinction that must survive
 
         # Shallow enough to finish: no rule applies at the bottom, and the flag stays DOWN.
-        @test isempty(_CL.reducts(deep, _ct(nest(2)); depth = 16))
+        @test isempty(_CL.reducts(deep, _ct(nest(2)); depth=16))
         @test !_CL.reducts_exhausted()
 
         # Contrast: genuinely no applicable rule, at full depth. Same empty list, different flag.
         @test isempty(_CL.reducts(_UNWRAP, _ct("(g a b)")))
         @test !_CL.reducts_exhausted()
 
-        @test_throws ArgumentError _CL.reducts(_UNWRAP, _ct("(f a)"); depth = 0)
+        @test_throws ArgumentError _CL.reducts(_UNWRAP, _ct("(f a)"); depth=0)
     end
 
     @testset "cond_step / cond_normalize — the SAME traversal, premises enabled" begin

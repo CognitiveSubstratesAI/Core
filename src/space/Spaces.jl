@@ -109,17 +109,17 @@ writers owes this declaration, and that "single-writer, no rollback" is an hones
 would put the same axis in two places — which is precisely how `:mork_shared` became a kind.
 """
 struct SpaceCaps
-    add         :: Bool      # insert an atom
-    remove      :: Bool      # delete an atom
-    atoms       :: Bool      # materialize the whole store (hyperon: OPT-IN, never assumed)
-    match       :: Bool      # pattern query at all
-    bindings    :: Bool      # ...and does that query CAPTURE variables, or only filter?
-    evaluate    :: Bool      # can MeTTa reduction run against it? (this is compile-arrow 6)
-    conjunction :: Bool      # native n-way join AT THIS API — 4 of 4 upstreams put it in the space
-    persist     :: Bool      # durable snapshot / reload
-    partition   :: Bool      # split into independent iterators (JeTTa's `chunks`)
-    atomicity   :: String    # declared concurrency/rollback model
-    note        :: String    # the one thing a caller most needs to know
+    add::Bool      # insert an atom
+    remove::Bool      # delete an atom
+    atoms::Bool      # materialize the whole store (hyperon: OPT-IN, never assumed)
+    match::Bool      # pattern query at all
+    bindings::Bool      # ...and does that query CAPTURE variables, or only filter?
+    evaluate::Bool      # can MeTTa reduction run against it? (this is compile-arrow 6)
+    conjunction::Bool      # native n-way join AT THIS API — 4 of 4 upstreams put it in the space
+    persist::Bool      # durable snapshot / reload
+    partition::Bool      # split into independent iterators (JeTTa's `chunks`)
+    atomicity::String    # declared concurrency/rollback model
+    note::String    # the one thing a caller most needs to know
 end
 
 """
@@ -132,13 +132,13 @@ and none is positional by accident. `result_type` is recorded because kinds deli
 type yet; a caller that must branch can branch on this rather than on the kind name.
 """
 struct SpaceKind
-    name        :: Symbol
-    provider    :: String              # kinds are open, so every entry says who owns it
-    result_type :: Type
-    modes       :: Vector{AccessMode}  # access modes this kind can actually be built at
-    integration :: IntegrationMode     # ⚠️ per-kind today, per-REGION in the architecture — see header
-    ctor        :: Function
-    caps        :: SpaceCaps
+    name::Symbol
+    provider::String              # kinds are open, so every entry says who owns it
+    result_type::Type
+    modes::Vector{AccessMode}  # access modes this kind can actually be built at
+    integration::IntegrationMode     # ⚠️ per-kind today, per-REGION in the architecture — see header
+    ctor::Function
+    caps::SpaceCaps
 end
 
 const SPACE_KINDS = Dict{Symbol, SpaceKind}()
@@ -156,12 +156,17 @@ would otherwise fail much later at the `make_space` call with a confusing messag
 function register_space_kind!(k::SpaceKind)
     prev = get(SPACE_KINDS, k.name, nothing)
     if prev !== nothing && prev.provider != k.provider
-        throw(ArgumentError(
-            "space kind :$(k.name) is already registered by $(prev.provider); " *
-            "$(k.provider) must choose another name"))
+        throw(
+            ArgumentError(
+                "space kind :$(k.name) is already registered by $(prev.provider); " *
+                "$(k.provider) must choose another name")
+        )
     end
-    isempty(k.modes) && throw(ArgumentError(
-        "space kind :$(k.name) declares no access modes — nothing could ever be constructed from it"))
+    isempty(k.modes) && throw(
+        ArgumentError(
+            "space kind :$(k.name) declares no access modes — nothing could ever be constructed from it"
+        )
+    )
     SPACE_KINDS[k.name] = k
 end
 
@@ -181,10 +186,12 @@ unloaded provider package, and seeing the list diagnoses both.
 """
 function space_kind(name::Symbol)
     k = get(SPACE_KINDS, name, nothing)
-    k === nothing && throw(ArgumentError(
-        "unknown space kind :$name — registered: $(join(string.(space_kinds()), ", ")). " *
-        "Kinds are registered by their providing package, so a missing one usually means that " *
-        "package is not loaded."))
+    k === nothing && throw(
+        ArgumentError(
+            "unknown space kind :$name — registered: $(join(string.(space_kinds()), ", ")). " *
+            "Kinds are registered by their providing package, so a missing one usually means that " *
+            "package is not loaded.")
+    )
     k
 end
 
@@ -218,12 +225,14 @@ An unsupported mode throws and names the modes that ARE supported, rather than s
 `Private` — a caller who asked for `Shared` and received an isolated space would get no error and wrong
 isolation, which is the worst available outcome.
 """
-function make_space(name::Symbol; mode::AccessMode = Private, kwargs...)
+function make_space(name::Symbol; mode::AccessMode=Private, kwargs...)
     k = space_kind(name)
-    mode in k.modes || throw(ArgumentError(
-        "space kind :$name does not support access mode $mode — supported: " *
-        "$(join(string.(k.modes), ", "))"))
-    k.ctor(; mode = mode, kwargs...)
+    mode in k.modes || throw(
+        ArgumentError(
+            "space kind :$name does not support access mode $mode — supported: " *
+            "$(join(string.(k.modes), ", "))")
+    )
+    k.ctor(; mode=mode, kwargs...)
 end
 
 """
@@ -235,20 +244,26 @@ modes and integration binding.
 This is the deliberate deliverable half of the registry. §2.2.1 promises "MeTTa code is substantially
 Space-independent"; this table measures how far that is true HERE, and is meant to read as a gap list.
 """
-function space_ledger(io::IO = stdout)
+function space_ledger(io::IO=stdout)
     ks = space_kinds()
     isempty(ks) && (println(io, "(no space kinds registered)"); return nothing)
     cols = ["add", "rm", "atoms", "match", "bind", "eval", "conj", "persist", "chunks"]
     getters = (c -> c.add, c -> c.remove, c -> c.atoms, c -> c.match, c -> c.bindings,
-               c -> c.evaluate, c -> c.conjunction, c -> c.persist, c -> c.partition)
+        c -> c.evaluate, c -> c.conjunction, c -> c.persist, c -> c.partition)
     w = maximum(length.(string.(ks)))
     println(io, rpad("kind", w), " │ ", join(cols, " "), " │ integration │ access modes")
-    println(io, "─"^w, "─┼─", "─"^(sum(length.(cols)) + length(cols) - 1), "─┼─────────────┼─────────────")
+    println(
+        io,
+        "─"^w,
+        "─┼─",
+        "─"^(sum(length.(cols)) + length(cols) - 1),
+        "─┼─────────────┼─────────────"
+    )
     for n in ks
         k = SPACE_KINDS[n]
         cells = [rpad(g(k.caps) ? "✔" : "·", length(c)) for (g, c) in zip(getters, cols)]
         println(io, rpad(string(n), w), " │ ", join(cells, " "), " │ ",
-                rpad(string(k.integration), 11), " │ ", join(string.(k.modes), ", "))
+            rpad(string(k.integration), 11), " │ ", join(string.(k.modes), ", "))
     end
     println(io)
     for n in ks
@@ -271,8 +286,8 @@ const _CAPS_VECTOR = SpaceCaps(
     #= bindings =# true,       # Eval.query returns Vector{Bindings} — this is the store that BINDS
     #= evaluate =# true,       # the live interpreter's store; the ONLY evaluable kind today
     #= conjunction =# false,   # `(, p1 p2 …)` is threaded in MATCH, not handed to the store. 4 of 4
-                               # upstreams put conjunction IN the space; the July verdict called this
-                               # "a faithfulness bug, not just a missing optimization".
+    # upstreams put conjunction IN the space; the July verdict called this
+    # "a faithfulness bug, not just a missing optimization".
     #= persist =# false, #= partition =# false,
     "single-writer, no rollback, no isolation — plain mutation of a Julia struct; no `with_mutex` or " *
     "`transaction` counterpart exists at any level (survey §8.4)",
@@ -300,49 +315,49 @@ const _CAPS_VECTOR = SpaceCaps(
 const _CAPS_MORK = SpaceCaps(
     #= add =# true, #= remove =# true, #= atoms =# true, #= match =# true,
     #= bindings =# true,       # ⇠ FLIPPED (space design §2). `core_match_bind` routes to
-                               # `space_query_multi_at`'s indexed descent and returns
-                               # Dict{Symbol,SExprConvertible} per match. `core_match` still FILTERS —
-                               # both exist; the KIND can now bind, which is what this column declares.
+    # `space_query_multi_at`'s indexed descent and returns
+    # Dict{Symbol,SExprConvertible} per match. `core_match` still FILTERS —
+    # both exist; the KIND can now bind, which is what this column declares.
     #= evaluate =# false,
     #= conjunction =# false,   # ⚠️ THE FLAG IS CORRECT; the REASON committed in 5a9b97a was WRONG and
-                               # is replaced here. That comment said "MORK offers no join to expose …
-                               # there is nothing public to call … the join is not offered to anyone."
-                               # Every clause of that is false, and the error is the one the VISIBILITY
-                               # PROTOCOL names: I read `TrieJoin.jl`'s exports (`trie_argset,
-                               # trie_join_unary` — unary, binary path private), found no BINARY entry
-                               # there, and concluded a capability-wide absence. The n-way join does not
-                               # live in TrieJoin. It ships as `space_query_multi` in
-                               # `MORK/src/kernel/Space.jl:625` — public, N-factor ("remaining children
-                               # are the sources"), re-exported from `MeTTaCore.jl:34`, and CALLED by
-                               # `PatternMiner.jl:40`. `MORK/test/integration/trie_join.jl:68-90` pins a
-                               # binary key-rotation join AND an n-ary chain join against hand-computed
-                               # truth: `(, (edge $x $y) (edge $y $z))` over 5 edges yields exactly 3.
-                               # A ported, tested, publicly-callable join is not an absent one.
-                               #
-                               # 🔑 SO WHAT IS ACTUALLY FALSE HERE — read the column's contract: "native
-                               # n-way join AT THIS API". Core's binding entry point `core_match_bind`
-                               # (`CoreSpace.jl:843`) takes ONE `pattern` and wraps it `(, P)` — a
-                               # single factor. The store can join N; the Core signature only ever hands
-                               # it 1. That is the whole gap.
-                               # ⇒ Exposing conjunction is a CORE-SIDE SIGNATURE CHANGE — accept a
-                               # Vector of patterns and wrap `(, p1 p2 …)`, which `space_query_multi_at`
-                               # already consumes. It is NOT blocked on upstream, and it is NOT a new
-                               # join to build over PathMap. The primitive is ported and under test.
-                               #
-                               # ⚠️ AND THE CORROBORATION I CITED FLATTERED THE WRONG ANSWER. PeTTa's
-                               # `dev-zone/mork_ffi` really does expose seven string commands with no
-                               # join, and CeTTa really did build its own `BridgeProductCursor` over
-                               # PathMap snapshots. Both facts are true; neither is evidence about what
-                               # OUR port exposes, and citing them made a conclusion drawn from the
-                               # wrong file look independently confirmed. Opening
-                               # `MORK/src/kernel/Space.jl` refuted it in one read.
+    # is replaced here. That comment said "MORK offers no join to expose …
+    # there is nothing public to call … the join is not offered to anyone."
+    # Every clause of that is false, and the error is the one the VISIBILITY
+    # PROTOCOL names: I read `TrieJoin.jl`'s exports (`trie_argset,
+    # trie_join_unary` — unary, binary path private), found no BINARY entry
+    # there, and concluded a capability-wide absence. The n-way join does not
+    # live in TrieJoin. It ships as `space_query_multi` in
+    # `MORK/src/kernel/Space.jl:625` — public, N-factor ("remaining children
+    # are the sources"), re-exported from `MeTTaCore.jl:34`, and CALLED by
+    # `PatternMiner.jl:40`. `MORK/test/integration/trie_join.jl:68-90` pins a
+    # binary key-rotation join AND an n-ary chain join against hand-computed
+    # truth: `(, (edge $x $y) (edge $y $z))` over 5 edges yields exactly 3.
+    # A ported, tested, publicly-callable join is not an absent one.
+    #
+    # 🔑 SO WHAT IS ACTUALLY FALSE HERE — read the column's contract: "native
+    # n-way join AT THIS API". Core's binding entry point `core_match_bind`
+    # (`CoreSpace.jl:843`) takes ONE `pattern` and wraps it `(, P)` — a
+    # single factor. The store can join N; the Core signature only ever hands
+    # it 1. That is the whole gap.
+    # ⇒ Exposing conjunction is a CORE-SIDE SIGNATURE CHANGE — accept a
+    # Vector of patterns and wrap `(, p1 p2 …)`, which `space_query_multi_at`
+    # already consumes. It is NOT blocked on upstream, and it is NOT a new
+    # join to build over PathMap. The primitive is ported and under test.
+    #
+    # ⚠️ AND THE CORROBORATION I CITED FLATTERED THE WRONG ANSWER. PeTTa's
+    # `dev-zone/mork_ffi` really does expose seven string commands with no
+    # join, and CeTTa really did build its own `BridgeProductCursor` over
+    # PathMap snapshots. Both facts are true; neither is evidence about what
+    # OUR port exposes, and citing them made a conclusion drawn from the
+    # wrong file look independently confirmed. Opening
+    # `MORK/src/kernel/Space.jl` refuted it in one read.
     #= persist =# true,        # snapshot_space_to_act! / load_act_source. Returns false for an EMPTY
-                               # region (n_atoms == 0), NOT for a root prefix — a root snapshot works
-                               # and is merely slower, as CoreSpaceActIO's own comment says.
+    # region (n_atoms == 0), NOT for a root prefix — a root snapshot works
+    # and is merely slower, as CoreSpaceActIO's own comment says.
     #= partition =# false,     # ⚠️ the PRIMITIVE exists — MORKTensorNetworks' ShardZipper
-                               # `partition_trie(space, l_max)` IS JeTTa's `chunks`, over this same
-                               # trie — but MORKTN is not a Core dependency and nothing exposes it on a
-                               # Space. Declared false because it is not reachable HERE, not absent.
+    # `partition_trie(space, l_max)` IS JeTTa's `chunks`, over this same
+    # trie — but MORKTN is not a Core dependency and nothing exposes it on a
+    # Space. Declared false because it is not reachable HERE, not absent.
     "declared single-writer. Core adds no concurrency coordination of its own — the read/write permits " *
     "on CoreSpace are pass-throughs (CORE-INT-1, audit 2026-06-05), because upstream keeps status_map.rs " *
     "in the mork-server crate, not the kernel. A concurrent embedding needs an external coarse lock. " *
@@ -358,15 +373,21 @@ const _CAPS_MORK = SpaceCaps(
 # `parent` turns this into what used to be the `:fork` kind: a snapshot-isolated copy. It is the same
 # ACCESS MODE (Private) over the same KIND, seeded differently — which is why it is a keyword and not a
 # kind of its own.
-function _make_vector_space(; mode::AccessMode, atoms = nothing, parent = nothing)
+function _make_vector_space(; mode::AccessMode, atoms=nothing, parent=nothing)
     if parent !== nothing
-        parent isa Eval.Space || throw(ArgumentError(
-            "make_space(:vector; parent = …) needs an interpreter Eval.Space; got $(typeof(parent)). " *
-            "A CoreSpace has no snapshot-fork operation — its isolation comes from disjoint prefixes " *
-            "instead, so use make_space(:mork; mode = Shared, name = …) for an independent region."))
-        atoms === nothing || throw(ArgumentError(
-            "make_space(:vector) takes `parent` OR `atoms`, not both — a fork is seeded from its " *
-            "parent's snapshot, so supplying atoms as well would silently discard one of them"))
+        parent isa Eval.Space || throw(
+            ArgumentError(
+                "make_space(:vector; parent = …) needs an interpreter Eval.Space; got $(typeof(parent)). " *
+                "A CoreSpace has no snapshot-fork operation — its isolation comes from disjoint prefixes " *
+                "instead, so use make_space(:mork; mode = Shared, name = …) for an independent region."
+            )
+        )
+        atoms === nothing || throw(
+            ArgumentError(
+                "make_space(:vector) takes `parent` OR `atoms`, not both — a fork is seeded from its " *
+                "parent's snapshot, so supplying atoms as well would silently discard one of them"
+            )
+        )
         return Eval.clone_store(parent)
     end
     atoms === nothing ? Eval.Space() : Eval.Space(atoms)
@@ -379,36 +400,49 @@ end
 # across all 9 live repos and survives only in the legacy ~/PRIMUS tree. The prefix REGISTRY is what
 # makes a shared space addressable BY NAME rather than by hand-built bytes, which is the difference
 # between Figure 4's model and a few tests that happen to pass byte strings.
-function _make_mork_space(; mode::AccessMode, name = nothing, prefix = nothing)
+function _make_mork_space(; mode::AccessMode, name=nothing, prefix=nothing)
     if mode === Private
-        (name === nothing && prefix === nothing) || throw(ArgumentError(
-            "make_space(:mork) at Private takes no `name`/`prefix` — a private MORK space owns its " *
-            "whole trie at the root prefix. Pass `mode = Shared` to place it in the node-shared trie."))
+        (name === nothing && prefix === nothing) || throw(
+            ArgumentError(
+                "make_space(:mork) at Private takes no `name`/`prefix` — a private MORK space owns its " *
+                "whole trie at the root prefix. Pass `mode = Shared` to place it in the node-shared trie."
+            )
+        )
         return new_core_space()
     end
     # mode === Shared
     if prefix === nothing
-        name === nothing && throw(ArgumentError(
-            "make_space(:mork; mode = Shared) needs either `name` (a MeTTa space name such as " *
-            "Symbol(\"&app/games\")) or an explicit `prefix::Vector{UInt8}`"))
+        name === nothing && throw(
+            ArgumentError(
+                "make_space(:mork; mode = Shared) needs either `name` (a MeTTa space name such as " *
+                "Symbol(\"&app/games\")) or an explicit `prefix::Vector{UInt8}`")
+        )
         nm = name isa Symbol ? name : Symbol(name)
         prefix = derive_prefix_from_name(nm)
-        prefix === nothing && throw(ArgumentError(
-            "shared-space name must begin with `&` so a trie prefix can be derived from it " *
-            "(`:&common` → \"common:/\"); got :$nm. Names without `&` bind as ordinary atoms, " *
-            "not as space references."))
+        prefix === nothing && throw(
+            ArgumentError(
+                "shared-space name must begin with `&` so a trie prefix can be derived from it " *
+                "(`:&common` → \"common:/\"); got :$nm. Names without `&` bind as ordinary atoms, " *
+                "not as space references.")
+        )
         check_prefix_free(nm, prefix)    # CONTAINMENT_POLICY — reject a NESTING sibling loudly,
-                                        # before it silently widens someone's later query
+        # before it silently widens someone's later query
         register_prefix!(nm, prefix)     # addressable by name, not only by these bytes
     end
-    new_core_space(get_node_shared(), prefix isa Vector{UInt8} ? prefix : Vector{UInt8}(prefix))
+    new_core_space(
+        get_node_shared(), prefix isa Vector{UInt8} ? prefix : Vector{UInt8}(prefix)
+    )
 end
 
 function _register_core_space_kinds!()
-    register_space_kind!(SpaceKind(:vector, "MeTTaCore", Eval.Space,
-                                   [Private], Native, _make_vector_space, _CAPS_VECTOR))
-    register_space_kind!(SpaceKind(:mork, "MeTTaCore", CoreSpace,
-                                   [Private, Shared], Native, _make_mork_space, _CAPS_MORK))
+    register_space_kind!(
+        SpaceKind(:vector, "MeTTaCore", Eval.Space,
+            [Private], Native, _make_vector_space, _CAPS_VECTOR)
+    )
+    register_space_kind!(
+        SpaceKind(:mork, "MeTTaCore", CoreSpace,
+            [Private, Shared], Native, _make_mork_space, _CAPS_MORK)
+    )
     nothing
 end
 

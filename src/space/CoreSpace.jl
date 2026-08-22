@@ -43,7 +43,8 @@ function _to_sexpr!(io::IO, x::SExprConvertible)::IO
     if x isa Symbol
         s = string(x)
         if startswith(s, "\$")
-            write(io, "__var_"); write(io, SubString(s, 2))
+            write(io, "__var_")
+            write(io, SubString(s, 2))
         else
             write(io, s)
         end
@@ -76,7 +77,7 @@ symbol `:hi`.
 `to_sexpr` itself preserves the legacy raw-S-expr passthrough semantics for
 String inputs (used by `core_add!`/`core_remove!`).
 """
-function to_sexpr_atom(x::SExprConvertible) :: String
+function to_sexpr_atom(x::SExprConvertible)::String
     x isa AbstractString && return "\"" * escape_string(String(x)) * "\""
     to_sexpr(x)
 end
@@ -85,7 +86,7 @@ end
 Convert a pattern to S-expression, keeping dollar-variables as MORK wildcards.
 Use for `core_match` queries — do NOT use for storage (variable names lost).
 """
-function to_sexpr_query(x::SExprConvertible) :: String
+function to_sexpr_query(x::SExprConvertible)::String
     if x isa Symbol
         s = string(x)
         # __var_x is the storage form of $x — convert back so MORK treats it as wildcard
@@ -93,9 +94,9 @@ function to_sexpr_query(x::SExprConvertible) :: String
         return s   # $x stays as-is — MORK parses it as a wildcard variable
     end
     x isa AbstractString && return String(x)   # passthrough — query patterns may contain raw S-expr fragments
-    x isa Bool           && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
-    x isa Number         && return string(x)
-    x isa Tuple          && return "($(join(to_sexpr_query.(x), " ")))"
+    x isa Bool && return x ? "True" : "False"   # must precede Number (Bool <: Integer)
+    x isa Number && return string(x)
+    x isa Tuple && return "($(join(to_sexpr_query.(x), " ")))"
     "($(join(to_sexpr_query.(x), " ")))"       # x::AbstractVector
 end
 
@@ -103,20 +104,22 @@ end
 # Returns `nothing` for an EMPTY string (line below) — so the honest type is a Union, not `Any`.
 # `Any` hid that: callers pushing into a `Vector{SExprConvertible}` accept `nothing` silently under
 # `Any` and a null atom enters the store. Typed, that same push is a MethodError at the boundary.
-from_sexpr(s::AbstractString) :: Union{SExprConvertible, Nothing} = from_sexpr(String(s))
-function from_sexpr(s::String) :: Union{SExprConvertible, Nothing}
+from_sexpr(s::AbstractString)::Union{SExprConvertible, Nothing} = from_sexpr(String(s))
+function from_sexpr(s::String)::Union{SExprConvertible, Nothing}
     s = strip(s)
     isempty(s) && return nothing
-    s == "True"  && return true
+    s == "True" && return true
     s == "False" && return false
 
     # String literal — preserves type tag from to_sexpr round-trip
     if startswith(s, "\"") && endswith(s, "\"") && length(s) >= 2
-        return unescape_string(s[2:end-1])
+        return unescape_string(s[2:(end - 1)])
     end
 
-    n = tryparse(Int, s);     n !== nothing && return n
-    n = tryparse(Float64, s); n !== nothing && return n
+    n = tryparse(Int, s)
+    n !== nothing && return n
+    n = tryparse(Float64, s)
+    n !== nothing && return n
 
     # MORK variable encoding: __var_NAME → Symbol("$NAME")
     startswith(s, "__var_") && return Symbol("\$" * s[7:end])
@@ -124,7 +127,7 @@ function from_sexpr(s::String) :: Union{SExprConvertible, Nothing}
     startswith(s, "\$") && return Symbol(s)
 
     if startswith(s, "(") && endswith(s, ")")
-        inner  = s[2:end-1]
+        inner = s[2:(end - 1)]
         tokens = _tokenise(inner)
         isempty(tokens) && return SExprConvertible[]   # NOT `[]` — a bare literal is Vector{Any}
         # SExprConvertible, not Any: `_tokenise` never yields an empty token, so no element can be
@@ -138,8 +141,11 @@ end
 
 export _tokenise
 _tokenise(s::AbstractString) = _tokenise(String(s))
-function _tokenise(s::String) :: Vector{String}
-    tokens = String[]; depth = 0; start = 1; i = 1
+function _tokenise(s::String)::Vector{String}
+    tokens = String[]
+    depth = 0
+    start = 1
+    i = 1
     in_str = false
     while i <= length(s)
         c = s[i]
@@ -157,9 +163,12 @@ function _tokenise(s::String) :: Vector{String}
             depth += 1
         elseif c == ')'
             depth -= 1
-            if depth == 0; push!(tokens, strip(s[start:i])); start = i + 1; end
+            if depth == 0
+                push!(tokens, strip(s[start:i]))
+                start = i + 1
+            end
         elseif isspace(c) && depth == 0
-            tok = strip(s[start:i-1])
+            tok = strip(s[start:(i - 1)])
             !isempty(tok) && push!(tokens, tok)
             start = i + 1
         end
@@ -196,11 +205,11 @@ Fields:
 - `use_supercompiler`— route exec atoms through `MorkSupercompiler.plan!`.
 """
 mutable struct CoreSpace
-    inner            :: Space
-    prefix           :: Vector{UInt8}
-    rule_cache       :: Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}
-    named_spaces     :: Dict{Symbol, CoreSpace}
-    use_supercompiler :: Bool
+    inner::Space
+    prefix::Vector{UInt8}
+    rule_cache::Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}
+    named_spaces::Dict{Symbol, CoreSpace}
+    use_supercompiler::Bool
 end
 
 """
@@ -238,9 +247,9 @@ a concurrent embedding without an external coarse lock would reattach it there.
 """
 new_core_space(shared::Space, prefix::Vector{UInt8}) =
     CoreSpace(shared, copy(prefix),
-              Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}(),
-              Dict{Symbol, CoreSpace}(),
-              false)
+        Dict{Symbol, Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}}(),
+        Dict{Symbol, CoreSpace}(),
+        false)
 
 # ── Node-level prefix registry ────────────────────────────────────────────────
 # Stage 1: process-level Symbol → byte-prefix mapping, materializing named spaces
@@ -307,7 +316,7 @@ Return the process-level shared MORK.Space, lazy-initializing on first
 access.  Multi-node concerns (Stage 2) replace this with a per-node
 context bound to a specific physical machine.
 """
-function get_node_shared() :: Space
+function get_node_shared()::Space
     NODE_SHARED[] === nothing && (NODE_SHARED[] = new_space())
     NODE_SHARED[]
 end
@@ -329,7 +338,7 @@ The `:/` suffix is a human-debuggable separator that also guarantees
 remain disjoint because the trailing `/` of `"app:/"` differs from the
 `/games` continuation.
 """
-function derive_prefix_from_name(name::Symbol) :: Union{Vector{UInt8}, Nothing}
+function derive_prefix_from_name(name::Symbol)::Union{Vector{UInt8}, Nothing}
     s = string(name)
     startswith(s, "&") || return nothing
     Vector{UInt8}(s[2:end] * ":/")
@@ -396,16 +405,21 @@ function check_prefix_free(name::Symbol, prefix::Vector{UInt8})
         other === name && continue
         rel, _ = prefix_compare(prefix, op)
         if rel === PREFIX_EQUALS
-            throw(ArgumentError(
-                "region prefix $(String(copy(prefix))) is already registered as :$other — " *
-                "two names for one region would make `(SpaceRef …)` ambiguous"))
-        elseif CONTAINMENT_POLICY === :flat && (rel === PREFIX_OF || rel === PREFIX_PREFIXED_BY)
+            throw(
+                ArgumentError(
+                    "region prefix $(String(copy(prefix))) is already registered as :$other — " *
+                    "two names for one region would make `(SpaceRef …)` ambiguous")
+            )
+        elseif CONTAINMENT_POLICY === :flat &&
+            (rel === PREFIX_OF || rel === PREFIX_PREFIXED_BY)
             inner, outer = rel === PREFIX_OF ? (name, other) : (other, name)
-            throw(ArgumentError(
-                "region :$name ($(String(copy(prefix)))) NESTS with :$other ($(String(copy(op)))) — " *
-                "a query on :$outer would structurally include :$inner's atoms. CONTAINMENT_POLICY is " *
-                ":flat, so regions must be mutually disjoint; give them sibling names " *
-                "(`&app/games` + `&app/social`, not `&app` + `&app/games`)."))
+            throw(
+                ArgumentError(
+                    "region :$name ($(String(copy(prefix)))) NESTS with :$other ($(String(copy(op)))) — " *
+                    "a query on :$outer would structurally include :$inner's atoms. CONTAINMENT_POLICY is " *
+                    ":flat, so regions must be mutually disjoint; give them sibling names " *
+                    "(`&app/games` + `&app/social`, not `&app` + `&app/games`).")
+            )
         end
     end
     nothing
@@ -428,7 +442,7 @@ than silently minting a region. Creating one is `make_space(:mork; mode = Shared
 a different act and should look like one.
 """
 _resolve_space(cs::CoreSpace) = cs
-_resolve_space(::Nothing)     = nothing
+_resolve_space(::Nothing) = nothing
 function _resolve_space(name::Symbol)
     p = lookup_prefix(name)
     p === nothing && return nothing
@@ -461,8 +475,8 @@ For the canonical pattern `(bind! &name (new-space))`, `src` is empty and
 this is just an allocation.  For pre-populated sources, atoms migrate via
 `core_atoms` + `core_add!`.
 """
-function rebind_to_shared_prefix(src::CoreSpace, prefix::Vector{UInt8}) :: CoreSpace
-    shared  = get_node_shared()
+function rebind_to_shared_prefix(src::CoreSpace, prefix::Vector{UInt8})::CoreSpace
+    shared = get_node_shared()
     wrapped = new_core_space(shared, prefix)
     # Migrate atoms from src (typically empty for the (bind! &name (new-space))
     # pattern; non-empty if user pre-populated before binding).
@@ -488,7 +502,7 @@ end
 # seam so a future *concurrent embedding without an external coarse lock* can
 # reattach real coordination HERE (or, upstream-faithfully, behind a Core
 # server tier) without touching every caller.
-with_read_permit(f::Function, ::CoreSpace)  = f()
+with_read_permit(f::Function, ::CoreSpace) = f()
 with_write_permit(f::Function, ::CoreSpace) = f()
 
 """
@@ -503,7 +517,7 @@ For a space mixing decomposition-safe and decomposition-unsafe rules, the
 per-space flag is too coarse — you would need per-exec-atom markers
 (extending the byte-trie's `_EXEC_PREFIX` machinery) to express that.
 """
-enable_sc!(s::CoreSpace) = (s.use_supercompiler = true; s)
+enable_sc!(s::CoreSpace) = (s.use_supercompiler=true; s)
 
 # ── Atom operations ───────────────────────────────────────────────────────────
 
@@ -529,14 +543,21 @@ function core_add!(s::CoreSpace, atom::SExprConvertible)
                 e = sexpr_to_expr(sexpr)
                 set_val_at!(s.inner.btm, vcat(s.prefix, e.buf), UNIT_VAL)
             end
-        catch e; @warn "core_add! failed" atom=sexpr exception=e; end
+        catch e
+            @warn "core_add! failed" atom=sexpr exception=e
+        end
         # Per-head cache invalidation: adding (= (head args) body) can only affect
         # lookups for `head` — other heads' cached rules are unchanged.
         # Full flush (empty!) only when the affected head can't be identified.
         if atom isa Vector && length(atom) == 3 && atom[1] === Symbol("=")
             head_expr = atom[2]
-            head_sym  = head_expr isa Vector && !isempty(head_expr) ? head_expr[1] :
-                        head_expr isa Symbol ? head_expr : nothing
+            head_sym = if head_expr isa Vector && !isempty(head_expr)
+                head_expr[1]
+            elseif head_expr isa Symbol
+                head_expr
+            else
+                nothing
+            end
             head_sym isa Symbol ? delete!(s.rule_cache, head_sym) : empty!(s.rule_cache)
         end
     end
@@ -556,7 +577,9 @@ function core_remove!(s::CoreSpace, atom::SExprConvertible)
         try
             e = sexpr_to_expr(sexpr)
             remove_val_at!(s.inner.btm, vcat(s.prefix, e.buf))
-        catch e; @warn "core_remove! failed" atom=sexpr exception=e; end
+        catch e
+            @warn "core_remove! failed" atom=sexpr exception=e
+        end
         empty!(s.rule_cache)   # removing anything could affect rule lookups
     end
     nothing
@@ -587,7 +610,7 @@ without paying the cost of `_unify` (which lives in Eval.jl and would create
 a circular include).  `_eval_match` still runs full `_unify` on whatever
 passes — the filter only narrows the candidate set.
 """
-function _shape_match(@nospecialize(pattern), @nospecialize(atom)) :: Bool
+function _shape_match(@nospecialize(pattern), @nospecialize(atom))::Bool
     _is_var_symbol(pattern) && return true
     if pattern isa Vector
         atom isa Vector || return false
@@ -708,7 +731,7 @@ one cannot give you one, by construction (`_shape_match` returns a `Bool`).
 # Patterns that start with a variable, or pin only the functor (e.g.
 # `(syn $r $p $c)` — every atom is `syn`), yield `nothing` → full-walk fallback.
 
-_concrete_token(el::Integer)       = string(el)
+_concrete_token(el::Integer) = string(el)
 _concrete_token(el::AbstractFloat) = string(el)
 function _concrete_token(el::Symbol)
     str = string(el)
@@ -750,7 +773,7 @@ end
 
 function _pattern_prefix_bytes(pattern)
     (pattern isa Vector && length(pattern) >= 2) || return nothing
-    bytes  = UInt8[item_byte(ExprArity(UInt8(length(pattern))))]
+    bytes = UInt8[item_byte(ExprArity(UInt8(length(pattern))))]
     pinned = 0
     for el in pattern
         n, stopped = _emit_prefix!(bytes, el)
@@ -820,7 +843,7 @@ function _bind_walk!(b::Dict{Symbol, SExprConvertible}, pattern, atom)::Bool
         ps = string(pattern)
         if startswith(ps, "\$") || startswith(ps, "__var_")
             prev = get(b, pattern, nothing)
-            prev === nothing && (b[pattern] = atom; return true)
+            prev === nothing && (b[pattern]=atom; return true)
             return prev == atom                      # repeated var must agree
         end
     end
@@ -840,7 +863,9 @@ Empty-pattern and non-vector patterns return no matches rather than erroring, ma
 tolerance at the same boundary.
 """
 core_match_bind(::CoreSpace, ::Nothing) = Dict{Symbol, SExprConvertible}[]
-function core_match_bind(s::CoreSpace, pattern::SExprConvertible) :: Vector{Dict{Symbol, SExprConvertible}}
+function core_match_bind(
+    s::CoreSpace, pattern::SExprConvertible
+)::Vector{Dict{Symbol, SExprConvertible}}
     out = Dict{Symbol, SExprConvertible}[]
     (pattern isa Vector && !isempty(pattern)) || return out
     pat = try
@@ -850,26 +875,32 @@ function core_match_bind(s::CoreSpace, pattern::SExprConvertible) :: Vector{Dict
         return out
     end
     with_read_permit(s) do
-        space_query_multi_at(s.inner.btm, s.prefix, pat, UInt8(0), function (_bindings, loc)
-            local atom
-            try
-                atom = from_sexpr(strip(expr_serialize(loc)))
-            catch err
-                @warn "core_match_bind: skipping unparseable match" exception=err maxlog=5
-                return true
+        space_query_multi_at(
+            s.inner.btm,
+            s.prefix,
+            pat,
+            UInt8(0),
+            function (_bindings, loc)
+                local atom
+                try
+                    atom = from_sexpr(strip(expr_serialize(loc)))
+                catch err
+                    @warn "core_match_bind: skipping unparseable match" exception=err maxlog=5
+                    return true
+                end
+                b = Dict{Symbol, SExprConvertible}()
+                _bind_walk!(b, pattern, atom) && push!(out, b)
+                true
             end
-            b = Dict{Symbol, SExprConvertible}()
-            _bind_walk!(b, pattern, atom) && push!(out, b)
-            true
-        end)
+        )
     end
     out
 end
 
 core_match(::CoreSpace, ::Nothing) = SExprConvertible[]   # explicit, was an `=== nothing` guard under `::Any`
-function core_match(s::CoreSpace, pattern::SExprConvertible) :: Vector{SExprConvertible}
+function core_match(s::CoreSpace, pattern::SExprConvertible)::Vector{SExprConvertible}
     results = SExprConvertible[]
-    prefix  = _pattern_prefix_bytes(pattern)
+    prefix = _pattern_prefix_bytes(pattern)
     with_read_permit(s) do
         if prefix === nothing
             _walk_atoms(s) do atom               # full scan — no concrete prefix to pin
@@ -899,7 +930,9 @@ Implementation note: same trie-walk + Julia-side filter as `core_match`
 match real rules).  The narrow shape filter `atom[1] === :(=) && atom[2][1]
 === head_sym` rejects ~99% of stdlib atoms without allocation.
 """
-function core_rules(s::CoreSpace, head_sym::Symbol) :: Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}
+function core_rules(
+    s::CoreSpace, head_sym::Symbol
+)::Vector{Tuple{Vector{SExprConvertible}, SExprConvertible}}
     cached = get(s.rule_cache, head_sym, nothing)
     cached !== nothing && return cached
 
@@ -909,9 +942,9 @@ function core_rules(s::CoreSpace, head_sym::Symbol) :: Vector{Tuple{Vector{SExpr
             # Stay inside the length-3 gate — preserves inertness of malformed
             # `=` atoms (arity 0/1/4+) which must not become rules under any
             # rewriter shape (current first-match or future fan-out).
-            atom isa Vector && length(atom) == 3 && atom[1] === :(=) || return
+            atom isa Vector && length(atom) == 3 && atom[1] === :(=) || return nothing
             head_part = atom[2]
-            body      = atom[3]
+            body = atom[3]
             # Two LHS shapes both inside the length-3 gate:
             #   expression-LHS:  (= (head args...) body)  → params = args
             #   symbol-LHS:      (= head body)            → params = []
@@ -936,11 +969,13 @@ Scoped to `s.prefix`:
   zipper; `zipper_path(rz)` returns paths RELATIVE to the anchor so they
   are the bare atom expression bytes (no manual prefix stripping needed).
 """
-function core_atoms(s::CoreSpace) :: Vector{SExprConvertible}
+function core_atoms(s::CoreSpace)::Vector{SExprConvertible}
     if isempty(s.prefix)
-        return [from_sexpr(strip(line))
-                for line in split(space_dump_all_sexpr(s.inner), '\n')
-                if !isempty(strip(line))]
+        return [
+            from_sexpr(strip(line))
+            for line in split(space_dump_all_sexpr(s.inner), '\n')
+            if !isempty(strip(line))
+        ]
     end
     # Prefix-scoped: walk subtrie under s.prefix, serialize each value's
     # relative-to-anchor path.  Mirrors the cmd_copy pattern in MORK Commands.jl.
@@ -973,13 +1008,15 @@ upstream primitive surfaces rather than silently no-op'ing.  The fix path
 is to land `space_metta_calculus_in_prefix!` in `sivaji1012/MORK` and
 restore the prefix-scoped call here.
 """
-function core_calculus!(s::CoreSpace, steps::Int = typemax(Int))
+function core_calculus!(s::CoreSpace, steps::Int=typemax(Int))
     n = 0
     with_write_permit(s) do
         if isempty(s.prefix)
             n = space_metta_calculus!(s.inner, steps)
         else
-            error("core_calculus! on prefixed CoreSpace requires space_metta_calculus_in_prefix! in upstream MORK — Stage 2 work")
+            error(
+                "core_calculus! on prefixed CoreSpace requires space_metta_calculus_in_prefix! in upstream MORK — Stage 2 work"
+            )
         end
     end
     n
@@ -993,9 +1030,11 @@ For root-prefix spaces, this is the pre-Stage-1 behavior unchanged.
 For prefixed spaces, see `core_calculus!`'s note on the missing upstream
 primitive.
 """
-core_calculus_at!(s::CoreSpace, loc::AbstractString, steps::Int = typemax(Int)) =
+core_calculus_at!(s::CoreSpace, loc::AbstractString, steps::Int=typemax(Int)) =
     if isempty(s.prefix)
         space_metta_calculus_at!(s.inner, loc, steps)
     else
-        error("core_calculus_at! on prefixed CoreSpace requires upstream MORK Stage 2 primitives")
+        error(
+            "core_calculus_at! on prefixed CoreSpace requires upstream MORK Stage 2 primitives"
+        )
     end

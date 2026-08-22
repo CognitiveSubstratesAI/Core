@@ -23,7 +23,9 @@ const _IL = MeTTaCore.CompilerEmitIL
 const _IV = MeTTaCore.Eval
 
 function _il_parse(sp, text::AbstractString)
-    toks = _IV.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]
+    toks = _IV.tokenize(text)
+    i = Ref(1)
+    out = MeTTaCore.StandardMeTTa.Atom[]
     while i[] <= length(toks)
         toks[i[]] == "!" && (i[] += 1)
         i[] > length(toks) && break
@@ -34,15 +36,19 @@ end
 
 "Compile `src` to minimal MeTTa."
 function _to_il(src::AbstractString)
-    sp = _IV.Space(); _IV.load_core_stdlib!(sp)
+    sp = _IV.Space()
+    _IV.load_core_stdlib!(sp)
     cls = _IA.translate_program(_IF.lower_program(_il_parse(sp, src)))
     (_IL.emit_il_program(cls), cls)
 end
 
 "Evaluate `query` against a Space loaded with `defs`; return sorted answer strings."
 function _answers(defs::Vector{String}, query::AbstractString)::Vector{String}
-    sp = _IV.Space(); _IV.load_core_stdlib!(sp)
-    for d in defs; _IV.load_metta!(sp, d); end
+    sp = _IV.Space()
+    _IV.load_core_stdlib!(sp)
+    for d in defs
+        _IV.load_metta!(sp, d)
+    end
     res = _IV.load_metta!(sp, "!" * query)
     sort(String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
 end
@@ -51,7 +57,7 @@ end
 function _agree(src::AbstractString, query::AbstractString)
     r, _ = _to_il(src)
     src_forms = String[strip(l) for l in split(src, '\n') if !isempty(strip(l))]
-    (interp = _answers(src_forms, query), il = _answers(r.clauses, query), result = r)
+    (interp=_answers(src_forms, query), il=_answers(r.clauses, query), result=r)
 end
 
 @testset "MeTTa → MeTTa-IL (minimal MeTTa) emitter" begin
@@ -103,7 +109,7 @@ end
         # `il.emitted >= mm2.emitted` — it counted the clause without ever evaluating it, which is
         # precisely the "well-formed nonsense" this file's header warns about. Both arms now execute.
         src = "(= (k \$x) (if (== \$x 1) one other))\n"
-        hit  = _agree(src, "(k 1)")
+        hit = _agree(src, "(k 1)")
         @test hit.interp == ["one"]
         @test hit.il == hit.interp
         miss = _agree(src, "(k 2)")
@@ -123,11 +129,12 @@ end
     @testset "COVERAGE: shapes Emit.jl declines, the IL emits" begin
         # Emit.jl:30-31 emits only all-GCall/GUnify clauses. Each program below contains a goal type
         # it declines. Both emitters are run on the SAME clauses so the comparison is exact.
-        for (label, src) in (("branch",  "(= (k \$x) (if (== \$x 1) one other))\n"),
-                             ("collapse", "(= (c) (collapse (superpose (1 2))))\n"))
-            sp = _IV.Space(); _IV.load_core_stdlib!(sp)
+        for (label, src) in (("branch", "(= (k \$x) (if (== \$x 1) one other))\n"),
+            ("collapse", "(= (c) (collapse (superpose (1 2))))\n"))
+            sp = _IV.Space()
+            _IV.load_core_stdlib!(sp)
             cls = _IA.translate_program(_IF.lower_program(_il_parse(sp, src)))
-            il  = _IL.emit_il_program(cls)
+            il = _IL.emit_il_program(cls)
             mm2 = _IE.emit_program(cls)
             @test length(cls) >= 1
             # The IL must do at least as well as MM2 on every shape — never worse.
@@ -137,11 +144,14 @@ end
 
     @testset "GResidual DECLINES, with a reason, and is never dropped" begin
         # A clause that A-normalization could not flatten must be counted, not silently omitted.
-        sp = _IV.Space(); _IV.load_core_stdlib!(sp)
-        cls = _IA.translate_program(_IF.lower_program(_il_parse(sp, "(= (f \$x) (g \$x))\n")))
+        sp = _IV.Space()
+        _IV.load_core_stdlib!(sp)
+        cls = _IA.translate_program(
+            _IF.lower_program(_il_parse(sp, "(= (f \$x) (g \$x))\n"))
+        )
         # synthesize a residual clause so the decline path is exercised deterministically
         resid = _IA.ANClause(Base.Symbol("r"), MeTTaCore.CompilerIR.IRAtom[],
-                             _IA.Goal[_IA.GResidual(cls[1].out, cls[1].out)], cls[1].out)
+            _IA.Goal[_IA.GResidual(cls[1].out, cls[1].out)], cls[1].out)
         r = _IL.emit_il_program(_IA.ANClause[resid])
         @test r.emitted == 0
         @test length(r.declined) == 1
@@ -200,12 +210,14 @@ end
     @test isempty(r3.declined)
     @test r3.emitted == 1
     #   …it COMPUTES when the callee resolves,
-    @test _answers(["(= (double \$x) (+ \$x \$x))", "(= (app \$f \$x) (let \$r (\$f \$x) \$r))"],
-                   "(app double 4)") == ["8"]
+    @test _answers(
+        ["(= (double \$x) (+ \$x \$x))", "(= (app \$f \$x) (let \$r (\$f \$x) \$r))"],
+        "(app double 4)") == ["8"]
     #   …and — THE CONTROL THE OLD ASSERTION EXISTED TO PROTECT — an UNRESOLVED callee is NOT faked:
     #   the term comes back unevaluated, exactly as the interpreter returns it. That is the property
     #   that made `metta` the right instruction and `eval` the wrong one (`eval` yields NotReducible).
-    @test _answers(["(= (app \$f \$x) (let \$r (\$f \$x) \$r))"], "(app nosuch 4)") == ["(nosuch 4)"]
+    @test _answers(["(= (app \$f \$x) (let \$r (\$f \$x) \$r))"], "(app nosuch 4)") ==
+        ["(nosuch 4)"]
 end
 
 @testset "STRUCTURAL emission agrees with the TEXT path — the prerequisite for switching" begin
@@ -227,63 +239,90 @@ end
     function _walk(a, f)
         f(a)
         if a isa _IR.IRExpression
-            _walk(a.head, f); for x in a.args; _walk(x, f); end
+            _walk(a.head, f)
+            for x in a.args
+                _walk(x, f)
+            end
         elseif a isa _IR.IRSpecial
-            for x in a.args; _walk(x, f); end
+            for x in a.args
+                _walk(x, f)
+            end
         end
     end
 
-    checked = 0; mismatches = Tuple{String,String}[]
+    checked = 0
+    mismatches = Tuple{String, String}[]
     for src in ("(= (f \$x) (g \$x))",
-                "(= (h \$x) (if (== \$x 1) \"one\" other))",
-                "(= (k \$x) (let (\$a \$b) \$x (pair \$b \$a)))",
-                "(= (m \$x) (match &self (p \$x \$y) \$y))",
-                "(= (n) (superpose (1 2 3)))",
-                "(= (q \$f \$x) (\$f \$x))")
+        "(= (h \$x) (if (== \$x 1) \"one\" other))",
+        "(= (k \$x) (let (\$a \$b) \$x (pair \$b \$a)))",
+        "(= (m \$x) (match &self (p \$x \$y) \$y))",
+        "(= (n) (superpose (1 2 3)))",
+        "(= (q \$f \$x) (\$f \$x))")
         _, cls = _to_il(src)
         for cl in cls
             # EVERY IRAtom reachable from EVERY goal — not just residuals. The first version walked
             # only `GResidual.node` + head args and visited 16 nodes; the anti-vacuity floor below
             # caught it. A converter proven on 16 nodes is not proven.
-            goal_atoms(g) = g isa _IA.GUnify    ? _IR.IRAtom[g.lhs, g.rhs] :
-                            g isa _IA.GCall     ? _IR.IRAtom[g.args...; g.out] :
-                            g isa _IA.GBranch   ? _IR.IRAtom[g.condval, g.out] :
-                            g isa _IA.GDisj     ? _IR.IRAtom[g.out] :
-                            g isa _IA.GFindall  ? _IR.IRAtom[g.template, g.out] :
-                            g isa _IA.GResidual ? _IR.IRAtom[g.node, g.out] : _IR.IRAtom[]
+            goal_atoms(g) =
+                if g isa _IA.GUnify
+                    _IR.IRAtom[g.lhs, g.rhs]
+                elseif g isa _IA.GCall
+                    _IR.IRAtom[g.args...; g.out]
+                elseif g isa _IA.GBranch
+                    _IR.IRAtom[g.condval, g.out]
+                elseif g isa _IA.GDisj
+                    _IR.IRAtom[g.out]
+                elseif g isa _IA.GFindall
+                    _IR.IRAtom[g.template, g.out]
+                elseif g isa _IA.GResidual
+                    _IR.IRAtom[g.node, g.out]
+                else
+                    _IR.IRAtom[]
+                end
             for g in _IA.all_goals(cl.goals), nd in goal_atoms(g)
-                _walk(nd, a -> begin
-                    checked += 1
-                    # BOTH builders against THEIR OWN renderer. Checking only `_il_atom` vs
-                    # `_render_il` would pass while the `render`-sites diverged — the exact gap
-                    # recorded in `6a9e2dd`, since `render` has no `IRSpecial` method and `_il_atom`
-                    # does. A property that holds while behaviour changes is worse than none.
-                    #
-                    # ⚠️ COMPARED VIA `il_text`, NOT `string`. The builders are now PARSE-EQUIVALENT:
-                    # a grounded string becomes a real `Grounded{String}`, and `show` prints it
-                    # WITHOUT quotes (`string(Grounded("one")) == "one"`), which re-parses as a
-                    # SYMBOL. `il_text` is the emitter's wire serializer and quotes it correctly.
-                    # This test caught exactly that when the builders changed under it — comparing
-                    # against `show` asserted a property the wire format does not have.
-                    for (txt, at, which) in ((_IL._render_il(a), _IL._il_atom(a),     "_il_atom"),
-                                             (_CE.render(a),     _IL._render_atom(a), "_render_atom"))
-                        if at === nothing
-                            occursin("<unrenderable", txt) ||
-                                push!(mismatches, (which * " " * txt, "nothing"))
-                        elseif _IL.il_text(at) != txt
-                            push!(mismatches, (which * " " * txt, _IL.il_text(at)))
+                _walk(
+                    nd,
+                    a -> begin
+                        checked += 1
+                        # BOTH builders against THEIR OWN renderer. Checking only `_il_atom` vs
+                        # `_render_il` would pass while the `render`-sites diverged — the exact gap
+                        # recorded in `6a9e2dd`, since `render` has no `IRSpecial` method and `_il_atom`
+                        # does. A property that holds while behaviour changes is worse than none.
+                        #
+                        # ⚠️ COMPARED VIA `il_text`, NOT `string`. The builders are now PARSE-EQUIVALENT:
+                        # a grounded string becomes a real `Grounded{String}`, and `show` prints it
+                        # WITHOUT quotes (`string(Grounded("one")) == "one"`), which re-parses as a
+                        # SYMBOL. `il_text` is the emitter's wire serializer and quotes it correctly.
+                        # This test caught exactly that when the builders changed under it — comparing
+                        # against `show` asserted a property the wire format does not have.
+                        for (txt, at, which) in
+                            ((_IL._render_il(a), _IL._il_atom(a), "_il_atom"),
+                            (_CE.render(a), _IL._render_atom(a), "_render_atom"))
+                            if at === nothing
+                                occursin("<unrenderable", txt) ||
+                                    push!(mismatches, (which * " " * txt, "nothing"))
+                            elseif _IL.il_text(at) != txt
+                                push!(mismatches, (which * " " * txt, _IL.il_text(at)))
+                            end
                         end
                     end
-                end)
+                )
             end
             for a in cl.head_args
                 checked += 1
-                for (txt, at, which) in ((_IL._render_il(a), _IL._il_atom(a),     "_il_atom"),
-                                         (_CE.render(a),     _IL._render_atom(a), "_render_atom"))
-                    at === nothing ?
-                        (occursin("<unrenderable", txt) ||
-                            push!(mismatches, (which * " " * txt, "nothing"))) :
-                        (_IL.il_text(at) == txt || push!(mismatches, (which * " " * txt, _IL.il_text(at))))
+                for (txt, at, which) in ((_IL._render_il(a), _IL._il_atom(a), "_il_atom"),
+                    (_CE.render(a), _IL._render_atom(a), "_render_atom"))
+                    if at === nothing
+                        (
+                            occursin("<unrenderable", txt) ||
+                            push!(mismatches, (which * " " * txt, "nothing"))
+                        )
+                    else
+                        (
+                            _IL.il_text(at) == txt ||
+                            push!(mismatches, (which * " " * txt, _IL.il_text(at)))
+                        )
+                    end
                 end
             end
         end

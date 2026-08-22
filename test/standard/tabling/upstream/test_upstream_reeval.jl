@@ -31,19 +31,25 @@ const _UR = Eval
 
 "Run `body` with the IDG recording on and every tabling registry cleared before AND after."
 function _ur_isolated(body::Function)
-    _UR.untable_all!(); _UR.abolish_all_tables!(); _UR.clear_idg!(); _UR.clear_dyn_deps!()
+    _UR.untable_all!()
+    _UR.abolish_all_tables!()
+    _UR.clear_idg!()
+    _UR.clear_dyn_deps!()
     _UR._IDG_RECORD[] = true
     try
         body()
     finally
         _UR.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
-        _UR.untable_all!(); _UR.abolish_all_tables!(); _UR.clear_idg!(); _UR.clear_dyn_deps!()
+        _UR.untable_all!()
+        _UR.abolish_all_tables!()
+        _UR.clear_idg!()
+        _UR.clear_dyn_deps!()
     end
 end
 
 "Keys of tables that went from valid to invalid across `mutate`."
 function _ur_newly_invalid(mutate::Function)::Vector{Atom}
-    before = Dict{Atom,Bool}(t => _UR.idg_is_invalid(t) for t in keys(_UR._IDG))
+    before = Dict{Atom, Bool}(t => _UR.idg_is_invalid(t) for t in keys(_UR._IDG))
     mutate()
     Atom[t for t in keys(_UR._IDG) if _UR.idg_is_invalid(t) && !get(before, t, false)]
 end
@@ -65,11 +71,13 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
     # mutation can ever clear. Silent under-invalidation is the one failure an IDG must not have.
     @testset "tnot registers an IDG edge, so invalidation propagates through negation" begin
         _ur_isolated() do
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, "(fact a)\n")
             load_metta!(s, raw"(= (q) (match &self (fact a) True))" * "\n")
             load_metta!(s, raw"(= (p) (tnot (q)))" * "\n")
-            _UR.table!(:q); _UR.table!(:p)
+            _UR.table!(:q)
+            _UR.table!(:p)
 
             # `q` succeeds (the fact is there), so `tnot(q)` fails and `p` has no answers.
             @test load_metta!(s, "!(q)\n") == Atom[Sym("True")]
@@ -86,9 +94,11 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
             @test qn in _UR._IDG[pn].dependent       # … and p knows it consulted q
 
             # and it FIRES: touching the bucket `q` read invalidates BOTH tables.
-            newly = _ur_names(_ur_newly_invalid() do
-                load_metta!(s, "!(add-atom &self (fact b))\n")
-            end)
+            newly = _ur_names(
+                _ur_newly_invalid() do
+                    load_metta!(s, "!(add-atom &self (fact b))\n")
+                end
+            )
             @test "(q)" in newly
             @test "(p)" in newly                     # ← the whole point of dynamic_tabled3
         end
@@ -103,19 +113,23 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
     # a mutation reaches the tables that READ that bucket and no others.
     @testset "an add-atom invalidates the table that read that bucket, and not its neighbour" begin
         _ur_isolated() do
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, "(edge a b)\n(edge b c)\n(color a)\n")
             load_metta!(s, raw"(= (reach $x $y) (match &self (edge $x $y) ($x $y)))" * "\n")
             load_metta!(s, raw"(= (hue $x) (match &self (color $x) $x))" * "\n")
-            _UR.table!(:reach); _UR.table!(:hue)
+            _UR.table!(:reach)
+            _UR.table!(:hue)
 
             @test length(load_metta!(s, raw"!(reach $x $y)" * "\n")) == 2
             @test length(load_metta!(s, raw"!(hue $x)" * "\n")) == 1
             @test length(_UR._IDG) == 2                       # anti-vacuity, as above
 
-            newly = _ur_names(_ur_newly_invalid() do
-                load_metta!(s, "!(add-atom &self (edge c d))\n")
-            end)
+            newly = _ur_names(
+                _ur_newly_invalid() do
+                    load_metta!(s, "!(add-atom &self (edge c d))\n")
+                end
+            )
             @test any(occursin("reach", n) for n in newly)
             # 🔴 THE HALF THAT ACTUALLY DISCRIMINATES. The revision stamp evicts everything, so
             # "reach was invalidated" is true under both designs; only "hue was NOT" separates them.
@@ -132,10 +146,14 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
     # on. A perf regression that large is a correctness statement about scope, so it gets an
     # assertion rather than a comment.
     @testset "with the IDG off, the invalidation entry records nothing" begin
-        _UR.untable_all!(); _UR.abolish_all_tables!(); _UR.clear_idg!(); _UR.clear_dyn_deps!()
+        _UR.untable_all!()
+        _UR.abolish_all_tables!()
+        _UR.clear_idg!()
+        _UR.clear_dyn_deps!()
         _UR._IDG_RECORD[] = false
         try
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, "(fact a)\n")
             load_metta!(s, raw"(= (q) (match &self (fact a) True))" * "\n")
             _UR.table!(:q)
@@ -146,7 +164,10 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
         finally
             # this testset SETS the flag deliberately, so it owes the same restore as the others.
             _UR.reset_execution_flags!()
-            _UR.untable_all!(); _UR.abolish_all_tables!(); _UR.clear_idg!(); _UR.clear_dyn_deps!()
+            _UR.untable_all!()
+            _UR.abolish_all_tables!()
+            _UR.clear_idg!()
+            _UR.clear_dyn_deps!()
         end
     end
 end

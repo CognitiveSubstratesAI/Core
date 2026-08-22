@@ -68,7 +68,8 @@ export GLabel, LabelId, LabelWild, LabelListE, LabelListCons, LabelListOne
 export GItem, ItemTerminal, ItemNonTerminal, ItemAbs, ItemBind
 export GRule, GHyp, GRewriteBody, RewBase, RewCtx, GRewriteDecl
 export GEquation, GFresh, GLiteral, GPresentation
-export binders_of, is_lambda_theory, rule_arity, declared_cats_used, ddl_rung, grounded_sorts
+export binders_of,
+    is_lambda_theory, rule_arity, declared_cats_used, ddl_rung, grounded_sorts
 export cat_name, empty_presentation, premises_of, conclusion_of
 
 # ── Cat — the ARITY LANGUAGE (Syntax.lean:33; BNFC `IdCat | ListOfCat | ArrowCat | ProdCat`) ─────
@@ -79,11 +80,20 @@ export cat_name, empty_presentation, premises_of, conclusion_of
 # (`[Proc]`, `![Vec<Proc>] as List`) were unwritable and a binder needed a bespoke struct instead of
 # simply being `arrow`.
 abstract type GCat end
-struct CatId    <: GCat; name::Base.Symbol      end
-struct CatList  <: GCat; elem::GCat             end
+struct CatId <: GCat
+    name::Base.Symbol
+end
+struct CatList <: GCat
+    elem::GCat
+end
 "An exponential. Upstream `^x.body:[A -> B]` is `arrow A B` — the binder's sort, not a special case."
-struct CatArrow <: GCat; dom::GCat; cod::GCat   end
-struct CatProd  <: GCat; cs::Vector{GCat}       end
+struct CatArrow <: GCat
+    dom::GCat
+    cod::GCat
+end
+struct CatProd <: GCat
+    cs::Vector{GCat}
+end
 
 "Name of an ATOMIC category, or `nothing` for a compound one."
 cat_name(c::GCat)::Union{Base.Symbol, Nothing} = c isa CatId ? (c::CatId).name : nothing
@@ -91,11 +101,19 @@ cat_name(c::GCat)::Union{Base.Symbol, Nothing} = c isa CatId ? (c::CatId).name :
 # ── Label (Syntax.lean:60; BNFC `Id | Wild | ListE | ListCons | ListOne`) ───────────────────────
 # "The list labels carry the element category of the list sort they construct."
 abstract type GLabel end
-struct LabelId       <: GLabel; name::Base.Symbol end
-struct LabelWild     <: GLabel                    end
-struct LabelListE    <: GLabel; elem::GCat        end
-struct LabelListCons <: GLabel; elem::GCat        end
-struct LabelListOne  <: GLabel; elem::GCat        end
+struct LabelId <: GLabel
+    name::Base.Symbol
+end
+struct LabelWild <: GLabel end
+struct LabelListE <: GLabel
+    elem::GCat
+end
+struct LabelListCons <: GLabel
+    elem::GCat
+end
+struct LabelListOne <: GLabel
+    elem::GCat
+end
 
 # ── Item (Syntax.lean:72; BNFC `Item`) ──────────────────────────────────────────────────────────
 # Upstream: "`terminal` is a literal; `nterminal` is a sort argument; `absNTerminal x it` is the
@@ -108,12 +126,22 @@ struct LabelListOne  <: GLabel; elem::GCat        end
 # scopes over when a constructor has more than one.
 abstract type GItem end
 "Concrete syntax. Kept for FAITHFULNESS; our surface never emits it (in MeTTa the s-expr IS the syntax)."
-struct ItemTerminal    <: GItem; text::String                  end
-struct ItemNonTerminal <: GItem; cat::GCat                     end
+struct ItemTerminal <: GItem
+    text::String
+end
+struct ItemNonTerminal <: GItem
+    cat::GCat
+end
 "`(x) it` — `x` is bound within `it`."
-struct ItemAbs         <: GItem; var::Base.Symbol; item::GItem end
+struct ItemAbs <: GItem
+    var::Base.Symbol
+    item::GItem
+end
 "`(Bind x c)` — declares `x` as a binder of category `c`."
-struct ItemBind        <: GItem; var::Base.Symbol; cat::GCat   end
+struct ItemBind <: GItem
+    var::Base.Symbol
+    cat::GCat
+end
 
 # ── Rule (Syntax.lean:81) — a function symbol `label . cat ::= items` ───────────────────────────
 # "`cat` is the output arity; the input arity is READ OFF the non-terminal items."
@@ -153,8 +181,14 @@ end
 
 "A rewrite: conclusion `lhs ~> rhs`, optionally under premises (Syntax.lean:128; `RewriteBase | RewriteContext`)."
 abstract type GRewriteBody end
-struct RewBase <: GRewriteBody; lhs::Atom; rhs::Atom          end
-struct RewCtx  <: GRewriteBody; hyp::GHyp; rest::GRewriteBody end
+struct RewBase <: GRewriteBody
+    lhs::Atom
+    rhs::Atom
+end
+struct RewCtx <: GRewriteBody
+    hyp::GHyp
+    rest::GRewriteBody
+end
 
 "A named rewrite declaration `name : rw` (Syntax.lean:134; BNFC `RDecl`)."
 struct GRewriteDecl
@@ -166,7 +200,8 @@ end
 function premises_of(r::GRewriteBody)::Vector{GHyp}
     out = GHyp[]
     while r isa RewCtx
-        push!(out, (r::RewCtx).hyp); r = (r::RewCtx).rest
+        push!(out, (r::RewCtx).hyp)
+        r = (r::RewCtx).rest
     end
     out
 end
@@ -211,9 +246,9 @@ struct GPresentation
 end
 
 "Mirrors `BasePresOps.empty` (Syntax.lean:194)."
-empty_presentation(name::Base.Symbol = :Empty) =
+empty_presentation(name::Base.Symbol=:Empty) =
     GPresentation(name, GCat[], GLiteral[], GRule[], GEquation[], GRewriteDecl[],
-                  Tuple{String, GPresentation}[])
+        Tuple{String, GPresentation}[])
 
 # ── structural queries ──────────────────────────────────────────────────────────────────────────
 
@@ -256,9 +291,12 @@ function declared_cats_used(p::GPresentation)::Set{Base.Symbol}
         elseif c isa CatList
             walk((c::CatList).elem)
         elseif c isa CatArrow
-            walk((c::CatArrow).dom); walk((c::CatArrow).cod)
+            walk((c::CatArrow).dom)
+            walk((c::CatArrow).cod)
         else
-            for x in (c::CatProd).cs; walk(x); end
+            for x in (c::CatProd).cs
+                walk(x)
+            end
         end
         nothing
     end
@@ -274,7 +312,9 @@ function declared_cats_used(p::GPresentation)::Set{Base.Symbol}
     end
     for r in p.terms
         walk(r.cat)
-        for i in r.items; witem(i); end
+        for i in r.items
+            witem(i)
+        end
     end
     used
 end

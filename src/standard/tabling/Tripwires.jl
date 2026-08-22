@@ -93,7 +93,7 @@ const NO_RESTRAINT = -1
 "Default action for the global bound. Upstream's flag default is `error`."
 const DEFAULT_TRIPWIRE_ACTION = TW_ERROR
 
-const _MAX_ANSWERS        = Dict{Symbol,Int}()          # per-head bound (the `max_answers(N)` option)
+const _MAX_ANSWERS = Dict{Symbol, Int}()          # per-head bound (the `max_answers(N)` option)
 const _MAX_ANSWERS_GLOBAL = Ref{Int}(NO_RESTRAINT)      # the global flag
 const _MAX_ANSWERS_ACTION = Ref{TripwireAction}(DEFAULT_TRIPWIRE_ACTION)
 
@@ -119,7 +119,8 @@ the kind of thing nobody remembers. `[[feedback_parity_vs_opt_in]]`"""
 const _MAX_SUBGOAL_SIZE_ACTION = Ref{TripwireAction}(TW_ERROR)
 
 "Set `max_table_subgoal_size_action`. `TW_ABSTRACT` is the only value that permits abstraction."
-set_max_table_subgoal_size_action!(a::TripwireAction) = (_MAX_SUBGOAL_SIZE_ACTION[] = a; nothing)
+set_max_table_subgoal_size_action!(a::TripwireAction) =
+    (_MAX_SUBGOAL_SIZE_ACTION[]=a; nothing)
 max_table_subgoal_size_action() = _MAX_SUBGOAL_SIZE_ACTION[]
 
 """
@@ -132,17 +133,22 @@ The retry is the part that is easy to miss: upstream does not merely refuse the 
 re-runs the variant lookup with the restraint disabled, so a WARNING disposition still tables the
 FULL goal rather than the abstracted one.
 """
-function fire_subgoal_size_tripwire(head::Union{Symbol,Nothing})::Bool
+function fire_subgoal_size_tripwire(head::Union{Symbol, Nothing})::Bool
     act = _MAX_SUBGOAL_SIZE_ACTION[]
     act == TW_ABSTRACT && return false
     hd = head === nothing ? "?" : String(head)
     if act == TW_ERROR || act == TW_SUSPEND
-        throw(ArgumentError("resource_error(tripwire(max_table_subgoal_size, $(hd))) — the goal " *
-                            "exceeds its `subgoal_abstract` bound. SWI's default action for this " *
-                            "restraint is `error`, NOT `abstract`; call " *
-                            "`set_max_table_subgoal_size_action!(TW_ABSTRACT)` to abstract instead."))
+        throw(
+            ArgumentError(
+                "resource_error(tripwire(max_table_subgoal_size, $(hd))) — the goal " *
+                "exceeds its `subgoal_abstract` bound. SWI's default action for this " *
+                "restraint is `error`, NOT `abstract`; call " *
+                "`set_max_table_subgoal_size_action!(TW_ABSTRACT)` to abstract instead."
+            )
+        )
     end
-    act == TW_WARNING && @warn "tripwire max_table_subgoal_size for $(hd) — tabling the FULL goal"
+    act == TW_WARNING &&
+        @warn "tripwire max_table_subgoal_size for $(hd) — tabling the FULL goal"
     true                                   # retry with the restraint disabled
 end
 
@@ -181,25 +187,31 @@ an ANSWER is not — it claims more than was derived — so the answer side has 
 const _MAX_TABLE_ANSWER_SIZE_ACTION = Ref{TripwireAction}(TW_ERROR)
 
 "The actions `max_table_answer_size_action` accepts — `pl-tabling.c:8871-8877`. NOTE: no `abstract`."
-const ANSWER_SIZE_ACTIONS = (TW_ERROR, TW_WARNING, TW_SUSPEND, TW_BOUNDED_RATIONALITY, TW_FAIL)
+const ANSWER_SIZE_ACTIONS = (
+    TW_ERROR, TW_WARNING, TW_SUSPEND, TW_BOUNDED_RATIONALITY, TW_FAIL
+)
 
 """Set `max_table_answer_size_action`, VALIDATING against upstream's per-key domain.
 
 Throws on `TW_ABSTRACT` exactly as `set_restraint_action` raises `domain_error(restraint_action,
 abstract)` — the value is legal for the SUBGOAL flag and illegal for this one."""
 function set_max_table_answer_size_action!(a::TripwireAction)
-    a in ANSWER_SIZE_ACTIONS || throw(ArgumentError(
-        "domain_error(restraint_action, $(a)) — `max_table_answer_size_action` accepts " *
-        "$(ANSWER_SIZE_ACTIONS) (pl-tabling.c:8871-8877). `TW_ABSTRACT` is legal ONLY for " *
-        "`max_table_subgoal_size_action`: generalising a CALL is sound, generalising an ANSWER is " *
-        "not, so the answer side offers `TW_BOUNDED_RATIONALITY` (generalise AND delay) instead."))
+    a in ANSWER_SIZE_ACTIONS || throw(
+        ArgumentError(
+            "domain_error(restraint_action, $(a)) — `max_table_answer_size_action` accepts " *
+            "$(ANSWER_SIZE_ACTIONS) (pl-tabling.c:8871-8877). `TW_ABSTRACT` is legal ONLY for " *
+            "`max_table_subgoal_size_action`: generalising a CALL is sound, generalising an ANSWER is " *
+            "not, so the answer side offers `TW_BOUNDED_RATIONALITY` (generalise AND delay) instead."
+        )
+    )
     _MAX_TABLE_ANSWER_SIZE_ACTION[] = a
     nothing
 end
 max_table_answer_size_action() = _MAX_TABLE_ANSWER_SIZE_ACTION[]
 
 "Set the global `max_table_answer_size`. Negative is `restraint/4`'s removal ⇒ `NO_RESTRAINT`."
-set_max_table_answer_size!(n::Int) = (_MAX_TABLE_ANSWER_SIZE[] = n < 0 ? NO_RESTRAINT : n; nothing)
+set_max_table_answer_size!(n::Int) =
+    (_MAX_TABLE_ANSWER_SIZE[]=n < 0 ? NO_RESTRAINT : n; nothing)
 max_table_answer_size()::Int = _MAX_TABLE_ANSWER_SIZE[]
 
 """
@@ -236,23 +248,27 @@ so `TW_WARNING` stores the ABSTRACTED answer, unconditionally. MEASURED on live 
 `test_abstract.jl` keys on: an implementation that stored the generalised answer and forgot the delay
 would pass every answer-set comparison and fail exactly there.
 """
-function fire_answer_size_tripwire(head::Union{Symbol,Nothing})::Symbol
+function fire_answer_size_tripwire(head::Union{Symbol, Nothing})::Symbol
     act = _MAX_TABLE_ANSWER_SIZE_ACTION[]
     hd = head === nothing ? "?" : String(head)
     act == TW_BOUNDED_RATIONALITY && return :conditional     # add_radial_restraint(), then store
     act == TW_FAIL && return :drop                           # trie_delete + return false
     if act == TW_ERROR
-        throw(ArgumentError("resource_error(tripwire(max_table_answer_size, $(hd))) — the answer " *
-                            "exceeds its `answer_abstract` bound. SWI's default action for this " *
-                            "restraint is `error`; call " *
-                            "`set_max_table_answer_size_action!(TW_BOUNDED_RATIONALITY)` to store " *
-                            "a generalised CONDITIONAL answer, or `TW_FAIL` to drop it."))
+        throw(
+            ArgumentError(
+                "resource_error(tripwire(max_table_answer_size, $(hd))) — the answer " *
+                "exceeds its `answer_abstract` bound. SWI's default action for this " *
+                "restraint is `error`; call " *
+                "`set_max_table_answer_size_action!(TW_BOUNDED_RATIONALITY)` to store " *
+                "a generalised CONDITIONAL answer, or `TW_FAIL` to drop it."
+            )
+        )
     end
     act == TW_SUSPEND &&
         @warn "tripwire max_table_answer_size for $(hd) — SWI would break to a debugger here"
     act == TW_WARNING &&
         @warn "tripwire max_table_answer_size for $(hd) — storing the GENERALISED answer " *
-              "unconditionally (SWI `warning` action: no retry on this side)"
+            "unconditionally (SWI `warning` action: no retry on this side)"
     :store                                   # warning/suspend: `tripwire/3` succeeds ⇒ add anyway
 end
 
@@ -270,16 +286,21 @@ function restraint!(head::Symbol, name::Symbol, value::Int)
         value < 0 ? delete!(_MAX_ANSWERS, head) : (_MAX_ANSWERS[head] = value)
         return nothing
     elseif name === :subgoal_abstract || name === :answer_abstract
-        throw(ArgumentError(
-            "$(name) is SWI §7.11.$(name === :subgoal_abstract ? 1 : 2) and operates on TRIE TERMS; " *
-            "our answers are a Dict/Vector, so it needs §1.0's answer trie. Refused rather than " *
-            "silently accepted — a restraint that appears to apply and does not is worse than none."))
+        throw(
+            ArgumentError(
+                "$(name) is SWI §7.11.$(name === :subgoal_abstract ? 1 : 2) and operates on TRIE TERMS; " *
+                "our answers are a Dict/Vector, so it needs §1.0's answer trie. Refused rather than " *
+                "silently accepted — a restraint that appears to apply and does not is worse than none."
+            )
+        )
     end
-    throw(ArgumentError("domain_error(table_option, $(name)) — known restraint: max_answers"))
+    throw(
+        ArgumentError("domain_error(table_option, $(name)) — known restraint: max_answers")
+    )
 end
 
 "Global `max_answers_for_subgoal` flag + its action (`pl-tabling.c:8917-8923`)."
-function set_global_max_answers!(value::Int, action::TripwireAction = DEFAULT_TRIPWIRE_ACTION)
+function set_global_max_answers!(value::Int, action::TripwireAction=DEFAULT_TRIPWIRE_ACTION)
     _MAX_ANSWERS_GLOBAL[] = value < 0 ? NO_RESTRAINT : value
     _MAX_ANSWERS_ACTION[] = action
     nothing
@@ -287,8 +308,8 @@ end
 
 max_answers(head::Symbol)::Int = get(_MAX_ANSWERS, head, NO_RESTRAINT)
 clear_restraints!(head::Symbol) = (delete!(_MAX_ANSWERS, head); nothing)
-clear_all_restraints!() = (empty!(_MAX_ANSWERS); _MAX_ANSWERS_GLOBAL[] = NO_RESTRAINT;
-                           _MAX_ANSWERS_ACTION[] = DEFAULT_TRIPWIRE_ACTION; nothing)
+clear_all_restraints!() = (empty!(_MAX_ANSWERS); _MAX_ANSWERS_GLOBAL[]=NO_RESTRAINT;
+    _MAX_ANSWERS_ACTION[]=DEFAULT_TRIPWIRE_ACTION; nothing)
 
 """
     tripwire_answers_for_subgoal(head, count) -> Union{TripwireAction,Nothing}
@@ -298,7 +319,9 @@ clear_all_restraints!() = (empty!(_MAX_ANSWERS); _MAX_ANSWERS_GLOBAL[] = NO_REST
 `count` is the table's answer count BEFORE adding the candidate — upstream's `wl->table->value_count`
 at the same point. Returns `nothing` when no restraint fires.
 """
-function tripwire_answers_for_subgoal(head::Symbol, count::Int)::Union{TripwireAction,Nothing}
+function tripwire_answers_for_subgoal(
+    head::Symbol, count::Int
+)::Union{TripwireAction, Nothing}
     lim = max_answers(head)
     if lim != NO_RESTRAINT
         count >= lim && return TW_BOUNDED_RATIONALITY     # per-predicate path: `>=`
@@ -338,7 +361,7 @@ absence as failure. Generalisation needs no trie; only the *conditional/undefine
 that is what `answer_count_restraint` records for the caller.
 """
 function tbl_wkl_add_answer(head::Symbol, answers::Vector{Atom},
-                                candidate::Atom)::Tuple{Vector{Atom},Bool,Union{TripwireAction,Nothing,Symbol}}
+    candidate::Atom)::Tuple{Vector{Atom}, Bool, Union{TripwireAction, Nothing, Symbol}}
     # `Symbol` in the return union carries `:duplicate` — upstream simply `return false`s there,
     # but naming it keeps a duplicate distinguishable from a `fail` action, which also adds nothing.
     # 🔴 A DUPLICATE MUST NOT TRIP THE RESTRAINT — fixed 2026-08-17 from the C, which orders it
@@ -352,17 +375,23 @@ function tbl_wkl_add_answer(head::Symbol, answers::Vector{Atom},
     # approximate flag; the trie-seated `trie_insert_restrained!` returns `:duplicate` and does not.
     any(x -> x == candidate, answers) && return (answers, false, :duplicate)
     act = tripwire_answers_for_subgoal(head, length(answers))
-    act === nothing              && return (push!(copy(answers), candidate), true, nothing)
+    act === nothing && return (push!(copy(answers), candidate), true, nothing)
     if act == TW_WARNING
-        @warn "tabling: max_answers exceeded for $(head) — answer added anyway (SWI `warning` action)" bound=max_answers(head)
+        @warn "tabling: max_answers exceeded for $(head) — answer added anyway (SWI `warning` action)" bound=max_answers(
+            head
+        )
         return (push!(copy(answers), candidate), true, act)      # add_anyway (pl-tabling.c:3660)
     elseif act == TW_FAIL
         return (answers, false, act)
     elseif act == TW_ERROR || act == TW_SUSPEND
         act == TW_SUSPEND &&
             @warn "tabling: max_answers exceeded for $(head) — SWI would break to a debugger here"
-        throw(ErrorException("resource_error(tripwire(max_answers_for_subgoal, $(head))) — " *
-                             "bound $(max_answers(head) == NO_RESTRAINT ? _MAX_ANSWERS_GLOBAL[] : max_answers(head))"))
+        throw(
+            ErrorException(
+                "resource_error(tripwire(max_answers_for_subgoal, $(head))) — " *
+                "bound $(max_answers(head) == NO_RESTRAINT ? _MAX_ANSWERS_GLOBAL[] : max_answers(head))"
+            )
+        )
     end
     # BOUNDED_RATIONALITY (pl-tabling.c:3636-3657): drop the candidate, then add ONE maximally
     # general answer that subsumes everything the bound stopped computing, and mark the table an
@@ -388,7 +417,9 @@ function generalise_answer_substitution(a::Atom)::Atom
     a isa Expression || return Var("_g", UInt64(_gen_counter[] += 1))
     ch = (a::Expression).children
     isempty(ch) && return a
-    Expression(Atom[i == 1 ? ch[1] : Var("_g", UInt64(_gen_counter[] += 1)) for i in eachindex(ch)])
+    Expression(
+        Atom[i == 1 ? ch[1] : Var("_g", UInt64(_gen_counter[] += 1)) for i in eachindex(ch)]
+    )
 end
 const _gen_counter = Ref{UInt64}(0)
 

@@ -25,8 +25,8 @@ using MeTTaCore
 # `include` is `esc`aped so it resolves at the CALL SITE — inside `module StandardMeTTaTests` the file
 # must load into THAT module, not into Main. Without the esc, macro hygiene resolves `include` in the
 # macro's defining module and every wrapped file would silently land in the wrong namespace.
-const SUITE_RAN    = String[]
-const SUITE_FAILED = Tuple{String,String}[]
+const SUITE_RAN = String[]
+const SUITE_FAILED = Tuple{String, String}[]
 
 # ── SHARDING: `CORE_SUITE_SHARD=1/2` runs every other file ────────────────────────────────────────
 # Added 2026-08-17 because the suite outgrew the 10-minute window a wrapped runner can wait for, and
@@ -50,24 +50,26 @@ const SUITE_SHARD = let v = get(ENV, "CORE_SUITE_SHARD", "")
 end
 SUITE_SHARD === nothing || printstyled(
     "\n  ⚠️  SHARDED RUN: shard $(SUITE_SHARD[1]) of $(SUITE_SHARD[2]) — this is NOT the full suite\n";
-    color = :yellow, bold = true)
+    color=:yellow, bold=true)
 
 macro suite(path)
     quote
         local p = $(esc(path))
         if Main.SUITE_SHARD !== nothing &&
-           (length(Main.SUITE_RAN) + length(Main.SUITE_SKIPPED)) % Main.SUITE_SHARD[2] !=
+            (length(Main.SUITE_RAN) + length(Main.SUITE_SKIPPED)) % Main.SUITE_SHARD[2] !=
            Main.SUITE_SHARD[1] - 1
             push!(Main.SUITE_SKIPPED, p)
         else
-        push!(Main.SUITE_RAN, p)
-        try
-            $(esc(:include))(p)
-        catch e
-            push!(Main.SUITE_FAILED,
-                  (p, first(replace(sprint(showerror, e), '\n' => ' '), 200)))
-            printstyled("\n  ✗ SUITE FILE FAILED (continuing): ", p, "\n"; color = :red, bold = true)
-        end
+            push!(Main.SUITE_RAN, p)
+            try
+                $(esc(:include))(p)
+            catch e
+                push!(Main.SUITE_FAILED,
+                    (p, first(replace(sprint(showerror, e), '\n' => ' '), 200)))
+                printstyled(
+                    "\n  ✗ SUITE FILE FAILED (continuing): ", p, "\n"; color=:red, bold=true
+                )
+            end
         end
     end
 end
@@ -105,7 +107,7 @@ let _plndir = joinpath(@__DIR__, "pln")
         endswith(_plnf, ".jl") || continue
         _plnpath = joinpath(_plndir, _plnf)
         @eval module $(gensym("PLN"))
-            Main.@suite($_plnpath)
+        Main.@suite($_plnpath)
         end
     end
 end
@@ -117,184 +119,184 @@ end
 # stay isolated from any global `S`/`V`/… that other top-level test files leak into Main
 # ("cannot define function S; it already has a value").
 module StandardMeTTaTests
-    using MeTTaCore, Test
-    Main.@suite("standard/test_atoms.jl")
-    Main.@suite("standard/test_minimal.jl")
-    # No instruction, at any arity, may crash the interpreter — the whole dispatch surface.
-    Main.@suite("standard/test_instr_arity.jl")
-    # MeTTa Invariant 1 (sequential effects) at the FORM level — the lane-neutral partition that
-    # stops a query being answered with a rule added after it. Lives above every lane on purpose.
-    Main.@suite("standard/test_program_regions.jl")
-    Main.@suite("standard/test_interpreter.jl")
-    Main.@suite("standard/test_tnot_wfs.jl")
-    # The LIVE swipl differential. test_tnot_wfs.jl's header claims oracle verification but its
-    # assertions are pinned literals and it never invokes swipl (measured 2026-08-06); this is the
-    # file that actually runs the oracle. Skips LOUDLY if swipl is absent — never silently passes.
-    Main.@suite("standard/test_wfs_swipl_differential.jl")
-    # SWI manual §7.1 (memoizing) + §7.2 (avoiding non-termination) — the two areas of §7 the
-    # roadmap records us as HAVING. That claim previously rested on "fib returns 832040", which is
-    # one number matching one expectation, not a comparison. This runs the manual's own examples
-    # under swipl and asserts Core agrees value-for-value. Same two guards as the WFS differential:
-    # loud skip if swipl is absent, and a positive control before any comparison.
-    Main.@suite("standard/test_tabling_swipl_differential.jl")
-    # Delimited control over the CPS frame chain — tabling roadmap §1.0 step 1. The primitives
-    # (`Continuation`/`capture_continuation`/`resume_continuation`/`Dependency`) that replace
-    # `_leader_pass` RECOMPUTATION with dependency-driven RESUMPTION. NOT yet wired into
-    # `tabled_eval`: this gates the primitives standalone, so a green run means capture-and-resume is
-    # sound on this machine, not that tabling uses it.
-    Main.@suite("standard/test_delimited_control.jl")
-    # CONTINUATION SAFETY — the invariant that makes §1.0's capture/resume sound: every `Frame.ret`
-    # closure is FRAME-AGNOSTIC (takes `self` as a parameter, closes over immutables only). A closure
-    # capturing an outer frame breaks it while adding ZERO Frame field writes, and
-    # test_delimited_control.jl would pass it — that gates BEHAVIOUR on one run, this gates the
-    # invariant. Includes a mutation battery proving the checker sees the defect class.
-    Main.@suite("standard/test_frame_agnostic_ret.jl")
-    # Mode-directed tabling / answer subsumption — SWI §7.3, ported into `src/standard/tabling/`
-    # (the subfolder mirrors swipl-devel's own section boundaries). Differentialled against live
-    # swipl on lattice(min/max/sum) and po/2. Compares AGGREGATION SEMANTICS, not an end-to-end
-    # tabled query — the merge point is §1.0's `tabled_eval` rewire and is not landed yet.
-    Main.@suite("standard/tabling/test_aggregation.jl")
-    # The COMPLETION MERGE POINT — `Tabling._merge_partial` and the growth signal it reports. The
-    # rest of the gate set CANNOT see this change: with no modes declared the value-based signal is
-    # behaviour-preserving by construction, so health/corpus/differentials stay green either way.
-    # This pins the case where cardinality and value DISAGREE, and the sum-under-recomputation hazard
-    # that makes non-idempotent §7.3 aggregates unsound until the §1.0 rewire lands.
-    Main.@suite("standard/tabling/test_completion_merge.jl")
-    # SWI §7.11.3 max_answers — the one restraint that ports to a Dict today (no answer trie needed:
-    # `bounded_rationality` does not TRUNCATE, it adds one maximally-general answer subsuming what the
-    # bound stopped computing). Landed in `tabling/Tripwires.jl` — named for upstream's own section
-    # header (boot/tabling.pl:2263), like every file in that subfolder.
-    Main.@suite("standard/tabling/test_tripwires.jl")
-    # The per-table WORKLIST — roadmap §1.0 step 3. ONE invariant: an answer is LEFT of a dependency
-    # iff they have not been combined, so combining is recorded by SWAPPING the pair and there is no
-    # "done" flag anywhere. NOT wired: the completion loop still recomputes via `_leader_pass`.
-    Main.@suite("standard/tabling/test_worklist.jl")
-    # The ANSWER TRIE — roadmap §1.0 step 4 (structure half). Structural duplicate detection and
-    # VARIANT identity, which a Dict{Atom,Vector{Atom}} cannot give: two answers equal up to variable
-    # renaming reach ONE node. Prerequisite for §7.11.1/2 abstraction and the insertion-time mode
-    # merge. NOT wired: tabled_eval still stores into _ANSWER_TABLE.
-    Main.@suite("standard/tabling/test_answer_trie.jl")
-    # Completion by RESUMPTION vs RECOMPUTATION — §1.0 step 4 (loop half). `_complete_resume!` is
-    # OFF by default and this file is why it stays off: the oracle for a rewrite of the engine core
-    # is agreement with the engine it replaces. Every case asserts whether it ACTUALLY exercised
-    # resumption before comparing — most programs do not (fib is a plain memo, no suspension).
-    Main.@suite("standard/tabling/test_completion_resume.jl")
-    # SWI `library(tables)`, the PORTABLE half — §7.12 inspection over the answer trie. The three
-    # predicates NOT here (get_residual/2, get_returns_and_dls/3, get_returns_and_tvs/3) need delay
-    # lists, which is a boundary visible in the C primitive list rather than a judgement call.
-    Main.@suite("standard/tabling/test_inspect.jl")
-    # SWI §7.5 subsumptive tabling — a second LOOKUP MODE over the same tables: the more specific
-    # call is answered from the more general table. NOT wired into tabled_eval; gates the lookup.
-    Main.@suite("standard/tabling/test_subsumptive.jl")
-    # ONE declaration surface — SWI's table_options/3 (roadmap 0b, the config principle). Gates the
-    # three states an option can be in: HONOURED, REFUSED-with-a-reason, and UNKNOWN (domain_error).
-    Main.@suite("standard/tabling/test_options.jl")
-    # SWI §7.7 — the incremental dependency graph. Replaces the revision stamp's all-or-nothing
-    # invalidation with per-table. Gates the GRAPH (edges, direction, transitive propagation,
-    # teardown); the RE-EVALUATION half of §7.7 is not built.
-    Main.@suite("standard/tabling/test_idg.jl")
-    # SWI §7.8 monotonic — PROPAGATE FORWARD on assert, INVALIDATE on retract. The propagation
-    # vehicle is §1.0's Dependency + resume_continuation, so 7.8 needed the assert/retract branch
-    # and the eager/lazy split rather than a new engine.
-    Main.@suite("standard/tabling/test_monotonic.jl")
-    # SWI §7.11.1 subgoal_abstract — the OTHER restraint: §7.11.3 bounds how big one table gets, this
-    # bounds how MANY tables there are. Upstream calls it "a merge between variant and subsumptive
-    # tabling", which is why it rides on §7.5 and NOT on the answer trie — the refusal reason that
-    # kept it unbuilt was simply wrong. WIRED into `tabled_eval`. Pins that the budget is a SIZE
-    # limit, not a depth limit (they differ on branching terms), and pins BOTH sides of the
-    # precision boundary: exact when an answer mentions the abstracted variable, over-approximating
-    # when it does not — because a MeTTa answer is a VALUE, not a substitution over the skeleton.
-    Main.@suite("standard/tabling/test_abstract.jl")
-    # SWI §7.7's RE-EVALUATION half — the IDG's second stage. The graph (edges, falsecount,
-    # transitive invalidation) shipped earlier; this is `prepare_reeval!` / `reeval_complete!` /
-    # `reset_reevaluation!` plus the DECREMENT walk that re-validates dependants.
-    # 🔴 The verdict is a CONTENT DIGEST, not upstream's `answer_count == value_count`. Cardinality
-    # is sound in Prolog because an answer IS its substitution; here every answer has a payload, and
-    # TWO measured mutation classes change content at constant count — `trie_insert_moded!` replaces
-    # a moded aggregate in place, and `merge_bottom_into!` widens a WFS bottom's condition. SWI
-    # documents the same insufficiency and patches it only in the monotonic path.
-    # ⚠️ The hook stays INERT until something calls `idg_changed!` on a space mutation, which is the
-    # dynamic-predicate edge and is still unbuilt — this lands the re-evaluation half, NOT
-    # incremental tabling end to end. The tests supply the trigger directly.
-    Main.@suite("standard/tabling/test_reeval.jl")
-    # 🔴 SCENARIOS PORTED FROM UPSTREAM'S OWN SUITE, not written by us. Every other tabling test here
-    # was authored from the same reading of `pl-tabling.c` that produced the code it grades — a
-    # closed loop in which a misreading becomes both the implementation and the assertion.
-    # `swipl-devel/tests/tabling/test_reeval.pl` supplies the claims; all 18 upstream tabling files
-    # (165 tests) pass against the live binary — `workflows/swipl_tabling_oracle.sh`.
-    Main.@suite("standard/tabling/upstream/test_upstream_reeval.jl")
-    # XSB's own WFS conformance corpus — 72 programs each shipping a machine-readable gold row
-    # (TRUE set / UNDEFINED set; absent ⇒ false), validated 72-agree-0-differ against live swipl by
-    # `test/standard/tabling/upstream/verify_corpus.sh`. 7 translated so far, spanning all three
-    # verdicts. This is the defect class `test_delays.jl` CANNOT see: that file tests the delay
-    # ALGEBRA, and a perfect algebra over a broken fixpoint passes every assertion in it.
-    Main.@suite("standard/tabling/upstream/test_xsb_wfs_corpus.jl")
-    # The GROUNDED enumeration: which `Grounded{T}` payloads the PARSER can produce (three) versus
-    # which the engine constructs (five more), and that `Grounded{Bindings}` never reaches an answer.
-    # A gate rather than prose in `docs/src/language/grammar.md`, because enumerations in prose go
-    # stale on the first addition.
-    Main.@suite("standard/test_grounded_payloads.jl")
-    # How a WFS bottom travels through the INTERPRETER: constructors and control forms must not
-    # absorb one (a rule that ignores its argument must still fire), while strict ops must, and
-    # `unify` must not launder ⊥ into its `else` branch. Both properties were wrong until
-    # 2026-08-18 and cost four XSB gold programs.
-    Main.@suite("standard/test_wfs_propagation.jl")
-    # §7.11.2 is WIRED: `answer_abstract(N)` fires at the answer-PRODUCTION site, not the completion
-    # mirror — the mirror cannot work, because the programs this restraint exists for never complete.
-    Main.@suite("standard/tabling/test_answer_restraint_wiring.jl")
-    # SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
-    # truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
-    # 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global
-    # and scrapes it at insertion, correct there because the engine runs ONE derivation and the trail
-    # erases abandoned ones; we map over a COLLECTION, so a literal port leaks value #1's condition
-    # onto value #2 with no trail to unwind it. Pins the DNF algebra (empty is the UNIT, not the
-    # zero), that 7.B's third delay kind exists with NO producer yet, and end-to-end that a real
-    # paradox yields a residual naming the goal it is stuck on — not the vacuous `True`.
-    Main.@suite("standard/tabling/test_delays.jl")
-    # The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
-    # because the rest silently falls back to the interpreter. This is the only thing that makes
-    # that incompleteness cost something: the emitted count may not decrease.
-    Main.@suite("compiler/test_definition_name.jl")  # which function is a definition ABOUT — grouping identity
-    Main.@suite("compiler/test_call_staging.jl")
-    Main.@suite("compiler/test_emit_substitution.jl")
-    Main.@suite("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
-    Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
-    Main.@suite("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
-    Main.@suite("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus
-    Main.@suite("compiler/test_il_roundtrip.jl")    # IL goes out as TEXT: which values survive parse(show(v))
-    Main.@suite("compiler/test_il_wire_roundtrip.jl")  # randomized parse(il_text(a))==a over the
-    Main.@suite("compiler/test_type_declarations.jl")  # `(: name type)` visible to the compiler —
-    Main.@suite("compiler/test_lib_differential.jl")   # Core/lib compiled-vs-interpreted answers —
-                                                   # the gate the three corpora do not cover
-                                                   # the arrow half of the call-vs-data predicate
-                                                   # WIRE form, with the known-loss ledger
-    Main.@suite("compiler/test_eval_one_step.jl")   # metta.txt:96 — `eval` is ONE STEP; args are not reduced
-    Main.@suite("compiler/test_gslt_presentation.jl")  # G = (Σ,E,R): binders · freshness · premised rewrites
-    Main.@suite("compiler/test_gslt_parse.jl")         # the s-expr surface — presentations you can WRITE
-    Main.@suite("compiler/test_mettail_presentation.jl")  # MeTTa's own assembly language, presented as a GSLT
-    Main.@suite("compiler/test_gslt_reduce.jl")        # the ENGINE — a presentation that RUNS, so its R can be wrong out loud
-    Main.@suite("compiler/test_gslt_context.jl")       # closure under CONTEXT + PREMISED rules firing
-    Main.@suite("compiler/test_gslt_multicategory.jl")  # Def 5.1: interfaces · contexts · plugging
-    # Def 2.2: bisimilarity over the UNLABELLED one-step relation + the bisimilarity-preserving term
-    # map. A DIFFERENT, weaker morphism than 5.1 — no labels, no contexts, no multicategory — and
-    # buildable from `GPresentation` + `reducts`, which 5.1 is not.
-    Main.@suite("compiler/test_gslt_bisimulation.jl")
-    Main.@suite("compiler/test_coverage_ratchet.jl")
-    Main.@suite("standard/test_stdlib.jl")
-    Main.@suite("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
-    Main.@suite("standard/test_conformance.jl")
-    # UNIT conformance — hyperon's OWN stdlib `#[test]` corpus over ten `unit/*.metta` modules, with a
-    # per-module expected-failure baseline. ⚠️ REGISTERED 2026-08-16 AFTER NEVER HAVING RUN: adopted at
-    # `0c51e87`, then touched only by mechanical renames, so `core.metta` sat at baseline 8 while only 2
-    # still failed. Wrapped in its own module because it defines generic names (`SM`, `BASELINE`,
-    # `UNIT_DIR`) that would otherwise land in StandardMeTTaTests' namespace — the same reason the
-    # pln/ loop wraps each of its files.
-    # (test_unit.jl is registered at TOP LEVEL below, not here — see the note there.)
-    Main.@suite("oracle/leatta/test_leatta_oracle.jl")   # differential vs the Lean-4 machine-proved MeTTa
-    Main.@suite("oracle/mettaref/test_mettaref_oracle.jl")  # MeTTapedia metta-ref: HOL4-specified M1
-                                                        # goldens + a nondeterminism/bag corpus.
-                                                        # VENDORED, no MeTTapedia/Lean/HOL4 toolchain
-                                                        # at test time — .metta files + .expected only.
+using MeTTaCore, Test
+Main.@suite("standard/test_atoms.jl")
+Main.@suite("standard/test_minimal.jl")
+# No instruction, at any arity, may crash the interpreter — the whole dispatch surface.
+Main.@suite("standard/test_instr_arity.jl")
+# MeTTa Invariant 1 (sequential effects) at the FORM level — the lane-neutral partition that
+# stops a query being answered with a rule added after it. Lives above every lane on purpose.
+Main.@suite("standard/test_program_regions.jl")
+Main.@suite("standard/test_interpreter.jl")
+Main.@suite("standard/test_tnot_wfs.jl")
+# The LIVE swipl differential. test_tnot_wfs.jl's header claims oracle verification but its
+# assertions are pinned literals and it never invokes swipl (measured 2026-08-06); this is the
+# file that actually runs the oracle. Skips LOUDLY if swipl is absent — never silently passes.
+Main.@suite("standard/test_wfs_swipl_differential.jl")
+# SWI manual §7.1 (memoizing) + §7.2 (avoiding non-termination) — the two areas of §7 the
+# roadmap records us as HAVING. That claim previously rested on "fib returns 832040", which is
+# one number matching one expectation, not a comparison. This runs the manual's own examples
+# under swipl and asserts Core agrees value-for-value. Same two guards as the WFS differential:
+# loud skip if swipl is absent, and a positive control before any comparison.
+Main.@suite("standard/test_tabling_swipl_differential.jl")
+# Delimited control over the CPS frame chain — tabling roadmap §1.0 step 1. The primitives
+# (`Continuation`/`capture_continuation`/`resume_continuation`/`Dependency`) that replace
+# `_leader_pass` RECOMPUTATION with dependency-driven RESUMPTION. NOT yet wired into
+# `tabled_eval`: this gates the primitives standalone, so a green run means capture-and-resume is
+# sound on this machine, not that tabling uses it.
+Main.@suite("standard/test_delimited_control.jl")
+# CONTINUATION SAFETY — the invariant that makes §1.0's capture/resume sound: every `Frame.ret`
+# closure is FRAME-AGNOSTIC (takes `self` as a parameter, closes over immutables only). A closure
+# capturing an outer frame breaks it while adding ZERO Frame field writes, and
+# test_delimited_control.jl would pass it — that gates BEHAVIOUR on one run, this gates the
+# invariant. Includes a mutation battery proving the checker sees the defect class.
+Main.@suite("standard/test_frame_agnostic_ret.jl")
+# Mode-directed tabling / answer subsumption — SWI §7.3, ported into `src/standard/tabling/`
+# (the subfolder mirrors swipl-devel's own section boundaries). Differentialled against live
+# swipl on lattice(min/max/sum) and po/2. Compares AGGREGATION SEMANTICS, not an end-to-end
+# tabled query — the merge point is §1.0's `tabled_eval` rewire and is not landed yet.
+Main.@suite("standard/tabling/test_aggregation.jl")
+# The COMPLETION MERGE POINT — `Tabling._merge_partial` and the growth signal it reports. The
+# rest of the gate set CANNOT see this change: with no modes declared the value-based signal is
+# behaviour-preserving by construction, so health/corpus/differentials stay green either way.
+# This pins the case where cardinality and value DISAGREE, and the sum-under-recomputation hazard
+# that makes non-idempotent §7.3 aggregates unsound until the §1.0 rewire lands.
+Main.@suite("standard/tabling/test_completion_merge.jl")
+# SWI §7.11.3 max_answers — the one restraint that ports to a Dict today (no answer trie needed:
+# `bounded_rationality` does not TRUNCATE, it adds one maximally-general answer subsuming what the
+# bound stopped computing). Landed in `tabling/Tripwires.jl` — named for upstream's own section
+# header (boot/tabling.pl:2263), like every file in that subfolder.
+Main.@suite("standard/tabling/test_tripwires.jl")
+# The per-table WORKLIST — roadmap §1.0 step 3. ONE invariant: an answer is LEFT of a dependency
+# iff they have not been combined, so combining is recorded by SWAPPING the pair and there is no
+# "done" flag anywhere. NOT wired: the completion loop still recomputes via `_leader_pass`.
+Main.@suite("standard/tabling/test_worklist.jl")
+# The ANSWER TRIE — roadmap §1.0 step 4 (structure half). Structural duplicate detection and
+# VARIANT identity, which a Dict{Atom,Vector{Atom}} cannot give: two answers equal up to variable
+# renaming reach ONE node. Prerequisite for §7.11.1/2 abstraction and the insertion-time mode
+# merge. NOT wired: tabled_eval still stores into _ANSWER_TABLE.
+Main.@suite("standard/tabling/test_answer_trie.jl")
+# Completion by RESUMPTION vs RECOMPUTATION — §1.0 step 4 (loop half). `_complete_resume!` is
+# OFF by default and this file is why it stays off: the oracle for a rewrite of the engine core
+# is agreement with the engine it replaces. Every case asserts whether it ACTUALLY exercised
+# resumption before comparing — most programs do not (fib is a plain memo, no suspension).
+Main.@suite("standard/tabling/test_completion_resume.jl")
+# SWI `library(tables)`, the PORTABLE half — §7.12 inspection over the answer trie. The three
+# predicates NOT here (get_residual/2, get_returns_and_dls/3, get_returns_and_tvs/3) need delay
+# lists, which is a boundary visible in the C primitive list rather than a judgement call.
+Main.@suite("standard/tabling/test_inspect.jl")
+# SWI §7.5 subsumptive tabling — a second LOOKUP MODE over the same tables: the more specific
+# call is answered from the more general table. NOT wired into tabled_eval; gates the lookup.
+Main.@suite("standard/tabling/test_subsumptive.jl")
+# ONE declaration surface — SWI's table_options/3 (roadmap 0b, the config principle). Gates the
+# three states an option can be in: HONOURED, REFUSED-with-a-reason, and UNKNOWN (domain_error).
+Main.@suite("standard/tabling/test_options.jl")
+# SWI §7.7 — the incremental dependency graph. Replaces the revision stamp's all-or-nothing
+# invalidation with per-table. Gates the GRAPH (edges, direction, transitive propagation,
+# teardown); the RE-EVALUATION half of §7.7 is not built.
+Main.@suite("standard/tabling/test_idg.jl")
+# SWI §7.8 monotonic — PROPAGATE FORWARD on assert, INVALIDATE on retract. The propagation
+# vehicle is §1.0's Dependency + resume_continuation, so 7.8 needed the assert/retract branch
+# and the eager/lazy split rather than a new engine.
+Main.@suite("standard/tabling/test_monotonic.jl")
+# SWI §7.11.1 subgoal_abstract — the OTHER restraint: §7.11.3 bounds how big one table gets, this
+# bounds how MANY tables there are. Upstream calls it "a merge between variant and subsumptive
+# tabling", which is why it rides on §7.5 and NOT on the answer trie — the refusal reason that
+# kept it unbuilt was simply wrong. WIRED into `tabled_eval`. Pins that the budget is a SIZE
+# limit, not a depth limit (they differ on branching terms), and pins BOTH sides of the
+# precision boundary: exact when an answer mentions the abstracted variable, over-approximating
+# when it does not — because a MeTTa answer is a VALUE, not a substitution over the skeleton.
+Main.@suite("standard/tabling/test_abstract.jl")
+# SWI §7.7's RE-EVALUATION half — the IDG's second stage. The graph (edges, falsecount,
+# transitive invalidation) shipped earlier; this is `prepare_reeval!` / `reeval_complete!` /
+# `reset_reevaluation!` plus the DECREMENT walk that re-validates dependants.
+# 🔴 The verdict is a CONTENT DIGEST, not upstream's `answer_count == value_count`. Cardinality
+# is sound in Prolog because an answer IS its substitution; here every answer has a payload, and
+# TWO measured mutation classes change content at constant count — `trie_insert_moded!` replaces
+# a moded aggregate in place, and `merge_bottom_into!` widens a WFS bottom's condition. SWI
+# documents the same insufficiency and patches it only in the monotonic path.
+# ⚠️ The hook stays INERT until something calls `idg_changed!` on a space mutation, which is the
+# dynamic-predicate edge and is still unbuilt — this lands the re-evaluation half, NOT
+# incremental tabling end to end. The tests supply the trigger directly.
+Main.@suite("standard/tabling/test_reeval.jl")
+# 🔴 SCENARIOS PORTED FROM UPSTREAM'S OWN SUITE, not written by us. Every other tabling test here
+# was authored from the same reading of `pl-tabling.c` that produced the code it grades — a
+# closed loop in which a misreading becomes both the implementation and the assertion.
+# `swipl-devel/tests/tabling/test_reeval.pl` supplies the claims; all 18 upstream tabling files
+# (165 tests) pass against the live binary — `workflows/swipl_tabling_oracle.sh`.
+Main.@suite("standard/tabling/upstream/test_upstream_reeval.jl")
+# XSB's own WFS conformance corpus — 72 programs each shipping a machine-readable gold row
+# (TRUE set / UNDEFINED set; absent ⇒ false), validated 72-agree-0-differ against live swipl by
+# `test/standard/tabling/upstream/verify_corpus.sh`. 7 translated so far, spanning all three
+# verdicts. This is the defect class `test_delays.jl` CANNOT see: that file tests the delay
+# ALGEBRA, and a perfect algebra over a broken fixpoint passes every assertion in it.
+Main.@suite("standard/tabling/upstream/test_xsb_wfs_corpus.jl")
+# The GROUNDED enumeration: which `Grounded{T}` payloads the PARSER can produce (three) versus
+# which the engine constructs (five more), and that `Grounded{Bindings}` never reaches an answer.
+# A gate rather than prose in `docs/src/language/grammar.md`, because enumerations in prose go
+# stale on the first addition.
+Main.@suite("standard/test_grounded_payloads.jl")
+# How a WFS bottom travels through the INTERPRETER: constructors and control forms must not
+# absorb one (a rule that ignores its argument must still fire), while strict ops must, and
+# `unify` must not launder ⊥ into its `else` branch. Both properties were wrong until
+# 2026-08-18 and cost four XSB gold programs.
+Main.@suite("standard/test_wfs_propagation.jl")
+# §7.11.2 is WIRED: `answer_abstract(N)` fires at the answer-PRODUCTION site, not the completion
+# mirror — the mirror cannot work, because the programs this restraint exists for never complete.
+Main.@suite("standard/tabling/test_answer_restraint_wiring.jl")
+# SWI §7.6 delay lists — conditional answers, roadmap 7.A-7.D. We already computed the WFS third
+# truth value (the alternating fixpoint gives the same model); what was missing is the REASON.
+# 🔴 The adaptation: the condition RIDES ON THE VALUE. SWI keeps it in a trail-scoped thread-global
+# and scrapes it at insertion, correct there because the engine runs ONE derivation and the trail
+# erases abandoned ones; we map over a COLLECTION, so a literal port leaks value #1's condition
+# onto value #2 with no trail to unwind it. Pins the DNF algebra (empty is the UNIT, not the
+# zero), that 7.B's third delay kind exists with NO producer yet, and end-to-end that a real
+# paradox yields a residual naming the goal it is stuck on — not the vacuous `True`.
+Main.@suite("standard/tabling/test_delays.jl")
+# The compiler's coverage FLOOR. 27.5% of the corpus emits and every other gate is green,
+# because the rest silently falls back to the interpreter. This is the only thing that makes
+# that incompleteness cost something: the emitted count may not decrease.
+Main.@suite("compiler/test_definition_name.jl")  # which function is a definition ABOUT — grouping identity
+Main.@suite("compiler/test_call_staging.jl")
+Main.@suite("compiler/test_emit_substitution.jl")
+Main.@suite("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
+Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
+Main.@suite("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
+Main.@suite("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus
+Main.@suite("compiler/test_il_roundtrip.jl")    # IL goes out as TEXT: which values survive parse(show(v))
+Main.@suite("compiler/test_il_wire_roundtrip.jl")  # randomized parse(il_text(a))==a over the
+Main.@suite("compiler/test_type_declarations.jl")  # `(: name type)` visible to the compiler —
+Main.@suite("compiler/test_lib_differential.jl")   # Core/lib compiled-vs-interpreted answers —
+# the gate the three corpora do not cover
+# the arrow half of the call-vs-data predicate
+# WIRE form, with the known-loss ledger
+Main.@suite("compiler/test_eval_one_step.jl")   # metta.txt:96 — `eval` is ONE STEP; args are not reduced
+Main.@suite("compiler/test_gslt_presentation.jl")  # G = (Σ,E,R): binders · freshness · premised rewrites
+Main.@suite("compiler/test_gslt_parse.jl")         # the s-expr surface — presentations you can WRITE
+Main.@suite("compiler/test_mettail_presentation.jl")  # MeTTa's own assembly language, presented as a GSLT
+Main.@suite("compiler/test_gslt_reduce.jl")        # the ENGINE — a presentation that RUNS, so its R can be wrong out loud
+Main.@suite("compiler/test_gslt_context.jl")       # closure under CONTEXT + PREMISED rules firing
+Main.@suite("compiler/test_gslt_multicategory.jl")  # Def 5.1: interfaces · contexts · plugging
+# Def 2.2: bisimilarity over the UNLABELLED one-step relation + the bisimilarity-preserving term
+# map. A DIFFERENT, weaker morphism than 5.1 — no labels, no contexts, no multicategory — and
+# buildable from `GPresentation` + `reducts`, which 5.1 is not.
+Main.@suite("compiler/test_gslt_bisimulation.jl")
+Main.@suite("compiler/test_coverage_ratchet.jl")
+Main.@suite("standard/test_stdlib.jl")
+Main.@suite("standard/test_space_arg_fail_closed.jl")   # space ops refuse a non-Space arg (no silent retarget)
+Main.@suite("standard/test_conformance.jl")
+# UNIT conformance — hyperon's OWN stdlib `#[test]` corpus over ten `unit/*.metta` modules, with a
+# per-module expected-failure baseline. ⚠️ REGISTERED 2026-08-16 AFTER NEVER HAVING RUN: adopted at
+# `0c51e87`, then touched only by mechanical renames, so `core.metta` sat at baseline 8 while only 2
+# still failed. Wrapped in its own module because it defines generic names (`SM`, `BASELINE`,
+# `UNIT_DIR`) that would otherwise land in StandardMeTTaTests' namespace — the same reason the
+# pln/ loop wraps each of its files.
+# (test_unit.jl is registered at TOP LEVEL below, not here — see the note there.)
+Main.@suite("oracle/leatta/test_leatta_oracle.jl")   # differential vs the Lean-4 machine-proved MeTTa
+Main.@suite("oracle/mettaref/test_mettaref_oracle.jl")  # MeTTapedia metta-ref: HOL4-specified M1
+# goldens + a nondeterminism/bag corpus.
+# VENDORED, no MeTTapedia/Lean/HOL4 toolchain
+# at test time — .metta files + .expected only.
 end
 
 # MM2 dual-lane router (src/standard/MM2Router.jl) — module-wrapped so its top-level `MC`/`facts`/`prog`
@@ -316,16 +318,22 @@ end
 # "UndefVarError: `MeTTaCore` not defined in Main.StandardMeTTaTests.var\"##UnitConformance\"".
 # The pln/ loop is at top level for the same reason; that is why it works.
 @eval module $(gensym("UnitConformance"))
-    # `using MeTTaCore, Test` is REQUIRED, not decoration: test_unit.jl does `const SM = MeTTaCore.Eval`,
-    # and its own `using MeTTaCore.Eval` binds `Eval` WITHOUT binding `MeTTaCore`. StandardMeTTaTests
-    # carries the same line at its head, which is why every file in it resolves.
-    using MeTTaCore, Test
-    Main.@suite(joinpath(@__DIR__, "standard", "test_unit.jl"))
+# `using MeTTaCore, Test` is REQUIRED, not decoration: test_unit.jl does `const SM = MeTTaCore.Eval`,
+# and its own `using MeTTaCore.Eval` binds `Eval` WITHOUT binding `MeTTaCore`. StandardMeTTaTests
+# carries the same line at its head, which is why every file in it resolves.
+using MeTTaCore, Test
+Main.@suite(joinpath(@__DIR__, "standard", "test_unit.jl"))
 end
 
-module GSLTTests;         Main.@suite("test_gslt.jl");          end
-module MeTTaILTests;      Main.@suite("test_mettail.jl");       end
-module PatternMinerTests; Main.@suite("test_pattern_miner.jl"); end
+module GSLTTests
+Main.@suite("test_gslt.jl")
+end
+module MeTTaILTests
+Main.@suite("test_mettail.jl")
+end
+module PatternMinerTests
+Main.@suite("test_pattern_miner.jl")
+end
 
 # Structural lint — no lib/ definition shadows a Core-provided name (closes the
 # duplication class from the 2026-06-10 primitive audit; clamp/xor/is-member consolidation).
@@ -414,14 +422,19 @@ end
 let testdir = @__DIR__
     reachable = Set{String}()
     function walk(path)
-        occursin(r"^\s*#", path) && return
-        txt = join((occursin(r"^\s*#", l) ? "" : split(l, '#')[1]
-                    for l in split(read(path, String), '\n')), '\n')
+        occursin(r"^\s*#", path) && return nothing
+        txt = join(
+            (
+                occursin(r"^\s*#", l) ? "" : split(l, '#')[1]
+                for l in split(read(path, String), '\n')
+            ), '\n')
         dir = dirname(path)
         for m in eachmatch(r"(?:include|@suite)\(\s*\"([^\"]+\.jl)\"", txt)
             p = normpath(joinpath(dir, m.captures[1]))
-            (occursin('$', p) || !startswith(p, normpath(testdir)) || p in reachable) && continue
-            push!(reachable, p); isfile(p) && walk(p)
+            (occursin('$', p) || !startswith(p, normpath(testdir)) || p in reachable) &&
+                continue
+            push!(reachable, p)
+            isfile(p) && walk(p)
         end
     end
     walk(joinpath(testdir, "runtests.jl"))
@@ -430,26 +443,37 @@ let testdir = @__DIR__
     # was not its turn. Counting only SUITE_RAN would make every sharded lane fail the gate and train
     # a reader to ignore it, which is worse than not having it. The SKIPPED count is reported
     # separately and loudly, so nothing is hidden by folding the two together here.
-    ran = Set(normpath(isabspath(p) ? p : joinpath(testdir, p))
-              for p in Iterators.flatten((SUITE_RAN, SUITE_SKIPPED)))
+    ran = Set(
+        normpath(isabspath(p) ? p : joinpath(testdir, p))
+        for p in Iterators.flatten((SUITE_RAN, SUITE_SKIPPED))
+    )
     # pln/*.jl arrive via the readdir loop, not a literal — they are in `ran`, never in `reachable`.
     missed = sort([p for p in reachable if !(p in ran) && isfile(p)])
     if !isempty(missed)
-        printstyled("\n  ⚠️  REACHABLE BUT NEVER EXECUTED — the suite ran less than it registered:\n";
-                    color = :red, bold = true)
-        for p in missed; println("      ", relpath(p, testdir)); end
+        printstyled(
+            "\n  ⚠️  REACHABLE BUT NEVER EXECUTED — the suite ran less than it registered:\n";
+            color=:red, bold=true)
+        for p in missed
+            println("      ", relpath(p, testdir))
+        end
     end
     isempty(SUITE_SKIPPED) || printstyled(
         "\n  ⚠️  SHARDED: $(length(SUITE_SKIPPED)) files SKIPPED — this run does NOT cover the suite\n";
-        color = :yellow, bold = true)
-    printstyled("\n  suite: $(length(SUITE_RAN)) files executed, $(length(SUITE_FAILED)) failed\n";
-                color = isempty(SUITE_FAILED) ? :green : :red, bold = true)
+        color=:yellow, bold=true)
+    printstyled(
+        "\n  suite: $(length(SUITE_RAN)) files executed, $(length(SUITE_FAILED)) failed\n";
+        color=isempty(SUITE_FAILED) ? :green : :red, bold=true)
     if !isempty(SUITE_FAILED) || !isempty(missed)
         for (p, m) in SUITE_FAILED
-            printstyled("  ✗ "; color = :red, bold = true); println(p); println("      ", m)
+            printstyled("  ✗ "; color=:red, bold=true)
+            println(p)
+            println("      ", m)
         end
-        error("Core suite: $(length(SUITE_FAILED)) file(s) failed" *
-              (isempty(missed) ? "" : ", $(length(missed)) reachable file(s) never ran") * " — " *
-              join(first.(SUITE_FAILED), ", "))
+        error(
+            "Core suite: $(length(SUITE_FAILED)) file(s) failed" *
+            (isempty(missed) ? "" : ", $(length(missed)) reachable file(s) never ran") *
+            " — " *
+            join(first.(SUITE_FAILED), ", ")
+        )
     end
 end

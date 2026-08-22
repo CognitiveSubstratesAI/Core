@@ -14,18 +14,27 @@ const _HROOT = @__DIR__
 const _HFULL = ("full" in ARGS) || (get(ENV, "CORE_HEALTH_FULL", "") == "1")
 
 # (name, test file) — each is a self-contained @testset that throws on failure.
-const _HCHECKS = Tuple{String,String}[
-    ("hyperon conformance (234 directives)", joinpath(_HROOT, "standard", "test_conformance.jl")),
-    ("LeaTTa proved-oracle (CORE_BUG gate)", joinpath(_HROOT, "oracle", "leatta", "test_leatta_oracle.jl")),
-    ("no dangling lib ops",                  joinpath(_HROOT, "test_no_dangling_ops.jl")),
-    ("no stdlib shadowing",                  joinpath(_HROOT, "test_no_stdlib_shadow.jl")),
+const _HCHECKS = Tuple{String, String}[
+    (
+        "hyperon conformance (234 directives)",
+        joinpath(_HROOT, "standard", "test_conformance.jl")
+    ),
+    (
+        "LeaTTa proved-oracle (CORE_BUG gate)",
+        joinpath(_HROOT, "oracle", "leatta", "test_leatta_oracle.jl")
+    ),
+    ("no dangling lib ops", joinpath(_HROOT, "test_no_dangling_ops.jl")),
+    ("no stdlib shadowing", joinpath(_HROOT, "test_no_stdlib_shadow.jl")),
     # A `$name` in a docstring is INTERPOLATION and breaks PRECOMPILE — cost three failures on
     # 2026-08-16/17, each quoting an upstream `$tbl_*` predicate or a MeTTa `$variable`.
-    ("no docstring \$-interpolation",         joinpath(_HROOT, "test_no_docstring_interpolation.jl")),
-    ("type system",                          joinpath(_HROOT, "test_types.jl")),
+    (
+        "no docstring \$-interpolation",
+        joinpath(_HROOT, "test_no_docstring_interpolation.jl")
+    ),
+    ("type system", joinpath(_HROOT, "test_types.jl"))
 ]
 
-_hresults = Tuple{String,Bool}[]
+_hresults = Tuple{String, Bool}[]
 for (name, path) in _HCHECKS
     @info "── health: $name ──"
     ok = try
@@ -39,7 +48,7 @@ for (name, path) in _HCHECKS
 end
 
 _hpass = count(r -> r[2], _hresults)
-_htot  = length(_hresults)
+_htot = length(_hresults)
 println("\n" * "="^58)
 println("  CORE HEALTH GATE: $(_hpass)/$(_htot) PASS" * (_HFULL ? "  (full)" : ""))
 for (name, ok) in _hresults

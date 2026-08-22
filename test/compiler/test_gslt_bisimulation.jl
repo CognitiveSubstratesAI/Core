@@ -27,7 +27,7 @@ const _BR = MeTTaCore.CompilerGSLTRelation
 const _BS = MeTTaCore.StandardMeTTa
 
 _bterm(src::AbstractString) =
-    (sp = _BV.Space(); toks = _BV.tokenize(src); i = Ref(1); _BV.parse_from(toks, i, sp.tokens))
+    (sp=_BV.Space(); toks=_BV.tokenize(src); i=Ref(1); _BV.parse_from(toks, i, sp.tokens))
 _blang(src::AbstractString) = _BA.parse_presentation(_bterm(src))
 
 # Two unary constructors that both reduce to their argument, plus a nullary constant.
@@ -75,27 +75,32 @@ const _AA = _bterm("(a)")
         @test unmatched == _AA          # `(f (a)) → (a)` is the step `(a)` cannot match
         @test dir === :forward
         # …and a genuine witness yields no counterexample at all
-        @test _BB.bisim_counterexample(_BP, _BB.BisimWitness([(_FA, _GA), (_AA, _AA)])) === nothing
+        @test _BB.bisim_counterexample(_BP, _BB.BisimWitness([(_FA, _GA), (_AA, _AA)])) ===
+            nothing
     end
 
     @testset "bounded bisimilarity separates what it must, and is honest about depth 0" begin
-        @test _BB.bisimilar_bounded(_BP, _FA, _GA; steps = 4)      # same observations
-        @test !_BB.bisimilar_bounded(_BP, _FA, _AA; steps = 4)     # redex vs normal form
+        @test _BB.bisimilar_bounded(_BP, _FA, _GA; steps=4)      # same observations
+        @test !_BB.bisimilar_bounded(_BP, _FA, _AA; steps=4)     # redex vs normal form
         # 🔴 `steps = 0` IS VACUOUSLY TRUE BY CONSTRUCTION — the empty observation separates nothing.
         # Asserted rather than left implicit, because a caller passing 0 learns exactly nothing and
         # the `true` looks like a result.
-        @test _BB.bisimilar_bounded(_BP, _FA, _AA; steps = 0)
+        @test _BB.bisimilar_bounded(_BP, _FA, _AA; steps=0)
     end
 
     @testset "a Def 2.2 morphism is CHECKED, and a collapsing map is refuted" begin
         carrier = _BS.Atom[_FA, _GA, _AA]
-        @test _BB.morphism_preserves_bisim(_BB.GMorphism(_BP, _BP, identity, carrier); steps = 4)
+        @test _BB.morphism_preserves_bisim(
+            _BB.GMorphism(_BP, _BP, identity, carrier); steps=4
+        )
 
         # 🔴 THE REFUTATION. A map sending `(f (a))` to `(a)` destroys an observation: the source pair
         # `((f (a)), (g (a)))` is inseparable, but their images `(a)` and `(g (a))` are not. This is
         # the naive term-map `Multicategory.jl`'s header refutes, and the checker must catch it.
         collapse(t) = string(t) == "(f (a))" ? _AA : t
-        @test !_BB.morphism_preserves_bisim(_BB.GMorphism(_BP, _BP, collapse, carrier); steps = 4)
+        @test !_BB.morphism_preserves_bisim(
+            _BB.GMorphism(_BP, _BP, collapse, carrier); steps=4
+        )
     end
 
     @testset "this is NOT Definition 5.1, and the distinction is asserted" begin

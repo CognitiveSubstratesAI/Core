@@ -39,10 +39,17 @@ _CC_DIR in _CC_V._MODULE_PATH[] || push!(_CC_V._MODULE_PATH[], _CC_DIR)
 
 "Error directives produced by running `src` on the INTERPRETER — the baseline this lane must match."
 function _cc_interp_errors(src::AbstractString)::Int
-    sp = _CC_V.Space(); _CC_V.load_core_stdlib!(sp)
-    rs = try _CC_V.load_metta!(sp, src) catch; return -1 end
-    count(r -> r isa MeTTaCore.StandardMeTTa.Expression && !isempty(r.children) &&
-               r.children[1] == MeTTaCore.StandardMeTTa.Sym("Error"), rs)
+    sp = _CC_V.Space()
+    _CC_V.load_core_stdlib!(sp)
+    rs = try
+        _CC_V.load_metta!(sp, src)
+    catch
+        return -1
+    end
+    count(
+        r ->
+            r isa MeTTaCore.StandardMeTTa.Expression && !isempty(r.children) &&
+            r.children[1] == MeTTaCore.StandardMeTTa.Sym("Error"), rs)
 end
 
 """Steps a single script may spend in the compiled lane before its queries are cut off.
@@ -63,15 +70,18 @@ const _CC_MAX_STEPS = 4_000
 
 "Error directives produced by the COMPILED lane, plus how much compiled and what ran out of budget."
 function _cc_compiled(src::AbstractString)
-    r = try MeTTaCore.compile_run(src; max_steps = _CC_MAX_STEPS)
-        catch e; return (errors = -1, compiled = 0, fell_back = 0, exhausted = 0,
-                         why = sprint(showerror, e)) end
+    r = try
+        MeTTaCore.compile_run(src; max_steps=_CC_MAX_STEPS)
+    catch e
+        return (errors=-1, compiled=0, fell_back=0, exhausted=0,
+            why=sprint(showerror, e))
+    end
     errs = 0
     for (_, answers) in r.answers, a in answers
         startswith(a, "(Error ") && (errs += 1)
     end
-    (errors = errs, compiled = r.compiled, fell_back = r.fell_back,
-     exhausted = length(r.exhausted), why = "")
+    (errors=errs, compiled=r.compiled, fell_back=r.fell_back,
+        exhausted=length(r.exhausted), why="")
 end
 
 """Scripts where the COMPILED lane is known to disagree with the interpreter, or to run out of budget.
@@ -150,7 +160,7 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # the head being compiled, so it is in `funs`), and the un-hoisted `min`/`s-tv` are USER-DEFINED
     # heads, which are safe under one `eval` (measured: `(eval (member2 $x (cdr-atom $l)))` → True).
     "c1_grounded_basic.metta" => (0, 1),   # NEW: needs >4 000 steps under `metta`; clean at 40 000
-    "c3_pln_stv.metta"    => (0, 3),       # error GONE; 3 queries now want more than 4 000 steps
+    "c3_pln_stv.metta" => (0, 3),       # error GONE; 3 queries now want more than 4 000 steps
     #
     # d2_higherfunc's shapes are NESTED-HEAD definitions — `(= (((curry $f) $x) $y) ($f $x $y))`,
     # `(= ((lambda $v $b) $arg) …)`. Both halves are declined: a variable-headed BODY is
@@ -228,30 +238,38 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # different wrong answer.
     # e1_kb_write's entry is REMOVED — 2 extra errors → 0 under `metta`. Its diagnosis above is kept
     # because it is the clearest statement of the class this change closed.
-    "f1_imports.metta"    => (0, 1),
-    "g1_docs.metta"       => (0, 1),
+    "f1_imports.metta" => (0, 1),
+    "g1_docs.metta" => (0, 1)
 )
 
 @testset "compile lane — the REAL corpus (26 hyperon scripts), not programs we chose" begin
     scripts = sort([f for f in readdir(_CC_DIR) if endswith(f, ".metta")])
     @test length(scripts) == 26                       # the corpus is intact, not silently shrunk
 
-    total_compiled = 0; total_fell_back = 0; worse = String[]
-    println("\n  ── compile-lane corpus differential (compiled / fell-back · errors interp→compiled) ──")
+    total_compiled = 0
+    total_fell_back = 0
+    worse = String[]
+    println(
+        "\n  ── compile-lane corpus differential (compiled / fell-back · errors interp→compiled) ──"
+    )
     for name in scripts
         src = read(joinpath(_CC_DIR, name), String)
-        print("     … $name\r"); flush(stdout)      # visible BEFORE the work, so a hang names itself
+        print("     … $name\r")
+        flush(stdout)      # visible BEFORE the work, so a hang names itself
         base = _cc_interp_errors(src)
-        got  = _cc_compiled(src)
-        total_compiled += got.compiled; total_fell_back += got.fell_back
+        got = _cc_compiled(src)
+        total_compiled += got.compiled
+        total_fell_back += got.fell_back
         want_extra, want_exh = get(_CC_KNOWN, name, (0, 0))
         extra = got.errors - base
         ok = extra == want_extra && got.exhausted == want_exh
         flag = ok ? " " : "✗"
-        println("     $flag $(rpad(name, 26)) $(lpad(got.compiled, 3))/$(lpad(got.fell_back, 3))   " *
-                "$base → $(got.errors)  exh=$(got.exhausted)" *
-                (want_extra + want_exh > 0 ? "   [known $want_extra/$want_exh]" : "") *
-                (isempty(got.why) ? "" : "   " * first(got.why, 80)))
+        println(
+            "     $flag $(rpad(name, 26)) $(lpad(got.compiled, 3))/$(lpad(got.fell_back, 3))   " *
+            "$base → $(got.errors)  exh=$(got.exhausted)" *
+            (want_extra + want_exh > 0 ? "   [known $want_extra/$want_exh]" : "") *
+            (isempty(got.why) ? "" : "   " * first(got.why, 80))
+        )
         # FLUSH PER SCRIPT. Julia buffers stdout when it is redirected, so a run that hangs prints
         # NOTHING and the hanging script cannot be identified from the log — measured on the first
         # run of this file, which sat at 98% CPU for ten minutes with an empty log.
@@ -259,10 +277,15 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
         # THE ASSERTION. Not "zero errors" — the compiled lane must not do WORSE than the interpreter
         # on the same script. Pinning zero would encode `test_conformance.jl`'s baseline twice and
         # break here for a reason that has nothing to do with the compiler.
-        ok || push!(worse, "$name: extra errors $extra (known $want_extra), " *
-                            "exhausted $(got.exhausted) (known $want_exh)")
+        ok || push!(
+            worse,
+            "$name: extra errors $extra (known $want_extra), " *
+            "exhausted $(got.exhausted) (known $want_exh)"
+        )
     end
-    for w in worse; @info "compile-lane corpus DEVIATION" detail=w; end
+    for w in worse
+        @info "compile-lane corpus DEVIATION" detail=w
+    end
     @test isempty(worse)
 
     println("     TOTAL compiled=$total_compiled  fell_back=$total_fell_back")
@@ -311,7 +334,7 @@ const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
     # Same `metta`-at-call-sites effect as the other dict, measured against the PROVED baseline:
     # every extra error gone, two scripts now wanting more than 4 000 steps.
     "c1_grounded_basic.metta" => (0, 1),
-    "c3_pln_stv.metta"    => (0, 3),
+    "c3_pln_stv.metta" => (0, 3),
     # d2_higherfunc REMOVED here too — 3 → 0 under the nested-head decline.
     # e1_kb_write REMOVED — 2 → 0 errors.
     # e2_states was (3, 0) here too and is FIXED against the PROVED baseline as well — the same
@@ -319,20 +342,23 @@ const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
     # baseline is our own interpreter, so "agrees" there could in principle mean two lanes wrong
     # together. Here the 3 errors are gone measured against machine-proved values, which is the
     # stronger claim and the reason both corpora are run.
-    "g1_docs.metta"       => (0, 1),
+    "g1_docs.metta" => (0, 1)
 )
 
 const _CC_LEATTA = joinpath(@__DIR__, "..", "oracle", "leatta", "corpus")
 
 "Error directives and compiled-clause count from the **:mork** backend (ARROW 6)."
 function _cc_mork(src::AbstractString)
-    r = try MeTTaCore.compile_run(src; backend = :mork)
-        catch e; return (errors = -1, compiled = 0, why = sprint(showerror, e)) end
+    r = try
+        MeTTaCore.compile_run(src; backend=:mork)
+    catch e
+        return (errors=-1, compiled=0, why=sprint(showerror, e))
+    end
     errs = 0
     for (_, answers) in r.answers, a in answers
         startswith(a, "(Error ") && (errs += 1)
     end
-    (errors = errs, compiled = r.compiled, why = "")
+    (errors=errs, compiled=r.compiled, why="")
 end
 
 @testset "ARROW 6 — the :mork backend on the same 26-script corpus" begin
@@ -346,11 +372,14 @@ end
     files = sort([joinpath(_CC_DIR, f) for f in readdir(_CC_DIR) if endswith(f, ".metta")])
     @test length(files) == 26
 
-    total_compiled = 0; raised = String[]; wrong = Tuple{String,Int}[]
+    total_compiled = 0
+    raised = String[]
+    wrong = Tuple{String, Int}[]
     for f in files
         m = _cc_mork(read(f, String))
         if m.errors < 0
-            push!(raised, basename(f)); continue
+            push!(raised, basename(f))
+            continue
         end
         total_compiled += m.compiled
         # Agreement is only ASSERTABLE where the lane ran. Where it compiled nothing it proves
@@ -369,11 +398,16 @@ end
     scripts = sort([f for f in readdir(_CC_LEATTA) if endswith(f, ".metta")])
     @test length(scripts) >= 20                       # the vendored corpus is intact
 
-    total_compiled = 0; total_fell_back = 0; worse = String[]
-    println("\n  ── LeaTTa-corpus compile-lane differential (compiled / fell-back · errors) ──")
+    total_compiled = 0
+    total_fell_back = 0
+    worse = String[]
+    println(
+        "\n  ── LeaTTa-corpus compile-lane differential (compiled / fell-back · errors) ──"
+    )
     for name in scripts
         src = read(joinpath(_CC_LEATTA, name), String)
-        print("     … $name\r"); flush(stdout)
+        print("     … $name\r")
+        flush(stdout)
         # ⚠️ THE BASELINE HERE IS ZERO, NOT THE INTERPRETER, and that is the entire reason to use this
         # corpus twice. LeaTTa PROVES all 270 directives pass, so "0 error directives" is a
         # machine-checked fact rather than Core's opinion of itself. Baselining against
@@ -381,16 +415,22 @@ end
         # green if both are wrong the same way, which is exactly the weakness the conformance half
         # already has.
         base = 0
-        got  = _cc_compiled(src)
-        total_compiled += got.compiled; total_fell_back += got.fell_back
+        got = _cc_compiled(src)
+        total_compiled += got.compiled
+        total_fell_back += got.fell_back
         want_extra, want_exh = get(_CC_KNOWN_LEATTA, name, (0, 0))
         extra = got.errors - base
         ok = extra == want_extra && got.exhausted == want_exh
-        println("     $(ok ? " " : "✗") $(rpad(name, 30)) " *
-                "$(lpad(got.compiled, 3))/$(lpad(got.fell_back, 3))   $base → $(got.errors)" *
-                "  exh=$(got.exhausted)$(isempty(got.why) ? "" : "   " * first(got.why, 80))")
+        println(
+            "     $(ok ? " " : "✗") $(rpad(name, 30)) " *
+            "$(lpad(got.compiled, 3))/$(lpad(got.fell_back, 3))   $base → $(got.errors)" *
+            "  exh=$(got.exhausted)$(isempty(got.why) ? "" : "   " * first(got.why, 80))"
+        )
         flush(stdout)
-        ok || push!(worse, "$name: extra $extra (known $want_extra), exh $(got.exhausted) (known $want_exh)")
+        ok || push!(
+            worse,
+            "$name: extra $extra (known $want_extra), exh $(got.exhausted) (known $want_exh)"
+        )
     end
     println("     TOTAL compiled=$total_compiled  fell_back=$total_fell_back")
     @test isempty(worse)

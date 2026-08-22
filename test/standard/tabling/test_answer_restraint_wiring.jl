@@ -27,14 +27,19 @@ using Test
 
 const _AR = Eval
 
-const _AR_PROG = raw"(= (q) 0)" * "\n" * raw"(= (q) (s 0))" * "\n" * raw"(= (q) (s (s 0)))" * "\n" *
-                 raw"(= (q) (s (s (s 0))))" * "\n" * raw"(= (q) (s (s (s (s 0)))))" * "\n"
+const _AR_PROG =
+    raw"(= (q) 0)" * "\n" * raw"(= (q) (s 0))" * "\n" * raw"(= (q) (s (s 0)))" * "\n" *
+    raw"(= (q) (s (s (s 0))))" * "\n" * raw"(= (q) (s (s (s (s 0)))))" * "\n"
 
 "Run the program with `n > 0` ⇒ `answer_abstract(n)` under bounded rationality, else plain tabling."
 function _ar_run(n::Int)::Vector{String}
-    _AR.untable_all!(); _AR.abolish_all_tables!()
-    _AR.clear_answer_abstract!(); _AR.clear_answer_delays!()
-    s = Space(); load_core_stdlib!(s); load_metta!(s, _AR_PROG)
+    _AR.untable_all!()
+    _AR.abolish_all_tables!()
+    _AR.clear_answer_abstract!()
+    _AR.clear_answer_delays!()
+    s = Space()
+    load_core_stdlib!(s)
+    load_metta!(s, _AR_PROG)
     if n > 0
         _AR.table_as!(:q, :answer_abstract => n)
         # SWI's DEFAULT action here is `error`, not abstraction — storing a generalised CONDITIONAL
@@ -65,8 +70,10 @@ end
             @test a in bounded
         end
     finally
-        _AR.untable_all!(); _AR.abolish_all_tables!()
-        _AR.clear_answer_abstract!(); _AR.clear_answer_delays!()
+        _AR.untable_all!()
+        _AR.abolish_all_tables!()
+        _AR.clear_answer_abstract!()
+        _AR.clear_answer_delays!()
         # 🔴 RESTORE THE TRIPWIRE ACTION TOO. `set_max_table_answer_size_action!` is PROCESS-GLOBAL,
         # and its documented default is `TW_ERROR` (`pl-tabling.c:9341`) — leaving it on
         # bounded-rationality would silently change how every LATER file's restraint behaves. That is

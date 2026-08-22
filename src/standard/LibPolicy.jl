@@ -130,7 +130,7 @@ function policy_space(lib::Symbol)
 end
 
 "Forget the cached private space for `lib` (or all of them) — for tests, and after a lib file edit."
-function reset_policy_space!(lib::Union{Symbol, Nothing} = nothing)
+function reset_policy_space!(lib::Union{Symbol, Nothing}=nothing)
     lib === nothing ? empty!(_POLICY_SPACES) : delete!(_POLICY_SPACES, lib)
     nothing
 end
@@ -174,8 +174,10 @@ function lib_policy(cs, name::AbstractString)::Float64
             "unsupported by design — see the module docstring.")
         return v
     end
-    error("lib_policy: `($name)` exists but takes arguments — it is a function, not a policy " *
-          "constant. Arities found: $([length(a) for (a, _) in rules]).")
+    error(
+        "lib_policy: `($name)` exists but takes arguments — it is a function, not a policy " *
+        "constant. Arities found: $([length(a) for (a, _) in rules])."
+    )
 end
 
 lib_policy(lib::Symbol, name::AbstractString) = lib_policy(policy_space(lib), name)
@@ -202,12 +204,13 @@ function lib_policy_names(lib::Symbol)::Vector{String}
     dir = nothing
     for d in Eval._MODULE_PATH[]
         cand = joinpath(d, String(lib))
-        isdir(cand) && (dir = cand; break)
+        isdir(cand) && (dir=cand; break)
     end
-    dir === nothing && error("lib_policy_names: no directory for library `$lib` on the module path")
+    dir === nothing &&
+        error("lib_policy_names: no directory for library `$lib` on the module path")
     names = String[]
     rx = r"^\s*\(=\s*\(([a-zA-Z0-9!?*/+<>=-]+)\)\s+-?[0-9]*\.?[0-9]+\s*\)"
-    for f in sort(filter(f -> endswith(f, ".metta"), readdir(dir; join = true)))
+    for f in sort(filter(f -> endswith(f, ".metta"), readdir(dir; join=true)))
         for ln in eachline(f)
             m = match(rx, ln)
             m === nothing || push!(names, m.captures[1])

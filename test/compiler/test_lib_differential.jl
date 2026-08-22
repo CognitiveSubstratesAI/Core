@@ -78,12 +78,13 @@ function _ld_with_fuel(f)
 end
 
 _ld_interp(prog) = _ld_with_fuel() do
-    sp = _LD_V.Space(); _LD_V.load_core_stdlib!(sp)
+    sp = _LD_V.Space()
+    _LD_V.load_core_stdlib!(sp)
     sort(string.(_LD_V.load_metta!(sp, prog)))
 end
 
 _ld_compiled(prog) = _ld_with_fuel() do
-    r = MeTTaCore.compile_run(prog; max_steps = _LD_MAX_STEPS)
+    r = MeTTaCore.compile_run(prog; max_steps=_LD_MAX_STEPS)
     sort(vcat([a for (_, a) in r.answers]...))
 end
 
@@ -123,21 +124,26 @@ const _LD_SKIP = Set{String}([
 # a MeTTa answer) is kept in `docs/specs/binder_template_hoisting_defect.md`; it is no longer pinned
 # here because this gate no longer runs those files.
 const _LD_KNOWN = Set{String}([
-    "base_rate.metta (BaseRateTv d1 d2)",
+    "base_rate.metta (BaseRateTv d1 d2)"
 ])
 
 @testset "Core/lib — compiled lane answers agree with the interpreter" begin
-    files = sort([joinpath(_LD_LIB, _LD_TARGET_DIR, f)
-                  for f in readdir(joinpath(_LD_LIB, _LD_TARGET_DIR)) if endswith(f, ".metta")])
+    files = sort([
+        joinpath(_LD_LIB, _LD_TARGET_DIR, f)
+        for f in readdir(joinpath(_LD_LIB, _LD_TARGET_DIR)) if endswith(f, ".metta")
+    ])
     @test !isempty(files)                                        # anti-vacuity: the scan found targets
 
-    observed = String[]; detail = String[]
-    nq = 0; nboth_threw = 0
+    observed = String[]
+    detail = String[]
+    nq = 0
+    nboth_threw = 0
     for f in first(files, _LD_MAX_FILES)
         src = read(f, String)
         for q in first(_ld_synth_queries(src), _LD_MAX_QUERIES_PER_FILE)
             (basename(f) * " " * q) in _LD_SKIP && continue
-            print("     … ", basename(f), " ", q, "\r"); flush(stdout)   # a hang names itself
+            print("     … ", basename(f), " ", q, "\r")
+            flush(stdout)   # a hang names itself
             prog = src * "\n!" * q * "\n"
             i = _ld_interp(prog)
             c = _ld_compiled(prog)
@@ -147,14 +153,16 @@ const _LD_KNOWN = Set{String}([
             elseif i != c
                 push!(observed, basename(f) * " " * q)
                 push!(detail,
-                      basename(f) * " " * q * "\n      interp  : " * first(string(i), 110) *
-                      "\n      compiled: " * first(string(c), 110))
+                    basename(f) * " " * q * "\n      interp  : " * first(string(i), 110) *
+                    "\n      compiled: " * first(string(c), 110))
             end
         end
     end
 
-    println("\n  ── Core/lib differential: $(nq) synthesised queries over " *
-            "$(min(length(files), _LD_MAX_FILES)) of $(length(files)) binder-op files ──")
+    println(
+        "\n  ── Core/lib differential: $(nq) synthesised queries over " *
+        "$(min(length(files), _LD_MAX_FILES)) of $(length(files)) binder-op files ──"
+    )
     for d in first(detail, 6)
         println("     ", (split(d, "\n")[1] in _LD_KNOWN ? "•" : "✗"), " ", d)
     end

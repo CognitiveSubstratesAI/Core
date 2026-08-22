@@ -17,7 +17,8 @@ const _OP = Eval
 @testset "table_options/3 — one declaration surface (roadmap 0b)" begin
 
     @testset "HONOURED options reach the live registries" begin
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
         o = _OP.table_as!(:p, :subsumptive, :max_answers => 1000)
         @test o.mode == :subsumptive && o.max_answers == 1000
         # the point of ONE entry point: it is the only place that knows how an option reaches the
@@ -34,7 +35,8 @@ const _OP = Eval
         # `restraint/4`: a NEGATIVE value REMOVES the restraint rather than storing it.
         _OP.table_as!(:p, :max_answers => -1)
         @test _OP.max_answers(:p) == _OP.NO_RESTRAINT
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
     end
 
     @testset "REFUSED options are DECLARABLE and throw, naming the roadmap item" begin
@@ -54,19 +56,25 @@ const _OP = Eval
         @test _OP.answer_abstract_for(:q) == 3     # …and it REACHED the registry, not just the record
         # every refusal must NAME its roadmap item, or the message teaches nothing
         for (opt, (item, _)) in _OP._REFUSED_OPTIONS
-            msg = try; _OP.table_as!(:q, opt); ""
-                  catch e; sprint(showerror, e) end
+            msg = try
+                _OP.table_as!(:q, opt)
+                ""
+            catch e
+                sprint(showerror, e)
+            end
             @test occursin(item, msg)
             @test occursin("Refused rather than silently accepted", msg)
         end
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
     end
 
     @testset "UNKNOWN options are a domain_error, as upstream" begin
         @test_throws ArgumentError _OP.table_as!(:q, :bogus)
         @test_throws ArgumentError _OP.table_as!(:q, :max_answer => 5)   # near-miss on a real name
         @test_throws ArgumentError _OP.table_as!(:q, 42)                  # not even a spec shape
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
     end
 
     @testset "🔴 a THROWING declaration leaves NOTHING half-applied" begin
@@ -74,7 +82,8 @@ const _OP = Eval
         # good and one refused option applies neither. Without that, `table_as!(:r, :subsumptive,
         # :incremental)` would leave :r tabled and subsumptive while reporting failure — the caller
         # would believe the declaration was rejected and the engine would disagree.
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
         @test_throws ArgumentError _OP.table_as!(:r, :subsumptive, :incremental)
         @test !(:r in _OP._TABLED_HEADS)
         @test !_OP.is_subsumptive(:r)
@@ -88,7 +97,8 @@ const _OP = Eval
         # semantics directly — the pairing is what must survive until §7.7 makes them honourable.
         o = _OP.TableOptions()
         @test !o.incremental && !o.opaque
-        o.incremental = true; o.opaque = false
+        o.incremental = true
+        o.opaque = false
         @test o.incremental && !o.opaque
         # …and the refusal covers both halves, so neither can be set through the declaration yet.
         @test haskey(_OP._REFUSED_OPTIONS, :incremental)
@@ -96,14 +106,16 @@ const _OP = Eval
     end
 
     @testset "untable! clears the options record with the declaration" begin
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
         _OP.table_as!(:s, :subsumptive, :max_answers => 5)
         @test _OP.is_subsumptive(:s) && _OP.max_answers(:s) == 5
         _OP.untable!(:s)
         @test !(:s in _OP._TABLED_HEADS)
         @test !_OP.is_subsumptive(:s)                 # mode cleared
         @test _OP.max_answers(:s) == _OP.NO_RESTRAINT # restraint cleared
-        _OP.untable_all!(); _OP.clear_all_table_options!()
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
     end
 
     @testset "defaults match upstream's absent-key semantics" begin

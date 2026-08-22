@@ -83,12 +83,12 @@ const _RI = MeTTaCore.Eval
 # no longer hoisted, and one clause that the hoisted goals had been blocking now emits. Small, but
 # raised in the same commit because a floor left below the measurement is a floor that cannot catch
 # the next regression.
-const FLOOR_STDLIB  = 11     # of 61  clauses (10 -> 11, the `()` unit-atom fix, 2026-08-12:
-                             # a stdlib clause containing `()` used to lower to `(Nil)` and fail)
+const FLOOR_STDLIB = 11     # of 61  clauses (10 -> 11, the `()` unit-atom fix, 2026-08-12:
+# a stdlib clause containing `()` used to lower to `(Nil)` and fail)
 const FLOOR_STANDARD = 9     # of 51
-const FLOOR_LIB     = 360    # of 888   (358 -> 360, arity-aware `is_fun`, 2026-08-11)
-const FLOOR_TOTAL   = 380    # of 1000  (377 -> 379 arity-aware `is_fun` 2026-08-11;
-                             #           379 -> 380 the `()` unit-atom fix 2026-08-12)
+const FLOOR_LIB = 360    # of 888   (358 -> 360, arity-aware `is_fun`, 2026-08-11)
+const FLOOR_TOTAL = 380    # of 1000  (377 -> 379 arity-aware `is_fun` 2026-08-11;
+#           379 -> 380 the `()` unit-atom fix 2026-08-12)
 
 # ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
 # MEASURED, not predicted: 687 of 1000, against MM2's 374. The design doc argued minimal MeTTa should
@@ -165,7 +165,9 @@ const FLOOR_IL_TOTAL = 930   # of 1000
 
 "Parens balance, ignoring anything inside a MeTTa string literal."
 function _rt_balanced(s::AbstractString)::Bool
-    depth = 0; instr = false; esc = false
+    depth = 0
+    instr = false
+    esc = false
     for c in s
         if esc
             esc = false
@@ -216,7 +218,8 @@ function _rt_wellformed(clause::AbstractString)::Bool
     occursin("<unrenderable", clause) && return false
     _rt_balanced(clause) || return false
     a = try
-        toks = _RI.tokenize(clause); i = Ref(1)
+        toks = _RI.tokenize(clause)
+        i = Ref(1)
         v = _RI.parse_from(toks, i, _RI.Space().tokens)
         i[] > length(toks) || return false          # trailing junk ⇒ not ONE atom
         v
@@ -230,7 +233,9 @@ end
 
 "Parse MeTTa text to surface atoms WITHOUT evaluating — a compiler frontend must not run the program."
 function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
-    toks = _RI.tokenize(text); i = Ref(1); out = _RS.Atom[]
+    toks = _RI.tokenize(text)
+    i = Ref(1)
+    out = _RS.Atom[]
     while i[] <= length(toks)
         toks[i[]] == "!" && (i[] += 1)
         i[] > length(toks) && break
@@ -240,11 +245,12 @@ function _ratchet_parse(sp, text::AbstractString)::Vector{_RS.Atom}
 end
 
 @testset "compiler coverage RATCHET — emitted clauses may not decrease" begin
-    sp = _RI.Space(); _RI.load_core_stdlib!(sp)
+    sp = _RI.Space()
+    _RI.load_core_stdlib!(sp)
     root = normpath(joinpath(dirname(pathof(MeTTaCore)), ".."))
-    groups = ["stdlib"       => joinpath(root, "stdlib"),
-              "src/standard" => joinpath(root, "src", "standard"),
-              "lib"          => joinpath(root, "lib")]
+    groups = ["stdlib" => joinpath(root, "stdlib"),
+        "src/standard" => joinpath(root, "src", "standard"),
+        "lib" => joinpath(root, "lib")]
 
     files = String[]
     for (_, d) in groups, (rt, _, fs) in walkdir(d), f in fs
@@ -255,32 +261,48 @@ end
     programs = Dict{String, MeTTaCore.CompilerIR.IRProgram}()   # NO `Any`: standing project rule, tests included
     allfuns = Set{Symbol}()
     for f in files
-        atoms = try _ratchet_parse(sp, read(f, String)) catch; continue end
-        prog  = try _RF.lower_program(atoms) catch; continue end
+        atoms = try
+            _ratchet_parse(sp, read(f, String))
+        catch
+            continue
+        end
+        prog = try
+            _RF.lower_program(atoms)
+        catch
+            continue
+        end
         programs[f] = prog
-        for d in prog.definitions; push!(allfuns, d.name); end
+        for d in prog.definitions
+            push!(allfuns, d.name)
+        end
     end
     @test !isempty(programs)                       # the corpus loaded at all
     @test length(allfuns) > 500                    # and produced a plausible head set
 
     # Pass 2 — emit with that set.
-    counts = Dict{String, Tuple{Int,Int}}()        # group => (emitted, total)
+    counts = Dict{String, Tuple{Int, Int}}()        # group => (emitted, total)
     for (label, dir) in groups
-        em = 0; tot = 0
+        em = 0
+        tot = 0
         for f in files
             startswith(f, dir) || continue
             haskey(programs, f) || continue
-            cls = try _RA.translate_program(programs[f]) catch; continue end
-            r = _RE.emit_program(cls; extra_funs = allfuns)
-            em += r.emitted; tot += length(cls)
+            cls = try
+                _RA.translate_program(programs[f])
+            catch
+                continue
+            end
+            r = _RE.emit_program(cls; extra_funs=allfuns)
+            em += r.emitted
+            tot += length(cls)
         end
         counts[label] = (em, tot)
     end
-    total_em  = sum(first(v)  for v in values(counts))
-    total_tot = sum(last(v)   for v in values(counts))
+    total_em = sum(first(v) for v in values(counts))
+    total_tot = sum(last(v) for v in values(counts))
 
     for (label, floor) in ("stdlib" => FLOOR_STDLIB, "src/standard" => FLOOR_STANDARD,
-                           "lib" => FLOOR_LIB)
+        "lib" => FLOOR_LIB)
         em, tot = counts[label]
         @info "compiler coverage" group=label emitted=em total=tot floor=floor
         @test em >= floor
@@ -294,30 +316,43 @@ end
     # too, not just the floor: emitted + declined must equal the clause count. That identity is what
     # caught the zero-branch GDisj bug — a clause was counted emitted while producing nothing, and
     # only the totals disagreeing revealed it.
-    il_em = 0; il_tot = 0; il_out = 0; il_decl = 0
+    il_em = 0
+    il_tot = 0
+    il_out = 0
+    il_decl = 0
     malformed = String[]
     for f in files
         haskey(programs, f) || continue
-        cls = try _RA.translate_program(programs[f]) catch; continue end
+        cls = try
+            _RA.translate_program(programs[f])
+        catch
+            continue
+        end
         r = MeTTaCore.CompilerEmitIL.emit_il_program(cls)
-        il_em += r.emitted; il_tot += length(cls)
-        il_out += length(r.clauses); il_decl += length(r.declined)
+        il_em += r.emitted
+        il_tot += length(cls)
+        il_out += length(r.clauses)
+        il_decl += length(r.declined)
         for c in r.clauses
             _rt_wellformed(c) || (length(malformed) < 8 && push!(malformed, first(c, 110)))
         end
     end
     # 🔴 A COUNT MUST NOT BE ABLE TO COUNT GARBAGE — see `_rt_wellformed`.
-    for m in malformed; @info "MALFORMED emitted IL" clause=m; end
+    for m in malformed
+        @info "MALFORMED emitted IL" clause=m
+    end
     @test isempty(malformed)
 
     # ⚠️ AND THE GATE ITSELF IS EXERCISED, because a check that has never rejected anything is not
     # known to work — the same reason every differential here carries a positive control. The first
     # string is verbatim what the emitter produced for 106 clauses while the ratchet scored 832.
-    @test !_rt_wellformed("(= (f) (function (chain (eval <unrenderable:IRSpecial>) \$t (return \$t))))")
+    @test !_rt_wellformed(
+        "(= (f) (function (chain (eval <unrenderable:IRSpecial>) \$t (return \$t))))"
+    )
     @test !_rt_wellformed("(= (f) (chain")                       # unbalanced ⇒ not one atom
     @test !_rt_wellformed("(= (f) a) (= (g) b)")                 # two atoms ⇒ not one clause
     @test !_rt_wellformed("(foo bar)")                           # not a `(=)` clause
-    @test  _rt_wellformed("(= (f \$x) (function (return \$x)))")  # …and a real one passes
+    @test _rt_wellformed("(= (f \$x) (function (return \$x)))")  # …and a real one passes
     @info "MeTTa-IL coverage TOTAL" emitted=il_em total=il_tot floor=FLOOR_IL_TOTAL clauses_out=il_out
     @test il_em >= FLOOR_IL_TOTAL
     @test il_em + il_decl == il_tot          # every clause is emitted OR declined — never dropped
@@ -339,17 +374,23 @@ end
     # `residual` overtook `call_in_body` as the largest bucket, which changes the priority order. A
     # number in prose is a measurement AT A TIME and does not announce when it expires; a number in a
     # test cannot go stale silently. Prints on every run so a shifted ranking is visible immediately.
-    hist = Dict{Symbol,Int}()
+    hist = Dict{Symbol, Int}()
     for f in files
         haskey(programs, f) || continue
-        cls = try _RA.translate_program(programs[f]) catch; continue end
-        r = _RE.emit_program(cls; extra_funs = allfuns)
+        cls = try
+            _RA.translate_program(programs[f])
+        catch
+            continue
+        end
+        r = _RE.emit_program(cls; extra_funs=allfuns)
         for cl in r.declined
             k = _RE.decline_reason(cl)
             hist[k] = get(hist, k, 0) + 1
         end
     end
-    @info "compiler DECLINE HISTOGRAM (re-measured every run)" sort(collect(hist), by = x -> -x[2])
+    @info "compiler DECLINE HISTOGRAM (re-measured every run)" sort(
+        collect(hist), by=x -> -x[2]
+    )
     @test sum(values(hist)) == total_tot - total_em      # every decline is attributed
     @test haskey(hist, :residual) && haskey(hist, :call_in_body)
 
@@ -357,6 +398,6 @@ end
     # floor gets raised in the same commit rather than drifting stale and stopping being a ratchet.
     if total_em > FLOOR_TOTAL
         @warn "compiler coverage ROSE above the floor — RAISE FLOOR_TOTAL (and the group floors) " *
-              "in this commit" floor=FLOOR_TOTAL now=total_em
+            "in this commit" floor=FLOOR_TOTAL now=total_em
     end
 end

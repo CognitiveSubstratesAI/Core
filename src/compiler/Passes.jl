@@ -46,28 +46,33 @@ function subst_var(node::IRAtom, target::NodeId, replacement::IRAtom)::IRAtom
     elseif node isa IRExpression
         e = node::IRExpression
         return IRExpression(subst_var(e.head, target, replacement),
-                            IRAtom[subst_var(a, target, replacement) for a in e.args],
-                            e.id, e.src)
+            IRAtom[subst_var(a, target, replacement) for a in e.args],
+            e.id, e.src)
     elseif node isa IRSpecial
         s = node::IRSpecial
         return IRSpecial(s.kind, s.surface,
-                         IRAtom[subst_var(a, target, replacement) for a in s.args], s.id, s.src)
+            IRAtom[subst_var(a, target, replacement) for a in s.args], s.id, s.src)
     elseif node isa IRSuperpose
         p = node::IRSuperpose
-        return IRSuperpose(IRAtom[subst_var(a, target, replacement) for a in p.alternatives],
-                           p.id, p.src)
+        return IRSuperpose(
+            IRAtom[subst_var(a, target, replacement) for a in p.alternatives],
+            p.id, p.src)
     elseif node isa IRDestructiveBinding
         d = node::IRDestructiveBinding
-        binds = IRBoundAtom[IRBoundAtom(subst_var(b.pattern, target, replacement),
-                                        subst_var(b.value, target, replacement), b.id, b.src)
-                            for b in d.bindings]
+        binds = IRBoundAtom[
+            IRBoundAtom(subst_var(b.pattern, target, replacement),
+                subst_var(b.value, target, replacement), b.id, b.src)
+            for b in d.bindings
+        ]
         return IRDestructiveBinding(binds, d.sequential,
-                                    subst_var(d.body, target, replacement), d.id, d.src)
+            subst_var(d.body, target, replacement), d.id, d.src)
     elseif node isa IRMatch
         m = node::IRMatch
-        brs = IRMatchBranch[IRMatchBranch(subst_var(b.pattern, target, replacement),
-                                          subst_var(b.body, target, replacement), b.src)
-                            for b in m.branches]
+        brs = IRMatchBranch[
+            IRMatchBranch(subst_var(b.pattern, target, replacement),
+                subst_var(b.body, target, replacement), b.src)
+            for b in m.branches
+        ]
         return IRMatch(subst_var(m.scrutinee, target, replacement), brs, m.id, m.src)
     end
     node                                    # leaves: Sym / Grounded / Predefined / ResolvedSymbol
@@ -102,7 +107,7 @@ Returns `nothing` — leave the clause alone — when the split is not sound:
 
 Declining is deliberate: an unsound split silently changes which rules fire.
 """
-function specialize_clause(lhs::IRAtom, rhs::IRAtom)::Union{Vector{IRBoundAtom},Nothing}
+function specialize_clause(lhs::IRAtom, rhs::IRAtom)::Union{Vector{IRBoundAtom}, Nothing}
     rhs isa IRMatch || return nothing
     m = rhs::IRMatch
     isempty(m.branches) && return nothing
@@ -137,12 +142,16 @@ function specialize_matches(program::IRProgram)
             if sp === nothing
                 push!(clauses, cl)
             else
-                append!(clauses, sp); n_split += 1
+                append!(clauses, sp)
+                n_split += 1
             end
         end
         push!(defs, IRFunctionDefinition(d.name, clauses, d.ty, d.id, d.src))
     end
-    (IRProgram(defs, program.runs, program.predefined, program.annotations, program.gen), n_split)
+    (
+        IRProgram(defs, program.runs, program.predefined, program.annotations, program.gen),
+        n_split
+    )
 end
 
 export subst_var, occurs, specialize_clause, specialize_matches

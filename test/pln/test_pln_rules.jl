@@ -20,16 +20,24 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN rules — conjunction/disjunction/negation (forward + demand via dispatch, vs oracle)" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
-    load_metta!(sp, """
-    (message P (stv 0.8 0.9))
-    (message Q (stv 0.7 0.85))
-    (factor cf conjunction (premises P Q) (conclusion Rc))
-    (produces Rc cf)
-    (factor df disjunction (premises P Q) (conclusion Rd))
-    (produces Rd df)
-    """)
+    load_metta!(
+        sp,
+        """
+(message P (stv 0.8 0.9))
+(message Q (stv 0.7 0.85))
+(factor cf conjunction (premises P Q) (conclusion Rc))
+(produces Rc cf)
+(factor df disjunction (premises P Q) (conclusion Rd))
+(produces Rd df)
+"""
+    )
 
     asserts = """
     !(assertEqual (fwd-conjunction (stv 0.8 0.9) (stv 0.7 0.85)) (stv 0.5599999999999999 0.985))
@@ -41,7 +49,9 @@ using MeTTaCore.StandardMeTTa
     !(assertEqual (factor-demand-pair Rd 1.0) (dpair 0.09999999999999998 0.09999999999999998))
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 7
 end

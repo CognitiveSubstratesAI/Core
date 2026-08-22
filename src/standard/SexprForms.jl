@@ -28,11 +28,15 @@
 # ── top-level form splitter: paren-depth aware, `!`-prefix aware, `;`-comment aware ──
 function mm2_split_forms(program::AbstractString)::Vector{Tuple{Bool, String}}
     forms = Tuple{Bool, String}[]
-    s = collect(program); n = length(s); i = 1
+    s = collect(program)
+    n = length(s)
+    i = 1
     while i <= n
         while i <= n && (isspace(s[i]) || s[i] == ';')
             if s[i] == ';'
-                while i <= n && s[i] != '\n'; i += 1; end
+                while i <= n && s[i] != '\n'
+                    i += 1
+                end
             else
                 i += 1
             end
@@ -40,28 +44,44 @@ function mm2_split_forms(program::AbstractString)::Vector{Tuple{Bool, String}}
         i > n && break
         bang = false
         if s[i] == '!'
-            bang = true; i += 1
-            while i <= n && isspace(s[i]); i += 1; end
+            bang = true
+            i += 1
+            while i <= n && isspace(s[i])
+                i += 1
+            end
         end
         i > n && break
         start = i
         if s[i] == '('
-            depth = 0; instr = false; esc = false        # string-aware: (/)/whitespace inside "…" are literal
+            depth = 0
+            instr = false
+            esc = false        # string-aware: (/)/whitespace inside "…" are literal
             while i <= n
                 c = s[i]
                 if instr
-                    esc ? (esc = false) : c == '\\' ? (esc = true) : c == '"' && (instr = false)
-                elseif c == '"'; instr = true
-                elseif c == '('; depth += 1
-                elseif c == ')'; depth -= 1
+                    if esc
+                        (esc = false)
+                    elseif c == '\\'
+                        (esc = true)
+                    else
+                        c == '"' && (instr = false)
+                    end
+                elseif c == '"'
+                    instr = true
+                elseif c == '('
+                    depth += 1
+                elseif c == ')'
+                    depth -= 1
                 end
                 i += 1
                 (depth == 0 && !instr) && break
             end
         else
-            while i <= n && !isspace(s[i]); i += 1; end
+            while i <= n && !isspace(s[i])
+                i += 1
+            end
         end
-        push!(forms, (bang, String(s[start:i-1])))
+        push!(forms, (bang, String(s[start:(i - 1)])))
     end
     forms
 end
@@ -72,7 +92,11 @@ function mm2_head(form::AbstractString)::String
     startswith(t, "(") || return strip(t)
     inner = SubString(t, nextind(t, firstindex(t)))
     j = findfirst(c -> isspace(c) || c == '(' || c == ')', inner)
-    j === nothing ? strip(inner) : strip(SubString(inner, firstindex(inner), prevind(inner, j)))
+    if j === nothing
+        strip(inner)
+    else
+        strip(SubString(inner, firstindex(inner), prevind(inner, j)))
+    end
 end
 
 "Top-level argument forms of a paren expr, e.g. `(match S P T)` → [\"match\",\"S\",\"P\",\"T\"]."
@@ -80,19 +104,39 @@ function mm2_expr_args(form::AbstractString)::Vector{String}
     t = strip(form)
     (startswith(t, "(") && endswith(t, ")")) || error("mm2_expr_args: not an expr: $form")
     inner = SubString(t, nextind(t, firstindex(t)), prevind(t, lastindex(t)))
-    args = String[]; depth = 0; buf = IOBuffer()
-    instr = false; esc = false                            # string-aware: (/)/whitespace inside "…" are literal
+    args = String[]
+    depth = 0
+    buf = IOBuffer()
+    instr = false
+    esc = false                            # string-aware: (/)/whitespace inside "…" are literal
     for c in inner
-        if instr; print(buf, c)
-            esc ? (esc = false) : c == '\\' ? (esc = true) : c == '"' && (instr = false)
-        elseif c == '"'; instr = true; print(buf, c)
-        elseif c == '('; depth += 1; print(buf, c)
-        elseif c == ')'; depth -= 1; print(buf, c)
+        if instr
+            print(buf, c)
+            if esc
+                (esc = false)
+            elseif c == '\\'
+                (esc = true)
+            else
+                c == '"' && (instr = false)
+            end
+        elseif c == '"'
+            instr = true
+            print(buf, c)
+        elseif c == '('
+            depth += 1
+            print(buf, c)
+        elseif c == ')'
+            depth -= 1
+            print(buf, c)
         elseif isspace(c) && depth == 0
-            s = String(take!(buf)); isempty(s) || push!(args, s)
-        else; print(buf, c); end
+            s = String(take!(buf))
+            isempty(s) || push!(args, s)
+        else
+            print(buf, c)
+        end
     end
-    s = String(take!(buf)); isempty(s) || push!(args, s)
+    s = String(take!(buf))
+    isempty(s) || push!(args, s)
     args
 end
 
@@ -151,22 +195,26 @@ to answer `true`. Over-reporting only costs regions; under-reporting silently re
 
 Regions are INCREMENTAL: apply `defs`, answer `queries`, keep the space, move on.
 """
-function split_program_regions(program::AbstractString, may_mutate::F)::Vector{ProgramRegion} where {F}
+function split_program_regions(
+    program::AbstractString, may_mutate::F
+)::Vector{ProgramRegion} where {F}
     regions = ProgramRegion[]
-    defs    = String[]
+    defs = String[]
     queries = String[]
     for (bang, form) in mm2_split_forms(program)
         if !bang
             if !isempty(queries)      # a definition AFTER queries ⇒ that prefix is closed
                 push!(regions, ProgramRegion(defs, queries))
-                defs = String[]; queries = String[]   # REBIND, never `empty!` — the pushed region aliases these
+                defs = String[]
+                queries = String[]   # REBIND, never `empty!` — the pushed region aliases these
             end
             push!(defs, form)
         else
             push!(queries, form)
             if may_mutate(form)       # the query itself changes the space ⇒ nothing after it shares this prefix
                 push!(regions, ProgramRegion(defs, queries))
-                defs = String[]; queries = String[]
+                defs = String[]
+                queries = String[]
             end
         end
     end
@@ -177,7 +225,11 @@ end
 "Render a region back to program text — `defs` in order, then each query re-prefixed with `!`."
 function region_program(r::ProgramRegion)::String
     io = IOBuffer()
-    for d in r.defs;    println(io, d);      end
-    for q in r.queries; println(io, "!", q); end
+    for d in r.defs
+        println(io, d)
+    end
+    for q in r.queries
+        println(io, "!", q)
+    end
     String(take!(io))
 end

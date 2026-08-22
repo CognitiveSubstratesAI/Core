@@ -9,10 +9,13 @@ using Test
 
     @testset "rewrite lowering: (~> LHS RHS) → (exec …)" begin
         # base rewrite, single-pattern LHS
-        @test metta_il_lower_rewrite(raw"(~> (a $x) (b $x))") == raw"(exec 0 (, (a $x)) (, (b $x)))"
+        @test metta_il_lower_rewrite(raw"(~> (a $x) (b $x))") ==
+            raw"(exec 0 (, (a $x)) (, (b $x)))"
         # conjunctive LHS passes through as the source list
-        @test metta_il_lower_rewrite(raw"(~> (, (edge $x $y) (edge $y $z)) (trans $x $z))") ==
-              raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (trans $x $z)))"
+        @test metta_il_lower_rewrite(
+            raw"(~> (, (edge $x $y) (edge $y $z)) (trans $x $z))"
+        ) ==
+            raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (trans $x $z)))"
     end
 
     @testset "run + bisimulation: MeTTa-IL rewrite ≡ interpreter (match)" begin
@@ -21,10 +24,18 @@ using Test
         R_il = metta_il_run!(cs, facts, il)
         @test R_il == ["(trans 0 2)", "(trans 1 3)"]
         SM = MeTTaCore.Eval
-        isp = SM.Space(); SM.load_core_stdlib!(isp); SM.load_metta!(isp, facts)
-        res = SM.load_metta!(isp, raw"!(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))")
-        R_interp = sort(unique(filter(s -> occursin("trans", s),
-                       [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])))
+        isp = SM.Space()
+        SM.load_core_stdlib!(isp)
+        SM.load_metta!(isp, facts)
+        res = SM.load_metta!(
+            isp, raw"!(match &self (, (edge $x $y) (edge $y $z)) (trans $x $z))"
+        )
+        R_interp = sort(
+            unique(
+                filter(s -> occursin("trans", s),
+                    [string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
+            )
+        )
         @test R_il == R_interp                                   # MeTTa-IL rewrite lane ≡ interpreter-spec
     end
 
@@ -47,15 +58,22 @@ using Test
         (~> (, (path $x $y) (edge $y $z)) (path $x $z))
         """
         cs = MC.new_core_space()
-        R_sat = metta_il_run!(cs, facts, il; saturate = true)
-        @test R_sat == ["(path 0 1)", "(path 0 2)", "(path 0 3)", "(path 1 2)", "(path 1 3)", "(path 2 3)"]
+        R_sat = metta_il_run!(cs, facts, il; saturate=true)
+        @test R_sat == [
+            "(path 0 1)",
+            "(path 0 2)",
+            "(path 0 3)",
+            "(path 1 2)",
+            "(path 1 3)",
+            "(path 2 3)"
+        ]
         # the SAME program single-step (default) does NOT reach the 3-hop closure — proves saturation is needed
         cs2 = MC.new_core_space()
         @test "(path 0 3)" ∉ metta_il_run!(cs2, facts, il)
         # cyclic input TERMINATES with the correct closure (value-dedup gate, not an infinite loop)
         cs3 = MC.new_core_space()
-        @test metta_il_run!(cs3, "(edge 0 1)\n(edge 1 0)", il; saturate = true) ==
-              ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
+        @test metta_il_run!(cs3, "(edge 0 1)\n(edge 1 0)", il; saturate=true) ==
+            ["(path 0 0)", "(path 0 1)", "(path 1 0)", "(path 1 1)"]
     end
     @testset "REGRESSION: non-`~>` forms RAISE instead of vanishing silently" begin
         # Before the guard, this lane filtered every entry with `if !bang && mm2_head(f) == "~>"`,
@@ -75,7 +93,9 @@ using Test
         # leave a half-loaded space behind
         @test isempty(MC.core_atoms(cs))
         # a `!` directive is discarded just as silently — also caught
-        @test_throws Exception metta_il_lower("(~> (p \$x) (q \$x))\n!(match &self (p \$x) \$x)")
+        @test_throws Exception metta_il_lower(
+            "(~> (p \$x) (q \$x))\n!(match &self (p \$x) \$x)"
+        )
         # the honest path still works: facts via `data`, rewrites via `program`
         cs2 = MC.new_core_space()
         @test metta_il_run!(cs2, "(p A)", "(~> (p \$x) (q \$x))") == ["(q A)"]
@@ -99,13 +119,17 @@ using Test
     @testset "def/match/emit pipeline surface (§9.1 → §9.2)" begin
         @testset "lowering: def → (exec PRIORITY (, PATS) (, EMITS)) per §9.2" begin
             @test metta_il_lower_def(raw"(def s () (match (a $x) (emit (b $x))))", 1) ==
-                  raw"(exec 1 (, (a $x)) (, (b $x)))"
+                raw"(exec 1 (, (a $x)) (, (b $x)))"
             # multiple patterns + multiple emits (extract-skeleton shape)
-            @test metta_il_lower_def(raw"(def x () (match (p $x) (emit (q $x)) (emit (r $x))))", 2) ==
-                  raw"(exec 2 (, (p $x)) (, (q $x) (r $x)))"
+            @test metta_il_lower_def(
+                raw"(def x () (match (p $x) (emit (q $x)) (emit (r $x))))", 2
+            ) ==
+                raw"(exec 2 (, (p $x)) (, (q $x) (r $x)))"
             # when guard folds into the source conjunction
-            @test metta_il_lower_def(raw"(def m () (match (c $x $n) (when (== $n hi) (emit (k $x)))))", 4) ==
-                  raw"(exec 4 (, (c $x $n) (== $n hi)) (, (k $x)))"
+            @test metta_il_lower_def(
+                raw"(def m () (match (c $x $n) (when (== $n hi) (emit (k $x)))))", 4
+            ) ==
+                raw"(exec 4 (, (c $x $n) (== $n hi)) (, (k $x)))"
         end
 
         @testset "run a staged pipeline (stage 2 consumes stage 1's output)" begin

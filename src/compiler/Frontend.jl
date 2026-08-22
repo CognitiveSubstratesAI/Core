@@ -57,20 +57,20 @@ import ..Eval
 # ever compares a surface string, so adding a spelling is one line and cannot drift across sites the
 # way `_MM2_SPECIAL_FORMS` + `_MM2_ARITH_I64` + the four exec templates did.
 const SPECIAL_FORMS = Dict{Base.Symbol, SpecialKind}(
-    :let        => SPECIAL_LET,
+    :let => SPECIAL_LET,
     Base.Symbol("let*") => SPECIAL_LET_SEQ,
-    :if         => SPECIAL_IF,
-    :case       => SPECIAL_CASE,
-    :match      => SPECIAL_MATCH,
-    :superpose  => SPECIAL_SUPERPOSE,
-    :collapse   => SPECIAL_COLLAPSE,
-    :quote      => SPECIAL_QUOTE,
-    :eval       => SPECIAL_EVAL,
-    :chain      => SPECIAL_CHAIN,
-    :function   => SPECIAL_FUNCTION,
-    :return     => SPECIAL_RETURN,
-    :Error      => SPECIAL_ERROR,
-    :catch      => SPECIAL_CATCH,
+    :if => SPECIAL_IF,
+    :case => SPECIAL_CASE,
+    :match => SPECIAL_MATCH,
+    :superpose => SPECIAL_SUPERPOSE,
+    :collapse => SPECIAL_COLLAPSE,
+    :quote => SPECIAL_QUOTE,
+    :eval => SPECIAL_EVAL,
+    :chain => SPECIAL_CHAIN,
+    :function => SPECIAL_FUNCTION,
+    :return => SPECIAL_RETURN,
+    :Error => SPECIAL_ERROR,
+    :catch => SPECIAL_CATCH
 )
 
 # ── resolution scope ─────────────────────────────────────────────────────────────────────────────
@@ -125,16 +125,16 @@ bind!(c::Ctx, name::Base.Symbol)::NodeId = (c.scope.names[name] = fresh(c))
 "Resolve `name`, binding it in the current scope on first sight — MeTTa variables are implicitly
 introduced by use, so first occurrence within a clause declares."
 resolve!(c::Ctx, name::Base.Symbol)::NodeId =
-    (u = lookup(c.scope, name); u == NO_ID ? bind!(c, name) : u)
+    (u=lookup(c.scope, name); u == NO_ID ? bind!(c, name) : u)
 
 # ── grounded typing ──────────────────────────────────────────────────────────────────────────────
 # The §3.4 TYPE CONVERSION decision, made ONCE here rather than per lane. `NumericSeam` owns the
 # arithmetic semantics; this only tags what the value IS.
-ground_type(::Integer)         = GROUNDED_INT
-ground_type(::AbstractFloat)   = GROUNDED_FLOAT
-ground_type(::Bool)            = GROUNDED_BOOL
-ground_type(::AbstractString)  = GROUNDED_STRING
-ground_type(_)                 = GROUNDED_OPAQUE
+ground_type(::Integer) = GROUNDED_INT
+ground_type(::AbstractFloat) = GROUNDED_FLOAT
+ground_type(::Bool) = GROUNDED_BOOL
+ground_type(::AbstractString) = GROUNDED_STRING
+ground_type(_) = GROUNDED_OPAQUE
 
 # ── the lowering ─────────────────────────────────────────────────────────────────────────────────
 
@@ -150,10 +150,11 @@ function lower end
 lower(c::Ctx, a::Sym)::IRAtom = IRSymbol(a.name, fresh(c), NO_SOURCE)
 
 lower(c::Ctx, a::Var)::IRAtom =
-    (n = Base.Symbol(a.name); IRVariable(n, resolve!(c, n), fresh(c), NO_SOURCE))
+    (n=Base.Symbol(a.name); IRVariable(n, resolve!(c, n), fresh(c), NO_SOURCE))
 
 # Bool BEFORE Integer — Julia's `Bool <: Integer`, so the generic method would tag `true` as an INT.
-lower(c::Ctx, a::Grounded{Bool})::IRAtom = IRGrounded(a.value, GROUNDED_BOOL, fresh(c), NO_SOURCE)
+lower(c::Ctx, a::Grounded{Bool})::IRAtom =
+    IRGrounded(a.value, GROUNDED_BOOL, fresh(c), NO_SOURCE)
 
 # ── A GROUNDED OPERATION IS A PRIMITIVE, NOT A VALUE ─────────────────────────────────────────────
 # MEASURED 2026-08-06: without these two methods, 2192 of 2765 residual goals in the A-normalizer
@@ -195,7 +196,7 @@ function lower(c::Ctx, a::Expression)::IRAtom
     # by construction rather than by convention. `Emit.render` and `EmitIL._atom_of` special-case it
     # back to `()` / `Expression(Atom[])`.
     isempty(a.children) && return IRExpression(IRSymbol(UNIT_HEAD, fresh(c), NO_SOURCE),
-                                               IRAtom[], fresh(c), NO_SOURCE)
+        IRAtom[], fresh(c), NO_SOURCE)
     h = a.children[1]
     rest = @view a.children[2:end]
     # A SYMBOL head may be a special form; a compound head never is, and stays structural.
@@ -210,9 +211,15 @@ function lower(c::Ctx, a::Expression)::IRAtom
     # This is the SECOND site with this bug — `definition_name` had it and was fixed; this one was
     # not swept at the same time. Per the standing rule, a recurring defect gets the RULE applied to
     # every candidate site, not a fix at the instance that happened to be noticed.
-    hname = h isa Sym                              ? (h::Sym).name :
-            h isa Grounded{Eval.Operation}  ? Base.Symbol(h.value.name) :
-            h isa Grounded{Eval.SpaceOp}    ? Base.Symbol(h.value.name) : nothing
+    hname = if h isa Sym
+        (h::Sym).name
+    elseif h isa Grounded{Eval.Operation}
+        Base.Symbol(h.value.name)
+    elseif h isa Grounded{Eval.SpaceOp}
+        Base.Symbol(h.value.name)
+    else
+        nothing
+    end
     if hname !== nothing
         kind = get(SPECIAL_FORMS, hname, nothing)
         kind === nothing || return lower_special(c, kind, hname, rest)
@@ -229,7 +236,7 @@ this returns `IRSpecial` rather than falling back to `IRExpression`: an unlowere
 stay visibly special, not disguise itself as an application.
 """
 function lower_special(c::Ctx, kind::SpecialKind, surface::Base.Symbol,
-                       args::AbstractVector{Atom})::IRAtom
+    args::AbstractVector{Atom})::IRAtom
     if kind === SPECIAL_LET || kind === SPECIAL_LET_SEQ
         b = lower_let(c, kind, surface, args)
         b === nothing || return b
@@ -260,8 +267,11 @@ function lower_special(c::Ctx, kind::SpecialKind, surface::Base.Symbol,
         # not variadic. Taking `args` directly gave a single alternative holding the whole tuple, so
         # the disjunction had one branch and `superpose` reduced to the tuple itself.
         # ORACLE, 2026-08-07: `!(superpose (a b c))` → `[c, b, a]` — THREE answers, not one.
-        alts = (length(args) == 1 && args[1] isa Expression) ?
-               (args[1]::Expression).children : args
+        alts = if (length(args) == 1 && args[1] isa Expression)
+            (args[1]::Expression).children
+        else
+            args
+        end
         return IRSuperpose(IRAtom[lower(c, x) for x in alts], fresh(c), NO_SOURCE)
     end
     IRSpecial(kind, surface, IRAtom[lower(c, x) for x in args], fresh(c), NO_SOURCE)
@@ -292,7 +302,8 @@ function lower_let(c::Ctx, kind::SpecialKind, ::Base.Symbol, args::AbstractVecto
     elseif kind === SPECIAL_LET_SEQ && length(args) == 2 && args[1] isa Expression
         c.scope = child(outer)
         for pv in (args[1]::Expression).children
-            (pv isa Expression && length(pv.children) == 2) || (c.scope = outer; return nothing)
+            (pv isa Expression && length(pv.children) == 2) ||
+                (c.scope=outer; return nothing)
             val = lower(c, pv.children[2])          # sequential: value sees all PRIOR bindings
             pat = lower(c, pv.children[1])          # then this pattern becomes visible
             push!(binds, IRBoundAtom(pat, val, fresh(c), NO_SOURCE))
@@ -316,9 +327,10 @@ later pass handles `if` and `case` once.
 """
 lower_if(c::Ctx, args::AbstractVector{Atom})::IRAtom =
     IRMatch(lower(c, args[1]),
-            IRMatchBranch[IRMatchBranch(IRSymbol(:True,  fresh(c), NO_SOURCE), lower(c, args[2])),
-                          IRMatchBranch(IRSymbol(:False, fresh(c), NO_SOURCE), lower(c, args[3]))],
-            fresh(c), NO_SOURCE)
+        IRMatchBranch[
+            IRMatchBranch(IRSymbol(:True, fresh(c), NO_SOURCE), lower(c, args[2])),
+            IRMatchBranch(IRSymbol(:False, fresh(c), NO_SOURCE), lower(c, args[3]))],
+        fresh(c), NO_SOURCE)
 
 """
 `(case SCRUT ((P1 B1) (P2 B2) …))` → `IRMatch`.
@@ -333,7 +345,7 @@ function lower_case(c::Ctx, ::SpecialKind, args::AbstractVector{Atom})
     outer = c.scope
     branches = IRMatchBranch[]
     for arm in (arms_atom::Expression).children
-        (arm isa Expression && length(arm.children) == 2) || (c.scope = outer; return nothing)
+        (arm isa Expression && length(arm.children) == 2) || (c.scope=outer; return nothing)
         c.scope = child(outer)
         push!(branches, IRMatchBranch(lower(c, arm.children[1]), lower(c, arm.children[2])))
     end
@@ -385,7 +397,7 @@ function definition_name(a::Expression)::Base.Symbol
         h = (lhs::Expression).children[1]
         h isa Sym && return (h::Sym).name
         h isa Grounded{Eval.Operation} && return Base.Symbol(h.value.name)
-        h isa Grounded{Eval.SpaceOp}   && return Base.Symbol(h.value.name)
+        h isa Grounded{Eval.SpaceOp} && return Base.Symbol(h.value.name)
         h isa Expression || break          # a Var head: un-nameable, and descending cannot help
         lhs = h                            # compound head — the name is one level further in
     end
@@ -409,9 +421,13 @@ function _record_type_decl!(prog::IRProgram, c::Ctx, a::Atom)
     ch = (a::Expression).children
     length(ch) == 3 || return nothing
     h = ch[1]
-    hname = h isa Sym ? Base.Symbol(String((h::Sym).name)) :
-            h isa Grounded && hasfield(typeof((h::Grounded).value), :name) ?
-                Base.Symbol(String(getfield((h::Grounded).value, :name))) : nothing
+    hname = if h isa Sym
+        Base.Symbol(String((h::Sym).name))
+    elseif h isa Grounded && hasfield(typeof((h::Grounded).value), :name)
+        Base.Symbol(String(getfield((h::Grounded).value, :name)))
+    else
+        nothing
+    end
     hname === :(:) || return nothing
     subj = ch[2]
     subj isa Sym || return nothing
@@ -453,7 +469,7 @@ function lower_program(atoms::Vector{Atom})::IRProgram
             if name === NO_NAME
                 push!(unnamed, IRBoundAtom(lhs, rhs, fresh(c), NO_SOURCE))
             else
-                haskey(byname, name) || (byname[name] = IRBoundAtom[]; push!(order, name))
+                haskey(byname, name) || (byname[name]=IRBoundAtom[]; push!(order, name))
                 push!(byname[name], IRBoundAtom(lhs, rhs, fresh(c), NO_SOURCE))
             end
         else
@@ -470,13 +486,13 @@ function lower_program(atoms::Vector{Atom})::IRProgram
 
     for name in order
         push!(prog.definitions,
-              IRFunctionDefinition(name, byname[name], nothing, fresh(c), NO_SOURCE))
+            IRFunctionDefinition(name, byname[name], nothing, fresh(c), NO_SOURCE))
     end
     # Un-nameable clauses last, one definition each. Order among themselves is source order; they
     # cannot collide with a named group because `NO_NAME` is never a key in `byname`.
     for cl in unnamed
         push!(prog.definitions,
-              IRFunctionDefinition(NO_NAME, IRBoundAtom[cl], nothing, fresh(c), NO_SOURCE))
+            IRFunctionDefinition(NO_NAME, IRBoundAtom[cl], nothing, fresh(c), NO_SOURCE))
     end
     prog
 end
@@ -498,6 +514,6 @@ tabled_definitions(program::IRProgram)::Vector{Base.Symbol} =
     Base.Symbol[d.name for d in program.definitions if d.name in Eval._TABLED_HEADS]
 
 export Scope, Ctx, SPECIAL_FORMS, lower, lower_program, is_definition, definition_name,
-       tabled_definitions, ground_type
+    tabled_definitions, ground_type
 
 end # module CompilerFrontend

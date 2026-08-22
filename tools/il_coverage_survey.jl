@@ -41,32 +41,46 @@ const CF = MeTTaCore.CompilerFrontend
 const AN = MeTTaCore.CompilerANormal
 LIB = joinpath(dirname(pathof(MeTTaCore)), "..", "lib")
 function clauses_for(sp, form)
-    toks = MC.Eval.tokenize(form); i = Ref(1); out = MC.StandardMeTTa.Atom[]
+    toks = MC.Eval.tokenize(form)
+    i = Ref(1)
+    out = MC.StandardMeTTa.Atom[]
     while i[] <= length(toks)
-        toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+        toks[i[]] == "!" && (i[] += 1)
+        i[] > length(toks) && break
         push!(out, MC.Eval.parse_from(toks, i, sp.tokens))
     end
-    prog = CF.lower_program(out); isempty(prog.definitions) && return nothing
+    prog = CF.lower_program(out)
+    isempty(prog.definitions) && return nothing
     AN.translate_program(prog)
 end
-println("=== ARROWS 1-4 (THE COMPILE ARROW): what does EmitIL decline on the REAL libs? ===\n")
-for lib in ["ecan","pln"]
-    dir = joinpath(LIB, lib); sp = MC.Eval.Space(); MC.Eval.load_core_stdlib!(sp)
-    ndef=0; ok=0; dec=0; err=0
+println(
+    "=== ARROWS 1-4 (THE COMPILE ARROW): what does EmitIL decline on the REAL libs? ===\n"
+)
+for lib in ["ecan", "pln"]
+    dir = joinpath(LIB, lib)
+    sp = MC.Eval.Space()
+    MC.Eval.load_core_stdlib!(sp)
+    ndef=0
+    ok=0
+    dec=0
+    err=0
     for f in sort(readdir(dir))
-        endswith(f,".metta") || continue
-        for form in MC._cs_split_top_level(read(joinpath(dir,f),String))
-            startswith(strip(form),"(=") || continue
+        endswith(f, ".metta") || continue
+        for form in MC._cs_split_top_level(read(joinpath(dir, f), String))
+            startswith(strip(form), "(=") || continue
             ndef += 1
             try
                 cls = clauses_for(sp, form)
                 cls === nothing && (dec += 1; continue)
                 r = CIL.emit_il_program(cls)
                 (r.emitted == length(cls) && isempty(r.declined)) ? (ok += 1) : (dec += 1)
-            catch e; err += 1 end
+            catch e
+                err += 1
+            end
         end
     end
-    pct = round(100*ok/max(ndef,1), digits=1)
-    println("── ", rpad(lib,5), " defs=", ndef, "  COMPILE (EmitIL) ok=", ok,
-            "  declined=", dec, "  raised=", err, "   => ", pct, "% of the real library COMPILES")
+    pct = round(100*ok/max(ndef, 1); digits=1)
+    println("── ", rpad(lib, 5), " defs=", ndef, "  COMPILE (EmitIL) ok=", ok,
+        "  declined=", dec, "  raised=", err, "   => ", pct,
+        "% of the real library COMPILES")
 end

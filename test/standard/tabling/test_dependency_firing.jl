@@ -21,17 +21,21 @@ using Test
 
 const _DF = Eval
 
-_df_parse(src, sp) = (toks = _DF.tokenize(src); _DF.parse_from(toks, Ref(1), sp.tokens))
+_df_parse(src, sp) = (toks=_DF.tokenize(src); _DF.parse_from(toks, Ref(1), sp.tokens))
 
 # run `query` with `head` tabled and dependency recording ON; return (answers, space, key)
 function _df_run(prog::AbstractString, query::AbstractString, head::Symbol)
     _DF.untable_all!()
-    s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+    s = Space()
+    load_core_stdlib!(s)
+    load_metta!(s, prog)
     _DF.table!(head)
     _DF._DEPS_RECORD[] = true
     try
-        ans = String[string(x) for y in load_metta!(s, query * "\n")
-                     for x in (y isa AbstractVector ? y : [y])]
+        ans = String[
+            string(x) for y in load_metta!(s, query * "\n")
+            for x in (y isa AbstractVector ? y : [y])
+        ]
         (sort!(ans), s)
     finally
         _DF.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
@@ -45,7 +49,8 @@ end
     # every claim about the default path being byte-identical is void.
     @testset "recording OFF by default ⇒ _DEPS stays empty" begin
         _DF.untable_all!()
-        s = Space(); load_core_stdlib!(s)
+        s = Space()
+        load_core_stdlib!(s)
         load_metta!(s, raw"(= (q) 1)  (= (q) (S (q)))")
         _DF.table!(:q)
         @test !_DF._DEPS_RECORD[]                     # the gate is shut unless a caller opens it
@@ -102,28 +107,35 @@ end
         derived = String[string(a) for a in get(fired, key, Atom[])]
         @test !isempty(derived)
         @test all(d -> d in ans, derived) ||
-              (@info "resumption produced an answer recomputation did NOT" derived ans; false)
+            (
+            @info "resumption produced an answer recomputation did NOT" derived ans; false
+        )
         _DF.untable_all!()
     end
 
     # ── the known leak, PINNED so step 4 must fix it rather than inherit it ─────────────────────
     @testset "KNOWN: re-running the leader re-records (why the flag is off)" begin
         _DF.untable_all!()
-        s = Space(); load_core_stdlib!(s)
+        s = Space()
+        load_core_stdlib!(s)
         load_metta!(s, raw"(= (q) 1)  (= (q) (S (q)))")
         _DF.table!(:q)
         key = _DF._canonical_goal(_df_parse("(q)", s), s, _DF.Bindings())
         _DF._DEPS_RECORD[] = true
         try
-            load_metta!(s, "!(q)\n"); n1 = length(get(_DF._DEPS, key, _DF.Dependency[]))
-            _DF._table_reset!(); _DF._DEPS_RECORD[] = true
-            load_metta!(s, "!(q)\n"); n2 = length(get(_DF._DEPS, key, _DF.Dependency[]))
+            load_metta!(s, "!(q)\n")
+            n1 = length(get(_DF._DEPS, key, _DF.Dependency[]))
+            _DF._table_reset!()
+            _DF._DEPS_RECORD[] = true
+            load_metta!(s, "!(q)\n")
+            n2 = length(get(_DF._DEPS, key, _DF.Dependency[]))
             @test n1 >= 1
             @test n1 == n2        # per-completion count is STABLE; the growth is across ROUNDS, and a
-                                  # fresh completion must not inherit the previous one's dependencies
+            # fresh completion must not inherit the previous one's dependencies
         finally
             # restore the ENV default, never a literal — defaults move (they did, 2026-08-16)
-            _DF.reset_execution_flags!(); _DF.untable_all!()
+            _DF.reset_execution_flags!()
+            _DF.untable_all!()
         end
     end
 end

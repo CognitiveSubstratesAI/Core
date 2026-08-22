@@ -51,11 +51,14 @@ function _mr_parse_expected(line::AbstractString)::Vector{_MR_SM.Atom}
     # single-result bag, so the multi-result separator the M1 printer uses is UNOBSERVED. Guessing it
     # would silently mis-parse the first multi-result golden that arrives; this stops instead.
     occursin(",", inner) &&
-        error("golden bag appears comma-separated — the separator was never observed when this " *
-              "was written; confirm M1's printer and extend `_mr_parse_expected`: $(repr(line))")
+        error(
+            "golden bag appears comma-separated — the separator was never observed when this " *
+            "was written; confirm M1's printer and extend `_mr_parse_expected`: $(repr(line))"
+        )
     isempty(inner) && return _MR_SM.Atom[]
     sp = _MR_V.Space()
-    toks = _MR_V.tokenize(String(inner)); i = Ref(1)
+    toks = _MR_V.tokenize(String(inner))
+    i = Ref(1)
     out = _MR_SM.Atom[]
     while i[] <= length(toks)
         push!(out, _MR_V.parse_from(toks, i, sp.tokens))
@@ -65,7 +68,8 @@ end
 
 "Run each `!`-directive of `src` separately, returning one result-bag per directive."
 function _mr_run_directives(src::AbstractString)::Vector{Vector{_MR_SM.Atom}}
-    sp = _MR_V.Space(); _MR_V.load_core_stdlib!(sp)
+    sp = _MR_V.Space()
+    _MR_V.load_core_stdlib!(sp)
     bags = Vector{_MR_SM.Atom}[]
     for (bang, form) in MeTTaCore.mm2_split_forms(src)
         if bang
@@ -85,11 +89,20 @@ end
     ndirectives = 0
     for name in files
         src = read(joinpath(_MR_CURATED, name), String)
-        golden = filter(!isempty, strip.(split(read(joinpath(_MR_CURATED,
-                        replace(name, ".metta" => ".expected")), String), '\n')))
+        golden = filter(
+            !isempty,
+            strip.(
+                split(
+                    read(joinpath(_MR_CURATED,
+                            replace(name, ".metta" => ".expected")), String), '\n')
+            )
+        )
         got = _mr_run_directives(src)
         if length(got) != length(golden)
-            push!(mismatches, "$name: $(length(got)) directives ran, $(length(golden)) goldens")
+            push!(
+                mismatches,
+                "$name: $(length(got)) directives ran, $(length(golden)) goldens"
+            )
             continue
         end
         for (k, (bag, line)) in enumerate(zip(got, golden))
@@ -120,33 +133,52 @@ end
     # returned the WRONG BAG — dropped a branch of a `superpose`, collapsed in the wrong order, lost a
     # `case` alternative — would have passed silently. The whole reason to adopt this corpus is bag
     # semantics, so the test has to be able to SEE a bag difference.
-    worse = String[]; total_compiled = 0; total_fell_back = 0; ncompared = 0; nonempty = 0
-    println("\n  ── metta-ref nondeterminism corpus (compiled / fell-back · bags compared) ──")
+    worse = String[]
+    total_compiled = 0
+    total_fell_back = 0
+    ncompared = 0
+    nonempty = 0
+    println(
+        "\n  ── metta-ref nondeterminism corpus (compiled / fell-back · bags compared) ──"
+    )
     for name in files
         src = read(joinpath(_MR_SELECTED, name), String)
-        print("     … $name\r"); flush(stdout)
+        print("     … $name\r")
+        flush(stdout)
         interp = try
             [sort(string.(bag)) for bag in _mr_run_directives(src)]
         catch e
-            push!(worse, "$name: interpreter threw $(first(sprint(showerror, e), 70))"); continue
+            push!(worse, "$name: interpreter threw $(first(sprint(showerror, e), 70))")
+            continue
         end
-        got = try MeTTaCore.compile_run(src; max_steps = _MR_MAX_STEPS)
-              catch e
-                  push!(worse, "$name: compiled lane threw $(first(sprint(showerror, e), 70))"); continue
-              end
-        total_compiled += got.compiled; total_fell_back += got.fell_back
+        got = try
+            MeTTaCore.compile_run(src; max_steps=_MR_MAX_STEPS)
+        catch e
+            push!(worse, "$name: compiled lane threw $(first(sprint(showerror, e), 70))")
+            continue
+        end
+        total_compiled += got.compiled
+        total_fell_back += got.fell_back
         comp = [sort(collect(answers)) for (_, answers) in got.answers]
-        agree = length(comp) == length(interp) && all(comp[k] == interp[k] for k in eachindex(comp))
+        agree =
+            length(comp) == length(interp) &&
+            all(comp[k] == interp[k] for k in eachindex(comp))
         ncompared += min(length(comp), length(interp))
         nonempty += count(!isempty, interp)
-        println("     $(agree ? " " : "✗") $(rpad(name, 38)) $(lpad(got.compiled, 3))/$(lpad(got.fell_back, 3))" *
-                "   bags=$(length(interp))" * (agree ? "" : "   interp=$interp compiled=$comp"))
+        println(
+            "     $(agree ? " " : "✗") $(rpad(name, 38)) $(lpad(got.compiled, 3))/$(lpad(got.fell_back, 3))" *
+            "   bags=$(length(interp))" * (agree ? "" : "   interp=$interp compiled=$comp")
+        )
         flush(stdout)
         agree || push!(worse, "$name: interp $interp vs compiled $comp")
     end
-    for w in worse; @info "metta-ref BAG DEVIATION" detail=w; end
+    for w in worse
+        @info "metta-ref BAG DEVIATION" detail=w
+    end
     @test isempty(worse)
-    println("     TOTAL compiled=$total_compiled  fell_back=$total_fell_back  bags compared=$ncompared")
+    println(
+        "     TOTAL compiled=$total_compiled  fell_back=$total_fell_back  bags compared=$ncompared"
+    )
     # ANTI-VACUITY, both directions: bags were actually compared, and they are not all empty (an
     # evaluator that returned nothing for everything would otherwise "agree" with itself).
     @test ncompared >= 20

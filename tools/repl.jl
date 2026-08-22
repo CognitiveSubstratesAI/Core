@@ -23,7 +23,11 @@
 #
 # NOTE (Revise): function-body edits in src/ hot-reload; editing a STRUCT's fields needs a fresh session.
 
-try; using Revise; catch; @warn "Revise unavailable — install into the global env for hot-reload"; end
+try
+    using Revise
+catch
+    @warn "Revise unavailable — install into the global env for hot-reload"
+end
 
 using MeTTaCore
 using Test
@@ -31,7 +35,7 @@ using Test
 const SM = MeTTaCore.Eval                       # metta_run / load_metta! / Space / parse
 const SA = MeTTaCore.StandardMeTTa         # Sym / Var / Expression / Bindings / match_atoms
 
-const _ROOT   = dirname(@__DIR__)
+const _ROOT = dirname(@__DIR__)
 const _STDLIB = joinpath(_ROOT, "src", "standard", "stdlib.metta")
 const _LIBDIR = joinpath(_ROOT, "lib")
 
@@ -52,9 +56,16 @@ end
 const _SPACE = Ref(_fresh_space())
 
 # Atom -> Julia value (readable results / test comparison). True/False -> :True/:False (test idiom).
-mval(a) = a isa SM.Grounded   ? a.value :
-          a isa SM.Sym        ? Symbol(a.name) :
-          a isa SM.Expression ? Any[mval(c) for c in a.children] : a
+mval(a) =
+    if a isa SM.Grounded
+        a.value
+    elseif a isa SM.Sym
+        Symbol(a.name)
+    elseif a isa SM.Expression
+        Any[mval(c) for c in a.children]
+    else
+        a
+    end
 
 # Shim.exec + print_result: run a chunk of MeTTa, print each result (hyperon exec/print_result).
 function ml(src::AbstractString)
@@ -75,7 +86,8 @@ mscript(src::AbstractString) = (ml(src); nothing)   # load_metta! already handle
 # Shim.parse_ok: does `src` parse to a COMPLETE expression? (hyperon parse_line — drives multiline.)
 function _parse_ok(src::AbstractString)
     try
-        SM.parse_program(src); return true
+        SM.parse_program(src)
+        return true
     catch
         return false
     end
@@ -94,29 +106,51 @@ function lib!(name::AbstractString)
             push!(files, m.captures[1])
         end
     end
-    isempty(files) && (files = filter(f -> endswith(f, ".metta") && f != name * ".metta", readdir(dir)))
+    isempty(files) &&
+        (files = filter(f -> endswith(f, ".metta") && f != name * ".metta", readdir(dir)))
     isempty(files) && (files = filter(f -> endswith(f, ".metta"), readdir(dir)))
-    n0 = length(_SPACE[].atoms); loaded = 0
+    n0 = length(_SPACE[].atoms)
+    loaded = 0
     for f in files
         path = isabspath(f) ? f : joinpath(dir, f)
-        try SM.load_metta!(_SPACE[], read(path, String)); loaded += 1
-        catch e; println("  ✗ ", f, ": ", first(sprint(showerror, e), 140)); end
+        try
+            SM.load_metta!(_SPACE[], read(path, String))
+            loaded += 1
+        catch e
+            println("  ✗ ", f, ": ", first(sprint(showerror, e), 140))
+        end
     end
-    println("  lib!(\"", name, "\") -> +", length(_SPACE[].atoms) - n0, " atoms (", loaded, "/", length(files), " files)")
+    println(
+        "  lib!(\"",
+        name,
+        "\") -> +",
+        length(_SPACE[].atoms) - n0,
+        " atoms (",
+        loaded,
+        "/",
+        length(files),
+        " files)"
+    )
     return nothing
 end
 
-reset!() = (_SPACE[] = _fresh_space(); println("  space reset (stdlib + config reloaded)"); nothing)
+reset!() =
+    (_SPACE[]=_fresh_space(); println("  space reset (stdlib + config reloaded)"); nothing)
 
 "Exec StandardMeTTa `src` in a FRESH stdlib space (stateless); return raw result atoms."
 function sm(src::AbstractString)
-    sp = SM.Space(); SM.load_core_stdlib!(sp); SM.load_metta!(sp, src)
+    sp = SM.Space()
+    SM.load_core_stdlib!(sp)
+    SM.load_metta!(sp, src)
 end
 
 "Run ONLY the StandardMeTTa testsets (fast warm iteration)."
-tstd() = for f in ("test_atoms","test_minimal","test_interpreter","test_stdlib","test_conformance")
-    include(joinpath(_ROOT, "test", "standard", f * ".jl"))
-end
+tstd() =
+    for f in (
+        "test_atoms", "test_minimal", "test_interpreter", "test_stdlib", "test_conformance"
+    )
+        include(joinpath(_ROOT, "test", "standard", f * ".jl"))
+    end
 "Run the full MeTTaCore test suite."
 t() = include(joinpath(_ROOT, "test", "runtests.jl"))
 
@@ -126,19 +160,28 @@ t() = include(joinpath(_ROOT, "test", "runtests.jl"))
 function _prompt()
     try
         r = SM.load_metta!(_SPACE[], "!(get-state &ReplPrompt)")
-        (!isempty(r) && r[1] isa SM.Grounded && r[1].value isa AbstractString) ? r[1].value : "> "
-    catch; "> "; end
+        if (!isempty(r) && r[1] isa SM.Grounded && r[1].value isa AbstractString)
+            r[1].value
+        else
+            "> "
+        end
+    catch
+        "> "
+    end
 end
 
 function metta()
-    println("MeTTa REPL (MeTTaCore.Eval). Ctrl-D to exit. Loading = !(import! …), help = !(help!).")
+    println(
+        "MeTTa REPL (MeTTaCore.Eval). Ctrl-D to exit. Loading = !(import! …), help = !(help!)."
+    )
     buf = IOBuffer()
     while true
         print(position(buf) == 0 ? _prompt() : "  ")
         line = readline(stdin; keep=false)
         # readline returns "" on EOF (eof(stdin)); distinguish real empty line from EOF
         if eof(stdin) && isempty(line)
-            println(); break
+            println()
+            break
         end
         print(buf, line, '\n')
         src = String(take!(copy(buf)))
@@ -153,5 +196,7 @@ end
 if isinteractive()
     println("MeTTaCore REPL — Minimal engine, Revise tracking src/.  (SM / SA namespaces)")
     println("  metta()        — enter the interactive MeTTa `> ` loop (Ctrl-D exits)")
-    println("  ml(\"!(...)\")  q(\"!(...)\")→values  mscript(...)  lib!(\"metamo\")  sm(\"...\")  tstd()  t()")
+    println(
+        "  ml(\"!(...)\")  q(\"!(...)\")→values  mscript(...)  lib!(\"metamo\")  sm(\"...\")  tstd()  t()"
+    )
 end

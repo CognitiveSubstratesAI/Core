@@ -44,7 +44,7 @@ const _LIBPLN = joinpath(@__DIR__, "..", "..", "lib", "pln")
     load_metta!(entry, "!(import! &self \"$(abspath(joinpath(_LIBPLN, "pln.metta")))\")")
     ent(expr) = strip(join(string.(load_metta!(entry, "!$expr")), " | "))
 
-    @test ent("(BaseRateTv 3 7)")   == "(stv 0.42857142857142855 0.75)"
+    @test ent("(BaseRateTv 3 7)") == "(stv 0.42857142857142855 0.75)"
     @test ent("(EvidenceConfidence 3)") == "0.75"
     @test ent("(BaseRateAdmits 0.5 0.9 0.9)") == "True"
 
@@ -89,22 +89,25 @@ const _LIBPLN = joinpath(@__DIR__, "..", "..", "lib", "pln")
     @test res("(BaseRateAdmits 0.0 0.0 0.0)") == "False"
 
     # and it must be the canonical rule, not a second copy that can drift from it
-    for (a, b, ab) in (("0.0","0.5","0.5"), ("0.5","0.9","0.1"), ("0.5","0.9","0.9"),
-                       ("0.8","0.7","0.7"), ("0.8","0.7","0.95"), ("1.0","1.0","1.0"))
-        @test res("(BaseRateAdmits $a $b $ab)") == res("(conditional-probability-consistency $a $b $ab)")
+    for (a, b, ab) in (("0.0", "0.5", "0.5"), ("0.5", "0.9", "0.1"), ("0.5", "0.9", "0.9"),
+        ("0.8", "0.7", "0.7"), ("0.8", "0.7", "0.95"), ("1.0", "1.0", "1.0"))
+        @test res("(BaseRateAdmits $a $b $ab)") ==
+            res("(conditional-probability-consistency $a $b $ab)")
     end
 
     # ── (4) M3 REGRESSION LOCK: the accessors are TOTAL over both constructors ────────────────────
     # Each of these matched no rule before the fix, so it reduced to itself and marshalled as 0.0.
-    @test res("(stv-strength (stv 0.25 0.75))")   == "0.25"
+    @test res("(stv-strength (stv 0.25 0.75))") == "0.25"
     @test res("(stv-confidence (stv 0.25 0.75))") == "0.75"
-    @test res("(stv-strength (STV 0.25 0.75))")   == "0.25"      # uppercase still works
+    @test res("(stv-strength (STV 0.25 0.75))") == "0.25"      # uppercase still works
     @test res("(stv-confidence (STV 0.25 0.75))") == "0.75"
 
     # applied to what the formulas ACTUALLY emit — the case that wrote (0,0) beliefs
-    @test res("(stv-strength (BaseRateTv 3 7))")   == "$(3/7)"
+    @test res("(stv-strength (BaseRateTv 3 7))") == "$(3/7)"
     @test res("(stv-confidence (BaseRateTv 3 7))") == "0.75"
-    @test res("(stv-confidence (Truth_Deduction (stv 0.8 0.9) (stv 0.7 0.85) (stv 0.6 0.8) (stv 0.7 0.9) (stv 0.6 0.85)))") == "0.3213"
+    @test res(
+        "(stv-confidence (Truth_Deduction (stv 0.8 0.9) (stv 0.7 0.85) (stv 0.6 0.8) (stv 0.7 0.9) (stv 0.6 0.85)))"
+    ) == "0.3213"
 
     # a NON-truth-value argument must still not match — the accessors stayed shape-guarded, they
     # were not widened to `$x` (which would return garbage for anything at all).
@@ -117,12 +120,18 @@ const _LIBPLN = joinpath(@__DIR__, "..", "..", "lib", "pln")
     # be free to vary, so both are atoms now.
     @test res("(BeliefDecayRate)") == "0.1"
     @test parse(Float64, res("(DecayedConfidence 1.0 0.0 0.0 (BeliefDecayRate))")) ≈ 1.0          # t = t₀
-    @test parse(Float64, res("(DecayedConfidence 1.0 0.0 10.0 (BeliefDecayRate))")) ≈ exp(-1.0)
-    @test parse(Float64, res("(DecayedConfidence 0.9 5.0 25.0 (BeliefDecayRate))")) ≈ 0.9 * exp(-2.0)
+    @test parse(Float64, res("(DecayedConfidence 1.0 0.0 10.0 (BeliefDecayRate))")) ≈
+        exp(-1.0)
+    @test parse(Float64, res("(DecayedConfidence 0.9 5.0 25.0 (BeliefDecayRate))")) ≈
+        0.9 * exp(-2.0)
     @test parse(Float64, res("(DecayedConfidence 1.0 0.0 10.0 0.0)")) ≈ 1.0                       # λ=0 ⇒ no decay
     # monotone non-increasing in t, and it never reaches zero (a decayed belief is weak, never refuted)
-    let ds = [parse(Float64, res("(DecayedConfidence 1.0 0.0 $(float(t)) (BeliefDecayRate))")) for t in 0:5:40]
-        @test issorted(ds; rev = true)
+    let ds = [
+            parse(
+                Float64, res("(DecayedConfidence 1.0 0.0 $(float(t)) (BeliefDecayRate))")
+            ) for t in 0:5:40
+        ]
+        @test issorted(ds; rev=true)
         @test all(>(0.0), ds)
     end
 end

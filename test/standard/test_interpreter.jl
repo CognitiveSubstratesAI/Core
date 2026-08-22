@@ -4,7 +4,9 @@ using MeTTaCore.Eval                  # precompiled submodule (was: include fres
 using MeTTaCore.StandardMeTTa
 using Test
 
-S(x) = Sym(x); V(x) = Var(x); E(xs...) = Expression(collect(Atom, xs)...)
+S(x) = Sym(x);
+V(x) = Var(x);
+E(xs...) = Expression(collect(Atom, xs)...)
 rule(lhs, rhs) = E(S("="), lhs, rhs)
 
 @testset "metta driver (metta.md §Interpretation, untyped)" begin
@@ -13,15 +15,18 @@ rule(lhs, rhs) = E(S("="), lhs, rhs)
     @test metta_run(E(S("foo")), sp) == Atom[S("a")]
 
     # APPLICATIVE order (vs eval NotReducible): (+ 1 (+ 2 3)) → 6
-    @test metta_run(E(PLUS, Grounded(1), E(PLUS, Grounded(2), Grounded(3))), Space()) == Atom[Grounded(6)]
+    @test metta_run(E(PLUS, Grounded(1), E(PLUS, Grounded(2), Grounded(3))), Space()) ==
+        Atom[Grounded(6)]
 
     # plain arithmetic + a defined function reducing through grounded
     sp2 = Space(Atom[rule(E(S("inc"), V("n")), E(PLUS, V("n"), Grounded(1)))])
     @test metta_run(E(S("inc"), Grounded(41)), sp2) == Atom[Grounded(42)]
 
     # NONDETERMINISM: three equalities for (color) ⇒ fan-out to {red, green, blue}
-    spc = Space(Atom[rule(E(S("color")), S("red")), rule(E(S("color")), S("green")),
-                     rule(E(S("color")), S("blue"))])
+    spc = Space(
+        Atom[rule(E(S("color")), S("red")), rule(E(S("color")), S("green")),
+            rule(E(S("color")), S("blue"))]
+    )
     @test Set(metta_run(E(S("color")), spc)) == Set(Atom[S("red"), S("green"), S("blue")])
 
     # nondeterminism fans through an enclosing expression: (pair (color)) → 3 results
@@ -39,13 +44,17 @@ end
 # PeTTa): (case (superpose (a b c)) …) → [a,b,c]; foldl of a superpose op forks the accumulator. Before
 # the 2026-07-12 fix Core returned a single result (case: flattened loop break-both; foldl: acc=rs[1]).
 @testset "case / foldl distribute over nondeterminism (4-engine verified)" begin
-    sp = Space(); load_core_stdlib!(sp)
+    sp = Space()
+    load_core_stdlib!(sp)
     q(s) = load_metta!(sp, s)
     # case distributes: N alternatives → N results (catch-all clause)
-    @test Set(q(raw"!(case (superpose (a b c)) (($x $x)))")) == Set(Atom[S("a"), S("b"), S("c")])
-    @test Set(q(raw"!(case (superpose (1 2)) ((1 one) (2 two)))")) == Set(Atom[S("one"), S("two")])
+    @test Set(q(raw"!(case (superpose (a b c)) (($x $x)))")) ==
+        Set(Atom[S("a"), S("b"), S("c")])
+    @test Set(q(raw"!(case (superpose (1 2)) ((1 one) (2 two)))")) ==
+        Set(Atom[S("one"), S("two")])
     # a no-match alternative is dropped (hyperon/CeTTa arbiter — not laundered to Empty)
-    @test Set(q(raw"!(case (superpose (1 2 9)) ((1 one) (2 two)))")) == Set(Atom[S("one"), S("two")])
+    @test Set(q(raw"!(case (superpose (1 2 9)) ((1 one) (2 two)))")) ==
+        Set(Atom[S("one"), S("two")])
     # deterministic case unchanged
     @test q("!(case foo ((foo matched) (bar other)))") == Atom[S("matched")]
     # foldl forks over a nondeterministic op → multiset {0,2,2,3} (4 paths), not one
@@ -62,23 +71,29 @@ end
     arrow(xs...) = E(S("->"), xs...)
 
     # if: (: if (-> Bool Atom Atom $t)) + the two = rules ; (boom) loops forever
-    spif = Space(Atom[
-        decl("if", arrow(S("Bool"), S("Atom"), S("Atom"), V("t"))),
-        rule(E(S("if"), S("True"),  V("then"), V("else")), V("then")),
-        rule(E(S("if"), S("False"), V("then"), V("else")), V("else")),
-        rule(E(S("boom")), E(S("boom")))])
+    spif = Space(
+        Atom[
+            decl("if", arrow(S("Bool"), S("Atom"), S("Atom"), V("t"))),
+            rule(E(S("if"), S("True"), V("then"), V("else")), V("then")),
+            rule(E(S("if"), S("False"), V("then"), V("else")), V("else")),
+            rule(E(S("boom")), E(S("boom")))]
+    )
     # the DEAD branch (boom) must NOT be evaluated (else: infinite loop → step-limit error)
-    @test metta_run(E(S("if"), S("True"),  S("a"), E(S("boom"))), spif) == Atom[S("a")]
+    @test metta_run(E(S("if"), S("True"), S("a"), E(S("boom"))), spif) == Atom[S("a")]
     @test metta_run(E(S("if"), S("False"), E(S("boom")), S("b")), spif) == Atom[S("b")]
 
     # let: (: let (-> Atom %Undefined% Atom %Undefined%)); body via `unify` (a minimal op)
-    splet = Space(Atom[
-        decl("let", arrow(S("Atom"), S("%Undefined%"), S("Atom"), S("%Undefined%"))),
-        rule(E(S("let"), V("p"), V("a"), V("tpl")),
-             E(S("unify"), V("a"), V("p"), V("tpl"), S("Empty")))])
+    splet = Space(
+        Atom[
+            decl("let", arrow(S("Atom"), S("%Undefined%"), S("Atom"), S("%Undefined%"))),
+            rule(E(S("let"), V("p"), V("a"), V("tpl")),
+                E(S("unify"), V("a"), V("p"), V("tpl"), S("Empty")))]
+    )
     # (let $x (+ 1 2) (g $x)) → (g 3): $a evaluated (%Undefined%), $p/$tpl lazy (Atom), unify binds $x
-    @test metta_run(E(S("let"), V("x"), E(PLUS, Grounded(1), Grounded(2)), E(S("g"), V("x"))), splet) ==
-          Atom[E(S("g"), Grounded(3))]
+    @test metta_run(
+        E(S("let"), V("x"), E(PLUS, Grounded(1), Grounded(2)), E(S("g"), V("x"))), splet
+    ) ==
+        Atom[E(S("g"), Grounded(3))]
 end
 
 @testset "metta parser + loader (metta.md §Syntax) — end to end from text" begin
@@ -109,28 +124,38 @@ end
     G(x) = Grounded(x)
     # a pure linear reference over ALL atoms (== bucket+wildcard match set for a keyed pattern), trie-independent.
     # Compare the resolved output multiset (stable across fresh-renames) so a wrong-atom-but-right-count trie bug fails.
-    linref(s, p) = (acc = Bindings[]; for a in Eval.all_atoms(s); append!(acc, match_atoms(p, Eval.rename_fresh(a))); end; acc)
+    linref(s, p) = (
+        acc=Bindings[];
+        for a in Eval.all_atoms(s)
+            append!(acc, match_atoms(p, Eval.rename_fresh(a)))
+        end;
+        acc
+    )
     outs(bs, p) = sort(String[string(Eval.subst(p, b)) for b in bs])       # resolved match instances
 
     s = Space()
-    for k in 1:30; Eval.add_atom!(s, E(S("rel"), S("a"), S("v$k"))); end   # 30 ground facts
+    for k in 1:30
+        Eval.add_atom!(s, E(S("rel"), S("a"), S("v$k")))
+    end   # 30 ground facts
     Eval.add_atom!(s, E(S("rel"), S("a"), V("x")))                          # pos-3 wildcard rule
     Eval.add_atom!(s, E(S("rel"), S("a"), E(S("g"), S("b"))))              # nested
     Eval.add_atom!(s, E(S("rel"), S("a"), G(5)))                            # grounded
     @test length(s.store.index[(:rel, :a)]) > Eval._TRIE_MIN_BUCKET              # trie actually fires
 
-    pats = [E(S("rel"), S("a"), S("v5")), E(S("rel"), S("a"), V("o")), E(S("rel"), S("a"), S("v99")),
-            E(S("rel"), S("a"), E(S("g"), S("b"))), E(S("rel"), S("a"), E(S("g"), V("z"))),
-            E(S("rel"), S("a"), G(5))]
+    pats = [E(S("rel"), S("a"), S("v5")), E(S("rel"), S("a"), V("o")),
+        E(S("rel"), S("a"), S("v99")),
+        E(S("rel"), S("a"), E(S("g"), S("b"))), E(S("rel"), S("a"), E(S("g"), V("z"))),
+        E(S("rel"), S("a"), G(5))]
     for p in pats
-        q = Eval.query(s, p); r = linref(s, p)
+        q = Eval.query(s, p)
+        r = linref(s, p)
         @test length(q) == length(r)
         @test outs(q, p) == outs(r, p)            # resolved instances identical ⇒ no dropped/wrong/dup match
     end
     # invalidation: adding to the bucket rebuilds the trie ⇒ new atom is found
     Eval.add_atom!(s, E(S("rel"), S("a"), S("vNEW")))
     @test length(Eval.query(s, E(S("rel"), S("a"), S("vNEW")))) ==
-          length(linref(s, E(S("rel"), S("a"), S("vNEW"))))
+        length(linref(s, E(S("rel"), S("a"), S("vNEW"))))
 end
 
 # Borrow 2 — revision-stamped SLG table invalidation (CeTTa table_store.c:153). A tabled goal's cached answer set
@@ -167,14 +192,18 @@ end
     Eval.untable_all!()
     try
         prog = "(= (h) 1)\n(= (h) 1)\n(= (k) (h))\n"          # two IDENTICAL rules ⇒ two answers
-        s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(s, prog)
         @test length(load_metta!(s, "!(k)\n")) == 2            # UNTABLED: multiset preserved, [1, 1]
 
         # ── AUTOMATIC: the guard refuses, and multiplicity SURVIVES. `k` is caught by PROPAGATION —
         # its single rule cannot overlap anything, but it CALLS `h`, so it inherits multivaluedness.
         # The head-local overlap test alone left `k` tabled and `!(k)` still collapsed; measured.
         Eval.untable_all!()
-        s2 = Space(); load_core_stdlib!(s2); load_metta!(s2, prog)
+        s2 = Space()
+        load_core_stdlib!(s2)
+        load_metta!(s2, prog)
         r = Eval.auto_table!(s2)
         @test :h in r.multivalued
         @test :k in r.multivalued                              # inherited through the call graph
@@ -183,14 +212,18 @@ end
 
         # ── EXPLICIT: still collapses, by design. Kept so the semantic mismatch stays visible.
         Eval.untable_all!()
-        s3 = Space(); load_core_stdlib!(s3); load_metta!(s3, prog)
-        Eval.table!(:k); Eval.table!(:h)
+        s3 = Space()
+        load_core_stdlib!(s3)
+        load_metta!(s3, prog)
+        Eval.table!(:k)
+        Eval.table!(:h)
         @test length(load_metta!(s3, "!(k)\n")) == 1           # the user asked for set semantics
 
         # ── a DISJOINT-pattern head is NOT refused: `length(rules) > 1` would have excluded it, which
         # is why the guard tests UNIFIABILITY instead. This is the case that signal got wrong.
         Eval.untable_all!()
-        s4 = Space(); load_core_stdlib!(s4)
+        s4 = Space()
+        load_core_stdlib!(s4)
         load_metta!(s4, "(= (f a) 1)\n(= (f b) 2)\n")
         @test !(:f in Eval.auto_table!(s4).multivalued)
     finally
@@ -203,13 +236,18 @@ end
     Eval.table!(Symbol("mem"))
     try
         s = Space()
-        for p in ["(= (mem) (collapse (match &self (item \$x) \$x)))", "(item a)", "(item b)"]
-            for (_, atom) in parse_program(p); Eval.add_atom!(s, atom); end
+        for p in
+            ["(= (mem) (collapse (match &self (item \$x) \$x)))", "(item a)", "(item b)"]
+            for (_, atom) in parse_program(p)
+                Eval.add_atom!(s, atom)
+            end
         end
         q = parse_program("(mem)")[1][2]
         r1 = string(metta_run(q, s))                          # cached at the current revision
         rev1 = s.revision
-        for (_, atom) in parse_program("(item c)"); Eval.add_atom!(s, atom); end
+        for (_, atom) in parse_program("(item c)")
+            Eval.add_atom!(s, atom)
+        end
         @test s.revision > rev1                               # mutation bumped the revision
         r2 = string(metta_run(q, s))                          # stale entry must be evicted + recomputed
         @test !occursin("c", r1)                              # baseline: c not yet present
@@ -227,7 +265,9 @@ end
     try
         fib = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))"
         # classification: pure fib/dbl tabled; impure remember (add-atom) skipped
-        s = Space(); load_core_stdlib!(s); load_metta!(s, fib)
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(s, fib)
         load_metta!(s, raw"(= (dbl $x) (* $x 2))")
         load_metta!(s, raw"(= (remember $x) (add-atom &self (seen $x)))")
         r = Eval.auto_table!(s)
@@ -238,15 +278,21 @@ end
 
         # result-identity: auto-tabled fib(10) == untabled fib(10) (order matters — tabling is global)
         Eval.untable_all!()
-        u = Space(); load_core_stdlib!(u); load_metta!(u, fib)
+        u = Space()
+        load_core_stdlib!(u)
+        load_metta!(u, fib)
         got_untabled = string(load_metta!(u, "!(fib 10)"))                # _TABLED_HEADS empty here
-        t = Space(); load_core_stdlib!(t); load_metta!(t, fib); Eval.auto_table!(t)
+        t = Space()
+        load_core_stdlib!(t)
+        load_metta!(t, fib)
+        Eval.auto_table!(t)
         got_tabled = string(load_metta!(t, "!(fib 10)"))                  # fib now tabled
         @test got_untabled == got_tabled && occursin("55", got_tabled)    # fib(10)=55, identical
 
         # impure fn still WORKS (mutates) despite being skipped
         Eval.untable_all!()
-        s3 = Space(); load_core_stdlib!(s3)
+        s3 = Space()
+        load_core_stdlib!(s3)
         load_metta!(s3, raw"(= (remember $x) (add-atom &self (seen $x)))")
         Eval.auto_table!(s3)
         load_metta!(s3, "!(remember foo)")
@@ -254,11 +300,15 @@ end
 
         # surface: the !(auto-table!) directive tables + reports; the auto_table=true load flag tables
         Eval.untable_all!()
-        s4 = Space(); load_core_stdlib!(s4); load_metta!(s4, fib)
+        s4 = Space()
+        load_core_stdlib!(s4)
+        load_metta!(s4, fib)
         @test occursin("fib", string(load_metta!(s4, "!(auto-table!)")))
         @test Eval.is_tabled(parse_program("(fib 1)")[1][2])
         Eval.untable_all!()
-        s5 = Space(); load_core_stdlib!(s5); load_metta!(s5, fib; auto_table = true)
+        s5 = Space()
+        load_core_stdlib!(s5)
+        load_metta!(s5, fib; auto_table=true)
         @test Eval.is_tabled(parse_program("(fib 1)")[1][2])
 
         # ── PURITY MUST SURVIVE COMPILATION (roadmap 0.1, fixed 2026-08-16) ──────────────────────
@@ -270,10 +320,13 @@ end
         # `compile_run`'s output did literally nothing, with no error and no observable difference.
         # That is why this is pinned: a silent no-op leaves nothing to notice if it comes back.
         Eval.untable_all!()
-        sIL = Space(); load_core_stdlib!(sIL)
+        sIL = Space()
+        load_core_stdlib!(sIL)
         il = MeTTaCore.compile_definition(sIL, fib)
         @test il !== nothing                                    # guard: the corpus must still compile fib
-        for a in il.atoms; Eval.add_atom!(sIL, a); end
+        for a in il.atoms
+            Eval.add_atom!(sIL, a)
+        end
         @test :fib in Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sIL)))   # ← the fix
         @test Eval.auto_table!(sIL).tabled == [:fib]            # and it now actually TABLES
 
@@ -281,10 +334,15 @@ end
         # every child, so a mutator nested INSIDE `(metta …)` must still surface and fail the head.
         # Without this, whitelisting `metta` would silently make every compiled body look pure.
         Eval.untable_all!()
-        sIM = Space(); load_core_stdlib!(sIM)
-        ilm = MeTTaCore.compile_definition(sIM, raw"(= (bump $x) (add-atom &self (seen $x)))")
+        sIM = Space()
+        load_core_stdlib!(sIM)
+        ilm = MeTTaCore.compile_definition(
+            sIM, raw"(= (bump $x) (add-atom &self (seen $x)))"
+        )
         if ilm !== nothing                                       # (if the compiler declines it, nothing to check)
-            for a in ilm.atoms; Eval.add_atom!(sIM, a); end
+            for a in ilm.atoms
+                Eval.add_atom!(sIM, a)
+            end
             @test !(:bump in Eval._pure_heads(Eval._rules_of(Eval.all_atoms(sIM))))
         end
     finally
@@ -299,15 +357,21 @@ end
     Eval.fast_match!(false)
     try
         norm(rs) = sort([replace(string(x), r"#\d+" => "#N") for x in rs])   # alpha-normalize gensym ids
-        run1(prog, q) = (s = Space(); load_core_stdlib!(s); load_metta!(s, prog); load_metta!(s, q))
+        run1(prog, q) =
+            (s=Space(); load_core_stdlib!(s); load_metta!(s, prog); load_metta!(s, q))
         for (prog, q) in [
-                (raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))", "!(fib 10)"),  # closed+ground → fast fires
-                (raw"(= (g $x) (h $x $y))", "!(g a)"),                     # unbound RHS var → NOT closed → falls back
-                (raw"(= (pick) (superpose (a b c)))", "!(pick)"),          # nondeterministic closed
-                (raw"(= (poly $x) (+ (* $x $x) (* 2 $x)))", "!(poly 5)"),  # nested pure
-                (raw"(= (idx (pair $a $b)) $a)", raw"!(idx (pair x y))")]  # var in goal → NOT ground → falls back
-            Eval.fast_match!(false); off = norm(run1(prog, q))
-            Eval.fast_match!(true);  on  = norm(run1(prog, q))
+            (
+                raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))",
+                "!(fib 10)"
+            ),  # closed+ground → fast fires
+            (raw"(= (g $x) (h $x $y))", "!(g a)"),                     # unbound RHS var → NOT closed → falls back
+            (raw"(= (pick) (superpose (a b c)))", "!(pick)"),          # nondeterministic closed
+            (raw"(= (poly $x) (+ (* $x $x) (* 2 $x)))", "!(poly 5)"),  # nested pure
+            (raw"(= (idx (pair $a $b)) $a)", raw"!(idx (pair x y))")]  # var in goal → NOT ground → falls back
+            Eval.fast_match!(false)
+            off = norm(run1(prog, q))
+            Eval.fast_match!(true)
+            on = norm(run1(prog, q))
             Eval.fast_match!(false)
             @test off == on
         end
@@ -324,13 +388,16 @@ end
     # LeaTTa (Lean-4 machine-proved MeTTa) differential, 2026-07-08: Core's `case` collapsed an
     # EMPTY result set to `()` and so missed the literal `Empty` clause — hyperon's rule
     # (stdlib.metta §case) is: empty subject ⇒ the `Empty` pattern fires. Fixed in Eval.jl.
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     # subject with NO results (unify miss) ⇒ the `Empty` clause, NOT the `()`/wildcard clause
-    @test load_metta!(s, "!(case (unify (A B) (C D) ok Empty) ((ok yes) (Empty nok)))") == Atom[S("nok")]
-    @test load_metta!(s, "!(case Empty ((ok yes) (Empty nok)))")                          == Atom[S("nok")]
+    @test load_metta!(s, "!(case (unify (A B) (C D) ok Empty) ((ok yes) (Empty nok)))") ==
+        Atom[S("nok")]
+    @test load_metta!(s, "!(case Empty ((ok yes) (Empty nok)))") == Atom[S("nok")]
     # regression — non-empty subjects are unaffected (first matching clause still wins)
-    @test load_metta!(s, "!(case (unify (A B) (A B) ok Empty) ((ok yes) (Empty nok)))") == Atom[S("yes")]
-    @test load_metta!(s, "!(case foo ((foo yes) (Empty nok)))")                          == Atom[S("yes")]
+    @test load_metta!(s, "!(case (unify (A B) (A B) ok Empty) ((ok yes) (Empty nok)))") ==
+        Atom[S("yes")]
+    @test load_metta!(s, "!(case foo ((foo yes) (Empty nok)))") == Atom[S("yes")]
 end
 
 @testset "get-atoms enumeration is INERT — never re-fires a stored (=) body (regression, omission 638bc7f)" begin
@@ -341,7 +408,8 @@ end
     # pure data retrieval (hyperon GetAtomsOp::type_ = `(-> Space Atom)`; the `Atom` return routes results
     # through interpreter.rs:1005 `typ==Atom ⇒ return verbatim`). The bug was invisible to LeaTTa/234-
     # conformance because no corpus test enumerates a rule-holding space (5-engine differential in scratchpad).
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     load_metta!(s, raw"!(bind! &d (new-space))")
     load_metta!(s, raw"!(add-atom &d (item x))")
     load_metta!(s, raw"!(bind! &prog (new-space))")
@@ -351,9 +419,11 @@ end
     @test isempty(load_metta!(s, raw"!(match &d (SIDE) fired)"))           # STILL absent ⇒ INERT (was [fired] = bug)
     @test occursin("add-atom", string(load_metta!(s, raw"!(collapse (get-atoms &prog))")))  # body intact, not ()
     # the fix must NOT break normal enumeration of inert data:
-    s2 = Space(); load_core_stdlib!(s2)
+    s2 = Space()
+    load_core_stdlib!(s2)
     load_metta!(s2, raw"!(bind! &x (new-space))")
-    load_metta!(s2, raw"!(add-atom &x (fact a))"); load_metta!(s2, raw"!(add-atom &x (fact b))")
+    load_metta!(s2, raw"!(add-atom &x (fact a))")
+    load_metta!(s2, raw"!(add-atom &x (fact b))")
     @test load_metta!(s2, raw"!(size-atom (collapse (get-atoms &x)))") == Atom[Grounded(2)]
 end
 
@@ -393,7 +463,9 @@ end
     try
         # BELOW THE API — the shape of a trie written from underneath.
         s1 = Space()
-        for (_, a) in parse_program("(= (p) 1)"); Eval.add_atom!(s1, a); end
+        for (_, a) in parse_program("(= (p) 1)")
+            Eval.add_atom!(s1, a)
+        end
         Eval.table!(Symbol("p"))
         q = parse_program("(p)")[1][2]
         string(metta_run(q, s1))                       # populate the answer table
@@ -407,12 +479,16 @@ end
         # THROUGH THE API — POSITIVE CONTROL. Without it the assertion above would also pass for an
         # engine where tabling simply never returned a second answer.
         s2 = Space()
-        for (_, a) in parse_program("(= (r) 1)"); Eval.add_atom!(s2, a); end
+        for (_, a) in parse_program("(= (r) 1)")
+            Eval.add_atom!(s2, a)
+        end
         Eval.table!(Symbol("r"))
         q2 = parse_program("(r)")[1][2]
         string(metta_run(q2, s2))
         rev1 = s2.revision
-        for (_, a) in parse_program("(= (r) 2)"); Eval.add_atom!(s2, a); end
+        for (_, a) in parse_program("(= (r) 2)")
+            Eval.add_atom!(s2, a)
+        end
         @test s2.revision > rev1                       # the API DID bump
         @test occursin("2", string(metta_run(q2, s2))) # so the table invalidated and recomputed
         # ⚠️ DO NOT DECLARE THIS FIXED ON THE STRENGTH OF THIS TEST. A hand `push!` into

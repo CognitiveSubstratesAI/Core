@@ -20,32 +20,45 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN demand adjoint — single HMP factor (§3.3 Eq1 vs oracle) + transpose discrimination" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
     # :252 single-factor graph: A=(0.8,0.9), AB=(0.7,0.85) → B (demanded 1.0).
-    load_metta!(sp, """
-    (message A  (stv 0.8 0.9))
-    (message AB (stv 0.7 0.85))
-    (factor mp hmp (premises A AB) (conclusion B))
-    (produces B mp)
-    """)
+    load_metta!(
+        sp,
+        """
+(message A  (stv 0.8 0.9))
+(message AB (stv 0.7 0.85))
+(factor mp hmp (premises A AB) (conclusion B))
+(produces B mp)
+"""
+    )
 
     # Adversarial negative control: the TRANSPOSED adjoint (each sens paired with the OTHER
     # premise's need). Test-only; proves the golden is not transpose-invariant.
-    load_metta!(sp, """
-    (= (hmp-demand-T \$dv (stv \$sA \$cA) (stv \$sAB \$cAB))
-       (let* ((\$senA (max \$sAB \$cAB)) (\$senAB (max \$sA \$cA)) (\$S (max \$senA \$senAB))
-              (\$pA  (clampu (* (* \$dv (/ \$senAB \$S)) (- 1.0 \$cA))))
-              (\$pAB (clampu (* (* \$dv (/ \$senA  \$S)) (- 1.0 \$cAB)))))
-         (dpair \$pA \$pAB)))
-    """)
+    load_metta!(
+        sp,
+        """
+(= (hmp-demand-T \$dv (stv \$sA \$cA) (stv \$sAB \$cAB))
+   (let* ((\$senA (max \$sAB \$cAB)) (\$senAB (max \$sA \$cA)) (\$S (max \$senA \$senAB))
+          (\$pA  (clampu (* (* \$dv (/ \$senAB \$S)) (- 1.0 \$cA))))
+          (\$pAB (clampu (* (* \$dv (/ \$senA  \$S)) (- 1.0 \$cAB)))))
+     (dpair \$pA \$pAB)))
+"""
+    )
 
     asserts = """
     !(assertEqual (factor-demand-pair B 1.0) (dpair 0.09444444444444441 0.15000000000000002))
     !(assertEqual (== (hmp-demand-T 1.0 (stv 0.8 0.9) (stv 0.7 0.85)) (dpair 0.09444444444444441 0.15000000000000002)) False)
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 2
 end

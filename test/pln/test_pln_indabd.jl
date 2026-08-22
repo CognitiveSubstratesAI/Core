@@ -22,25 +22,33 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN rows-only — induction + abduction (5-premise chain-rule + singularities + sens_A=0) vs oracle" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
-    load_metta!(sp, """
-    (message nA (stv 0.6 0.8))
-    (message nB (stv 0.4 0.85))
-    (message nC (stv 0.6 0.9))
-    (message nBA (stv 0.5 0.85))
-    (message nBC (stv 0.5 0.8))
-    (factor indf induction (premises nA nB nC nBA nBC) (conclusion ACi))
-    (produces ACi indf)
-    (factor abdf abduction (premises nA nB nC nBA nBC) (conclusion ACa))
-    (produces ACa abdf)
-    (message nAs (stv 0.0001 0.8))
-    (factor inds induction (premises nAs nB nC nBA nBC) (conclusion ACis))
-    (produces ACis inds)
-    (message nBs (stv 0.0001 0.85))
-    (factor abds abduction (premises nA nBs nC nBA nBC) (conclusion ACas))
-    (produces ACas abds)
-    """)
+    load_metta!(
+        sp,
+        """
+(message nA (stv 0.6 0.8))
+(message nB (stv 0.4 0.85))
+(message nC (stv 0.6 0.9))
+(message nBA (stv 0.5 0.85))
+(message nBC (stv 0.5 0.8))
+(factor indf induction (premises nA nB nC nBA nBC) (conclusion ACi))
+(produces ACi indf)
+(factor abdf abduction (premises nA nB nC nBA nBC) (conclusion ACa))
+(produces ACa abdf)
+(message nAs (stv 0.0001 0.8))
+(factor inds induction (premises nAs nB nC nBA nBC) (conclusion ACis))
+(produces ACis inds)
+(message nBs (stv 0.0001 0.85))
+(factor abds abduction (premises nA nBs nC nBA nBC) (conclusion ACas))
+(produces ACas abds)
+"""
+    )
 
     asserts = """
     !(assertEqual (factor-demand-abduction ACa 1.0) (dquint 0 0.08812800000000003 0.09999999999999998 0.08812800000000003 0.12484799999999996))
@@ -51,7 +59,9 @@ using MeTTaCore.StandardMeTTa
     !(assertEqual (factor-demand-induction ACis 1.0) (dquint 0.19999999999999996 0.0002082916666666666 0.0003331666666666666 9.999999999999999e-5 0.0006665333333333332))
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 6
 end

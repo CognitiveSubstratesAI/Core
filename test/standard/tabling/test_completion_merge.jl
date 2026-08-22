@@ -84,11 +84,11 @@ const _CM = Eval
         _CM.untable_all_modes!()
         a(n) = Expression(Atom[Sym(:q), Grounded(n)])
         for (existing, incoming) in (
-                (Atom[], Atom[a(1), a(2)]),                  # from empty
-                (Atom[a(1)], Atom[a(1)]),                    # pure duplicate ⇒ no growth
-                (Atom[a(1)], Atom[a(2), a(1)]),              # partial overlap
-                (Atom[a(1), a(2)], Atom[a(2), a(1)]),        # full overlap, reordered
-                (Atom[a(2)], Atom[a(1)]))                    # disjoint
+            (Atom[], Atom[a(1), a(2)]),                  # from empty
+            (Atom[a(1)], Atom[a(1)]),                    # pure duplicate ⇒ no growth
+            (Atom[a(1)], Atom[a(2), a(1)]),              # partial overlap
+            (Atom[a(1), a(2)], Atom[a(2), a(1)]),        # full overlap, reordered
+            (Atom[a(2)], Atom[a(1)]))                    # disjoint
             (merged, changed) = _CM._merge_partial(existing, incoming, a(0))
             @test merged == unique(vcat(existing, incoming))          # the exact old expression
             @test changed == (length(merged) != length(existing))     # …and the exact old signal
@@ -102,18 +102,26 @@ const _CM = Eval
     # dedup, because what belongs to §1.0 is REACHABILITY; the aggregation SEMANTICS is §7.3's.
     @testset "both tabled_eval paths run through _merge_partial" begin
         for (label, prog, query, want) in (
-                ("non-recursive: singleton fast path (initial pass only)",
-                 raw"(= (nr) 1)  (= (nr) 1)  (= (nr) 2)", "!(nr)", ["1", "2"]),
-                ("self-recursive: enters the fixpoint loop",
-                 raw"(= (sr 0) 1)  (= (sr 1) 1)  (= (sr $n) (sr 0))", "!(sr 1)", ["1"]))
-            _CM.untable_all!(); _CM.untable_all_modes!()
-            s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+            ("non-recursive: singleton fast path (initial pass only)",
+                raw"(= (nr) 1)  (= (nr) 1)  (= (nr) 2)", "!(nr)", ["1", "2"]),
+            ("self-recursive: enters the fixpoint loop",
+                raw"(= (sr 0) 1)  (= (sr 1) 1)  (= (sr $n) (sr 0))", "!(sr 1)", ["1"]))
+            _CM.untable_all!()
+            _CM.untable_all_modes!()
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(s, prog)
             _CM.table!(label[1] == 'n' ? :nr : :sr)
-            got = sort!(String[string(x) for y in load_metta!(s, query * "\n")
-                               for x in (y isa AbstractVector ? y : [y])])
+            got = sort!(
+                String[
+                    string(x) for y in load_metta!(s, query * "\n")
+                    for x in (y isa AbstractVector ? y : [y])
+                ]
+            )
             @test got == want || (@info "merge point NOT reached" label got want; false)
         end
-        _CM.untable_all!(); _CM.untable_all_modes!()
+        _CM.untable_all!()
+        _CM.untable_all_modes!()
     end
 end
 

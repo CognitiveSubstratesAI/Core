@@ -10,16 +10,17 @@
 # while Euclidean grows/shrinks bins independently (slow to shift a mislocated bump).
 using LinearAlgebra, Random, Printf, Statistics
 
-softmax(z) = (e = exp.(z .- maximum(z)); e ./ sum(e))
+softmax(z) = (e=exp.(z .- maximum(z)); e ./ sum(e))
 smjac(p) = Diagonal(p) .- p * p'
 function meas_laplacian(p, ω)
-    K = length(p); W = [i == j ? 0.0 : ω[i, j]*(p[i]+p[j]) for i in 1:K, j in 1:K]
+    K = length(p)
+    W = [i == j ? 0.0 : ω[i, j]*(p[i]+p[j]) for i in 1:K, j in 1:K]
     Diagonal(vec(sum(W; dims=2))) - W
 end
 
 function make_data(rng; n=40, K=11)
     X = range(-2.0, 2.0; length=n) |> collect
-    bump(c) = (d = [exp(-((k-c)^2)/(2*1.0^2)) for k in 1:K]; d ./ sum(d))
+    bump(c) = (d=[exp(-((k-c)^2)/(2*1.0^2)) for k in 1:K]; d ./ sum(d))
     centers = [1 + (K-1) * (1/(1+exp(-x))) for x in X]   # smooth location ∈ [1,K]
     T = reduce(vcat, transpose.(bump.(centers)))          # (n,K) target bumps
     X, T, centers
@@ -27,10 +28,13 @@ end
 
 # one optimizer epoch over the data; `mode` ∈ :euclid, :fisher, :wasser. Returns updated W + mean F.
 function epoch!(W, X, T, ω; mode=:euclid, η=0.3, λ=1e-2, fdiag=nothing)
-    K = size(T, 2); gW = zeros(size(W)); Ftot = 0.0
+    K = size(T, 2)
+    gW = zeros(size(W))
+    Ftot = 0.0
     for i in eachindex(X)
         feat = [X[i], 1.0]
-        p = softmax(W * feat); tgt = @view T[i, :]
+        p = softmax(W * feat)
+        tgt = @view T[i, :]
         Ftot += 0.5 * sum((p .- tgt) .^ 2)
         glog = smjac(p) * (p .- tgt)                     # ∂F/∂logits
         if mode == :wasser
@@ -50,14 +54,19 @@ function epoch!(W, X, T, ω; mode=:euclid, η=0.3, λ=1e-2, fdiag=nothing)
 end
 
 function run(; seed=0, epochs=200, K=11)
-    rng = MersenneTwister(seed); X, T, centers = make_data(rng; K=K)
+    rng = MersenneTwister(seed)
+    X, T, centers = make_data(rng; K=K)
     ω = [exp(-(i-j)^2 / 2.0) for i in 1:K, j in 1:K]
-    pred_center(W) = mean(abs(argmax(softmax(W*[X[i],1.0])) - centers[i]) for i in eachindex(X))
-    res = Dict{Symbol,Any}()
+    pred_center(W) =
+        mean(abs(argmax(softmax(W*[X[i], 1.0])) - centers[i]) for i in eachindex(X))
+    res = Dict{Symbol, Any}()
     for mode in (:euclid, :fisher, :wasser)
-        W = 0.1 .* randn(MersenneTwister(99), K, 2); fdiag = zeros(K, 2)
+        W = 0.1 .* randn(MersenneTwister(99), K, 2)
+        fdiag = zeros(K, 2)
         Ftraj = Float64[]
-        for e in 1:epochs; push!(Ftraj, epoch!(W, X, T, ω; mode=mode, fdiag=fdiag)); end
+        for e in 1:epochs
+            push!(Ftraj, epoch!(W, X, T, ω; mode=mode, fdiag=fdiag))
+        end
         res[mode] = (Ffinal=Ftraj[end], F20=Ftraj[20], center_err=pred_center(W))
     end
     res
@@ -66,7 +75,8 @@ end
 open("/tmp/jlmark", "w") do io
     for sd in 0:2
         r = run(; seed=sd)
-        @printf(io, "seed %d  | F@20:  E=%.4f F=%.4f W=%.4f  | F_final: E=%.4f F=%.4f W=%.4f  | center-err(bins): E=%.2f F=%.2f W=%.2f\n",
+        @printf(io,
+            "seed %d  | F@20:  E=%.4f F=%.4f W=%.4f  | F_final: E=%.4f F=%.4f W=%.4f  | center-err(bins): E=%.2f F=%.2f W=%.2f\n",
             sd, r[:euclid].F20, r[:fisher].F20, r[:wasser].F20,
             r[:euclid].Ffinal, r[:fisher].Ffinal, r[:wasser].Ffinal,
             r[:euclid].center_err, r[:fisher].center_err, r[:wasser].center_err)

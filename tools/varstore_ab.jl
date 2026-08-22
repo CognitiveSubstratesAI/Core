@@ -27,9 +27,12 @@ sep(t) = (println(); println("="^78); println(t); println("="^78))
 function ask(cs, q::String)
     pat = MC.sexpr_to_expr(q)
     hits = String[]
-    n = MC.space_query_multi(cs.inner.btm, pat, function (_b, loc)
-        push!(hits, strip(MC.expr_serialize(loc))); true
-    end)
+    n = MC.space_query_multi(
+        cs.inner.btm, pat, function (_b, loc)
+            push!(hits, strip(MC.expr_serialize(loc)))
+            true
+        end
+    )
     (n, hits)
 end
 
@@ -42,26 +45,48 @@ for q in ["(, (= (f 5) \$r))", "(, (= (f \$y) \$r))"]
         n, hits = ask(csA, q)
         println("  ", rpad(q, 24), " -> n=", n, "  ", hits)
     catch e
-        println("  ", rpad(q, 24), " raised ", typeof(e), ": ", sprint(showerror, e)[1:min(end,120)])
+        println(
+            "  ",
+            rpad(q, 24),
+            " raised ",
+            typeof(e),
+            ": ",
+            sprint(showerror, e)[1:min(end, 120)]
+        )
     end
 end
 
 sep("B — stored via space_add_all_sexpr! (REAL MORK vars): (= (f \$x) \$x)")
 csB = MC.new_core_space()
 MC.space_add_all_sexpr!(csB.inner, "(= (f \$x) \$x)")
-println("  trie: ", strip(MC.space_dump_all_sexpr(csB.inner)), "   <- name regenerated, co-reference kept")
+println(
+    "  trie: ",
+    strip(MC.space_dump_all_sexpr(csB.inner)),
+    "   <- name regenerated, co-reference kept"
+)
 for q in ["(, (= (f 5) \$r))", "(, (= (f \$y) \$r))"]
     try
         n, hits = ask(csB, q)
         println("  ", rpad(q, 24), " -> n=", n, "  ", hits)
     catch e
-        println("  ", rpad(q, 24), " raised ", typeof(e), ": ", sprint(showerror, e)[1:min(end,120)])
+        println(
+            "  ",
+            rpad(q, 24),
+            " raised ",
+            typeof(e),
+            ": ",
+            sprint(showerror, e)[1:min(end, 120)]
+        )
     end
 end
 
 sep("VERDICT")
-println("  If A's ground query is 0 and B's ground query is >0, the STORAGE FORM is the whole cause:")
-println("  the rule is inert in the trie only because to_sexpr wrote a ground symbol where a")
+println(
+    "  If A's ground query is 0 and B's ground query is >0, the STORAGE FORM is the whole cause:"
+)
+println(
+    "  the rule is inert in the trie only because to_sexpr wrote a ground symbol where a"
+)
 println("  variable belonged. Nothing about MORK, De Bruijn, or name loss is implicated.")
 println()
 println("done.")

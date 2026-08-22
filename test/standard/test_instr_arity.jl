@@ -50,10 +50,11 @@ using MeTTaCore.StandardMeTTa
 using Test
 
 "Every head `interpret_stack` dispatches on (Eval.jl `interpret_stack`, the if/elseif chain)."
-const _IA_NAMES = ["cons-atom", "decons-atom", "unify", "eval", "evalc", "chain", "function",
-                   "collapse-bind", "superpose-bind", "metta", "interpret-tuple",
-                   "interpret-function", "interpret-args", "metta-call", "return-on-error",
-                   "args-cont", "metta-noreduce"]
+const _IA_NAMES = ["cons-atom", "decons-atom", "unify", "eval", "evalc", "chain",
+    "function",
+    "collapse-bind", "superpose-bind", "metta", "interpret-tuple",
+    "interpret-function", "interpret-args", "metta-call", "return-on-error",
+    "args-cont", "metta-noreduce"]
 
 @testset "instruction arity — an ill-formed operation is DATA, never a crash" begin
     crashed = Tuple{String, Int, String}[]
@@ -77,10 +78,12 @@ const _IA_NAMES = ["cons-atom", "decons-atom", "unify", "eval", "evalc", "chain"
     # …and the guard must NOT have gone the other way. A WELL-FORMED instruction still evaluates:
     # over-guarding is the failure mode that broke 36 tests, and it looks identical to success here
     # unless something asserts the positive.
-    @test bare_eval(Expression(Atom[Sym("cons-atom"), Sym("a"), Expression(Atom[Sym("b")])]),
-                    Space()) == Atom[Expression(Atom[Sym("a"), Sym("b")])]
+    @test bare_eval(
+        Expression(Atom[Sym("cons-atom"), Sym("a"), Expression(Atom[Sym("b")])]),
+        Space()) == Atom[Expression(Atom[Sym("a"), Sym("b")])]
     let sp = Space()
         add_atom!(sp, Expression(Atom[Sym("="), Expression(Atom[Sym("f")]), Sym("q")]))
-        @test bare_eval(Expression(Atom[Sym("eval"), Expression(Atom[Sym("f")])]), sp) == Atom[Sym("q")]
+        @test bare_eval(Expression(Atom[Sym("eval"), Expression(Atom[Sym("f")])]), sp) ==
+            Atom[Sym("q")]
     end
 end

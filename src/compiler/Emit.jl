@@ -68,15 +68,15 @@ import MorkSupercompiler: JoinNode, plan_join_order, SAtom, EFF_READ
 "Render an IR node as MeTTa s-expression text."
 function render end
 
-render(a::IRSymbol)::String        = String(a.name)
-render(a::IRPredefined)::String    = String(a.name)
+render(a::IRSymbol)::String = String(a.name)
+render(a::IRPredefined)::String = String(a.name)
 render(a::IRResolvedSymbol)::String = String(a.name)
 
 # A variable's TEXT is its written name. Resolution gave it a unique id for reasoning; the id must
 # NOT reach the text, because two clauses that each wrote `$x` are separate rules and MORK scopes
 # variables per rule. Within one clause, sameness of name is exactly sameness of variable — which is
 # the invariant resolution established.
-render(a::IRVariable)::String      = "\$" * String(a.name)
+render(a::IRVariable)::String = "\$" * String(a.name)
 
 """Escape a string for the IL wire form, matching what `Eval.tokenize` decodes and what upstream
 hyperon's `parse_string` accepts (`lib/src/metta/text.rs:550-573`).
@@ -111,12 +111,18 @@ on the wire, so a literal newline inside a clause would split it for any line-ba
 # and it was a randomized `parse(il_text(a)) == a` property — not any corpus — that caught it.
 function _write_escaped!(io::IO, s::AbstractString)::IO
     for c in s
-        if     c == '\\'; write(io, "\\\\")
-        elseif c == '"' ; write(io, "\\\"")
-        elseif c == '\n'; write(io, "\\n")
-        elseif c == '\r'; write(io, "\\r")
-        elseif c == '\t'; write(io, "\\t")
-        else            ; write(io, c)
+        if c == '\\'
+            write(io, "\\\\")
+        elseif c == '"'
+            write(io, "\\\"")
+        elseif c == '\n'
+            write(io, "\\n")
+        elseif c == '\r'
+            write(io, "\\r")
+        elseif c == '\t'
+            write(io, "\\t")
+        else
+            write(io, c)
         end
     end
     io
@@ -160,17 +166,19 @@ relational pattern the trie can match.
 NAME in the emitted text, so it is applied as a substitution before rendering (see `_unify_subst`)
 and contributes no pattern of its own.
 """
-function render_goal(g::GCall)::Union{String,Nothing}
+function render_goal(g::GCall)::Union{String, Nothing}
     parts = String[String(g.head)]
     for a in g.args
-        s = render(a); startswith(s, "<unrenderable") && return nothing
+        s = render(a)
+        startswith(s, "<unrenderable") && return nothing
         push!(parts, s)
     end
-    o = render(g.out); startswith(o, "<unrenderable") && return nothing
+    o = render(g.out)
+    startswith(o, "<unrenderable") && return nothing
     push!(parts, o)
     "(" * join(parts, " ") * ")"
 end
-render_goal(::Goal)::Union{String,Nothing} = nothing
+render_goal(::Goal)::Union{String, Nothing} = nothing
 
 """
     _unify_subst(goals) -> Dict{Base.Symbol,String}
@@ -181,15 +189,17 @@ Collapse `GUnify` goals into a variable→text substitution.
 the binding is discharged textually here. Only variable-headed unifications are handled — a
 destructuring `let` (`(let (\$a \$b) …)`) yields a non-variable pattern and is declined upstream.
 """
-function _unify_subst(goals::Vector{Goal})::Union{Dict{Base.Symbol,String},Nothing}
-    sub = Dict{Base.Symbol,String}()
+function _unify_subst(goals::Vector{Goal})::Union{Dict{Base.Symbol, String}, Nothing}
+    sub = Dict{Base.Symbol, String}()
     for g in goals
         g isa GUnify || continue
         if g.lhs isa IRVariable
-            s = render(g.rhs); startswith(s, "<unrenderable") && return nothing
+            s = render(g.rhs)
+            startswith(s, "<unrenderable") && return nothing
             sub[(g.lhs::IRVariable).name] = s
         elseif g.rhs isa IRVariable
-            s = render(g.lhs); startswith(s, "<unrenderable") && return nothing
+            s = render(g.lhs)
+            startswith(s, "<unrenderable") && return nothing
             sub[(g.rhs::IRVariable).name] = s
         else
             return nothing            # structural unification — not expressible as a rename
@@ -219,10 +229,13 @@ so a substitution can no longer partially rewrite a name it does not own. The re
 substitute on the typed IR by `NodeId` — variable IDENTITY, which the frontend already resolves —
 rather than on rendered text at all; this makes the text path correct in the meantime.
 """
-function _apply_subst(txt::String, sub::Dict{Base.Symbol,String})::String
+function _apply_subst(txt::String, sub::Dict{Base.Symbol, String})::String
     isempty(sub) && return txt
-    replace(txt, r"\$[A-Za-z_][A-Za-z0-9_\-]*" =>
-                 m -> String(get(sub, Base.Symbol(SubString(m, 2)), m)))
+    replace(
+        txt,
+        r"\$[A-Za-z_][A-Za-z0-9_\-]*" =>
+            m -> String(get(sub, Base.Symbol(SubString(m, 2)), m))
+    )
 end
 
 # ── grounded arithmetic → the `pure` sink ────────────────────────────────────────────────────────
@@ -281,12 +294,14 @@ end
 # you to STOP — it cannot tell you when to proceed. Treat a widening request as BLOCKED-PENDING-LIST,
 # not as approved-by-default, and write the list rather than routing around it.
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
-const _ARITH_I64 = Dict{Base.Symbol,String}(
+const _ARITH_I64 = Dict{Base.Symbol, String}(
     :+ => "sum_i64", :- => "sub_i64", :* => "product_i64", :% => "mod_i64", :/ => "div_i64")
-const _ARITH_F64 = Dict{Base.Symbol,String}(
+const _ARITH_F64 = Dict{Base.Symbol, String}(
     :+ => "sum_f64", :- => "sub_f64", :* => "product_f64", :/ => "div_f64")   # no `%` on floats
 
-const _ARITH_CASTS = ("i64_to_string", "i64_from_string", "f64_to_string", "f64_from_string")
+const _ARITH_CASTS = (
+    "i64_to_string", "i64_from_string", "f64_to_string", "f64_from_string"
+)
 
 # ── VALIDATE THE NAMES AGAINST MORK'S OWN REGISTRY, AT LOAD ──────────────────────────────────────
 # MORK owns the pure-op namespace (`MORK.PURE_OPS`, 369 ops). Every name above must exist there or
@@ -308,8 +323,10 @@ function _validate_pure_ops()
         haskey(MORK.PURE_OPS, c) || push!(missing_ops, c)
     end
     isempty(missing_ops) ||
-        error("CompilerEmit: these pure ops are NOT in MORK.PURE_OPS — the emitter would produce " *
-              "dead rules: " * join(sort(unique(missing_ops)), ", "))
+        error(
+            "CompilerEmit: these pure ops are NOT in MORK.PURE_OPS — the emitter would produce " *
+            "dead rules: " * join(sort(unique(missing_ops)), ", ")
+        )
     nothing
 end
 _validate_pure_ops()
@@ -325,7 +342,7 @@ A-normalization flattened `(+ \$x 1)` into a goal sequence threading fresh temps
 wants the TREE back. This is the inverse map, and `_arith_tree` walks it to re-nest.
 """
 function _arith_env(goals::Vector{Goal})
-    env = Dict{Base.Symbol,GCall}()
+    env = Dict{Base.Symbol, GCall}()
     for g in goals
         g isa GCall || continue
         is_arith(g.head) || continue
@@ -336,7 +353,7 @@ function _arith_env(goals::Vector{Goal})
 end
 
 "Does this arithmetic tree require f64? Any `/`, or any float literal, forces it — and propagates."
-function _needs_f64(node::IRAtom, env::Dict{Base.Symbol,GCall})::Bool
+function _needs_f64(node::IRAtom, env::Dict{Base.Symbol, GCall})::Bool
     node isa IRGrounded && return node.ty === GROUNDED_FLOAT
     node isa IRVariable || return false
     g = get(env, (node::IRVariable).name, nothing)
@@ -346,7 +363,7 @@ function _needs_f64(node::IRAtom, env::Dict{Base.Symbol,GCall})::Bool
 end
 
 "Is `%` present anywhere in the tree? (int-only; cannot coexist with a float mode)"
-function _has_mod(node::IRAtom, env::Dict{Base.Symbol,GCall})::Bool
+function _has_mod(node::IRAtom, env::Dict{Base.Symbol, GCall})::Bool
     node isa IRVariable || return false
     g = get(env, (node::IRVariable).name, nothing)
     g === nothing && return false
@@ -360,8 +377,8 @@ end
 Render an arithmetic tree as a nested pure-op expression, wrapping non-arith leaves in
 `<t>_from_string`. `nothing` if any node falls outside the arithmetic fragment.
 """
-function _arith_tree(node::IRAtom, env::Dict{Base.Symbol,GCall}, float::Bool,
-                     sub::Dict{Base.Symbol,String})::Union{String,Nothing}
+function _arith_tree(node::IRAtom, env::Dict{Base.Symbol, GCall}, float::Bool,
+    sub::Dict{Base.Symbol, String})::Union{String, Nothing}
     cast = float ? "f64_from_string" : "i64_from_string"
     if node isa IRVariable
         g = get(env, (node::IRVariable).name, nothing)
@@ -373,12 +390,14 @@ function _arith_tree(node::IRAtom, env::Dict{Base.Symbol,GCall}, float::Bool,
         op === nothing && return nothing                                # e.g. `%` under f64
         parts = String[op]
         for a in g.args
-            s = _arith_tree(a, env, float, sub); s === nothing && return nothing
+            s = _arith_tree(a, env, float, sub)
+            s === nothing && return nothing
             push!(parts, s)
         end
         return "(" * join(parts, " ") * ")"
     end
-    s = render(node); startswith(s, "<unrenderable") && return nothing
+    s = render(node)
+    startswith(s, "<unrenderable") && return nothing
     "($cast " * _apply_subst(s, sub) * ")"
 end
 
@@ -394,7 +413,9 @@ participate, but the TYPE says otherwise, which is both a latent `MethodError` a
 instability. Matching the whole `\$name` and dropping the sigil is provably `String`.
 """
 _term_vars(s::AbstractString)::Set{String} =
-    Set{String}(String(SubString(m.match, 2)) for m in eachmatch(r"\$[A-Za-z_][A-Za-z0-9_\-]*", s))
+    Set{String}(
+        String(SubString(m.match, 2)) for m in eachmatch(r"\$[A-Za-z_][A-Za-z0-9_\-]*", s)
+    )
 
 """
     _plan_sources(srcs) -> Vector{String}
@@ -464,9 +485,9 @@ FUNCTORS: source `,` (plain patterns — `I` means "typed source" and makes upst
 `sources.rs:233`), template `O` (typed sinks, required for `+`/`-`). Both verified against the
 upstream binary; see the exec contract at the head of this file.
 """
-function emit_clause(clause::ANClause; priority::Integer = 0,
-                     publish::Bool = false,
-                     funs::Set{Base.Symbol} = Set{Base.Symbol}())::Union{String,Nothing}
+function emit_clause(clause::ANClause; priority::Integer=0,
+    publish::Bool=false,
+    funs::Set{Base.Symbol}=Set{Base.Symbol}())::Union{String, Nothing}
     sub = _unify_subst(clause.goals)
     sub === nothing && return nothing
 
@@ -507,7 +528,8 @@ function emit_clause(clause::ANClause; priority::Integer = 0,
     # THE REDEX — the surface term as it appears in the space, arity n, no appended output.
     redex_parts = String[String(clause.name)]
     for a in clause.head_args
-        s = render(a); startswith(s, "<unrenderable") && return nothing
+        s = render(a)
+        startswith(s, "<unrenderable") && return nothing
         push!(redex_parts, _apply_subst(s, sub))
     end
     redex = "(" * join(redex_parts, " ") * ")"
@@ -557,7 +579,8 @@ function emit_clause(clause::ANClause; priority::Integer = 0,
     # Conjunct ORDER is the largest performance lever on this substrate (~1500x upstream). See
     # `_plan_sources` — the redex stays pinned first, the rest go through the cost-based planner.
     srcs = _plan_sources(srcs)
-    tmpl = publish ? "(+ " * out * ") (+ (=val " * redex * " " * out * "))" : "(+ " * out * ")"
+    tmpl =
+        publish ? "(+ " * out * ") (+ (=val " * redex * " " * out * "))" : "(+ " * out * ")"
     "(exec $priority (, " * join(srcs, " ") * ") (O " * tmpl * ")"[1:end] * ")"
 end
 
@@ -567,12 +590,13 @@ end
 The redex pattern this clause fires on — `(f a₁…aₙ)`. Needed by `emit_program` to emit ONE deletion
 rule per distinct redex, rather than one per clause.
 """
-function clause_redex(clause::ANClause)::Union{String,Nothing}
+function clause_redex(clause::ANClause)::Union{String, Nothing}
     sub = _unify_subst(clause.goals)
     sub === nothing && return nothing
     parts = String[String(clause.name)]
     for a in clause.head_args
-        s = render(a); startswith(s, "<unrenderable") && return nothing
+        s = render(a)
+        startswith(s, "<unrenderable") && return nothing
         push!(parts, _apply_subst(s, sub))
     end
     "(" * join(parts, " ") * ")"
@@ -611,10 +635,11 @@ The CALLEE TERM of a call — `(g a\$_1…a\$_n)`, arity n, NO appended output. 
 and what the `(=val …)` key is built from, so it must be byte-identical to the callee's own redex as
 `clause_redex` renders it — the two are matched against each other through the trie.
 """
-function _call_term(g::GCall, sub::Dict{Base.Symbol,String})::Union{String,Nothing}
+function _call_term(g::GCall, sub::Dict{Base.Symbol, String})::Union{String, Nothing}
     parts = String[String(g.head)]
     for a in g.args
-        s = render(a); startswith(s, "<unrenderable") && return nothing
+        s = render(a)
+        startswith(s, "<unrenderable") && return nothing
         push!(parts, _apply_subst(s, sub))
     end
     "(" * join(parts, " ") * ")"
@@ -627,8 +652,8 @@ head ⇒ the defined heads its clauses call. Calls to MORK pure ops are excluded
 `(=val …)` for them, so they can never be staged.
 """
 function _call_graph(clauses::Vector{ANClause},
-                     funs::Set{Base.Symbol})::Dict{Base.Symbol,Set{Base.Symbol}}
-    g = Dict{Base.Symbol,Set{Base.Symbol}}()
+    funs::Set{Base.Symbol})::Dict{Base.Symbol, Set{Base.Symbol}}
+    g = Dict{Base.Symbol, Set{Base.Symbol}}()
     for cl in clauses
         s = get!(() -> Set{Base.Symbol}(), g, cl.name)
         for goal in cl.goals
@@ -649,8 +674,8 @@ Declining is the correct behaviour rather than a gap to paper over. A recursive 
 at ONE stage (or a trampoline), not a deeper stage; emitting it with a made-up depth would produce a
 rule that fires once and then silently stops, which is worse than not emitting it.
 """
-function _cyclic_heads(graph::Dict{Base.Symbol,Set{Base.Symbol}})::Set{Base.Symbol}
-    color = Dict{Base.Symbol,Int}()             # 0 unvisited · 1 on the current path · 2 finished
+function _cyclic_heads(graph::Dict{Base.Symbol, Set{Base.Symbol}})::Set{Base.Symbol}
+    color = Dict{Base.Symbol, Int}()             # 0 unvisited · 1 on the current path · 2 finished
     bad = Set{Base.Symbol}()
     function dfs(n::Base.Symbol)::Bool          # true ⇒ n lies on or reaches a cycle
         c = get(color, n, 0)
@@ -666,7 +691,9 @@ function _cyclic_heads(graph::Dict{Base.Symbol,Set{Base.Symbol}})::Set{Base.Symb
         hit && push!(bad, n)
         hit
     end
-    for n in keys(graph); dfs(n); end
+    for n in keys(graph)
+        dfs(n)
+    end
     bad
 end
 
@@ -677,9 +704,9 @@ Longest call depth: 0 for a head that calls nothing, else `1 + max(level(callee)
 skipped. This is `KBSaturation._stratify`'s job — dependency graph ⇒ strata under a strictly-greater
 constraint — reused in shape, with producer/consumer edges in place of negation edges.
 """
-function _call_levels(graph::Dict{Base.Symbol,Set{Base.Symbol}},
-                      cyclic::Set{Base.Symbol})::Dict{Base.Symbol,Int}
-    lvl = Dict{Base.Symbol,Int}()
+function _call_levels(graph::Dict{Base.Symbol, Set{Base.Symbol}},
+    cyclic::Set{Base.Symbol})::Dict{Base.Symbol, Int}
+    lvl = Dict{Base.Symbol, Int}()
     function level(n::Base.Symbol)::Int
         haskey(lvl, n) && return lvl[n]
         lvl[n] = 0
@@ -734,8 +761,8 @@ is a generalisation of it, not a replacement, which is why call-free clauses kee
 output when nothing in the program is staged.
 """
 function emit_clause_staged(clause::ANClause, level::Integer, lmax::Integer;
-                            priority::Integer = 0,
-                            funs::Set{Base.Symbol} = Set{Base.Symbol}())::Union{Vector{String},Nothing}
+    priority::Integer=0,
+    funs::Set{Base.Symbol}=Set{Base.Symbol}())::Union{Vector{String}, Nothing}
     sub = _unify_subst(clause.goals)
     sub === nothing && return nothing
 
@@ -781,23 +808,27 @@ function emit_clause_staged(clause::ANClause, level::Integer, lmax::Integer;
 
     redex_parts = String[String(clause.name)]
     for a in clause.head_args
-        s = render(a); startswith(s, "<unrenderable") && return nothing
+        s = render(a)
+        startswith(s, "<unrenderable") && return nothing
         push!(redex_parts, _apply_subst(s, sub))
     end
     redex = "(" * join(redex_parts, " ") * ")"
 
-    srcs = String[redex]; demands = String[]
+    srcs = String[redex]
+    demands = String[]
     for g in clause.goals
         g isa GUnify && continue
         if g isa GCall
             is_arith(g.head) && continue         # COMPUTED, not matched — no source, no demand
-            ct = _call_term(g, sub); ct === nothing && return nothing
+            ct = _call_term(g, sub)
+            ct === nothing && return nothing
             o = _apply_subst(render(g.out), sub)
             startswith(o, "<unrenderable") && return nothing
             push!(demands, "(+ " * ct * ")")
             push!(srcs, "(=val " * ct * " " * o * ")")
         else
-            s = render_goal(g); s === nothing && return nothing
+            s = render_goal(g)
+            s === nothing && return nothing
             push!(srcs, _apply_subst(s, sub))
         end
     end
@@ -816,14 +847,15 @@ function emit_clause_staged(clause::ANClause, level::Integer, lmax::Integer;
         tree = _arith_tree(clause.out, env, float, sub)
         tree === nothing && return nothing
         cast = float ? "f64_to_string" : "i64_to_string"
-        tmpl = "(pure \$__r \$__r ($cast $tree)) " *
-               "(pure (=val $redex \$__r2) \$__r2 ($cast $tree))"
+        tmpl =
+            "(pure \$__r \$__r ($cast $tree)) " *
+            "(pure (=val $redex \$__r2) \$__r2 ($cast $tree))"
     end
 
     srcs = _plan_sources(srcs)
     String[
         "(exec $(priority + lmax - level) (, $redex) (O " * join(demands, " ") * "))",
-        "(exec $(priority + lmax + level) (, " * join(srcs, " ") * ") (O " * tmpl * "))",
+        "(exec $(priority + lmax + level) (, " * join(srcs, " ") * ") (O " * tmpl * "))"
     ]
 end
 
@@ -867,8 +899,8 @@ irreducible expression as itself. The single-stage form had the complementary fl
 on a fire, but lost answers). This is the same trade the existing reduction lane makes, and closing
 it needs a fired-marker the exec calculus does not currently carry.
 """
-function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
-                      extra_funs::Set{Base.Symbol} = Set{Base.Symbol}())
+function emit_program(clauses::Vector{ANClause}; priority::Integer=0,
+    extra_funs::Set{Base.Symbol}=Set{Base.Symbol}())
     # The defined heads — a call to one of these is a legitimate source pattern, because some rule
     # produces it. Anything else must be a MORK pure op or the clause is declined (`emit_clause`).
     #
@@ -892,10 +924,10 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
     flat = ANClause[p for ps in paths for p in ps]
 
     # Call depth drives stage assignment. Cyclic heads get no depth and keep the plain path's decline.
-    graph  = _call_graph(flat, funs)
+    graph = _call_graph(flat, funs)
     cyclic = _cyclic_heads(graph)
     levels = _call_levels(graph, cyclic)
-    lmax   = isempty(levels) ? 0 : maximum(values(levels))
+    lmax = isempty(levels) ? 0 : maximum(values(levels))
     # Heads someone actually calls. Only these publish `(=val …)`; publishing for every head would
     # double the write volume of a 1000-clause program to produce keys nothing ever reads.
     called = Set{Base.Symbol}()
@@ -903,33 +935,42 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
         push!(called, c)
     end
 
-    rules = String[]; declined = ANClause[]; redexes = String[]; seen = Set{String}()
-    nemit = 0; nstaged = 0; nexpanded = 0
+    rules = String[]
+    declined = ANClause[]
+    redexes = String[]
+    seen = Set{String}()
+    nemit = 0
+    nstaged = 0
+    nexpanded = 0
     for (i, cl) in enumerate(clauses)
         ps = paths[i]
-        got = String[]; rxs = String[]; ok = true; staged_here = false
+        got = String[]
+        rxs = String[]
+        ok = true
+        staged_here = false
         for pc in ps
             lv = get(levels, pc.name, 0)
             # A call-free clause emits at its own level; `lmax + lv` is `priority` when nothing is staged.
-            one = emit_clause(pc; priority = priority + lmax + lv,
-                              publish = pc.name in called, funs = funs)
+            one = emit_clause(pc; priority=priority + lmax + lv,
+                publish=pc.name in called, funs=funs)
             g = if one !== nothing
                 String[one]
             elseif pc.name in cyclic
                 nothing                              # recursion: no finite stage exists
             else
-                emit_clause_staged(pc, lv, lmax; priority = priority, funs = funs)
+                emit_clause_staged(pc, lv, lmax; priority=priority, funs=funs)
             end
             # PARTIAL EXPANSION IS NEVER EMITTED. Three arms of four is a silently dropped answer, and
             # a rule that cannot fire is worse than an absent one — so one failing path fails the clause.
-            g === nothing && (ok = false; break)
+            g === nothing && (ok=false; break)
             one === nothing && (staged_here = true)
             append!(got, g)
             rx = clause_redex(pc)
             rx === nothing || push!(rxs, rx)
         end
         if !ok
-            push!(declined, cl); continue
+            push!(declined, cl)
+            continue
         end
         staged_here && (nstaged += 1)
         length(ps) > 1 && (nexpanded += 1)
@@ -946,10 +987,12 @@ function emit_program(clauses::Vector{ANClause}; priority::Integer = 0,
     if nstaged > 0
         # Intermediates only, never source atoms — the `grounding.mm2` discipline. One generic rule
         # rather than one per key: `(=val …)` is our own vocabulary, so nothing else can match it.
-        push!(deletions, "(exec $(cstage) (, (=val \$__k \$__v)) (O (- (=val \$__k \$__v))))")
+        push!(
+            deletions, "(exec $(cstage) (, (=val \$__k \$__v)) (O (- (=val \$__k \$__v))))"
+        )
     end
-    (; rules = vcat(rules, deletions), emitted = nemit, staged = nstaged, expanded = nexpanded,
-       declined, deletions = length(deletions))
+    (; rules=vcat(rules, deletions), emitted=nemit, staged=nstaged, expanded=nexpanded,
+        declined, deletions=length(deletions))
 end
 
 """
@@ -1054,7 +1097,9 @@ Read these before citing any row above; each retired a ranking this histogram ha
 """
 function decline_histogram(clauses::Vector{ANClause})
     funs = Set{Base.Symbol}(c.name for c in clauses)   # hoisted: was rebuilt PER CLAUSE (O(n^2))
-    paths = Dict{Base.Symbol,Int}(); fully = Dict{Base.Symbol,Int}(); expanded = 0
+    paths = Dict{Base.Symbol, Int}()
+    fully = Dict{Base.Symbol, Int}()
+    expanded = 0
     # 🔴 `declining` ADDED 2026-08-15 — the counter whose ABSENCE invited a wrong number.
     # Neither `paths` nor `fully` answers "how many clauses decline AT ALL": `paths` counts blocked
     # PATHS (expansion multiplies them), and `fully` counts only clauses whose every blocked path
@@ -1070,7 +1115,7 @@ function decline_histogram(clauses::Vector{ANClause})
     # (IL→MORK routing we own), not a MeTTa→MM2 compile arrow, which does not exist.
     declining = 0
     for cl in clauses
-        emit_clause(cl; funs = funs) === nothing || continue
+        emit_clause(cl; funs=funs) === nothing || continue
         e = expand_control(cl)
         if e === nothing                                # unexpandable — attribute the clause itself
             r = decline_reason(cl)
@@ -1082,7 +1127,7 @@ function decline_histogram(clauses::Vector{ANClause})
         expanded += 1
         reasons = Base.Symbol[]
         for p in e
-            emit_clause(p; funs = funs) === nothing || continue
+            emit_clause(p; funs=funs) === nothing || continue
             push!(reasons, decline_reason(p))
         end
         isempty(reasons) && continue                    # every path emits after expansion
@@ -1093,9 +1138,10 @@ function decline_histogram(clauses::Vector{ANClause})
         u = unique(reasons)
         length(u) == 1 && (fully[u[1]] = get(fully, u[1], 0) + 1)
     end
-    (; paths, fully, expanded, declining, total = length(clauses))
+    (; paths, fully, expanded, declining, total=length(clauses))
 end
 
-export render, render_goal, emit_clause, emit_clause_staged, emit_program, decline_reason, decline_histogram
+export render, render_goal, emit_clause, emit_clause_staged, emit_program, decline_reason,
+    decline_histogram
 
 end # module CompilerEmit

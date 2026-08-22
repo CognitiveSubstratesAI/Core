@@ -99,13 +99,13 @@
 # ⇒ Per-space + arity-keyed is the RIGHT shape (the reference says so). Whether it is URGENT is
 # unproven; a test that exhibits a wrong ANSWER — not merely a leaked mark — is the prerequisite.
 const _TABLED_HEADS = Set{Symbol}()
-const _ANSWER_TABLE = Dict{Atom,Vector{Atom}}()
-const _ANSWER_STAMP = Dict{Atom,Tuple{UInt,Int}}()   # key → (objectid(space), revision) at completion; auto-evict on mismatch
+const _ANSWER_TABLE = Dict{Atom, Vector{Atom}}()
+const _ANSWER_STAMP = Dict{Atom, Tuple{UInt, Int}}()   # key → (objectid(space), revision) at completion; auto-evict on mismatch
 const _TABLE_INPROG = Set{Atom}()
-const _PARTIAL = Dict{Atom,Vector{Atom}}()   # a leader's accumulating answer set during completion
+const _PARTIAL = Dict{Atom, Vector{Atom}}()   # a leader's accumulating answer set during completion
 const _PARTIAL_READ = Set{Atom}()            # tabled keys whose partials a consumer read ⇒ self-recursive
 const _GEN_STACK = Atom[]                     # in-progress leaders (generators), in call order
-const _COMPONENT = Dict{Atom,Atom}()          # key → SCC root (union-find; merged on a cross-leader cycle)
+const _COMPONENT = Dict{Atom, Atom}()          # key → SCC root (union-find; merged on a cross-leader cycle)
 const _NEG_BARRIER = Set{Atom}()              # in-progress keys sitting BEHIND an active tnot (negation)
 const _NEG_DEPTH = Ref(0)                      # active tnot-drive depth (>0 ⇒ evaluating under a negation)
 const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key under negation ⇒ unsound 2-valued
@@ -114,7 +114,7 @@ const _NEG_TAINT = Ref(false)                 # a consumer read a barrier key un
 # instead of driving G + tainting (the taint is what makes the tabler over-conservative on dynamically-
 # stratified SCCs). OUT-of-SCC `tnot` (key ∉ _WFS_BOUND) and all off-WFS execution (_WFS_ACTIVE=false) are
 # untouched ⇒ 234-conformance byte-identical.
-const _WFS_BOUND  = Ref(Dict{Atom,Vector{Atom}}())   # SCC-member key ↦ bound answer-set I (read-only in a phase)
+const _WFS_BOUND = Ref(Dict{Atom, Vector{Atom}}())   # SCC-member key ↦ bound answer-set I (read-only in a phase)
 const _WFS_ACTIVE = Ref(false)                        # true only inside an `_S_P!` phase
 """Which NEGATIVE literals each in-progress goal's derivation is stuck on.
 
@@ -124,7 +124,7 @@ optimistic answer set (`_wfs_bottom_for`), and those answers are ordinary values
 so the reason evaporated and `answer_residual` reported `True`, the value that means UNCONDITIONAL.
 Caught by `test_delays.jl`'s end-to-end paradox assertion the moment the SCC fix landed, which is
 exactly what that anti-vacuity test was written for."""
-const _NEG_DELAYS = Dict{Atom,Set{Atom}}()            # stuck goal ⇒ the callees it delayed on
+const _NEG_DELAYS = Dict{Atom, Set{Atom}}()            # stuck goal ⇒ the callees it delayed on
 
 "Record that the goal currently being derived delays on `callee` — call it wherever `tnot` yields ⊥."
 function _record_neg_delay!(callee::Atom)
@@ -143,7 +143,7 @@ function _record_neg_delay!(callee::Atom)
     nothing
 end
 
-const _SCC_NEG    = Set{Atom}()                       # in-progress goals re-entered ACROSS a tnot barrier (a
+const _SCC_NEG = Set{Atom}()                       # in-progress goals re-entered ACROSS a tnot barrier (a
 #   positive edge closing a cycle through negation) ⇒ their SCC needs `_wfs_complete!`. Set at the source in
 #   `tabled_eval`'s consumer path; the routing checks whether any SCC member is marked. Replaces the old
 #   hardcoded `tnot`-body scan (`_body_has_tnot`/`_scc_has_negation`) — same info, from the machinery that owns it.
@@ -191,9 +191,9 @@ Base.hash(w::WFSBottom, h::UInt) = hash(length(w.delays), hash(:WFSBottom, h))
 
 Base.show(io::IO, w::WFSBottom) =
     print(io, isempty(w.delays) ? "undefined" : "undefined")   # the RESIDUAL is asked for explicitly,
-                                                               # via `answer_residual` — printing it
-                                                               # here would change every WFS oracle
-                                                               # comparison, which compares TEXT.
+# via `answer_residual` — printing it
+# here would change every WFS oracle
+# comparison, which compares TEXT.
 const UNDEFINED = Grounded(WFSBottom())       # NOT aliased to Empty or False; NOT a program Sym
 
 """
@@ -234,12 +234,15 @@ undefined) but would report a condition that is INCOMPLETE — and an incomplete
 none, because it looks authoritative. `dnf_and` is the explicit conjunction that upstream gets
 implicitly from pushing onto one ambient register.
 """
-function propagated_undefined(xs::Vector{Atom})::Union{Atom,Nothing}
+function propagated_undefined(xs::Vector{Atom})::Union{Atom, Nothing}
     found = nothing
     for x in xs
         is_undefined(x) || continue
-        found = found === nothing ? x :
-                undefined_with(dnf_and(delays_of(found::Atom), delays_of(x)))
+        found = if found === nothing
+            x
+        else
+            undefined_with(dnf_and(delays_of(found::Atom), delays_of(x)))
+        end
     end
     found
 end
@@ -273,12 +276,17 @@ answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 # answer (library/tables.pl:262-274), evaluating it itself. The reporting surface therefore belongs
 # with `get_residual` in `tabling/Inspect.jl`, not here.
 
-_table_reset!() = (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
-                   empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
-                   _NEG_DEPTH[] = 0; _NEG_TAINT[] = false; empty!(_SCC_NEG); empty!(_NEG_DELAYS); empty!(_DEPS);
-                   _CURRENT_TARGET[] = nothing; _DEPS_COUNT[] = 0; clear_worklists!(); clear_answer_tries!(); clear_answer_delays!(); clear_idg!(); clear_mono!(); clear_dyn_deps!(); empty!(_REEVAL_PENDING);  # §1.0 3-4 + §7.7 + §7.8
-                   _WFS_BOUND[] = Dict{Atom,Vector{Atom}}(); _WFS_ACTIVE[] = false)
-_scc_root(k::Atom)::Atom = (r = get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
+_table_reset!() =
+    (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
+        empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
+        _NEG_DEPTH[]=0; _NEG_TAINT[]=false; empty!(_SCC_NEG); empty!(_NEG_DELAYS);
+        empty!(_DEPS);
+        _CURRENT_TARGET[]=nothing; _DEPS_COUNT[]=0; clear_worklists!();
+        clear_answer_tries!(); clear_answer_delays!(); clear_idg!(); clear_mono!();
+        clear_dyn_deps!(); empty!(_REEVAL_PENDING);  # §1.0 3-4 + §7.7 + §7.8
+        _WFS_BOUND[]=Dict{Atom, Vector{Atom}}(); _WFS_ACTIVE[]=false)
+_scc_root(k::Atom)::Atom =
+    (r=get(_COMPONENT, k, k); r == k ? k : (_COMPONENT[k] = _scc_root(r)))
 
 """
     _union_scc!(key)
@@ -294,7 +302,7 @@ function _union_scc!(key::Atom)
     ki = findfirst(g -> g == key, _GEN_STACK)
     ki === nothing && return nothing
     root = _scc_root(key)
-    for j in ki+1:length(_GEN_STACK)
+    for j in (ki + 1):length(_GEN_STACK)
         _COMPONENT[_scc_root(_GEN_STACK[j])] = root
     end
     nothing
@@ -335,9 +343,11 @@ Throws if `head` has an INCOMPLETE table — upstream's `change_incomplete_error
 """
 function untable!(head::Symbol)::Bool
     head in _TABLED_HEADS || return false
-    any(k -> head_name(k) === head, _TABLE_INPROG) && throw(ErrorException(
-        "permission_error(modify, incomplete_table, $(head)) — untable! during an active " *
-        "completion would delete answers the running fixpoint still refers to"))
+    any(k -> head_name(k) === head, _TABLE_INPROG) && throw(
+        ErrorException(
+            "permission_error(modify, incomplete_table, $(head)) — untable! during an active " *
+            "completion would delete answers the running fixpoint still refers to")
+    )
     delete!(_TABLED_HEADS, head)
     abolish_table_subgoals!(head)
     untable_modes!(head)        # '$table_mode' — tabling/Aggregation.jl
@@ -365,10 +375,14 @@ its TARGET is (resuming into a deleted table is what leaves a dangling continuat
 function abolish_table_subgoals!(head::Symbol)
     _ishead(k::Atom) = head_name(k) === head
     for d in (_ANSWER_TABLE, _ANSWER_STAMP, _PARTIAL, _COMPONENT, _DEPS)
-        for k in collect(keys(d)); _ishead(k) && delete!(d, k); end
+        for k in collect(keys(d))
+            _ishead(k) && delete!(d, k)
+        end
     end
     for s in (_TABLE_INPROG, _PARTIAL_READ, _NEG_BARRIER, _SCC_NEG)
-        for k in collect(s); _ishead(k) && delete!(s, k); end
+        for k in collect(s)
+            _ishead(k) && delete!(s, k)
+        end
     end
     for (src, deps) in _DEPS                       # …and dependencies TARGETING this head
         filter!(dep -> !_ishead(dep.target), deps)
@@ -377,24 +391,41 @@ function abolish_table_subgoals!(head::Symbol)
     filter!(!_ishead, _GEN_STACK)
     # §1.0 step 3: a table's WORKLIST dies with the table. Resolved at call time — `drop_worklist!`
     # is defined in `tabling/Worklists.jl`, included after this file (see the note at its include).
-    for key in collect(keys(_WORKLISTS)); _ishead(key) && drop_worklist!(key); end
+    for key in collect(keys(_WORKLISTS))
+        _ishead(key) && drop_worklist!(key)
+    end
     # §1.0 step 4: and its ANSWER TRIE. A surviving trie would serve answers for a predicate that is
     # no longer tabled — the same class as a stranded _DEPS entry.
-    for key in collect(keys(_ANSWER_TRIES)); _ishead(key) && drop_answer_trie!(key); end
+    for key in collect(keys(_ANSWER_TRIES))
+        _ishead(key) && drop_answer_trie!(key)
+    end
     # §7.7: and its IDG node, unlinking both directions — a dropped table must not leave dangling
     # edges that propagate invalidation into nothing.
-    for key in collect(keys(_IDG)); _ishead(key) && drop_idg_node!(key); end
+    for key in collect(keys(_IDG))
+        _ishead(key) && drop_idg_node!(key)
+    end
     # §7.8: and its monotonic dependencies, in both directions — a resume into a dropped table
     # would feed answers into a trie that no longer exists.
-    for key in collect(keys(_MONO_DEPS)); _ishead(key) && drop_mono_deps!(key); end
+    for key in collect(keys(_MONO_DEPS))
+        _ishead(key) && drop_mono_deps!(key)
+    end
     nothing
 end
-@inline is_tabled(atom::Atom)::Bool = !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
+@inline is_tabled(atom::Atom)::Bool =
+    !isempty(_TABLED_HEADS) && head_name(atom) in _TABLED_HEADS
 # MeTTa surface for the directive (the analog of SWI `:- table fib/1`): `!(table! fib)` marks the `fib`
 # predicate tabled, so a program/server enables tabling without a Julia call. Registered in TOKEN_REGISTRY.
-const TABLE_DECL = Grounded(Operation("table!", xs ->
-    (length(xs) == 1 && xs[1] isa Sym) ?
-        (table!((xs[1]::Sym).name); ExecOk(Atom[Expression(Atom[])])) : ExecNoReduce()))
+const TABLE_DECL = Grounded(
+    Operation(
+        "table!",
+        xs ->
+            if (length(xs) == 1 && xs[1] isa Sym)
+                (table!((xs[1]::Sym).name); ExecOk(Atom[Expression(Atom[])]))
+            else
+                ExecNoReduce()
+            end
+    )
+)
 
 # ── PURITY-ANALYSIS AUTO-TABLER (MeTTa-TS-style `automatic tabling of pure functions`) ──────────────
 # `table!` is opt-in (`!(table! fib)`); MeTTa-TS instead auto-detects which functions are PURE (their
@@ -405,53 +436,58 @@ const TABLE_DECL = Grounded(Operation("table!", xs ->
 # remove-atom, match/&self, state, superpose, I/O, or any un-whitelisted grounded op / data constructor) is
 # left UNTABLED. Result-preserving: tabling memoises a pure function's answer set, so answers are identical,
 # only faster (fib: exponential → linear). Not auto-wired into load_metta! — call `auto_table!(space)` explicitly.
-const _PURE_PRIMS = Set{Symbol}(Symbol.([
-    "+","-","*","/","%","<",">","<=",">=","==","!=",                       # arithmetic + comparison
-    "and","or","not","xor","if","if-equal","unify","let","let*","case",    # boolean + control
-    "quote","unquote","eval","id","noeval","noreduce-eq","=alpha",         # quote / eval (pure)
-    "car-atom","cdr-atom","cons-atom","size-atom","index-atom","min-atom","max-atom",  # pure list/tuple
-    "get-type","get-metatype","match-types","is-function",                 # type queries (pure)
-    "sqrt-math","pow-math","abs-math","log-math","exp-math","sin-math","cos-math",
-    # 🔴 THE MINIMAL-MeTTa CONTROL INSTRUCTIONS — added 2026-08-16 (roadmap item 0.1).
-    # THEIR ABSENCE WAS A SILENT NO-OP, NOT A MISSING FEATURE. `EmitIL` lowers every definition to
-    #     (= (fib $n) (function (chain (metta (< $n 2) %Undefined% &self) $__t1 …)))
-    # so a COMPILED body's callees are `function`/`chain`/`metta`/`return`. None was whitelisted, and
-    # `_pure_heads` is a WHITELIST fixpoint (unknown op ⇒ impure), so EVERY compiled head came back
-    # impure. MEASURED 2026-08-15:
-    #     `:fib` in `_pure_heads`, SOURCE form  ->  true
-    #     `:fib` in `_pure_heads`, IL form      ->  FALSE
-    # ⇒ every purity-gated consumer is inert on the compiled lane. `auto_table!` is the one we
-    # noticed — tabling `compile_run`'s output did LITERALLY NOTHING — and it is not necessarily the
-    # only one.
-    #
-    # THEY ARE PURE. `function`/`return` are a call boundary and its join point; `chain` binds an
-    # intermediate and continues; `metta`/`evalc` evaluate a sub-term; `decons-atom` destructures.
-    # None mutates, reads state, or does I/O. Purity of what they CONTAIN is still checked
-    # independently: `_callees!` recurses into every child, so `(metta (add-atom …) …)` still
-    # surfaces `add-atom` and fails the head.
-    #
-    # ⚠️ `collapse-bind`/`superpose-bind` DELIBERATELY OMITTED. The header above lists `superpose`
-    # among the impure ops; that conservative stance is kept. Their answer SET is well-defined so
-    # they are arguably tabl-able, but widening nondeterminism handling is its own decision with its
-    # own evidence, not a side effect of unblocking the compiled lane.
-    #
-    # ⚠️ BLAST RADIUS — `_pure_heads` ALSO FEEDS `purity_may_mutate` (`CompileLane.jl:40`), which
-    # drives REGION SPLITTING for Invariant 1: more pure heads ⇒ fewer forms flagged mutating ⇒ FEWER
-    # SPLITS. Mostly contained, because these heads appear in COMPILED bodies while
-    # `purity_may_mutate` analyses SOURCE forms — the exception is a user writing minimal MeTTa
-    # directly (legal since `d3e245f`), where the new classification is the CORRECT one and the old
-    # "impure" verdict was conservative-and-wrong rather than a deliberate guard.
-    # ⇒ THE PROVED CORPUS IS THE GATE FOR THIS CHANGE, not the unit tests.
-    "function","return","chain","metta","evalc","decons-atom",
-]))
+const _PURE_PRIMS = Set{Symbol}(
+    Symbol.([
+        "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!=",                       # arithmetic + comparison
+        "and", "or", "not", "xor", "if", "if-equal", "unify", "let", "let*", "case",    # boolean + control
+        "quote", "unquote", "eval", "id", "noeval", "noreduce-eq", "=alpha",         # quote / eval (pure)
+        "car-atom", "cdr-atom", "cons-atom", "size-atom", "index-atom", "min-atom",
+        "max-atom",  # pure list/tuple
+        "get-type", "get-metatype", "match-types", "is-function",                 # type queries (pure)
+        "sqrt-math", "pow-math", "abs-math", "log-math", "exp-math", "sin-math", "cos-math",
+        # 🔴 THE MINIMAL-MeTTa CONTROL INSTRUCTIONS — added 2026-08-16 (roadmap item 0.1).
+        # THEIR ABSENCE WAS A SILENT NO-OP, NOT A MISSING FEATURE. `EmitIL` lowers every definition to
+        #     (= (fib $n) (function (chain (metta (< $n 2) %Undefined% &self) $__t1 …)))
+        # so a COMPILED body's callees are `function`/`chain`/`metta`/`return`. None was whitelisted, and
+        # `_pure_heads` is a WHITELIST fixpoint (unknown op ⇒ impure), so EVERY compiled head came back
+        # impure. MEASURED 2026-08-15:
+        #     `:fib` in `_pure_heads`, SOURCE form  ->  true
+        #     `:fib` in `_pure_heads`, IL form      ->  FALSE
+        # ⇒ every purity-gated consumer is inert on the compiled lane. `auto_table!` is the one we
+        # noticed — tabling `compile_run`'s output did LITERALLY NOTHING — and it is not necessarily the
+        # only one.
+        #
+        # THEY ARE PURE. `function`/`return` are a call boundary and its join point; `chain` binds an
+        # intermediate and continues; `metta`/`evalc` evaluate a sub-term; `decons-atom` destructures.
+        # None mutates, reads state, or does I/O. Purity of what they CONTAIN is still checked
+        # independently: `_callees!` recurses into every child, so `(metta (add-atom …) …)` still
+        # surfaces `add-atom` and fails the head.
+        #
+        # ⚠️ `collapse-bind`/`superpose-bind` DELIBERATELY OMITTED. The header above lists `superpose`
+        # among the impure ops; that conservative stance is kept. Their answer SET is well-defined so
+        # they are arguably tabl-able, but widening nondeterminism handling is its own decision with its
+        # own evidence, not a side effect of unblocking the compiled lane.
+        #
+        # ⚠️ BLAST RADIUS — `_pure_heads` ALSO FEEDS `purity_may_mutate` (`CompileLane.jl:40`), which
+        # drives REGION SPLITTING for Invariant 1: more pure heads ⇒ fewer forms flagged mutating ⇒ FEWER
+        # SPLITS. Mostly contained, because these heads appear in COMPILED bodies while
+        # `purity_may_mutate` analyses SOURCE forms — the exception is a user writing minimal MeTTa
+        # directly (legal since `d3e245f`), where the new classification is the CORRECT one and the old
+        # "impure" verdict was conservative-and-wrong rather than a deliberate guard.
+        # ⇒ THE PROVED CORPUS IS THE GATE FOR THIS CHANGE, not the unit tests.
+        "function", "return", "chain", "metta", "evalc", "decons-atom"
+    ])
+)
 
 # extract `(= (h …) body)` rules from a list of atoms → head Symbol ↦ [body atoms]
-function _rules_of(atoms)::Dict{Symbol,Vector{Atom}}
-    d = Dict{Symbol,Vector{Atom}}(); EQ = Symbol("=")
+function _rules_of(atoms)::Dict{Symbol, Vector{Atom}}
+    d = Dict{Symbol, Vector{Atom}}()
+    EQ = Symbol("=")
     for a in atoms
         (a isa Expression && length(a.children) == 3 && head_name(a) == EQ) || continue
         lhs = a.children[2]
-        (lhs isa Expression && !isempty(lhs.children) && lhs.children[1] isa Sym) || continue
+        (lhs isa Expression && !isempty(lhs.children) && lhs.children[1] isa Sym) ||
+            continue
         push!(get!(d, head_name(lhs), Atom[]), a.children[3])
     end
     d
@@ -461,15 +497,18 @@ end
 function _callees!(a::Atom, acc::Set{Symbol})
     if a isa Expression && !isempty(a.children)
         a.children[1] isa Sym && push!(acc, (a.children[1]::Sym).name)
-        for c in a.children; _callees!(c, acc); end
+        for c in a.children
+            _callees!(c, acc)
+        end
     end
     acc
 end
 
 # impurity-propagation fixpoint: a head is impure if a body calls something that is neither a pure prim
 # nor a (defined) head (⇒ an unknown/impure grounded op), or calls a known-impure head. Self-recursion OK.
-function _pure_heads(rules::Dict{Symbol,Vector{Atom}})::Set{Symbol}
-    heads = Set(keys(rules)); impure = Set{Symbol}()
+function _pure_heads(rules::Dict{Symbol, Vector{Atom}})::Set{Symbol}
+    heads = Set(keys(rules))
+    impure = Set{Symbol}()
     while true
         changed = false
         for h in heads
@@ -479,7 +518,10 @@ function _pure_heads(rules::Dict{Symbol,Vector{Atom}})::Set{Symbol}
                 for op in _callees!(body, Set{Symbol}())
                     op == h && continue
                     if !(op in _PURE_PRIMS || op in heads) || op in impure
-                        push!(impure, h); changed = true; done = true; break
+                        push!(impure, h)
+                        changed = true
+                        done = true
+                        break
                     end
                 end
                 done && break
@@ -529,12 +571,14 @@ unknown/impure op is left untabled — result-preserving, only faster. Returns t
 # silently drops answers; declining to table costs only speed.
 
 "LHS patterns per head — `_rules_of` keeps only RHS bodies, and the guard needs the heads."
-function _rule_heads_of(atoms)::Dict{Symbol,Vector{Atom}}
-    d = Dict{Symbol,Vector{Atom}}(); EQ = Symbol("=")
+function _rule_heads_of(atoms)::Dict{Symbol, Vector{Atom}}
+    d = Dict{Symbol, Vector{Atom}}()
+    EQ = Symbol("=")
     for a in atoms
         (a isa Expression && length(a.children) == 3 && head_name(a) == EQ) || continue
         lhs = a.children[2]
-        (lhs isa Expression && !isempty(lhs.children) && lhs.children[1] isa Sym) || continue
+        (lhs isa Expression && !isempty(lhs.children) && lhs.children[1] isa Sym) ||
+            continue
         push!(get!(d, head_name(lhs), Atom[]), lhs)
     end
     d
@@ -569,15 +613,16 @@ see `_standardise_apart` below for the numbers.
 
 ⚠️ THE `get!` CLOSURE STAYS AND IS FINE: it captures, but it does not call itself, so it infers.
 """
-function _sa_rename(x::Atom, seen::Dict{Var,Var}, n::Base.RefValue{Int}, nm::String)::Atom
+function _sa_rename(x::Atom, seen::Dict{Var, Var}, n::Base.RefValue{Int}, nm::String)::Atom
     x isa Var && return get!(() -> (n[] += 1; Var(nm, UInt64(n[]))), seen, x)
-    x isa Expression && return Expression(Atom[_sa_rename(c, seen, n, nm) for c in x.children])
+    x isa Expression &&
+        return Expression(Atom[_sa_rename(c, seen, n, nm) for c in x.children])
     x
 end
 
 "Rename every variable in `a` to a fresh id, so two patterns share no variable (standardise apart)."
 function _standardise_apart(a::Atom, tag::UInt64)::Atom
-    _sa_rename(a, Dict{Var,Var}(), Ref(0), _sa_name(tag))
+    _sa_rename(a, Dict{Var, Var}(), Ref(0), _sa_name(tag))
 end
 
 """
@@ -590,7 +635,7 @@ multivalued: the unsafe direction is tabling something multivalued, which drops 
 """
 function is_multivalued(heads::Vector{Atom})::Bool
     length(heads) <= 1 && return false
-    for i in 1:length(heads)-1, j in i+1:length(heads)
+    for i in 1:(length(heads) - 1), j in (i + 1):length(heads)
         li = _standardise_apart(heads[i], UInt64(1))
         lj = _standardise_apart(heads[j], UInt64(2))
         unifiable = try
@@ -622,7 +667,7 @@ Analyses ALL rules, stdlib included, because the call chain that carries multipl
 head can run through library code.
 """
 function _multivalued_heads(atoms)::Set{Symbol}
-    rh    = _rule_heads_of(atoms)
+    rh = _rule_heads_of(atoms)
     rules = _rules_of(atoms)
     multi = Set{Symbol}(h for (h, pats) in rh if is_multivalued(pats))   # seed: overlapping clauses
     changed = true
@@ -631,9 +676,12 @@ function _multivalued_heads(atoms)::Set{Symbol}
         for (h, bodies) in rules
             h in multi && continue
             for b in bodies
-                cs = Set{Symbol}(); _callees!(b, cs)
+                cs = Set{Symbol}()
+                _callees!(b, cs)
                 if !isdisjoint(cs, multi)
-                    push!(multi, h); changed = true; break
+                    push!(multi, h)
+                    changed = true
+                    break
                 end
             end
         end
@@ -670,10 +718,12 @@ over ALL rules (stdlib included) because the chain back into a head can run thro
 """
 function _self_reaching_heads(atoms)::Set{Symbol}
     rules = _rules_of(atoms)
-    reach = Dict{Symbol,Set{Symbol}}()
+    reach = Dict{Symbol, Set{Symbol}}()
     for (h, bodies) in rules
         cs = Set{Symbol}()
-        for b in bodies; _callees!(b, cs); end
+        for b in bodies
+            _callees!(b, cs)
+        end
         reach[h] = cs
     end
     changed = true
@@ -682,7 +732,7 @@ function _self_reaching_heads(atoms)::Set{Symbol}
         for (h, cs) in reach
             for c in collect(cs)
                 for c2 in get(reach, c, Set{Symbol}())
-                    c2 in cs || (push!(cs, c2); changed = true)
+                    c2 in cs || (push!(cs, c2); changed=true)
                 end
             end
         end
@@ -697,22 +747,36 @@ function auto_table!(space::Space)
     # would silently drop the duplicate answers MeTTa's multiset semantics requires.
     multi = _multivalued_heads(all_atoms(space))
     up = setdiff(intersect(pure, user), multi)
-    for h in up; table!(h); end
-    (tabled = sort!(collect(up)), skipped = sort!(collect(setdiff(user, up))),
-     multivalued = sort!(collect(multi)))
+    for h in up
+        table!(h)
+    end
+    (tabled=sort!(collect(up)), skipped=sort!(collect(setdiff(user, up))),
+        multivalued=sort!(collect(multi)))
 end
 
 # `!(auto-table!)` — the MeTTa surface for the auto-tabler (the analog of MeTTa-TS's automatic tabling; cf.
 # `!(table! fib)` for the per-predicate directive). Analyzes `&self` and tables every PURE user function head,
 # returning `(auto-tabled h1 h2 …)` so a program/server enables it with no Julia call and sees what was tabled.
-const AUTO_TABLE_DECL = Grounded(SpaceOp("auto-table!", function (xs, space)
-    r = auto_table!(space)
-    ExecOk(Atom[Expression(Atom[Sym("auto-tabled"); Atom[Sym(string(h)) for h in r.tabled]])])
-end))
+const AUTO_TABLE_DECL = Grounded(
+    SpaceOp(
+        "auto-table!",
+        function (xs, space)
+            r = auto_table!(space)
+            ExecOk(
+                Atom[Expression(
+                    Atom[Sym("auto-tabled"); Atom[Sym(string(h)) for h in r.tabled]]
+                )]
+            )
+        end
+    )
+)
 
 _replay(answers::Vector{Atom}, b::Bindings, prev) =
-    isempty(answers) ? finished_result(EMPTY, b, prev) :
-    reduce(vcat, (finished_result(ans, b, prev) for ans in answers))
+    if isempty(answers)
+        finished_result(EMPTY, b, prev)
+    else
+        reduce(vcat, (finished_result(ans, b, prev) for ans in answers))
+    end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DELIMITED CONTROL — `shift`/`reset` over the CPS frame chain (roadmap §1.0, step 1 of 4)
@@ -784,7 +848,7 @@ A suspended computation captured at a tabled call — the `shift/1` half of deli
 retained because answers are stored in the canonical key's variables and must be `_project`ed back.
 """
 struct Continuation
-    prev::Union{Frame,Nothing}
+    prev::Union{Frame, Nothing}
     b::Bindings
     goal::Atom
 end
@@ -794,7 +858,7 @@ end
 
 `shift/1`: capture the remainder of the current computation without producing an answer.
 """
-capture_continuation(b::Bindings, prev::Union{Frame,Nothing}, goal::Atom) =
+capture_continuation(b::Bindings, prev::Union{Frame, Nothing}, goal::Atom) =
     Continuation(prev, copy(b), goal)
 
 """
@@ -808,7 +872,7 @@ top-level `interpret`. RE-ENTRANT BY CONSTRUCTION: `c` is never consumed, so the
 be resumed once per answer — which is the whole point, since a dependency fires on every new answer of
 its source table.
 """
-resume_continuation(c::Continuation, answer::Atom, space)::Vector{Tuple{Atom,Bindings}} =
+resume_continuation(c::Continuation, answer::Atom, space)::Vector{Tuple{Atom, Bindings}} =
     _run_plan(finished_result(answer, copy(c.b), c.prev), space)
 
 """
@@ -824,7 +888,7 @@ struct Dependency
     target::Atom          # the variant key whose answer set the resumption feeds
 end
 
-const _DEPS = Dict{Atom,Vector{Dependency}}()   # source key ↦ dependencies waiting on its answers
+const _DEPS = Dict{Atom, Vector{Dependency}}()   # source key ↦ dependencies waiting on its answers
 
 # Canonicalize a tabled goal to its VARIANT KEY. Cross-checked vs SWI-Prolog boot/tabling.pl `start_tabling`
 # + the C `$tbl_variant_table`: SWI variant-matches the goal up to variable RENAMING and does NOT reduce
@@ -834,19 +898,28 @@ const _DEPS = Dict{Atom,Vector{Dependency}}()   # source key ↦ dependencies wa
 # `(fib (- 20 2))` and `(fib (- 19 1))` both key to `(fib 18)` (halves the table → O(n)), and `(fib $x)` /
 # `(fib $y)` share one table.
 function _variant_rename(a::Atom)::Atom
-    seen = Dict{Var,Var}(); n = Ref(0)
-    rn(x::Atom) = x isa Var ? get!(() -> (n[] += 1; Var("_v", UInt64(n[]))), seen, x) :
-                  (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
+    seen = Dict{Var, Var}()
+    n = Ref(0)
+    rn(x::Atom) =
+        if x isa Var
+            get!(() -> (n[] += 1; Var("_v", UInt64(n[]))), seen, x)
+        else
+            (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
+        end
     rn(a)
 end
 # reduced goal = subst + REDUCE args (no var-rename); _canonical_goal renames on top ⇒ the variant KEY.
 function _reduced_goal(atom::Atom, space, b::Bindings)::Atom
     g = subst(atom, b)
     (g isa Expression && !isempty(g.children)) || return g
-    rargs = Atom[c isa Var ? c : (rs = metta_run(c, space); isempty(rs) ? c : rs[1]) for c in g.children[2:end]]
+    rargs = Atom[
+        c isa Var ? c : (rs=metta_run(c, space); isempty(rs) ? c : rs[1]) for
+        c in g.children[2:end]
+    ]
     Expression(Atom[g.children[1]; rargs])
 end
-_canonical_goal(atom::Atom, space, b::Bindings)::Atom = _variant_rename(_reduced_goal(atom, space, b))
+_canonical_goal(atom::Atom, space, b::Bindings)::Atom =
+    _variant_rename(_reduced_goal(atom, space, b))
 
 # NON-GROUND ANSWER PROJECTION (the SLG answer skeleton, variant tabling). Answers are stored in the canonical
 # key's vars (_v1.._vn from _variant_rename); replaying them to a caller whose goal is a VARIANT means mapping
@@ -855,23 +928,30 @@ _canonical_goal(atom::Atom, space, b::Bindings)::Atom = _variant_rename(_reduced
 # not just ground arithmetic. (Fresh existential vars a rule body introduces are NOT standardized-apart here —
 # a documented follow-up; PLN's equality-based matching is dominated by goal-var answers.)
 function _ordered_vars(a::Atom)::Vector{Var}
-    out = Var[]; seen = Set{Var}()
+    out = Var[]
+    seen = Set{Var}()
     function walk(x::Atom)
         if x isa Var
             x in seen || (push!(seen, x); push!(out, x))
         elseif x isa Expression
-            for c in x.children; walk(c); end
+            for c in x.children
+                walk(c)
+            end
         end
     end
-    walk(a); out
+    walk(a)
+    out
 end
-_subst_vars(a::Atom, m::Dict{Var,Atom})::Atom =
-    a isa Var ? get(m, a, a) :
-    (a isa Expression ? Expression(Atom[_subst_vars(c, m) for c in a.children]) : a)
+_subst_vars(a::Atom, m::Dict{Var, Atom})::Atom =
+    if a isa Var
+        get(m, a, a)
+    else
+        (a isa Expression ? Expression(Atom[_subst_vars(c, m) for c in a.children]) : a)
+    end
 function _project(answers::Vector{Atom}, red::Atom)::Vector{Atom}
     cvars = _ordered_vars(red)
     isempty(cvars) && return answers
-    m = Dict{Var,Atom}(Var("_v", UInt64(i)) => cvars[i] for i in eachindex(cvars))
+    m = Dict{Var, Atom}(Var("_v", UInt64(i)) => cvars[i] for i in eachindex(cvars))
     Atom[_subst_vars(a, m) for a in answers]
 end
 
@@ -920,7 +1000,8 @@ becomes `(s (s (s \$_sa#1)))` with `disposition = :conditional` under bounded-ra
 """
 function _restrain_answers(incoming::Vector{Atom}, key::Atom)::Vector{Atom}
     # cheap global gate first: nothing declared anywhere ⇒ not even a head lookup
-    (isempty(_ANSWER_ABSTRACT) && max_table_answer_size() == NO_RESTRAINT) && return incoming
+    (isempty(_ANSWER_ABSTRACT) && max_table_answer_size() == NO_RESTRAINT) &&
+        return incoming
     h = head_name(key)
     answer_abstract_for(h) == NO_RESTRAINT && return incoming
     t = answer_trie_for(key)
@@ -933,7 +1014,9 @@ function _restrain_answers(incoming::Vector{Atom}, key::Atom)::Vector{Atom}
     out
 end
 
-_merge_partial(existing::Vector{Atom}, incoming::Vector{Atom}, key::Atom)::Tuple{Vector{Atom},Bool} =
+_merge_partial(
+    existing::Vector{Atom}, incoming::Vector{Atom}, key::Atom
+)::Tuple{Vector{Atom}, Bool} =
     merge_answers(existing, _restrain_answers(incoming, key), table_modes(head_name(key)))
 
 # Suspend-on-variant via NAIVE FIXPOINT — the simplification of SWI completion (boot/tabling.pl
@@ -947,10 +1030,14 @@ _merge_partial(existing::Vector{Atom}, incoming::Vector{Atom}, key::Atom)::Tuple
 # One resolution pass for the leader: apply key's `(= key body)` rules and reduce each body. A recursive
 # sub-call to an in-progress variant hits the hook → consumer → reads partials. Returns this pass's answers.
 function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
-    out = Atom[]; X = freshvar("X")
-    saved_target = _CURRENT_TARGET[]; _CURRENT_TARGET[] = key   # whose worker is running (dependency TARGET)
+    out = Atom[]
+    X = freshvar("X")
+    saved_target = _CURRENT_TARGET[]
+    _CURRENT_TARGET[] = key   # whose worker is running (dependency TARGET)
     try
-        for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
+        for qb in query(space, Expression(Sym("="), key, X)),
+            mb in merge_bindings(Bindings(), qb)
+
             is_present(mb, X) || continue
             for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
                 is_empty_atom(at) && continue
@@ -1008,7 +1095,7 @@ Upstream cannot have this bug and the reason is instructive: `delay_info` hangs 
 same record, they do not become several answers. `⊥{A}` and `⊥{B}` are one answer conditional on
 `A ∨ B`. That is what this restores.
 """
-function merge_bottom_into!(out::Vector{Atom}, a::Atom)::Union{Bool,Nothing}
+function merge_bottom_into!(out::Vector{Atom}, a::Atom)::Union{Bool, Nothing}
     is_undefined(a) || return nothing
     i = findfirst(is_undefined, out)
     i === nothing && return nothing
@@ -1047,10 +1134,10 @@ end
 # hit re-records its dependency each round and `_DEPS` grows without bound over a long completion.
 # Under the step-4 rewire that is moot — the worker runs ONCE and suspends — but until then, leaving
 # recording on by default would be a memory leak in the engine's hottest loop.
-const _CURRENT_TARGET = Ref{Union{Atom,Nothing}}(nothing)   # variant key whose worker is running, or nothing
-const _DEPS_RECORD    = Ref(false)                          # opt-in: record dependencies at consumers
-                                                            # (on together with _RESUME_COMPLETION — resumption
-                                                            #  without recording silently completes nothing)
+const _CURRENT_TARGET = Ref{Union{Atom, Nothing}}(nothing)   # variant key whose worker is running, or nothing
+const _DEPS_RECORD = Ref(false)                          # opt-in: record dependencies at consumers
+# (on together with _RESUME_COMPLETION — resumption
+#  without recording silently completes nothing)
 
 """How many dependencies have been RECORDED since the last table reset.
 
@@ -1067,7 +1154,10 @@ function record_dependency!(source::Atom, b::Bindings, prev, red::Atom)
     _DEPS_RECORD[] || return nothing
     tgt = _CURRENT_TARGET[]
     tgt === nothing && return nothing            # not inside a worker ⇒ no target to feed
-    push!(get!(_DEPS, source, Dependency[]), Dependency(source, capture_continuation(b, prev, red), tgt))
+    push!(
+        get!(_DEPS, source, Dependency[]),
+        Dependency(source, capture_continuation(b, prev, red), tgt)
+    )
     _DEPS_COUNT[] += 1          # CUMULATIVE — `_DEPS` itself is now freed at completion (#6)
     nothing
 end
@@ -1082,8 +1172,10 @@ pairs are still unprocessed (step 3).
 Answers are stored in the canonical key's variables, so each is `_project`ed into the continuation's
 own goal before resumption — the same mapping `_replay` does on the consumer path.
 """
-function fire_dependencies!(source::Atom, answers::Vector{Atom}, space)::Dict{Atom,Vector{Atom}}
-    out = Dict{Atom,Vector{Atom}}()
+function fire_dependencies!(
+    source::Atom, answers::Vector{Atom}, space
+)::Dict{Atom, Vector{Atom}}
+    out = Dict{Atom, Vector{Atom}}()
     for d in get(_DEPS, source, Dependency[])
         for a in _project(answers, d.cont.goal)
             for (at, bnd) in resume_continuation(d.cont, a, space)
@@ -1095,7 +1187,9 @@ function fire_dependencies!(source::Atom, answers::Vector{Atom}, space)::Dict{At
     # `_variant_unique`, not `unique`: the twin sites (`_leader_pass`, `_merge_partial`) were moved off
     # `==` on 2026-08-17 because it does not terminate on non-ground answers, and this one was missed.
     # It also routes bottoms through `merge_bottom_into!`, which `unique` cannot do.
-    for (k, v) in out; out[k] = _variant_unique(v); end
+    for (k, v) in out
+        out[k] = _variant_unique(v)
+    end
     out
 end
 
@@ -1184,7 +1278,7 @@ const _REEVAL_PENDING = Set{Atom}()
 # store's own discriminant — which is already computed on BOTH sides (`_index_key` in `add_atom!`
 # and in `query`). Coarser than per-variant unification, still per-table.
 "The store discriminant a tabled evaluation READ — `Tuple{Symbol,Symbol}`, never `Any`."
-const _DYN_DEPS = Dict{Tuple{Symbol,Symbol},Set{Atom}}()
+const _DYN_DEPS = Dict{Tuple{Symbol, Symbol}, Set{Atom}}()
 
 """Tables whose derivation did a FULL SCAN, so no discriminant can describe what they depend on.
 
@@ -1205,7 +1299,7 @@ Record that the table currently being derived read discriminant `k` (`nothing` �
 record needed, and for the same reason: the stack's top is the innermost goal being TABLED, which
 during a drive is the CALLEE, not the caller whose body is running.
 """
-function dyn_read!(k::Union{Tuple{Symbol,Symbol},Nothing})
+function dyn_read!(k::Union{Tuple{Symbol, Symbol}, Nothing})
     # 🔴 THE IDG IS OPT-IN, AND SO IS ITS ENTRY. `_IDG_RECORD[]` already gates edge recording
     # (`CORE_TABLING_IDG=1`); these hooks are part of the same graph and must obey the same switch.
     # MEASURED: without this gate `test_abstract.jl` — which builds many abstracted variants, hence
@@ -1223,8 +1317,11 @@ function dyn_read!(k::Union{Tuple{Symbol,Symbol},Nothing})
     # right owners — and `_IDG` was EMPTY, because neither table happened to call another tabled
     # predicate, so nothing had ever created a node for them. `dyn_changed!` then invalidated 0 of 2.
     idg_node_for(owner::Atom)
-    k === nothing ? push!(_DYN_ALL, owner::Atom) :
-                    push!(get!(_DYN_DEPS, k, Set{Atom}()), owner::Atom)
+    if k === nothing
+        push!(_DYN_ALL, owner::Atom)
+    else
+        push!(get!(_DYN_DEPS, k, Set{Atom}()), owner::Atom)
+    end
     nothing
 end
 
@@ -1239,21 +1336,23 @@ upstream (`change_incomplete_error`), but an `add-atom` executed inside a tabled
 legitimate MeTTa idiom and our purity gating is head-level — so a mutation arriving mid-completion
 STOPS propagating rather than aborting the run.
 """
-function dyn_changed!(k::Union{Tuple{Symbol,Symbol},Nothing})::Int
+function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing})::Int
     _IDG_RECORD[] || return 0            # see `dyn_read!` — same switch, same reason
     n = 0
     for tbl in (k === nothing ? Atom[] : collect(get(_DYN_DEPS, k, Set{Atom}())))
-        n += length(idg_changed!(tbl; mono = true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
+        n += length(idg_changed!(tbl; mono=true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
     end
     for tbl in collect(_DYN_ALL)
-        n += length(idg_changed!(tbl; mono = true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
+        n += length(idg_changed!(tbl; mono=true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
     end
     n
 end
 
 "Drop a table's dynamic-dependency records — called wherever a table is abolished."
 function drop_dyn_deps!(key::Atom)
-    for (_, tbls) in _DYN_DEPS; delete!(tbls, key); end
+    for (_, tbls) in _DYN_DEPS
+        delete!(tbls, key)
+    end
     delete!(_DYN_ALL, key)
     nothing
 end
@@ -1292,9 +1391,9 @@ function reset_execution_flags!()
     # pre-flip invocation in any script or note does not silently mean something else.
     recompute = get(ENV, "CORE_TABLING_RECOMPUTE", "") == "1"
     _RESUME_COMPLETION[] = !recompute
-    _DEPS_RECORD[]       = !recompute
-    _TRIE_READ[]         = get(ENV, "CORE_TABLING_TRIE_READ", "") != "0"    # ON unless explicitly 0
-    _IDG_RECORD[]        = get(ENV, "CORE_TABLING_IDG", "") == "1"
+    _DEPS_RECORD[] = !recompute
+    _TRIE_READ[] = get(ENV, "CORE_TABLING_TRIE_READ", "") != "0"    # ON unless explicitly 0
+    _IDG_RECORD[] = get(ENV, "CORE_TABLING_IDG", "") == "1"
     nothing
 end
 
@@ -1322,9 +1421,17 @@ behaviour and so never worse than before."""
 function _aggregated_form(merged::Vector{Atom}, newa::Atom, key::Atom)::Atom
     modes = table_modes(head_name(key))
     has_aggregation(modes) || return newa
-    k = try; mode_key(newa, modes); catch; return newa; end
+    k = try
+        mode_key(newa, modes)
+    catch
+        return newa
+    end
     for a in merged
-        ka = try; mode_key(a, modes); catch; continue; end
+        ka = try
+            mode_key(a, modes)
+        catch
+            continue
+        end
         variant_eq(ka, k) && return a
     end
     newa
@@ -1344,8 +1451,12 @@ function _complete_resume!(members::Vector{Atom}, typ::Atom, space::Space, key::
     _RESUME_COMPLETION[] || return false
     for m in members                                   # seed from the initial pass
         wl = worklist_for(m)
-        for a in get(_PARTIAL, m, Atom[]); wkl_add_answer!(wl, a); end
-        for d in get(_DEPS, m, Dependency[]); wkl_add_suspension!(wl, d); end
+        for a in get(_PARTIAL, m, Atom[])
+            wkl_add_answer!(wl, a)
+        end
+        for d in get(_DEPS, m, Dependency[])
+            wkl_add_suspension!(wl, d)
+        end
     end
     guard = 0
     while true
@@ -1383,13 +1494,17 @@ function _complete_resume!(members::Vector{Atom}, typ::Atom, space::Space, key::
                     is_empty_atom(at) && continue
                     newa = subst(at, bnd)
                     tgt = d.target
-                    _PARTIAL[tgt], ch = _merge_partial(get(_PARTIAL, tgt, Atom[]), Atom[newa], tgt)
+                    _PARTIAL[tgt], ch = _merge_partial(
+                        get(_PARTIAL, tgt, Atom[]), Atom[newa], tgt
+                    )
                     # 🔴 #12: PROPAGATE THE AGGREGATED ANSWER, NOT THE RAW ONE. Under a `lattice`/`po`
                     # mode `ch` is true because the MERGED value changed, but `newa` is the incoming
                     # pre-aggregation answer — so consumers of a mode-directed table saw values that
                     # were never in it. Upstream passes `wkl_add_answer(wl, node)` a TRIE NODE, whose
                     # value is the aggregated one (`wkl_mode_add_answer`, `pl-tabling.c:3928`).
-                    ch && wkl_add_answer!(worklist_for(tgt), _aggregated_form(_PARTIAL[tgt], newa, tgt))
+                    ch && wkl_add_answer!(
+                        worklist_for(tgt), _aggregated_form(_PARTIAL[tgt], newa, tgt)
+                    )
                 end
             end
         end
@@ -1400,9 +1515,11 @@ function _complete_resume!(members::Vector{Atom}, typ::Atom, space::Space, key::
         # mark a pair combined would re-offer it forever) rather than an unbounded program, and says
         # so rather than looping silently.
         guard += 1
-        guard > 1_000_000 && error("completion-by-resumption exceeded 1e6 work batches for " *
-                                   "$(key) — the worklist invariant is broken (a pair is being " *
-                                   "re-offered), not merely a large program")
+        guard > 1_000_000 && error(
+            "completion-by-resumption exceeded 1e6 work batches for " *
+            "$(key) — the worklist invariant is broken (a pair is being " *
+            "re-offered), not merely a large program"
+        )
     end
     true
 end
@@ -1431,9 +1548,11 @@ Its reason is the DISJUNCTION of whatever the optimistic answers were conditiona
 optimistic derivations, several alternative conditions, which is exactly upstream's `delay_info`
 shape. Empty when none of them carried a delay, and that reads as "reason not recorded", never as
 unconditional."""
-function _wfs_bottom_for(um::Vector{Atom}, member::Union{Atom,Nothing} = nothing)::Atom
+function _wfs_bottom_for(um::Vector{Atom}, member::Union{Atom, Nothing}=nothing)::Atom
     dnf = DelayDNF()
-    for a in um; dnf = dnf_or(dnf, delays_of(a)); end
+    for a in um
+        dnf = dnf_or(dnf, delays_of(a))
+    end
     # ⚠️ FALL BACK TO THE RECORDED NEGATIVE DEPENDENCIES. The optimistic answers are ordinary values
     # and carry no delay, so disjoining them yields the EMPTY DNF — which `answer_residual` renders
     # as `True`, i.e. UNCONDITIONAL. That is the opposite of what a paradox means, and it is what
@@ -1455,15 +1574,17 @@ end
 # member — including a mid-phase newcomer that joins comp() during this call — to ⊥ on its FIRST appearance, so
 # no member ever reads a stale cross-phase _PARTIAL under the current bound (the only unsoundness path found).
 function _S_P!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom,
-               bound::Dict{Atom,Vector{Atom}})::Dict{Atom,Vector{Atom}}
+    bound::Dict{Atom, Vector{Atom}})::Dict{Atom, Vector{Atom}}
     comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
-    savedB = _WFS_BOUND[]; savedA = _WFS_ACTIVE[]
-    _WFS_BOUND[] = bound; _WFS_ACTIVE[] = true
+    savedB = _WFS_BOUND[]
+    savedA = _WFS_ACTIVE[]
+    _WFS_BOUND[] = bound
+    _WFS_ACTIVE[] = true
     seen = Set{Atom}()
     try
         while true
             for m in comp()                                       # ⊥-restart, newcomer-safe (MUST-FIX):
-                (m in seen) || (_PARTIAL[m] = Atom[]; push!(seen, m))
+                (m in seen) || (_PARTIAL[m]=Atom[]; push!(seen, m))
             end
             grew = false
             for m in comp()
@@ -1473,9 +1594,10 @@ function _S_P!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom,
             end
             grew || break
         end
-        return Dict{Atom,Vector{Atom}}(m => copy(_PARTIAL[m]) for m in comp())
+        return Dict{Atom, Vector{Atom}}(m => copy(_PARTIAL[m]) for m in comp())
     finally
-        _WFS_BOUND[] = savedB; _WFS_ACTIVE[] = savedA             # nest-safe (mirrors _NEG_BARRIER save/restore)
+        _WFS_BOUND[] = savedB
+        _WFS_ACTIVE[] = savedA             # nest-safe (mirrors _NEG_BARRIER save/restore)
     end
 end
 
@@ -1485,31 +1607,39 @@ end
 # not even in the optimistic U ⇒ false. Leaves the classified set in _PARTIAL[m] for tabled_eval to cache.
 function _wfs_complete!(members::Vector{Atom}, typ::Atom, space::Space, key::Atom)
     comp() = Atom[g for g in _GEN_STACK if _scc_root(g) == key]
-    K = Dict{Atom,Vector{Atom}}(m => Atom[] for m in members)     # ⊥
-    local U::Dict{Atom,Vector{Atom}} = K
+    K = Dict{Atom, Vector{Atom}}(m => Atom[] for m in members)     # ⊥
+    local U::Dict{Atom, Vector{Atom}} = K
     while true
-        U     = _S_P!(members, typ, space, key, K)               # Upper = S_P(K)        (optimistic step)
+        U = _S_P!(members, typ, space, key, K)               # Upper = S_P(K)        (optimistic step)
         Knext = _S_P!(members, typ, space, key, U)               # T(K)  = S_P(S_P(K))   (pessimistic step)
         members = comp()
         # 🔴 VARIANT-AWARE CONVERGENCE (audit 2026-08-18). `issetequal` compares with `isequal`/`hash`,
         # i.e. the same `==` identity that made the completion fixpoint non-terminating on non-ground
         # answers (finding #1 of the previous audit) — the twin sites were converted and this one was
         # not. Two answer sets equal up to variable renaming ARE the same set here.
-        converged = length(Knext) == length(K) &&
+        converged =
+            length(Knext) == length(K) &&
             all(m -> haskey(K, m) && _answer_sets_equiv(K[m], Knext[m]), keys(Knext))
         K = Knext
         converged && break                                       # at break: U = S_P(K) (the true upper bound)
     end
     for m in comp()
-        km = get(K, m, Atom[]); um = get(U, m, Atom[])
+        km = get(K, m, Atom[])
+        um = get(U, m, Atom[])
         # roadmap 7.A: the bottom this fixpoint EMITS should carry a reason too. It has no single
         # `tnot` to name — this is the alternating fixpoint's own classification, "in the optimistic
         # bound U but unfounded in K" — so the reason is whatever the OPTIMISTIC answers were
         # conditional on, disjoined. When none of them carried a delay the DNF is empty, which reads
         # correctly as "undefined, reason not recorded" rather than as unconditional.
-        _PARTIAL[m] = _wfs_definite(km) ? km :                   # TRUE  — well-founded definite answers
-                      !isempty(um)      ? Atom[_wfs_bottom_for(um, m)] :   # UNDEFINED — in U, unfounded in K
-                                          Atom[]                  # FALSE — not even in the optimistic U
+        _PARTIAL[m] = if _wfs_definite(km)
+            km
+        elseif (                   # TRUE  — well-founded definite answers
+            !isempty(um)   # UNDEFINED — in U, unfounded in K
+        )
+            Atom[_wfs_bottom_for(um, m)]   # UNDEFINED — in U, unfounded in K
+        else
+            Atom[]
+        end                  # FALSE — not even in the optimistic U
     end
     return nothing
 end
@@ -1551,7 +1681,9 @@ strictly more general than `red`, and `abstract_subgoal(gen)` is a fixpoint (abs
 abstracted goal spends the same budget on strictly fewer compounds), so the second entry takes the
 plain variant arm.
 """
-function _abstract_tabled_eval(red::Atom, gen::Atom, typ::Atom, space::Space, b::Bindings, prev)
+function _abstract_tabled_eval(
+    red::Atom, gen::Atom, typ::Atom, space::Space, b::Bindings, prev
+)
     genkey = _variant_rename(gen)
     # drive the general table to completion, discarding its answers — we want the TABLE, not this
     # call's projection of it. Fresh bindings so the caller's variables cannot be bound by the
@@ -1567,10 +1699,16 @@ function _abstract_tabled_eval(red::Atom, gen::Atom, typ::Atom, space::Space, b:
     # (`shift_for_copy(call_info(GenSkeleton, Skeleton, Status))`, boot/tabling.pl:497-498) — it is
     # never answered as empty. Reading `_PARTIAL` is the consumer branch's own behaviour
     # (`tabled_eval` does the same for a variant re-entry), reused rather than reinvented.
-    general = haskey(_ANSWER_TABLE, genkey) ? _ANSWER_TABLE[genkey] :
-              genkey in _TABLE_INPROG        ? (push!(_PARTIAL_READ, genkey);
-                                                copy(get(_PARTIAL, genkey, Atom[]))) :
-              has_answer_trie(genkey)        ? trie_answers(answer_trie_for(genkey)) : Atom[]
+    general = if haskey(_ANSWER_TABLE, genkey)
+        _ANSWER_TABLE[genkey]
+    elseif genkey in _TABLE_INPROG
+        (push!(_PARTIAL_READ, genkey);
+            copy(get(_PARTIAL, genkey, Atom[])))
+    elseif has_answer_trie(genkey)
+        trie_answers(answer_trie_for(genkey))
+    else
+        Atom[]
+    end
     # ⚠️ PROJECT ONTO `gen` FIRST, THEN SPECIALISE. A stored answer holds `Var("_v", i)` placeholders
     # keyed to ITS OWN table's ordered variables, so an answer that mentions the abstracted variable
     # mentions `_v_i`, NOT `_sa_i` — and substituting the abstraction binding would find nothing to
@@ -1655,11 +1793,15 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             # same sequence, not merely the same set. Answer order is user-visible
             # (`Eval.jl` propagates store order into answer order), so a switch that quietly
             # reordered would be a behaviour change hiding inside a storage change.
-            answers = _TRIE_READ[] && has_answer_trie(key) ?
-                      trie_answers(answer_trie_for(key)) : _ANSWER_TABLE[key]
+            answers = if _TRIE_READ[] && has_answer_trie(key)
+                trie_answers(answer_trie_for(key))
+            else
+                _ANSWER_TABLE[key]
+            end
             return _replay(_project(answers, red), b, prev)                      #   FRESH ⇒ project+replay
         end
-        delete!(_ANSWER_TABLE, key); delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
+        delete!(_ANSWER_TABLE, key)
+        delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
         # ── §7.7: RE-EVALUATE rather than DISCARD ───────────────────────────────────────────────
         # `drop_answer_trie!` throws the old answers away, and with them the only thing that could
         # establish that re-derivation produced the SAME answers — which is what lets
@@ -1670,9 +1812,9 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         if _IDG_RECORD[] && has_idg_node(key) && idg_is_invalid(key) && prepare_reeval!(key)
             push!(_REEVAL_PENDING, key)
         else
-        drop_answer_trie!(key)                                                   #   …and the mirrored trie with it: a
-                                                                                 #   surviving trie would let §7.5 answer
-                                                                                 #   a subsumed call from evicted data.
+            drop_answer_trie!(key)                                                   #   …and the mirrored trie with it: a
+            #   surviving trie would let §7.5 answer
+            #   a subsumed call from evicted data.
         end
     end
     if key in _TABLE_INPROG                                                       # CONSUMER (variant re-entry):
@@ -1683,20 +1825,23 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         end
         _union_scc!(key)                                                         #   union key..top into one SCC
         record_dependency!(key, b, prev, red)                                    #   §4.2: THIS is the shift
-                                        # ↑ `(b, prev)` here IS the suspended remainder of the target's
-                                        # worker — the same pair `_replay` resumes immediately below.
-                                        # Recording is opt-in (`_DEPS_RECORD`), so this line is a no-op
-                                        # on the default path until the step-4 rewire consumes it.
+        # ↑ `(b, prev)` here IS the suspended remainder of the target's
+        # worker — the same pair `_replay` resumes immediately below.
+        # Recording is opt-in (`_DEPS_RECORD`), so this line is a no-op
+        # on the default path until the step-4 rewire consumes it.
         return _replay(_project(get(_PARTIAL, key, Atom[]), red), b, prev)       #   answer from partials (suspend)
     end
-    push!(_TABLE_INPROG, key); push!(_GEN_STACK, key)                            # become a GENERATOR
-    _PARTIAL[key] = Atom[]; _COMPONENT[key] = key; delete!(_PARTIAL_READ, key)
+    push!(_TABLE_INPROG, key)
+    push!(_GEN_STACK, key)                            # become a GENERATOR
+    _PARTIAL[key] = Atom[]
+    _COMPONENT[key] = key
+    delete!(_PARTIAL_READ, key)
     local ans::Vector{Atom} = Atom[]
     try
         _PARTIAL[key], _ = _merge_partial(Atom[], _leader_pass(key, typ, space), key)  # initial pass (may merge me up)
-                                        # ↑ through the SAME merge point: a non-recursive head takes the
-                                        # singleton fast path below and never enters a fixpoint round, so
-                                        # a merge point wired only into the loops would silently skip it.
+        # ↑ through the SAME merge point: a non-recursive head takes the
+        # singleton fast path below and never enters a fixpoint round, so
+        # a merge point wired only into the loops would silently skip it.
         if _scc_root(key) != key                                                 # I became a FOLLOWER ⇒
             return _replay(_project(_PARTIAL[key], red), b, prev)              #   ancestor root finishes me
         end
@@ -1720,7 +1865,10 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         end
         ans = _PARTIAL[key]
         _stamp = (objectid(space), space.revision)                              # stamp each completed answer set with
-        for m in comp(); _ANSWER_TABLE[m] = _PARTIAL[m]; _ANSWER_STAMP[m] = _stamp; end  # the (space, revision) it holds for
+        for m in comp()
+            _ANSWER_TABLE[m] = _PARTIAL[m]
+            _ANSWER_STAMP[m] = _stamp
+        end  # the (space, revision) it holds for
         # ── roadmap 1.0b, STEP 1: MIRROR the completed answers into the ANSWER TRIE ──────────────
         # The trie is not yet the read path — `_ANSWER_TABLE` above still is — so this changes NO
         # behaviour. What it changes is REACHABILITY: `library(tables)` (`get_call`/`get_calls`/
@@ -1741,7 +1889,9 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         # disable-to-prove order used for the resumption flip.
         for m in comp()
             t = answer_trie_for(m)
-            for a in _PARTIAL[m]; trie_insert!(t, a); end
+            for a in _PARTIAL[m]
+                trie_insert!(t, a)
+            end
             if m in _REEVAL_PENDING                  # §7.7: finish the re-evaluation lifecycle —
                 delete!(_REEVAL_PENDING, m)          #   `reeval_complete!` sets :complete itself and,
                 reeval_complete!(m)                  #   on :same, RE-VALIDATES the dependants (:8495)
@@ -1762,7 +1912,10 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
                     delete!(_REEVAL_PENDING, m)
                     idg_is_reevaluating(m) && reset_reevaluation!(m)
                 end
-                delete!(_TABLE_INPROG, m); delete!(_PARTIAL, m); delete!(_COMPONENT, m); delete!(_PARTIAL_READ, m)
+                delete!(_TABLE_INPROG, m)
+                delete!(_PARTIAL, m)
+                delete!(_COMPONENT, m)
+                delete!(_PARTIAL_READ, m)
                 delete!(_SCC_NEG, m)
                 # 🔴 #6: THE WORKLIST AND THE SUSPENSIONS MUST DIE WITH THE COMPLETION.
                 # They did not, and re-completing the same key after a revision bump re-seeded into a
@@ -1773,7 +1926,8 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
                 # Upstream frees every worklist at `'$tbl_table_complete_all'`: `complete_worklist`
                 # with `destroy = !wl->undefined && isEmptyBuffer(&wl->delays)` (`pl-tabling.c:4876`)
                 # — and with no delay lists, which is our configuration, that is ALWAYS true.
-                drop_worklist!(m); delete!(_DEPS, m)
+                drop_worklist!(m)
+                delete!(_DEPS, m)
             end
         end
     end
@@ -1792,84 +1946,104 @@ end
 # Consistent with the bottom-up lane's stratified-NAF (KBSaturation `_is_negated_premise`: succeeds iff the
 # closed-world match is empty) — same meaning of negation, extended top-down with the undefined third value.
 # Opt-in gate: fires only when G's head is tabled (else usage error) ⇒ default-OFF ⇒ 234-path byte-identical.
-const TNOT = Grounded(SpaceOp("tnot", function (xs, space)
-    length(xs) == 1 || return ExecNoReduce()
-    G = xs[1]
-    (G isa Expression && !isempty(G.children)) || return ExecNoReduce()
-    is_tabled(G) || return ExecOk(Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
-        "tnot: goal head must be tabled — (table! …) it first")])
-    isempty(collect_vars(G)) || return ExecOk(Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
-        "tnot: non-ground goal (instantiation_error)")])
-    key = _canonical_goal(G, space, Bindings())
-    # ── roadmap 7.A/7.B: EVERY BOTTOM BELOW CARRIES ITS REASON ──────────────────────────────────
-    # These four sites are the only places this engine produces a WFS bottom from NEGATION, and each
-    # of them KNOWS the literal it is stuck on: `tnot(G)`, with G's table undecided. That is exactly
-    # upstream's NEGATIVE delay — `delay { variant = G's table, answer = NULL }` — and recording it is
-    # what turns "undefined" from a flag into a CONDITIONAL ANSWER with a readable residual.
-    # Table-level, because our `tnot` requires a GROUND goal and asks whether the table is empty; 7.B's
-    # answer-level kind has no producer yet, and the tests assert that rather than let it look wired.
-    und = undefined_with(DelayDNF([DelaySet([delay_negative(key)])]))
-    if _WFS_ACTIVE[] && haskey(_WFS_BOUND[], key)                        # WFS Stage B: IN-SCC negation during the
-        S = _WFS_BOUND[][key]                                            #   alternating fixpoint — read the phase-
-        return _wfs_definite(S) ? ExecOk(Atom[]) :                       #   FIXED bound I (no drive/taint/inprog):
-               isempty(S)       ? ExecOk(Atom[Sym("True")]) :            #     G∈I definite ⇒ ¬G false (Empty)
-                                  (_record_neg_delay!(key); ExecOk(Atom[und]))   # I[G] only-undef ⇒ ¬G undef
-    end                                                                 #     I[G] only-undef ⇒ ¬G undefined
-    # 🔴 CHECK FOR A DEFINITE ANSWER BEFORE SUSPENDING — audit 2026-08-18.
-    # This returned the bottom the moment G's table was in progress. But an in-progress table can
-    # ALREADY hold a definite answer, and if it does then G is provably true and `tnot(G)` is FALSE,
-    # not undefined — no fixpoint round can retract a derived answer. Upstream tests the table's
-    # answers before it suspends, for the same reason. Returning ⊥ here was sound but needlessly
-    # imprecise, and it propagates: every consumer of that ⊥ inherits an undefined it need not have.
-    # Reading `_PARTIAL` is a CONSUMER READ and must be flagged as one, exactly as `tabled_eval` does.
-    if key in _TABLE_INPROG
-        push!(_PARTIAL_READ, key)
-        _wfs_definite(get(_PARTIAL, key, Atom[])) && return ExecOk(Atom[])   # G provably true ⇒ ¬G false
-        # 🔴🔴 NEGATIVITY IS A PROPERTY OF THE COMPONENT, NOT OF THIS CALL — FIXED 2026-08-18.
-        # This returned ⊥ and returned IMMEDIATELY, so it did none of what the POSITIVE consumer
-        # branch does in `tabled_eval`: no `_SCC_NEG`, no `_union_scc!`. The callee therefore
-        # completed as its OWN SCC and its ⊥ was written into `_ANSWER_TABLE` and mirrored into the
-        # trie as a COMPLETED answer — never revisited by the alternating fixpoint that exists to
-        # decide exactly this.
-        #
-        # MEASURED, live engine, same program and same space, only the QUERY ORDER differing:
-        #     (= (q) (r))  (= (q) 1)  (= (r) (p))  (= (p) (tnot (q)))
-        #     ask q first -> q=[undefined,1]  p=[undefined]  r=[undefined]   ← all three WRONG
-        #     ask p first -> q=[1]            p=[]           r=[]            ← all three right
-        # WFS has a UNIQUE model, so order-dependence is not a tie-break — it is a wrong answer.
-        #
-        # Upstream cannot reach this state: `tnot/1` SUSPENDS rather than answering
-        # (`negation_suspend/3`, boot/tabling.pl:897-901), and `worklist_negative`
-        # (pl-tabling.c:3006-3016) sets `neg_status` on the COMPONENT. Marking the SCC here is the
-        # minimal Julia analogue: the ⊥ still flows, but the component is now routed to
-        # `_wfs_complete!`, which re-derives it under the alternating fixpoint instead of freezing it.
-        push!(_SCC_NEG, key)
-        _union_scc!(key)
-        # the goal whose derivation is stuck is the innermost generator — record what it waits on, so
-        # `_wfs_bottom_for` can still name it after the fixpoint rebuilds the bottom.
-        _record_neg_delay!(key)
-        return ExecOk(Atom[und])
-    end
-    saved = copy(_NEG_BARRIER); union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
-    st = _NEG_TAINT[]; _NEG_TAINT[] = false; _NEG_DEPTH[] += 1            #   a consumer reading a barrier key
-    local A::Vector{Atom} = Atom[]; local tainted::Bool = false          #   ⇒ a positive edge crossed the tnot
-    try
-        A = metta_run(G, space)
-    finally
-        _NEG_DEPTH[] -= 1; tainted = _NEG_TAINT[]; _NEG_TAINT[] = st
-        empty!(_NEG_BARRIER); union!(_NEG_BARRIER, saved)
-    end
-    # ⚠️ RECORD ON EVERY ⊥-YIELDING BRANCH. Keying only the in-progress one associated the delay with
-    # the WRONG member: in the pure paradox `p :- tnot(q), q :- tnot(p)`, p's own `tnot` DRIVES q
-    # rather than finding it in progress, so p got no record and its residual came back `True`.
-    tainted                     && (_record_neg_delay!(key); return ExecOk(Atom[und]))
-    any(a -> !is_undefined(a), A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
-    # G only-undefined ⇒ ¬G undefined. The reason is OUR negative delay CONJOINED with whatever made
-    # G's own answers undefined — the residual must reach THROUGH the negation, or it names only the
-    # last link of the chain while reading as complete.
-    if (_u = propagated_undefined(A)) !== nothing
-        _record_neg_delay!(key)
-        return ExecOk(Atom[undefined_with(dnf_and(delays_of(und), delays_of(_u)))])
-    end
-    ExecOk(Atom[Sym("True")])                                            # G false ⇒ ¬G true
-end))
+const TNOT = Grounded(
+    SpaceOp(
+        "tnot",
+        function (xs, space)
+            length(xs) == 1 || return ExecNoReduce()
+            G = xs[1]
+            (G isa Expression && !isempty(G.children)) || return ExecNoReduce()
+            is_tabled(G) || return ExecOk(
+                Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
+                    "tnot: goal head must be tabled — (table! …) it first")]
+            )
+            isempty(collect_vars(G)) || return ExecOk(
+                Atom[error_atom(Expression(Atom[Sym("tnot"), G]),
+                    "tnot: non-ground goal (instantiation_error)")]
+            )
+            key = _canonical_goal(G, space, Bindings())
+            # ── roadmap 7.A/7.B: EVERY BOTTOM BELOW CARRIES ITS REASON ──────────────────────────────────
+            # These four sites are the only places this engine produces a WFS bottom from NEGATION, and each
+            # of them KNOWS the literal it is stuck on: `tnot(G)`, with G's table undecided. That is exactly
+            # upstream's NEGATIVE delay — `delay { variant = G's table, answer = NULL }` — and recording it is
+            # what turns "undefined" from a flag into a CONDITIONAL ANSWER with a readable residual.
+            # Table-level, because our `tnot` requires a GROUND goal and asks whether the table is empty; 7.B's
+            # answer-level kind has no producer yet, and the tests assert that rather than let it look wired.
+            und = undefined_with(DelayDNF([DelaySet([delay_negative(key)])]))
+            if _WFS_ACTIVE[] && haskey(_WFS_BOUND[], key)                        # WFS Stage B: IN-SCC negation during the
+                S = _WFS_BOUND[][key]                                            #   alternating fixpoint — read the phase-
+                return if _wfs_definite(S)
+                    ExecOk(Atom[])                       #   FIXED bound I (no drive/taint/inprog):
+                elseif isempty(S)
+                    ExecOk(Atom[Sym("True")])            #     G∈I definite ⇒ ¬G false (Empty)
+                else
+                    (_record_neg_delay!(key); ExecOk(Atom[und]))
+                end   # I[G] only-undef ⇒ ¬G undef
+            end                                                                 #     I[G] only-undef ⇒ ¬G undefined
+            # 🔴 CHECK FOR A DEFINITE ANSWER BEFORE SUSPENDING — audit 2026-08-18.
+            # This returned the bottom the moment G's table was in progress. But an in-progress table can
+            # ALREADY hold a definite answer, and if it does then G is provably true and `tnot(G)` is FALSE,
+            # not undefined — no fixpoint round can retract a derived answer. Upstream tests the table's
+            # answers before it suspends, for the same reason. Returning ⊥ here was sound but needlessly
+            # imprecise, and it propagates: every consumer of that ⊥ inherits an undefined it need not have.
+            # Reading `_PARTIAL` is a CONSUMER READ and must be flagged as one, exactly as `tabled_eval` does.
+            if key in _TABLE_INPROG
+                push!(_PARTIAL_READ, key)
+                _wfs_definite(get(_PARTIAL, key, Atom[])) && return ExecOk(Atom[])   # G provably true ⇒ ¬G false
+                # 🔴🔴 NEGATIVITY IS A PROPERTY OF THE COMPONENT, NOT OF THIS CALL — FIXED 2026-08-18.
+                # This returned ⊥ and returned IMMEDIATELY, so it did none of what the POSITIVE consumer
+                # branch does in `tabled_eval`: no `_SCC_NEG`, no `_union_scc!`. The callee therefore
+                # completed as its OWN SCC and its ⊥ was written into `_ANSWER_TABLE` and mirrored into the
+                # trie as a COMPLETED answer — never revisited by the alternating fixpoint that exists to
+                # decide exactly this.
+                #
+                # MEASURED, live engine, same program and same space, only the QUERY ORDER differing:
+                #     (= (q) (r))  (= (q) 1)  (= (r) (p))  (= (p) (tnot (q)))
+                #     ask q first -> q=[undefined,1]  p=[undefined]  r=[undefined]   ← all three WRONG
+                #     ask p first -> q=[1]            p=[]           r=[]            ← all three right
+                # WFS has a UNIQUE model, so order-dependence is not a tie-break — it is a wrong answer.
+                #
+                # Upstream cannot reach this state: `tnot/1` SUSPENDS rather than answering
+                # (`negation_suspend/3`, boot/tabling.pl:897-901), and `worklist_negative`
+                # (pl-tabling.c:3006-3016) sets `neg_status` on the COMPONENT. Marking the SCC here is the
+                # minimal Julia analogue: the ⊥ still flows, but the component is now routed to
+                # `_wfs_complete!`, which re-derives it under the alternating fixpoint instead of freezing it.
+                push!(_SCC_NEG, key)
+                _union_scc!(key)
+                # the goal whose derivation is stuck is the innermost generator — record what it waits on, so
+                # `_wfs_bottom_for` can still name it after the fixpoint rebuilds the bottom.
+                _record_neg_delay!(key)
+                return ExecOk(Atom[und])
+            end
+            saved = copy(_NEG_BARRIER)
+            union!(_NEG_BARRIER, _TABLE_INPROG)       # drive G under a negation barrier:
+            st = _NEG_TAINT[]
+            _NEG_TAINT[] = false
+            _NEG_DEPTH[] += 1            #   a consumer reading a barrier key
+            local A::Vector{Atom} = Atom[]
+            local tainted::Bool = false          #   ⇒ a positive edge crossed the tnot
+            try
+                A = metta_run(G, space)
+            finally
+                _NEG_DEPTH[] -= 1
+                tainted = _NEG_TAINT[]
+                _NEG_TAINT[] = st
+                empty!(_NEG_BARRIER)
+                union!(_NEG_BARRIER, saved)
+            end
+            # ⚠️ RECORD ON EVERY ⊥-YIELDING BRANCH. Keying only the in-progress one associated the delay with
+            # the WRONG member: in the pure paradox `p :- tnot(q), q :- tnot(p)`, p's own `tnot` DRIVES q
+            # rather than finding it in progress, so p got no record and its residual came back `True`.
+            tainted && (_record_neg_delay!(key); return ExecOk(Atom[und]))
+            any(a -> !is_undefined(a), A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
+            # G only-undefined ⇒ ¬G undefined. The reason is OUR negative delay CONJOINED with whatever made
+            # G's own answers undefined — the residual must reach THROUGH the negation, or it names only the
+            # last link of the chain while reading as complete.
+            if (_u = propagated_undefined(A)) !== nothing
+                _record_neg_delay!(key)
+                return ExecOk(Atom[undefined_with(dnf_and(delays_of(und), delays_of(_u)))])
+            end
+            ExecOk(Atom[Sym("True")])                                            # G false ⇒ ¬G true
+        end
+    )
+)

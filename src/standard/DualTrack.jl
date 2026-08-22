@@ -20,7 +20,8 @@ function _last_theory_name(program::AbstractString)
     name = nothing
     for (bang, f) in mm2_split_forms(program)
         (bang || mm2_head(f) != "theory") && continue
-        a = mm2_expr_args(f); length(a) >= 2 && (name = a[2])
+        a = mm2_expr_args(f)
+        length(a) >= 2 && (name = a[2])
     end
     name
 end
@@ -60,11 +61,12 @@ end
 _mc_may_mutate(program::AbstractString) = purity_may_mutate(program)
 
 function _mc_fallback_eval(data::AbstractString, program::AbstractString,
-                           deferred::AbstractVector{<:AbstractString};
-                           fallback::Symbol = :interpreter, fallback_table::Bool = true)
+    deferred::AbstractVector{<:AbstractString};
+    fallback::Symbol=:interpreter, fallback_table::Bool=true)
     evaluated = Tuple{String, Vector{String}}[]
     (fallback === :interpreter && !isempty(deferred)) || return evaluated
-    isp = Eval.Space(); Eval.load_core_stdlib!(isp)
+    isp = Eval.Space()
+    Eval.load_core_stdlib!(isp)
     isempty(strip(data)) || Eval.load_metta!(isp, data)
     for (bang, f) in mm2_split_forms(program)
         bang || Eval.load_metta!(isp, f)
@@ -81,7 +83,12 @@ function _mc_fallback_eval(data::AbstractString, program::AbstractString,
         for b in deferred
             res = Eval.load_metta!(isp, "!" * b)   # re-prefix exactly as mm2_eq_bisim does
             push!(evaluated,
-                (String(b), String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
+                (
+                    String(b),
+                    String[
+                        string(x) for r in res for x in (r isa AbstractVector ? r : [r])
+                    ]
+                ))
         end
     finally
         if prev_tabled !== nothing
@@ -129,24 +136,35 @@ rule-head calls — see `mm2_zam_answers`) are answered ON the ZAM itself via sc
 demand-injection + redex-delete readback; `results.zam_served` lists the bangs the ZAM answered.
 """
 function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
-                mode::Symbol = :auto, theory = nothing, saturate::Bool = false, steps::Int = 1_000_000,
-                supercompile::Bool = false, sc_opts::SCOptions = SC_DEFAULTS, eq_mode::Symbol = :reduction,
-                fallback::Symbol = :interpreter, fallback_table::Bool = true)
+    mode::Symbol=:auto, theory=nothing, saturate::Bool=false, steps::Int=1_000_000,
+    supercompile::Bool=false, sc_opts::SCOptions=SC_DEFAULTS, eq_mode::Symbol=:reduction,
+    fallback::Symbol=:interpreter, fallback_table::Bool=true)
     heads = _dual_heads(program)
-    lane = mode != :auto ? mode :
-           (theory !== nothing || "theory" in heads) ? :theory :
-           "def" in heads ? :pipeline :
-           "~>"  in heads ? :rewrite : :direct
+    lane = if mode != :auto
+        mode
+    elseif (theory !== nothing || "theory" in heads)
+        :theory
+    elseif "def" in heads
+        :pipeline
+    elseif "~>" in heads
+        :rewrite
+    else
+        :direct
+    end
     results = if lane === :theory
         tname = theory !== nothing ? String(theory) : _last_theory_name(program)
-        tname === nothing && error("mc_run: :theory lane needs a (theory …) in the program or theory=NAME")
-        theory_run!(cs, data, program, tname; steps = steps, saturate = saturate,
-            use_magic_sets = sc_opts.use_magic_sets, magic_query = sc_opts.magic_query, magic_bound = sc_opts.magic_bound)
+        tname === nothing && error(
+            "mc_run: :theory lane needs a (theory …) in the program or theory=NAME"
+        )
+        theory_run!(cs, data, program, tname; steps=steps, saturate=saturate,
+            use_magic_sets=sc_opts.use_magic_sets, magic_query=sc_opts.magic_query,
+            magic_bound=sc_opts.magic_bound)
     elseif lane === :pipeline
-        metta_il_run_pipeline!(cs, data, program; steps = steps)
+        metta_il_run_pipeline!(cs, data, program; steps=steps)
     elseif lane === :rewrite
-        metta_il_run!(cs, data, program; steps = steps, saturate = saturate,
-            use_magic_sets = sc_opts.use_magic_sets, magic_query = sc_opts.magic_query, magic_bound = sc_opts.magic_bound)
+        metta_il_run!(cs, data, program; steps=steps, saturate=saturate,
+            use_magic_sets=sc_opts.use_magic_sets, magic_query=sc_opts.magic_query,
+            magic_bound=sc_opts.magic_bound)
     elseif lane === :direct
         isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
         # opt-in (OFF by default): route the Direct lane through the MorkSupercompiler (join-planning /
@@ -161,7 +179,8 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
             # non-bang forms verbatim + match-bangs BARE (still lowered via §10.3 — and the stray-`!`
             # trie pollution disappears), and route non-match bangs to the interpreter fallback,
             # exactly like the streaming branch's deferred.
-            keep = String[]; sc_deferred = String[]
+            keep = String[]
+            sc_deferred = String[]
             for (bang, f) in mm2_split_forms(program)
                 if !bang || mm2_head(f) == "match"
                     push!(keep, f)
@@ -169,10 +188,10 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
                     push!(sc_deferred, f)          # SC cannot serve a non-match bang
                 end
             end
-            scres = sc_execute!(cs, join(keep, "\n"); opts = sc_opts)
+            scres = sc_execute!(cs, join(keep, "\n"); opts=sc_opts)
             evaluated = _mc_fallback_eval(data, program, sc_deferred;
-                                          fallback = fallback, fallback_table = fallback_table)
-            (; sc = scres, evaluated, deferred = sc_deferred, zam_served = String[])
+                fallback=fallback, fallback_table=fallback_table)
+            (; sc=scres, evaluated, deferred=sc_deferred, zam_served=String[])
         else
             # ── PREFIX-EXACT REGION STAGING (MeTTa Invariant 1: effects are sequential) ──────────
             # This branch used to hand the WHOLE program to all three consumers at once, so every
@@ -195,32 +214,39 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
             # only this region's bangs. Re-adding earlier rules to `cs` is a no-op (the MORK trie is
             # a set) and their redexes are already consumed, so they do not re-fire.
             regions = split_program_regions(program, _mc_may_mutate(program))
-            n_exec = 0; n_data = 0
-            matched    = Tuple{String, Vector{String}}[]
-            deferred   = String[]
-            evaluated  = Tuple{String, Vector{String}}[]
+            n_exec = 0
+            n_data = 0
+            matched = Tuple{String, Vector{String}}[]
+            deferred = String[]
+            evaluated = Tuple{String, Vector{String}}[]
             zam_served = String[]
-            cum        = String[]
+            cum = String[]
             for r in regions
                 append!(cum, r.defs)
                 prog_r = region_program(ProgramRegion(cum, r.queries))
-                route = mm2_route!(cs, prog_r; steps = steps, eq_mode = eq_mode)
+                route = mm2_route!(cs, prog_r; steps=steps, eq_mode=eq_mode)
                 # FASTLANE-FIRST, literal: deferred bangs in the reduction-servable SAFE SUBSET are
                 # answered ON the ZAM (mm2_zam_answers — scratch space, redex-delete readback); only
                 # the remainder goes to the interpreter FALLBACK (design §5 R7 lane 3; MeTTa-spec §4).
                 # Both evaluate in scratch spaces — the live MORK space is not written by either.
-                zam = fallback === :none ?
-                    (; served = Tuple{String, Vector{String}}[],
-                       remaining = String[String(b) for b in route.deferred]) :
-                    mm2_zam_answers(prog_r, route.deferred; steps = steps)
+                zam = if fallback === :none
+                    (; served=Tuple{String, Vector{String}}[],
+                        remaining=String[String(b) for b in route.deferred])
+                else
+                    mm2_zam_answers(prog_r, route.deferred; steps=steps)
+                end
                 # n_exec/n_data are counts over `prog_r`, which is cumulative ⇒ the LAST region's
                 # figures are the program totals. Summing them would double-count earlier rules.
-                n_exec = route.n_exec; n_data = route.n_data
-                append!(matched,   route.matched)
-                append!(deferred,  route.deferred)
+                n_exec = route.n_exec
+                n_data = route.n_data
+                append!(matched, route.matched)
+                append!(deferred, route.deferred)
                 append!(evaluated, zam.served)
-                append!(evaluated, _mc_fallback_eval(data, prog_r, zam.remaining;
-                                                     fallback = fallback, fallback_table = fallback_table))
+                append!(
+                    evaluated,
+                    _mc_fallback_eval(data, prog_r, zam.remaining;
+                        fallback=fallback, fallback_table=fallback_table)
+                )
                 append!(zam_served, String[b for (b, _) in zam.served])
             end
             (; n_exec, n_data, matched, deferred, evaluated, zam_served)
@@ -228,5 +254,5 @@ function mc_run(cs::CoreSpace, data::AbstractString, program::AbstractString;
     else
         error("mc_run: unknown mode $mode (expected :auto/:direct/:rewrite/:pipeline/:theory)")
     end
-    (lane = lane, results = results)
+    (lane=lane, results=results)
 end

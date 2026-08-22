@@ -31,9 +31,15 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN evidence-overlap gate — stamp canonicalisation + StampDisjoint" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_core_logic.metta"), String))
+    load_metta!(
+        sp,
+        read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_core_logic.metta"), String)
+    )
 
-    _errs(rs) = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    _errs(rs) = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"),
+        rs
+    )
 
     # (1) InsertionSort must actually SORT — not return an unreduced term. The `msort` regression:
     #     any result still shaped `(msort …)` means the undefined call is back.
@@ -49,12 +55,16 @@ using MeTTaCore.StandardMeTTa
 
     # (2) Canonicalisation is the POINT of sorting: stamp equality must not depend on premise
     #     order, or StampDisjoint's overlap test is order-sensitive.
-    rs = load_metta!(sp, "!(assertEqual (InsertionSort (s2 s1) ()) (InsertionSort (s1 s2) ()))")
+    rs = load_metta!(
+        sp, "!(assertEqual (InsertionSort (s2 s1) ()) (InsertionSort (s1 s2) ()))"
+    )
     @test isempty(_errs(rs))
 
     # (3) A DERIVED stamp (the :553 shape) must be a flat, sorted tuple — this is the exact
     #     expression whose malformation broke the gate.
-    rs = load_metta!(sp, "!(assertEqual (InsertionSort (TupleConcat (s1) (s2)) ()) (s1 s2))")
+    rs = load_metta!(
+        sp, "!(assertEqual (InsertionSort (TupleConcat (s1) (s2)) ()) (s1 s2))"
+    )
     @test isempty(_errs(rs))
 
     # (4) NO STARVATION — disjoint evidence must be revisable (gate says True).

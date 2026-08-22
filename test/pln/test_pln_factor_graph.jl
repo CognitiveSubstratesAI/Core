@@ -14,7 +14,12 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN factor graph — forward supply (§6.1 Mammal/Lassie vs oracle)" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
     # The Mammal/Lassie graph as atoms (conclusion-first schema). Leaves carry messages;
     # B and C are computed.
@@ -36,7 +41,9 @@ using MeTTaCore.StandardMeTTa
     !(assertEqual (supply C) (stv 0.8934749999999999 0.45599999999999996))
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 3
 end

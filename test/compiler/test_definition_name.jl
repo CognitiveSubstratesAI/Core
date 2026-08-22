@@ -32,8 +32,10 @@ const _DN_S = MeTTaCore.StandardMeTTa
 
 "Parse every top-level form of `src` in a stdlib-loaded space (so registered ops arrive Grounded)."
 function _dn_parse(src::AbstractString)
-    sp = _DN_V.Space(); _DN_V.load_core_stdlib!(sp)
-    toks = _DN_V.tokenize(src); i = Ref(1)
+    sp = _DN_V.Space()
+    _DN_V.load_core_stdlib!(sp)
+    toks = _DN_V.tokenize(src)
+    i = Ref(1)
     out = _DN_S.Atom[]
     while i[] <= length(toks)
         toks[i[]] == "!" && (i[] += 1)
@@ -48,23 +50,25 @@ _dn_names(src) = [String(d.name) for d in _DN_F.lower_program(_dn_parse(src)).de
 @testset "definition_name — the head of a definition is not always a symbol" begin
 
     @testset "all four head kinds, each in isolation" begin
-        @test _dn_names("(= (twice \$x) (+ \$x \$x))")            == ["twice"]   # Sym
-        @test _dn_names("(= (id \$x) \$x)")                       == ["id"]      # Grounded op
+        @test _dn_names("(= (twice \$x) (+ \$x \$x))") == ["twice"]   # Sym
+        @test _dn_names("(= (id \$x) \$x)") == ["id"]      # Grounded op
         @test _dn_names("(= ((curry-a \$f \$a) \$b) (\$f \$a \$b))") == ["curry-a"] # Expression, 1 deep
         @test _dn_names("(= (((curry \$f) \$x) \$y) (\$f \$x \$y))") == ["curry"]   # Expression, 2 deep
         # A VARIABLE head names nothing, and descending cannot help. The sentinel is correct here —
         # what must not happen is two of them being treated as the same function (next testset).
-        @test _dn_names("(= ((\$f \$x) \$y) \$y)")                 == [""]
+        @test _dn_names("(= ((\$f \$x) \$y) \$y)") == [""]
     end
 
     @testset "THE DEFECT: distinct compound-head functions must not MERGE" begin
-        src = "(= (((curry \$f) \$x) \$y) (\$f \$x \$y))\n" *
-              "(= ((curry-a \$f \$a) \$b) (\$f \$a \$b))\n" *
-              "(= ((lambda \$v \$b) \$arg) (let \$v \$arg \$b))\n"
+        src =
+            "(= (((curry \$f) \$x) \$y) (\$f \$x \$y))\n" *
+            "(= ((curry-a \$f \$a) \$b) (\$f \$a \$b))\n" *
+            "(= ((lambda \$v \$b) \$arg) (let \$v \$arg \$b))\n"
         prog = _DN_F.lower_program(_dn_parse(src))
         # Measured BEFORE the fix: 1 definition named "" holding 3 clauses.
         @test length(prog.definitions) == 3
-        @test sort([String(d.name) for d in prog.definitions]) == ["curry", "curry-a", "lambda"]
+        @test sort([String(d.name) for d in prog.definitions]) ==
+            ["curry", "curry-a", "lambda"]
         @test all(length(d.clauses) == 1 for d in prog.definitions)
     end
 

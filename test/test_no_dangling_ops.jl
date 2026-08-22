@@ -18,9 +18,9 @@ using Test
 
 const _DOP_ROOT = normpath(joinpath(@__DIR__, ".."))
 _dop_strip(t) = join((replace(ln, r";.*$" => "") for ln in split(t, '\n')), '\n')
-const _DOP_HEAD   = r"\(\s*([A-Za-z_][A-Za-z0-9_?!*<>./%=+-]*)"
+const _DOP_HEAD = r"\(\s*([A-Za-z_][A-Za-z0-9_?!*<>./%=+-]*)"
 const _DOP_DEFLHS = r"(?m)^\s*\(=\s*\(\s*([A-Za-z_][A-Za-z0-9_?!*<>./%=+-]*)"
-_dop_heads(t)  = Set(m.captures[1] for m in eachmatch(_DOP_HEAD,   _dop_strip(t)))
+_dop_heads(t) = Set(m.captures[1] for m in eachmatch(_DOP_HEAD, _dop_strip(t)))
 _dop_deflhs(t) = Set(m.captures[1] for m in eachmatch(_DOP_DEFLHS, _dop_strip(t)))
 function _dop_metta(dir)
     fs = String[]
@@ -37,7 +37,9 @@ end
     # So harvest every op-name-shaped quoted string from the primitive .jl files (over-inclusive on
     # purpose — better to under-report a dangle than to false-positive a constructor).
     grounded = Set{String}()
-    for dir in ("src/primitives", "src/standard"), f in readdir(joinpath(_DOP_ROOT, dir); join=true)
+    for dir in ("src/primitives", "src/standard"),
+        f in readdir(joinpath(_DOP_ROOT, dir); join=true)
+
         endswith(f, ".jl") || continue
         for m in eachmatch(r"\"([a-zA-Z][a-zA-Z0-9_?!*<>./%+-]*)\"", read(f, String))
             push!(grounded, m.captures[1])
@@ -48,16 +50,27 @@ end
         endswith(f, ".metta") && union!(livestd, _dop_deflhs(read(f, String)))
     end
     alllib = Set{String}()
-    for f in _dop_metta(joinpath(_DOP_ROOT, "lib")); union!(alllib, _dop_deflhs(read(f, String))); end
-    builtins = Set(["if", "let", "let*", "match", "case", "eval", "evalc", "chain", "function", "return",
-        "unify", "quote", "superpose", "collapse", "sequential", "add-atom", "remove-atom", "get-atoms",
-        "new-space", "bind!", "and", "or", "not", "sealed", "empty", "import!", "Error", "True", "False"])
+    for f in _dop_metta(joinpath(_DOP_ROOT, "lib"))
+        union!(alllib, _dop_deflhs(read(f, String)))
+    end
+    builtins = Set(["if", "let", "let*", "match", "case", "eval", "evalc", "chain",
+        "function", "return",
+        "unify", "quote", "superpose", "collapse", "sequential", "add-atom", "remove-atom",
+        "get-atoms",
+        "new-space", "bind!", "and", "or", "not", "sealed", "empty", "import!", "Error",
+        "True", "False"])
     live = union(grounded, livestd, alllib, builtins)
 
     # (2) "should-have-resolved" reference: ops defined in the DEAD top-level stdlib/ (look available,
     # engine never loads them) + curated upstream-only names ports have used.
     deadup = Set{String}()
-    for f in (isdir(joinpath(_DOP_ROOT, "stdlib")) ? readdir(joinpath(_DOP_ROOT, "stdlib"); join=true) : String[])
+    for f in (
+        if isdir(joinpath(_DOP_ROOT, "stdlib"))
+            readdir(joinpath(_DOP_ROOT, "stdlib"); join=true)
+        else
+            String[]
+        end
+    )
         endswith(f, ".metta") && union!(deadup, _dop_deflhs(read(f, String)))
     end
     union!(deadup, Set(["list_to_set", "exclude-item", "append"]))
@@ -71,7 +84,9 @@ end
         end
     end
     for (op, fs) in offenders
-        @warn "lib/ calls a DANGLING primitive (undefined in the live engine; exists only in dead stdlib/ or upstream) — reuse the live grounded op instead" op=op files=unique(fs)
+        @warn "lib/ calls a DANGLING primitive (undefined in the live engine; exists only in dead stdlib/ or upstream) — reuse the live grounded op instead" op=op files=unique(
+            fs
+        )
     end
     @test isempty(offenders)
 end

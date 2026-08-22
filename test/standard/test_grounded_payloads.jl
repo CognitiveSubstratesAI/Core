@@ -23,10 +23,20 @@ using Test
 @testset "GROUNDED — parser-reachable payloads are exactly Int64, Float64, String" begin
     s = Space()
     reachable = Set{Type}()
-    walk(a::Atom) = a isa Grounded ? push!(reachable, typeof(a).parameters[1]) :
-                    a isa Expression ? (for c in a.children; walk(c); end) : nothing
+    walk(a::Atom) =
+        if a isa Grounded
+            push!(reachable, typeof(a).parameters[1])
+        elseif a isa Expression
+            (
+                for c in a.children
+                    walk(c)
+                end
+            )
+        else
+            nothing
+        end
     for src in ("42", "-7", "0", "3.14", "1e10", "\"a string\"", "True", "False",
-                "(f 1 2.5 \"s\")", raw"(g $x True)", "()")
+        "(f 1 2.5 \"s\")", raw"(g $x True)", "()")
         walk(Eval.parse_from(Eval.tokenize(src), Ref(1), s.tokens))
     end
     @test reachable == Set{Type}([Int64, Float64, String])
@@ -43,23 +53,26 @@ end
     # `compiler/EmitIL.jl:502` records a MEASURED defect: a primitive once leaked `Grounded{Bindings}`
     # atoms into answers, caught against four engines. Bindings riding through evaluation as an atom
     # is fine; surfacing one to a caller is not, because it is not a term of the language.
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     # ⚠️ PUT ATOMS IN *THIS* SPACE FIRST. The first draft queried `!(get-atoms &self)` on a fresh
     # `Space()` and got ZERO — `load_core_stdlib!` populates a different store
     # (`[[feedback_empty_result_may_be_the_wrong_store]]`). The anti-vacuity counter below is what
     # caught it: the testset was inspecting three atoms with one of four queries inert.
     load_metta!(s, "(edge a b)\n(edge b c)\n")
-    leaked = Atom[]; seen = 0
+    leaked = Atom[]
+    seen = 0
     # `match` and `let` are the binding-CARRYING paths — where a `Grounded{Bindings}` could plausibly
     # surface — so they matter here far more than arithmetic does.
     for src in ("!(+ 1 2)\n", "!(< 1 2)\n", raw"!(let $x 1 $x)" * "\n",
-                "!(get-atoms &self)\n",
-                raw"!(match &self (edge $x $y) ($x $y))" * "\n",
-                raw"!(match &self (edge $x $y) $x)" * "\n")
+        "!(get-atoms &self)\n",
+        raw"!(match &self (edge $x $y) ($x $y))" * "\n",
+        raw"!(match &self (edge $x $y) $x)" * "\n")
         for y in load_metta!(s, src)
             for x in (y isa AbstractVector ? y : [y])
                 seen += 1
-                x isa Grounded && typeof(x).parameters[1] === Eval.Bindings && push!(leaked, x)
+                x isa Grounded && typeof(x).parameters[1] === Eval.Bindings &&
+                    push!(leaked, x)
             end
         end
     end

@@ -54,7 +54,7 @@ using ..CompilerIR
 using ..CompilerANormal
 using ..CompilerEmit: render, _escape_il_string
 import ..CompilerEmit   # reuse the renderer AND its escaper — a second
-                                                  # of either would drift from the first
+# of either would drift from the first
 using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded   # typed atom model — same idiom as Frontend.jl:38
 import ..Eval                          # TOKEN_REGISTRY, for parse-equivalent predefined ops
 
@@ -86,13 +86,13 @@ end
 # So: one clause per branch, with the surrounding goals duplicated into each. Recursive, because a
 # branch may itself contain a disjunction. `limit` is a runaway guard — a cross product of nested
 # disjunctions is exponential, and silently emitting 10k clauses would be worse than declining.
-function _expand_disj(gs::Vector{Goal}, limit::Int = 64)::Union{Vector{Vector{Goal}}, Nothing}
+function _expand_disj(gs::Vector{Goal}, limit::Int=64)::Union{Vector{Vector{Goal}}, Nothing}
     i = findfirst(g -> g isa GDisj, gs)
     i === nothing && return Vector{Goal}[gs]
     d = gs[i]::GDisj
     out = Vector{Goal}[]
     for b in d.branches
-        merged = vcat(gs[1:i - 1], b, gs[i + 1:end])
+        merged = vcat(gs[1:(i - 1)], b, gs[(i + 1):end])
         sub = _expand_disj(merged, limit)
         sub === nothing && return nothing
         append!(out, sub)
@@ -111,10 +111,10 @@ end
 # out of the clause. Hardcoding it was a wrong-answer bug (see `_instr(::GBranch, …)`).
 # The instruction heads, interned once. `Sym` holds a Julia `Symbol`, so these are pointer-compares
 # rather than the string concatenation the text emitter did per node.
-const _A_EQ, _A_FUNCTION, _A_RETURN   = Sym("="), Sym("function"), Sym("return")
-const _A_CHAIN, _A_UNIFY, _A_METTA    = Sym("chain"), Sym("unify"), Sym("metta")
-const _A_EVAL, _A_COLLAPSE            = Sym("eval"), Sym("collapse-bind")
-const _A_EMPTY, _A_UNDEF, _A_SELF     = Sym("Empty"), Sym("%Undefined%"), Sym("&self")
+const _A_EQ, _A_FUNCTION, _A_RETURN = Sym("="), Sym("function"), Sym("return")
+const _A_CHAIN, _A_UNIFY, _A_METTA = Sym("chain"), Sym("unify"), Sym("metta")
+const _A_EVAL, _A_COLLAPSE = Sym("eval"), Sym("collapse-bind")
+const _A_EMPTY, _A_UNDEF, _A_SELF = Sym("Empty"), Sym("%Undefined%"), Sym("&self")
 _ret(a::Atom)::Atom = Expression(Atom[_A_RETURN, a])
 
 """Atom → the IL's WIRE TEXT. `string`/`show` is NOT this, and that gap is the session's recurring
@@ -179,7 +179,9 @@ function _il_text!(io::IO, a::Atom)::IO
         # `_write_escaped!`, NOT `write(io, _escape_il_string(…))` — the latter materialized the whole
         # escaped string just to copy it in and discard it. PR #167's third change; same escape table,
         # same bytes, one fewer allocation per string literal.
-        write(io, '"'); CompilerEmit._write_escaped!(io, a.value); write(io, '"')
+        write(io, '"')
+        CompilerEmit._write_escaped!(io, a.value)
+        write(io, '"')
     else
         print(io, a)   # NOT `write(io, string(a))` — that materializes a String per LEAF just to copy
     end                #   it into the buffer. `print` goes through the same `show` and writes direct.
@@ -220,7 +222,9 @@ end
 function _atom_args(args::Vector{IRAtom})::Union{Vector{Atom}, Nothing}
     out = Atom[]
     for a in args
-        v = _render_atom(a); v === nothing && return nothing; push!(out, v)
+        v = _render_atom(a)
+        v === nothing && return nothing
+        push!(out, v)
     end
     out
 end
@@ -240,14 +244,25 @@ Neither the suite nor the ratchet could tell those two apart from a real gain.
 So the special-form rendering lives HERE, in the target that has an instruction for it, and the MM2
 emitter keeps rejecting exactly what it rejected before."""
 _render_il(a::IRAtom)::String =
-    a isa IRSpecial ?
-        (isempty((a::IRSpecial).args) ? "(" * String((a::IRSpecial).surface) * ")" :
-         "(" * String((a::IRSpecial).surface) * " " *
-         join(String[_render_il(x) for x in (a::IRSpecial).args], " ") * ")") :
-    a isa IRExpression ?
-        "(" * join(String[_render_il(x) for x in
-                          IRAtom[(a::IRExpression).head; (a::IRExpression).args]], " ") * ")" :
-    render(a)
+    if a isa IRSpecial
+        (
+            if isempty((a::IRSpecial).args)
+                "(" * String((a::IRSpecial).surface) * ")"
+            else
+                "(" * String((a::IRSpecial).surface) * " " *
+                join(String[_render_il(x) for x in (a::IRSpecial).args], " ") * ")"
+            end
+        )
+    elseif a isa IRExpression
+        "(" *
+        join(
+            String[
+                _render_il(x) for x in
+                IRAtom[(a::IRExpression).head; (a::IRExpression).args]
+            ], " ") * ")"
+    else
+        render(a)
+    end
 
 """IR node → a typed `StandardMeTTa.Atom`, the STRUCTURAL counterpart of `_render_il`.
 
@@ -292,7 +307,9 @@ function _atom_of(a::IRAtom, specials::Bool)::Union{Atom, Nothing}
         specials || return nothing
         kids = Atom[Sym(String((a::IRSpecial).surface))]
         for x in (a::IRSpecial).args
-            c = _atom_of(x, specials); c === nothing && return nothing; push!(kids, c)
+            c = _atom_of(x, specials)
+            c === nothing && return nothing
+            push!(kids, c)
         end
         return Expression(kids)
     elseif a isa IRExpression
@@ -300,19 +317,24 @@ function _atom_of(a::IRAtom, specials::Bool)::Union{Atom, Nothing}
         CompilerEmit._is_unit(a::IRExpression) && return Expression(Atom[])
         kids = Atom[]
         for x in IRAtom[(a::IRExpression).head; (a::IRExpression).args]
-            c = _atom_of(x, specials); c === nothing && return nothing; push!(kids, c)
+            c = _atom_of(x, specials)
+            c === nothing && return nothing
+            push!(kids, c)
         end
         return Expression(kids)
-    elseif a isa IRSymbol       ; return Sym(String((a::IRSymbol).name))
-    elseif a isa IRResolvedSymbol; return Sym(String((a::IRResolvedSymbol).name))
-    elseif a isa IRVariable     ; return Var(String((a::IRVariable).name))
+    elseif a isa IRSymbol
+        return Sym(String((a::IRSymbol).name))
+    elseif a isa IRResolvedSymbol
+        return Sym(String((a::IRResolvedSymbol).name))
+    elseif a isa IRVariable
+        return Var(String((a::IRVariable).name))
     elseif a isa IRPredefined
         # PARSE-EQUIVALENT: parsing `+` against a space's token table yields `Grounded{Operation}`,
         # not `Sym("+")`. The IR keeps only the NAME, so the registry supplies the value — the one
         # lookup this direction needs. Falls back to `Sym` for a name that is not registered, which
         # is what parsing would also produce.
         return get(Eval.TOKEN_REGISTRY, String((a::IRPredefined).name),
-                   Sym(String((a::IRPredefined).name)))
+            Sym(String((a::IRPredefined).name)))
     elseif a isa IRGrounded
         # PARSE-EQUIVALENT: the IR already HOLDS the value, so this is the real thing — a
         # `Grounded{String}`, `Grounded{Int}`, `Grounded{Space}` — exactly what parsing the rendered
@@ -338,8 +360,10 @@ _render_atom(a::IRAtom)::Union{Atom, Nothing} = _atom_of(a, false)
 "`(unify <atom> <pattern> <then> <else>)` — spec §3. A failed unification yields `Empty`, Core's own
 `EMPTY` sentinel (`Eval.jl:39`), so a non-matching clause contributes no result rather than erroring."
 function _instr(g::GUnify, cont::Atom, fail::Atom)::Union{Atom, Nothing}
-    l = _render_atom(g.lhs); l === nothing && return nothing
-    r = _render_atom(g.rhs); r === nothing && return nothing
+    l = _render_atom(g.lhs)
+    l === nothing && return nothing
+    r = _render_atom(g.rhs)
+    r === nothing && return nothing
     Expression(Atom[_A_UNIFY, l, r, cont, fail])
 end
 
@@ -381,8 +405,10 @@ information at a call site, and `%Undefined%` is exactly MeTTa's "no expectation
 (`metta_language_spec.md` §2.4). `&self` is the context space, which re-parses to whatever space the
 clause is loaded into — correct by construction, and the same property `_name_spaces` relies on."""
 function _instr(g::GCall, cont::Atom, ::Atom)::Union{Atom, Nothing}
-    args = _atom_args(g.args); args === nothing && return nothing
-    o = _render_atom(g.out);   o === nothing && return nothing
+    args = _atom_args(g.args)
+    args === nothing && return nothing
+    o = _render_atom(g.out)
+    o === nothing && return nothing
     call = Expression(Atom[Sym(String(g.head)); args])
     # ── DEFER BY DEFAULT, DECIDE ONLY ON EVIDENCE ─────────────────────────────────────────────────
     # `metta` is one of the THIRTEEN minimal-MeTTa instructions (`metta.txt:96`), so handing an atom
@@ -430,16 +456,19 @@ So the arms are closed into a value and bound ONCE:
 
 `cont` now appears exactly once regardless of nesting, which is the whole point of a join."""
 function _instr(g::GBranch, cont::Atom, ::Atom)::Union{Atom, Nothing}
-    o = _render_atom(g.out); o === nothing && return nothing
+    o = _render_atom(g.out)
+    o === nothing && return nothing
     ret = _ret(o)
-    thn = _seq(g.then, 1, ret, _RET_EMPTY); thn === nothing && return nothing
+    thn = _seq(g.then, 1, ret, _RET_EMPTY)
+    thn === nothing && return nothing
     # An EMPTY `els` means "no further arm" — failing there yields Empty, it does not fall out of the
     # clause. A non-empty `els` is the NEXT ARM and is itself a GBranch.
     els = isempty(g.els) ? _RET_EMPTY : _seq(g.els, 1, ret, _RET_EMPTY)
     els === nothing && return nothing
     # `cond` carries the REAL test (a GUnify). Its success continuation is the then-arm and its
     # FAILURE continuation is the else-arm — that threading is the whole fix.
-    body = _seq(g.cond, 1, thn, els); body === nothing && return nothing
+    body = _seq(g.cond, 1, thn, els)
+    body === nothing && return nothing
     Expression(Atom[_A_CHAIN, Expression(Atom[_A_FUNCTION, body]), o, cont])
 end
 
@@ -502,9 +531,12 @@ Original note follows.
 Spec §3: `collapse-bind` interprets an atom and returns a tuple of ALL its results. The body is a goal
 sequence, so it is wrapped in `function`/`return` to become one interpretable atom."""
 function _instr(g::GFindall, cont::Atom, ::Atom)::Union{Atom, Nothing}
-    tm = _render_atom(g.template); tm === nothing && return nothing
-    o  = _render_atom(g.out);      o  === nothing && return nothing
-    body = _seq(g.body, 1, _ret(tm), _RET_EMPTY); body === nothing && return nothing
+    tm = _render_atom(g.template)
+    tm === nothing && return nothing
+    o = _render_atom(g.out)
+    o === nothing && return nothing
+    body = _seq(g.body, 1, _ret(tm), _RET_EMPTY)
+    body === nothing && return nothing
     # STRIP THE BINDINGS. `collapse-bind` returns `(Atom Bindings)` PAIRS by contract (hyperon
     # `@doc collapse-bind`: "…in a form (Atom Bindings)"), while `collapse` must yield a TUPLE
     # (`@doc collapse`: "Converts a nondeterministic result into a tuple"). Emitting the capture
@@ -517,21 +549,30 @@ function _instr(g::GFindall, cont::Atom, ::Atom)::Union{Atom, Nothing}
     # Upstream wraps `(metta \$atom %Undefined% \$space)`; our body is already a `function`, so the
     # `(context-space)` step it needs to build that call is not required here.
     pairs = fresh_ilvar("c")
-    acc   = fresh_ilvar("res")
-    item  = fresh_ilvar("item")
-    fold  = Expression(Atom[_A_EVAL,
-                Expression(Atom[Sym("foldl-atom"), pairs, Expression(Atom[]), acc, item,
-                                Expression(Atom[Sym("_collapse-add-next-atom-from-collapse-bind-result"),
-                                                acc, item])])])
-    Expression(Atom[_A_CHAIN,
-                    Expression(Atom[_A_COLLAPSE, Expression(Atom[_A_FUNCTION, body])]), pairs,
-                    Expression(Atom[_A_CHAIN, fold, o, cont])])
+    acc = fresh_ilvar("res")
+    item = fresh_ilvar("item")
+    fold = Expression(
+        Atom[_A_EVAL,
+            Expression(
+                Atom[Sym("foldl-atom"), pairs, Expression(Atom[]), acc, item,
+                    Expression(
+                        Atom[Sym("_collapse-add-next-atom-from-collapse-bind-result"),
+                            acc, item]
+                    )]
+            )]
+    )
+    Expression(
+        Atom[_A_CHAIN,
+            Expression(Atom[_A_COLLAPSE, Expression(Atom[_A_FUNCTION, body])]), pairs,
+            Expression(Atom[_A_CHAIN, fold, o, cont])]
+    )
 end
 
 # Fresh IL-level variable names. Distinct prefix from the A-normalizer's `\$__t` so a collision is
 # impossible by construction rather than by hoping the counters never meet.
 const _IL_VAR_N = Ref(0)
-fresh_ilvar(tag::AbstractString)::Atom = (_IL_VAR_N[] += 1; Var("__il_" * tag * string(_IL_VAR_N[])))
+fresh_ilvar(tag::AbstractString)::Atom =
+    (_IL_VAR_N[] += 1; Var("__il_" * tag * string(_IL_VAR_N[])))
 
 # GDisj never reaches here — `_expand_disj` removes it before the fold. If one survives, that is a bug
 # in the expansion, not a shape to improvise around, so decline loudly rather than guess.
@@ -560,11 +601,17 @@ function _instr(g::GResidual, cont::Atom, ::Atom)::Union{Atom, Nothing}
     # which handles `IRSpecial`. Using the same builder as the other sites here would DECLINE clauses
     # that emit today; using this builder at the other sites would WIDEN them. See `_atom_of`.
     nd = _il_atom(n)
-    inner = nd === nothing              ? nothing :
-            _lowerable_match(n)         ? Expression(Atom[_A_EVAL, nd]) :
-            _is_minimal_instruction(n)  ? nd :
-            _var_headed_call(n)         ? Expression(Atom[_A_METTA, nd, _A_UNDEF, _A_SELF]) :
-                                          nothing
+    inner = if nd === nothing
+        nothing
+    elseif _lowerable_match(n)
+        Expression(Atom[_A_EVAL, nd])
+    elseif _is_minimal_instruction(n)
+        nd
+    elseif _var_headed_call(n)
+        Expression(Atom[_A_METTA, nd, _A_UNDEF, _A_SELF])
+    else
+        nothing
+    end
     inner === nothing && return nothing
     # THE RENDER GUARD, and it closes a CLASS rather than the instance that produced it. Lowering a
     # node VERBATIM is only sound if it renders; `_render_il` is total and marks what it cannot render
@@ -575,7 +622,8 @@ function _instr(g::GResidual, cont::Atom, ::Atom)::Union{Atom, Nothing}
     # version. Any future verbatim lowering gets this check for free by going through here.
     # The old `<unrenderable` SUBSTRING SCAN is gone: an unrenderable node is now `nothing` from the
     # builder and propagates by construction, so the guard cannot be forgotten by a future `_instr`.
-    o = _render_atom(g.out); o === nothing && return nothing
+    o = _render_atom(g.out)
+    o === nothing && return nothing
     Expression(Atom[_A_CHAIN, inner, o, cont])
 end
 
@@ -770,7 +818,8 @@ function _decline_reason(gs::Vector{Goal})::String
     nested = _first_residual(gs)
     nested === nothing || return "GResidual (unflattened node: " * nested * ")"
     for g in gs
-        g isa GDisj && isempty((g::GDisj).branches) && return "GDisj with zero branches (emits nothing)"
+        g isa GDisj && isempty((g::GDisj).branches) &&
+            return "GDisj with zero branches (emits nothing)"
     end
     any(g -> g isa GDisj, gs) && return "GDisj expansion exceeded the 64-clause limit"
 
@@ -796,10 +845,12 @@ function _first_residual(gs::Vector{Goal})::Union{Nothing, String}
             return string(nameof(typeof((g::GResidual).node)))
         elseif g isa GBranch
             for sub in ((g::GBranch).cond, (g::GBranch).then, (g::GBranch).els)
-                r = _first_residual(sub); r === nothing || return r
+                r = _first_residual(sub)
+                r === nothing || return r
             end
         elseif g isa GFindall
-            r = _first_residual((g::GFindall).body); r === nothing || return r
+            r = _first_residual((g::GFindall).body)
+            r === nothing || return r
         end
     end
     nothing
@@ -819,29 +870,42 @@ function _first_unbuildable(gs::Vector{Goal})::Union{Nothing, String}
     note(a::IRAtom, specials::Bool) = begin
         found[] === nothing || return nothing
         if _atom_of(a, specials) === nothing
-            found[] = specials ?
-                      string(nameof(typeof(a))) * " (unbuildable even in GResidual position)" :
-                      (_atom_of(a, true) === nothing ?
-                       string(nameof(typeof(a))) :
-                       string(nameof(typeof(a))) * " (builds only in GResidual position)")
+            found[] = if specials
+                string(nameof(typeof(a))) * " (unbuildable even in GResidual position)"
+            else
+                (
+                    if _atom_of(a, true) === nothing
+                        string(nameof(typeof(a)))
+                    else
+                        string(nameof(typeof(a))) * " (builds only in GResidual position)"
+                    end
+                )
+            end
         end
         nothing
     end
-    walk(a::IRAtom, specials::Bool = false) = begin
+    walk(a::IRAtom, specials::Bool=false) = begin
         note(a, specials)
         if a isa IRExpression
             walk((a::IRExpression).head, specials)
-            for x in (a::IRExpression).args; walk(x, specials); end
+            for x in (a::IRExpression).args
+                walk(x, specials)
+            end
         elseif a isa IRSpecial
-            for x in (a::IRSpecial).args; walk(x, specials); end
+            for x in (a::IRSpecial).args
+                walk(x, specials)
+            end
         end
         nothing
     end
     for g in gs
         if g isa GUnify
-            walk((g::GUnify).lhs); walk((g::GUnify).rhs)
+            walk((g::GUnify).lhs)
+            walk((g::GUnify).rhs)
         elseif g isa GCall
-            for x in (g::GCall).args; walk(x); end
+            for x in (g::GCall).args
+                walk(x)
+            end
             walk((g::GCall).out)
         elseif g isa GResidual
             walk((g::GResidual).node, true)      # emitted via `_il_atom` — specials ARE buildable here
@@ -852,7 +916,8 @@ function _first_unbuildable(gs::Vector{Goal})::Union{Nothing, String}
                 r === nothing || (found[] === nothing && (found[] = r))
             end
         elseif g isa GFindall
-            walk((g::GFindall).template); walk((g::GFindall).out)
+            walk((g::GFindall).template)
+            walk((g::GFindall).out)
             r = _first_unbuildable((g::GFindall).body)
             r === nothing || (found[] === nothing && (found[] = r))
         end
@@ -878,10 +943,12 @@ function emit_il_clause(c::ANClause)::Union{Vector{Atom}, Nothing}
     # obstacle — the clause struct was. Declining was the safe stopgap; this is the fix.
     if c.nested_head
         c.head_pattern === nothing && return nothing        # nested but no pattern carried ⇒ decline
-        hp = _il_atom(c.head_pattern); hp === nothing && return nothing
+        hp = _il_atom(c.head_pattern)
+        hp === nothing && return nothing
         return _emit_with_head(c, hp)
     end
-    hargs = _atom_args(c.head_args); hargs === nothing && return nothing
+    hargs = _atom_args(c.head_args)
+    hargs === nothing && return nothing
     head = Expression(Atom[Sym(String(c.name)); hargs])
     _emit_with_head(c, head, variants)
 end
@@ -889,9 +956,10 @@ end
 """Emit one clause given an already-rendered HEAD — shared by the plain and nested-head paths so the
 unrenderable sweep and the all-or-nothing decline apply identically to both."""
 function _emit_with_head(c::ANClause, head::Atom,
-                         variants = _expand_disj(c.goals))::Union{Vector{Atom}, Nothing}
+    variants=_expand_disj(c.goals))::Union{Vector{Atom}, Nothing}
     variants === nothing && return nothing
-    o = _render_atom(c.out); o === nothing && return nothing
+    o = _render_atom(c.out)
+    o === nothing && return nothing
     out = Atom[]
     for gs in variants
         body = _seq(gs, 1, _ret(o), _RET_EMPTY)

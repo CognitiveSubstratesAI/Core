@@ -27,17 +27,25 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN demand sweep — multi-factor (§4.4 vs generated oracle golden) + threading control" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
-    load_metta!(sp, """
-    (message A  (stv 0.95 0.95))
-    (message AB (stv 0.99 0.80))
-    (message BC (stv 0.95 0.60))
-    (factor f1 hmp (premises A AB) (conclusion B))
-    (factor f2 hmp (premises B BC) (conclusion C))
-    (produces B f1)
-    (produces C f2)
-    """)
+    load_metta!(
+        sp,
+        """
+(message A  (stv 0.95 0.95))
+(message AB (stv 0.99 0.80))
+(message BC (stv 0.95 0.60))
+(factor f1 hmp (premises A AB) (conclusion B))
+(factor f2 hmp (premises B BC) (conclusion C))
+(produces B f1)
+(produces C f2)
+"""
+    )
     load_metta!(sp, "!(compute-demand-field! C)")   # materialise the field as (dem node val) atoms
 
     asserts = """
@@ -49,7 +57,9 @@ using MeTTaCore.StandardMeTTa
     !(assertEqual (== (dp-1 (factor-demand-pair B 1.0)) (match &self (dem A \$d) \$d)) False)
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 6
 end

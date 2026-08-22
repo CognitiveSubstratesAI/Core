@@ -27,11 +27,18 @@ using Test
 using MeTTaCore
 
 const _NS = MeTTaCore.Eval
-const _NSP = (s = _NS.Space(); _NS.load_core_stdlib!(s); s)
-_nsval(a) = a isa _NS.Grounded ? a.value :
-            a isa _NS.Sym ? Symbol(a.name) :
-            a isa _NS.Expression ? Any[_nsval(c) for c in a.children] : a
-nsq(src) = (r = _NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
+const _NSP = (s=_NS.Space(); _NS.load_core_stdlib!(s); s)
+_nsval(a) =
+    if a isa _NS.Grounded
+        a.value
+    elseif a isa _NS.Sym
+        Symbol(a.name)
+    elseif a isa _NS.Expression
+        Any[_nsval(c) for c in a.children]
+    else
+        a
+    end
+nsq(src) = (r=_NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
 
 @testset "numeric seam — Int/Float boundary vs the reference" begin
 
@@ -69,9 +76,10 @@ nsq(src) = (r = _NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
         # A raw Julia DivideError used to escape the evaluator for `%`, and `/` returned Inf/NaN.
         # Both now reduce to the shape LeaTTa proves (Stdlib.lean:86-101, docstring citing
         # "Hyperon's checked_div"): Error (op a b) DivisionByZero.
-        iserr(r, op, a, b) = r isa AbstractVector && length(r) == 3 &&
-                             r[1] === :Error && r[3] === :DivisionByZero &&
-                             r[2] == Any[op, a, b]
+        iserr(r, op, a, b) =
+            r isa AbstractVector && length(r) == 3 &&
+            r[1] === :Error && r[3] === :DivisionByZero &&
+            r[2] == Any[op, a, b]
         @test iserr(nsq("!(% 7 0)"), :%, 7, 0)      # no longer throws
         @test iserr(nsq("!(/ 7 0)"), :/, 7, 0)      # no longer Inf
         @test iserr(nsq("!(/ 0 0)"), :/, 0, 0)      # no longer NaN

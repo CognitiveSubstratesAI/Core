@@ -55,11 +55,11 @@ module CompilerGSLTParse
 
 using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded
 using ..CompilerIR: GroundedType, GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL,
-                    GROUNDED_STRING, GROUNDED_OPAQUE
+    GROUNDED_STRING, GROUNDED_OPAQUE
 using ..CompilerGSLTPresentation: GCat, CatId, CatList, CatArrow, CatProd,
-                                  GLabel, LabelId, GItem, ItemNonTerminal, ItemAbs, ItemBind,
-                                  GRule, GHyp, GRewriteBody, RewBase, RewCtx, GRewriteDecl,
-                                  GEquation, GFresh, GLiteral, GPresentation, cat_name
+    GLabel, LabelId, GItem, ItemNonTerminal, ItemAbs, ItemBind,
+    GRule, GHyp, GRewriteBody, RewBase, RewCtx, GRewriteDecl,
+    GEquation, GFresh, GLiteral, GPresentation, cat_name
 
 export parse_presentation
 
@@ -174,8 +174,11 @@ function _parse_item(a::Atom)::GItem
         xs = _args(a::Expression)
         length(xs) == 2 || error("GSLT parse: ($(h) x C) takes a variable and a category")
         v = _symname(xs[1], "bound variable of `$(h)`")
-        return h === :bind ? ItemBind(v, _parse_cat(xs[2])) :
-                             ItemAbs(v, ItemNonTerminal(_parse_cat(xs[2])))
+        return if h === :bind
+            ItemBind(v, _parse_cat(xs[2]))
+        else
+            ItemAbs(v, ItemNonTerminal(_parse_cat(xs[2])))
+        end
     end
     ItemNonTerminal(_parse_cat(a))
 end
@@ -189,16 +192,17 @@ function _parse_rule(f::Atom)::GRule
     sig = xs[2]
     _head(sig) === :(->) || error("GSLT parse: signature of `$label` must be (-> … Result)")
     parts = _args(sig::Expression)
-    isempty(parts) && error("GSLT parse: signature of `$label` needs at least a result category")
+    isempty(parts) &&
+        error("GSLT parse: signature of `$label` needs at least a result category")
     GRule(LabelId(label), _parse_cat(parts[end]),
-          GItem[_parse_item(p) for p in parts[1:end - 1]])
+        GItem[_parse_item(p) for p in parts[1:(end - 1)]])
 end
 
 # ── literals — the EXTENSION; carriers validated against the real enum ──────────────────────────
 
 const _CARRIERS = Dict{Base.Symbol, GroundedType}(
-    :GROUNDED_INT    => GROUNDED_INT,   :GROUNDED_FLOAT  => GROUNDED_FLOAT,
-    :GROUNDED_BOOL   => GROUNDED_BOOL,  :GROUNDED_STRING => GROUNDED_STRING,
+    :GROUNDED_INT => GROUNDED_INT, :GROUNDED_FLOAT => GROUNDED_FLOAT,
+    :GROUNDED_BOOL => GROUNDED_BOOL, :GROUNDED_STRING => GROUNDED_STRING,
     :GROUNDED_OPAQUE => GROUNDED_OPAQUE)
 
 """`(literal Sort CARRIER)`. CARRIER must be a real `GroundedType` (`compiler/IR.jl:129`).
@@ -212,8 +216,10 @@ function _parse_literal(f::Atom)::GLiteral
     s = _symname(xs[1], "literal sort")
     c = _symname(xs[2], "carrier of `$s`")
     haskey(_CARRIERS, c) ||
-        error("GSLT parse: `$s` names unknown carrier `$c`; expected one of " *
-              join(sort!(String[String(k) for k in keys(_CARRIERS)]), ", "))
+        error(
+            "GSLT parse: `$s` names unknown carrier `$c`; expected one of " *
+            join(sort!(String[String(k) for k in keys(_CARRIERS)]), ", ")
+        )
     GLiteral(s, _CARRIERS[c])
 end
 
@@ -232,17 +238,22 @@ NO INNER `==` MARKER: MeTTa resolves `==` to a GROUNDED operation, never a `Sym`
 matched as a keyword here. Measured, after a first draft that used it and rejected every well-formed
 equation."""
 function _parse_equation(f::Atom)::GEquation
-    _head(f) === :equation || error("GSLT parse: expected (equation Label … LHS RHS), got $(f)")
+    _head(f) === :equation ||
+        error("GSLT parse: expected (equation Label … LHS RHS), got $(f)")
     xs = _args(f::Expression)
-    length(xs) >= 3 || error("GSLT parse: (equation Label … LHS RHS) needs a label and two sides")
+    length(xs) >= 3 ||
+        error("GSLT parse: (equation Label … LHS RHS) needs a label and two sides")
     label = _symname(xs[1], "equation label")
     i = 2
     conds = GFresh[]
     while i <= length(xs) - 2 && _head(xs[i]) === :fresh
-        push!(conds, _parse_fresh(xs[i])); i += 1
+        push!(conds, _parse_fresh(xs[i]))
+        i += 1
     end
     i == length(xs) - 1 ||
-        error("GSLT parse: equation `$label` has unexpected forms between conditions and sides")
+        error(
+            "GSLT parse: equation `$label` has unexpected forms between conditions and sides"
+        )
     GEquation(xs[end - 1], xs[end], conds)
 end
 
@@ -253,14 +264,16 @@ end
 `Base.Symbol("~>")`, NOT `:(~>)`: `~>` is not a Julia operator, so `:(~>)` parses as the Expr
 `:(~(>))` and the comparison against a Symbol is silently ALWAYS FALSE. Measured."""
 function _parse_hyp(a::Atom, ctx::AbstractString)::GHyp
-    _head(a) === Base.Symbol("~>") || error("GSLT parse: $ctx must be (~> Src Tgt), got $(a)")
+    _head(a) === Base.Symbol("~>") ||
+        error("GSLT parse: $ctx must be (~> Src Tgt), got $(a)")
     xs = _args(a::Expression)
     length(xs) == 2 || error("GSLT parse: (~> Src Tgt) takes exactly 2 variables in $ctx")
     GHyp(_pvarname(xs[1], "premise source"), _pvarname(xs[2], "premise target"))
 end
 
 function _parse_conclusion(a::Atom, ctx::AbstractString)::Tuple{Atom, Atom}
-    _head(a) === Base.Symbol("~>") || error("GSLT parse: $ctx must be (~> Src Tgt), got $(a)")
+    _head(a) === Base.Symbol("~>") ||
+        error("GSLT parse: $ctx must be (~> Src Tgt), got $(a)")
     xs = _args(a::Expression)
     length(xs) == 2 || error("GSLT parse: (~> Src Tgt) takes exactly 2 terms in $ctx")
     (xs[1], xs[2])
@@ -271,12 +284,15 @@ end
 An empty premise list is an axiom; a non-empty one is a congruence rule. Built as the nested
 `RewCtx`/`RewBase` spine the port uses, matching `Syntax.lean:128`."""
 function _parse_rewrite(f::Atom)::GRewriteDecl
-    _head(f) === :rewrite || error("GSLT parse: expected (rewrite Label (…) (~> S T)), got $(f)")
+    _head(f) === :rewrite ||
+        error("GSLT parse: expected (rewrite Label (…) (~> S T)), got $(f)")
     xs = _args(f::Expression)
-    length(xs) == 3 || error("GSLT parse: (rewrite Label (premises…) (~> S T)) takes 3 parts")
+    length(xs) == 3 ||
+        error("GSLT parse: (rewrite Label (premises…) (~> S T)) takes 3 parts")
     label = _symname(xs[1], "rewrite label")
     prems = xs[2]
-    prems isa Expression || error("GSLT parse: premises of `$label` must be a list; use () for none")
+    prems isa Expression ||
+        error("GSLT parse: premises of `$label` must be a list; use () for none")
     lhs, rhs = _parse_conclusion(xs[3], "the conclusion of `$label`")
     body::GRewriteBody = RewBase(lhs, rhs)
     for p in reverse((prems::Expression).children)
@@ -291,22 +307,34 @@ end
 function _cats_of_rule(r::GRule)::Set{Base.Symbol}
     out = Set{Base.Symbol}()
     function walk(c::GCat)
-        if c isa CatId;        push!(out, (c::CatId).name)
-        elseif c isa CatList;  walk((c::CatList).elem)
-        elseif c isa CatArrow; walk((c::CatArrow).dom); walk((c::CatArrow).cod)
-        else;                  for x in (c::CatProd).cs; walk(x); end
+        if c isa CatId
+            push!(out, (c::CatId).name)
+        elseif c isa CatList
+            walk((c::CatList).elem)
+        elseif c isa CatArrow
+            walk((c::CatArrow).dom)
+            walk((c::CatArrow).cod)
+        else
+            for x in (c::CatProd).cs
+                walk(x)
+            end
         end
         nothing
     end
     function witem(i::GItem)
-        if i isa ItemNonTerminal;  walk((i::ItemNonTerminal).cat)
-        elseif i isa ItemBind;     walk((i::ItemBind).cat)
-        elseif i isa ItemAbs;      witem((i::ItemAbs).item)
+        if i isa ItemNonTerminal
+            walk((i::ItemNonTerminal).cat)
+        elseif i isa ItemBind
+            walk((i::ItemBind).cat)
+        elseif i isa ItemAbs
+            witem((i::ItemAbs).item)
         end
         nothing
     end
     walk(r.cat)
-    for i in r.items; witem(i); end
+    for i in r.items
+        witem(i)
+    end
     out
 end
 
@@ -341,8 +369,10 @@ function _check_schematic(term::Atom, labels::Set{Base.Symbol}, ctx::AbstractStr
     n = _opt_name(term)
     n === nothing && return nothing                     # a literal of a grounded sort
     n in RESERVED_HEADS && return nothing
-    n in labels || error("GSLT parse: `$n` in $ctx is neither a declared constructor nor a " *
-                         "pattern variable — write `\$$n` if it is a variable")
+    n in labels || error(
+        "GSLT parse: `$n` in $ctx is neither a declared constructor nor a " *
+        "pattern variable — write `\$$n` if it is a variable"
+    )
     nothing
 end
 
@@ -361,10 +391,10 @@ function parse_presentation(a::Atom)::GPresentation
     rest = body[2:end]
 
     exports = GCat[_parse_cat(s) for s in _section(rest, :types)]
-    lits    = GLiteral[_parse_literal(f) for f in _section(rest, :literals)]
-    terms   = GRule[_parse_rule(f) for f in _section(rest, :terms)]
-    eqs     = GEquation[_parse_equation(f) for f in _section(rest, :equations)]
-    rews    = GRewriteDecl[_parse_rewrite(f) for f in _section(rest, :rewrites)]
+    lits = GLiteral[_parse_literal(f) for f in _section(rest, :literals)]
+    terms = GRule[_parse_rule(f) for f in _section(rest, :terms)]
+    eqs = GEquation[_parse_equation(f) for f in _section(rest, :equations)]
+    rews = GRewriteDecl[_parse_rewrite(f) for f in _section(rest, :rewrites)]
 
     # DUPLICATE LABELS — upstream tests this (`bad/RepeatLabel.module`). Two constructors sharing a
     # label make the signature ambiguous and every generated artifact inherits the ambiguity.
@@ -398,13 +428,17 @@ function parse_presentation(a::Atom)::GPresentation
     # incompatible sets of formation rules.
     built = Set{Base.Symbol}()
     for r in terms
-        n = cat_name(r.cat); n === nothing || push!(built, n)
+        n = cat_name(r.cat)
+        n === nothing || push!(built, n)
     end
     lseen = Set{Base.Symbol}()
     for l in lits
-        l.sort in declared || error("GSLT parse: literal sort `$(l.sort)` is not in (types …)")
-        l.sort in lseen && error("GSLT parse: duplicate literal declaration for `$(l.sort)`")
-        l.sort in built && error("GSLT parse: `$(l.sort)` is declared grounded but also has constructors")
+        l.sort in declared ||
+            error("GSLT parse: literal sort `$(l.sort)` is not in (types …)")
+        l.sort in lseen &&
+            error("GSLT parse: duplicate literal declaration for `$(l.sort)`")
+        l.sort in built &&
+            error("GSLT parse: `$(l.sort)` is declared grounded but also has constructors")
         push!(lseen, l.sort)
     end
 
@@ -416,7 +450,9 @@ function parse_presentation(a::Atom)::GPresentation
     end
     for r in rews
         rb = r.rw
-        while rb isa RewCtx; rb = (rb::RewCtx).rest; end
+        while rb isa RewCtx
+            rb = (rb::RewCtx).rest
+        end
         _check_schematic((rb::RewBase).lhs, seen, "the left side of rewrite `$(r.name)`")
         _check_schematic((rb::RewBase).rhs, seen, "the right side of rewrite `$(r.name)`")
     end

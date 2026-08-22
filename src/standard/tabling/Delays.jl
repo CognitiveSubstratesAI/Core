@@ -62,13 +62,13 @@ end
 table-level; the other two kinds name an answer."""
 struct Delay
     variant::Atom
-    answer::Union{Atom,Nothing}
+    answer::Union{Atom, Nothing}
     kind::DelayKind
 end
 
-delay_positive(v::Atom, a::Atom)        = Delay(v, a,       DELAY_POSITIVE)
-delay_negative(v::Atom)                 = Delay(v, nothing, DELAY_NEGATIVE)
-delay_negative_answer(v::Atom, a::Atom) = Delay(v, a,       DELAY_NEGATIVE_ANSWER)
+delay_positive(v::Atom, a::Atom) = Delay(v, a, DELAY_POSITIVE)
+delay_negative(v::Atom) = Delay(v, nothing, DELAY_NEGATIVE)
+delay_negative_answer(v::Atom, a::Atom) = Delay(v, a, DELAY_NEGATIVE_ANSWER)
 
 "A CONJUNCTION of delayed literals — upstream's `delay_set`."
 const DelaySet = Vector{Delay}
@@ -81,9 +81,16 @@ an unsatisfiable condition. Consumers read empty as "no information", never as "
 const DelayDNF = Vector{DelaySet}
 
 Base.show(io::IO, d::Delay) =
-    print(io, d.kind == DELAY_POSITIVE        ? string(d.variant) :
-              d.kind == DELAY_NEGATIVE        ? "(not $(d.variant))" :
-                                                "(not (== $(d.variant) $(d.answer)))")
+    print(
+        io,
+        if d.kind == DELAY_POSITIVE
+            string(d.variant)
+        elseif d.kind == DELAY_NEGATIVE
+            "(not $(d.variant))"
+        else
+            "(not (== $(d.variant) $(d.answer)))"
+        end
+    )
 
 "Two delayed literals are the same literal — used to keep conjunctions and disjunctions dup-free."
 delay_eq(a::Delay, b::Delay)::Bool =
@@ -140,7 +147,9 @@ function dnf_and(a::DelayDNF, b::DelayDNF)::DelayDNF
     out = DelayDNF()
     for sa in a, sb in b
         merged = sa
-        for d in sb; merged = delayset_add(merged, d); end
+        for d in sb
+            merged = delayset_add(merged, d)
+        end
         any(x -> set_eq(x, merged), out) || push!(out, merged)
     end
     out
@@ -163,15 +172,25 @@ end
 
 function _residual_set(s::DelaySet)::Atom
     lits = Atom[_residual_literal(d) for d in s]
-    isempty(lits)        ? Sym("True") :
-    length(lits) == 1    ? lits[1] :
-                           Expression(Atom[Sym(:and), lits...])
+    if isempty(lits)
+        Sym("True")
+    elseif length(lits) == 1
+        lits[1]
+    else
+        Expression(Atom[Sym(:and), lits...])
+    end
 end
 
 _residual_literal(d::Delay)::Atom =
-    d.kind == DELAY_POSITIVE ? d.variant :
-    d.kind == DELAY_NEGATIVE ? Expression(Atom[Sym(:not), d.variant]) :
-        Expression(Atom[Sym(:not), Expression(Atom[Sym(Symbol("==")), d.variant, d.answer::Atom])])
+    if d.kind == DELAY_POSITIVE
+        d.variant
+    elseif d.kind == DELAY_NEGATIVE
+        Expression(Atom[Sym(:not), d.variant])
+    else
+        Expression(
+            Atom[Sym(:not), Expression(Atom[Sym(Symbol("==")), d.variant, d.answer::Atom])]
+        )
+    end
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 # THE CONDITION ACCESSOR — `'$tbl_answer'/3`'s THIRD ARGUMENT.
@@ -231,7 +250,7 @@ case: `di == DL_UNDEFINED || !isEmptyBuffer(&di->delay_sets)`. Reason-less botto
 live inversion, not a hypothetical one. The truth value is decided by `is_undefined`, which is a TYPE
 test on the value, and only the SHAPE of the reason is read from the DNF.
 """
-function answer_condition(a::Atom)::Union{Symbol,DelayDNF}
+function answer_condition(a::Atom)::Union{Symbol, DelayDNF}
     is_undefined(a) || return COND_TRUE        # no delay info at all ⇒ unconditional (`:5373`)
     dnf = delays_of(a)
     isempty(dnf) ? COND_UNDEFINED : dnf        # DL_UNDEFINED (`:5371`) vs a real delay list
@@ -278,7 +297,7 @@ that distinction. Changing it means updating the `"(not p)"` assertions pinned i
 """
 function delay_lists(a::Atom)::Vector{Vector{Atom}}
     cond = answer_condition(a)
-    cond === COND_TRUE      && return Vector{Atom}[]
+    cond === COND_TRUE && return Vector{Atom}[]
     cond === COND_UNDEFINED && return Vector{Atom}[Atom[Sym("undefined")]]
     Vector{Atom}[Atom[_residual_literal(d) for d in s] for s in cond::DelayDNF]
 end

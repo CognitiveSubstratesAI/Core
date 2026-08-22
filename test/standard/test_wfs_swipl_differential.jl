@@ -59,7 +59,8 @@ _wfs_diff_canonical(xs::Vector{Atom})::Vector{Atom} =
 
 function _wfs_diff(prog::AbstractString, query::AbstractString)::Vector{Atom}
     Eval.untable_all!()
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     load_metta!(s, prog)
     _wfs_diff_canonical(load_metta!(s, query))
 end
@@ -77,8 +78,8 @@ Run `swipl -q <pl_file>` and parse its `classify/2` report into `goal => "true"|
 Returns an EMPTY dict on any failure (missing binary, non-zero exit, unparseable output) — the
 caller's positive control turns that into a visible failure rather than a silent pass.
 """
-function _swipl_classify(pl_file::AbstractString)::Dict{String,String}
-    out = Dict{String,String}()
+function _swipl_classify(pl_file::AbstractString)::Dict{String, String}
+    out = Dict{String, String}()
     swipl = Sys.which("swipl")
     swipl === nothing && return out
     txt = try
@@ -97,8 +98,8 @@ end
 
 "Core's answer for a goal, classified into SWI's vocabulary."
 function _core_classify(answers::Vector{Atom})::String
-    isempty(answers)             && return "false"
-    answers == Atom[_U_DIFF]     && return "undefined"
+    isempty(answers) && return "false"
+    answers == Atom[_U_DIFF] && return "undefined"
     answers == Atom[Sym("True")] && return "true"
     "other:" * string(answers)   # anything else is a real divergence, reported verbatim
 end
@@ -110,7 +111,7 @@ end
 
     if swipl === nothing
         @test_skip "swipl NOT ON PATH — the WFS differential did not run. Build it: see " *
-                   "docs/specs/SWIPL_CAPABILITY_MAP_2026-08-06.md §0(a). NOT a pass."
+            "docs/specs/SWIPL_CAPABILITY_MAP_2026-08-06.md §0(a). NOT a pass."
     elseif !isfile(pl)
         @test_skip "oracle program missing: $pl — the WFS differential did not run. NOT a pass."
     else

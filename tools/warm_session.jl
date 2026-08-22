@@ -41,29 +41,36 @@ cd(ROOT)
 # them: at snippet top level it reports the SESSION SCRIPT, not the snippet, even when
 # `include_string` is handed an anchored filename (measured).
 Core.eval(Main, :(const _WARM_TOP = Ref(true)))
-Core.eval(Main, :(const include = function (p::AbstractString)
-    isabspath(p) && return Base.include(Main, p)
-    if _WARM_TOP[]                                   # snippet's own include → project root
-        _WARM_TOP[] = false
-        try
-            return Base.include(Main, joinpath($ROOT, p))
-        finally
-            _WARM_TOP[] = true
+Core.eval(
+    Main,
+    :(
+        const include = function (p::AbstractString)
+            isabspath(p) && return Base.include(Main, p)
+            if _WARM_TOP[]                                   # snippet's own include → project root
+                _WARM_TOP[] = false
+                try
+                    return Base.include(Main, joinpath($ROOT, p))
+                finally
+                    _WARM_TOP[] = true
+                end
+            end
+            sp = Base.source_path(nothing)                   # nested → relative to the including file
+            Base.include(Main, joinpath(sp === nothing ? $ROOT : dirname(sp), p))
         end
-    end
-    sp = Base.source_path(nothing)                   # nested → relative to the including file
-    Base.include(Main, joinpath(sp === nothing ? $ROOT : dirname(sp), p))
-end))
+    )
+)
 
-const DIR  = joinpath(ROOT, ".warm")
+const DIR = joinpath(ROOT, ".warm")
 mkpath(DIR)
-const INF  = joinpath(DIR, "in.jl")
+const INF = joinpath(DIR, "in.jl")
 const OUTF = joinpath(DIR, "out.txt")
 const SEQF = joinpath(DIR, "seq")
 const DONE = joinpath(DIR, "done")
 const STATUSF = joinpath(DIR, "status")   # "0"/"1" — see the STATUS note in _serve
 function _serve()
-    rm(INF; force = true); rm(DONE; force = true); rm(STATUSF; force = true)
+    rm(INF; force=true)
+    rm(DONE; force=true)
+    rm(STATUSF; force=true)
     write(joinpath(DIR, "ready"), "1")
     println("WARM SESSION READY (MeTTaCore + MorkSupercompiler loaded)")
     seen = ""
@@ -81,7 +88,7 @@ function _serve()
                 revise_fail = nothing
                 if isdefined(Main, :Revise)
                     try
-                        Base.invokelatest(Main.Revise.revise; throw = true)
+                        Base.invokelatest(Main.Revise.revise; throw=true)
                     catch e
                         revise_fail = (e, catch_backtrace())
                     end
@@ -102,7 +109,10 @@ function _serve()
                     redirect_stdout(io) do
                         redirect_stderr(io) do
                             if revise_fail !== nothing
-                                println(io, "REVISE FAILED — refusing to run this snippet (session would be STALE):")
+                                println(
+                                    io,
+                                    "REVISE FAILED — refusing to run this snippet (session would be STALE):"
+                                )
                                 showerror(io, revise_fail[1], revise_fail[2])
                                 println(io)
                                 status = 1
@@ -114,7 +124,9 @@ function _serve()
                                     # tools/ — so `include("test/runtests.jl")` went looking for
                                     # tools/test/runtests.jl and died. `cd(ROOT)` above is NOT
                                     # sufficient: `include` uses the source-file context, not pwd().
-                                    Base.include_string(Main, code, joinpath(ROOT, "warm_snippet.jl"))
+                                    Base.include_string(
+                                        Main, code, joinpath(ROOT, "warm_snippet.jl")
+                                    )
                                 catch e
                                     showerror(io, e, catch_backtrace())
                                     println(io)

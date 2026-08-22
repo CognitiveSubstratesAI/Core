@@ -20,21 +20,29 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN rows-only — inversion (3-premise + singularity cap) + negation demand vs oracle" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
-    load_metta!(sp, """
-    (message Ai (stv 0.8 0.9))
-    (message Bi (stv 0.5 0.85))
-    (message BAi (stv 0.99 0.80))
-    (factor invf inversion (premises Ai Bi BAi) (conclusion ABc))
-    (produces ABc invf)
-    (message As (stv 0.0001 0.9))
-    (factor invs inversion (premises As Bi BAi) (conclusion ABs))
-    (produces ABs invs)
-    (message X (stv 0.7 0.85))
-    (factor negf negation (premises X) (conclusion NX))
-    (produces NX negf)
-    """)
+    load_metta!(
+        sp,
+        """
+(message Ai (stv 0.8 0.9))
+(message Bi (stv 0.5 0.85))
+(message BAi (stv 0.99 0.80))
+(factor invf inversion (premises Ai Bi BAi) (conclusion ABc))
+(produces ABc invf)
+(message As (stv 0.0001 0.9))
+(factor invs inversion (premises As Bi BAi) (conclusion ABs))
+(produces ABs invs)
+(message X (stv 0.7 0.85))
+(factor negf negation (premises X) (conclusion NX))
+(produces NX negf)
+"""
+    )
 
     asserts = """
     !(assertEqual (fwd-inversion (stv 0.8 0.9) (stv 0.5 0.85) (stv 0.99 0.80)) (stv 0.6187499999999999 0.6120000000000001))
@@ -44,7 +52,9 @@ using MeTTaCore.StandardMeTTa
     !(assertEqual (factor-demand-single NX 1.0) (dsingle 0.15000000000000002))
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 5
 end

@@ -37,24 +37,27 @@ function _register_arithmetic!()
     # `gcall("%", [7,0]) === nothing` pins. The interpreter renders the same decision as an
     # `(Error … DivisionByZero)` atom. Same decision, two renderings — that is the seam's contract.
     for (name, op) in [("+", +), ("-", -), ("*", *),
-                       ("/", NumericSeam.seam_div), ("%", NumericSeam.seam_mod)]
-        MORK.register_grounded!(name, args -> begin
-            # STRICTLY BINARY (was `< 2`, which admitted 2 OR MORE and then read only args[1..2],
-            # so `(+ 1 2 3)` answered 3 with argument 3 SILENTLY IGNORED — measured 2026-07-29).
-            # The interpreter's `_num_binop` requires exactly 2 (`length(xs) == 2 || ExecNoReduce`),
-            # so anything else must decline here too, not quietly truncate.
-            length(args) == 2 || return nothing
-            a = _gnum(args[1]); b = _gnum(args[2])
-            (a === nothing || b === nothing) && return nothing
-            # `rem(::Int, 0)` throws a Julia DivideError. A HOST exception must never escape into
-            # MeTTa evaluation, so decline (leave the term unreduced) instead of crashing — and
-            # instead of the old code's silent `NaN`, which came from doing integer rem in floats.
-            # (The interpreter's own `%` DOES currently throw here; tracked separately, since
-            # changing it needs the hyperon oracle to say what `(% 7 0)` should produce.)
-            r = op(a, b)
-            r isa NumericSeam.SeamError && return nothing   # decline; see the note above
-            string(r)
-        end)
+        ("/", NumericSeam.seam_div), ("%", NumericSeam.seam_mod)]
+        MORK.register_grounded!(
+            name, args -> begin
+                # STRICTLY BINARY (was `< 2`, which admitted 2 OR MORE and then read only args[1..2],
+                # so `(+ 1 2 3)` answered 3 with argument 3 SILENTLY IGNORED — measured 2026-07-29).
+                # The interpreter's `_num_binop` requires exactly 2 (`length(xs) == 2 || ExecNoReduce`),
+                # so anything else must decline here too, not quietly truncate.
+                length(args) == 2 || return nothing
+                a = _gnum(args[1])
+                b = _gnum(args[2])
+                (a === nothing || b === nothing) && return nothing
+                # `rem(::Int, 0)` throws a Julia DivideError. A HOST exception must never escape into
+                # MeTTa evaluation, so decline (leave the term unreduced) instead of crashing — and
+                # instead of the old code's silent `NaN`, which came from doing integer rem in floats.
+                # (The interpreter's own `%` DOES currently throw here; tracked separately, since
+                # changing it needs the hyperon oracle to say what `(% 7 0)` should produce.)
+                r = op(a, b)
+                r isa NumericSeam.SeamError && return nothing   # decline; see the note above
+                string(r)
+            end
+        )
     end
 end
 
@@ -65,14 +68,18 @@ function _register_comparison!()
     # Int64s above 2^53 coerce to the same Float64, so `(< 9007199254740993 9007199254740994)`
     # compared EQUAL and answered False. Type-preserving parse + Julia's own promotion is exact.
     for (name, op) in [("<", <), (">", >), ("<=", <=), (">=", >=), ("==", ==)]
-        MORK.register_grounded!(name, args -> begin
-            length(args) == 2 || return nothing      # strictly binary — see _register_arithmetic!
-            a = _gnum(args[1]); b = _gnum(args[2])
-            if a !== nothing && b !== nothing
-                return op(a, b) ? "True" : "False"
+        MORK.register_grounded!(
+            name,
+            args -> begin
+                length(args) == 2 || return nothing      # strictly binary — see _register_arithmetic!
+                a = _gnum(args[1])
+                b = _gnum(args[2])
+                if a !== nothing && b !== nothing
+                    return op(a, b) ? "True" : "False"
+                end
+                (op === (==)) ? (args[1] == args[2] ? "True" : "False") : nothing
             end
-            (op === (==)) ? (args[1] == args[2] ? "True" : "False") : nothing
-        end)
+        )
     end
 end
 
@@ -93,7 +100,7 @@ function _register_string_ops!()
     # Per MeTTa stdlib: !(trace! "label" expr) → prints "label", returns expr
     MORK.register_grounded!("trace!", args -> begin
         label = length(args) >= 1 ? args[1] : ""
-        val   = length(args) >= 2 ? args[2] : "()"
+        val = length(args) >= 2 ? args[2] : "()"
         println("[trace] ", label, " = ", val)
         val   # pass the value through
     end)
@@ -102,20 +109,27 @@ end
 # ── Type checks ───────────────────────────────────────────────────────────────
 
 function _register_type_checks!()
-    MORK.register_grounded!("is-number", args -> begin
-        isempty(args) && return "False"
-        tryparse(Float64, args[1]) !== nothing ? "True" : "False"
-    end)
-    MORK.register_grounded!("is-symbol", args -> begin
-        isempty(args) && return "False"
-        s = args[1]
-        !startswith(s, "(") && tryparse(Float64, s) === nothing ? "True" : "False"
-    end)
-    MORK.register_grounded!("is-empty", args -> begin
-        isempty(args) && return "True"
-        s = strip(args[1])
-        (s == "()" || isempty(s)) ? "True" : "False"
-    end)
+    MORK.register_grounded!(
+        "is-number", args -> begin
+            isempty(args) && return "False"
+            tryparse(Float64, args[1]) !== nothing ? "True" : "False"
+        end
+    )
+    MORK.register_grounded!(
+        "is-symbol",
+        args -> begin
+            isempty(args) && return "False"
+            s = args[1]
+            !startswith(s, "(") && tryparse(Float64, s) === nothing ? "True" : "False"
+        end
+    )
+    MORK.register_grounded!(
+        "is-empty", args -> begin
+            isempty(args) && return "True"
+            s = strip(args[1])
+            (s == "()" || isempty(s)) ? "True" : "False"
+        end
+    )
 end
 
 # ── List ops ─────────────────────────────────────────────────────────────────
@@ -128,16 +142,22 @@ end
 # ── Boolean ops ───────────────────────────────────────────────────────────────
 
 function _register_boolean_ops!()
-    MORK.register_grounded!("and", args -> begin
-        all(a -> a == "True", args) ? "True" : "False"
-    end)
-    MORK.register_grounded!("or", args -> begin
-        any(a -> a == "True", args) ? "True" : "False"
-    end)
-    MORK.register_grounded!("not", args -> begin
-        isempty(args) && return "False"
-        args[1] == "False" || args[1] == "()" ? "True" : "False"
-    end)
+    MORK.register_grounded!(
+        "and", args -> begin
+            all(a -> a == "True", args) ? "True" : "False"
+        end
+    )
+    MORK.register_grounded!(
+        "or", args -> begin
+            any(a -> a == "True", args) ? "True" : "False"
+        end
+    )
+    MORK.register_grounded!(
+        "not", args -> begin
+            isempty(args) && return "False"
+            args[1] == "False" || args[1] == "()" ? "True" : "False"
+        end
+    )
 end
 
 # ── Extended math (*-math suffix — Mettatron/CeTTa convention) ───────────────
@@ -151,12 +171,21 @@ rules are stated IN TERMS of it ("abs/trunc/ceil/floor/round PRESERVE type; sqrt
 Float"), so collapsing `4` and `4.0` makes those rules unstatable.
 """
 _g2atom(s::AbstractString) = begin
-    v = MORK.grounded_num(s); v !== nothing && return StandardMeTTa.Grounded(v)   # 2nd copy, gone
+    v = MORK.grounded_num(s)
+    v !== nothing && return StandardMeTTa.Grounded(v)   # 2nd copy, gone
     # STRING is GROUNDED, not SYMBOL — `GROUNDED ::= STRING | WORD` (metta_grammar.ebnf). Without this
     # a quoted literal fell through to `Sym(Symbol("\"hello\""))`, i.e. a symbol whose NAME included
     # the quotes, where the interpreter's own `parse_atom` (Eval.jl:2453) yields
     # `Grounded("hello")`. Same unquoting rule as the parser: strip the leading quote.
-    startswith(s, "\"") && return StandardMeTTa.Grounded(String(s[nextind(s, 1):(endswith(s, "\"") && length(s) >= 2 ? prevind(s, lastindex(s)) : lastindex(s))]))
+    startswith(s, "\"") && return StandardMeTTa.Grounded(
+        String(
+            s[nextind(s, 1):(if endswith(s, "\"") && length(s) >= 2
+                prevind(s, lastindex(s))
+            else
+                lastindex(s)
+            end)]
+        )
+    )
     # VARIABLE is one of the grammar's FOUR atom kinds (metta_grammar.ebnf), so it must not fall
     # through to Sym. Two spellings reach here: parse-time `$x`, and `__var_x` — the GROUND symbol
     # `load_metta!(::CoreSpace)` writes so a variable's NAME survives the MORK round trip. Collapsing
@@ -229,20 +258,29 @@ end
 
 function _register_math!()
     # Every op here EXISTS in CoreMathOps.jl (hyperon-faithful) — delegate, never re-derive.
-    for name in ["sqrt-math", "abs-math", "log-math", "floor-math", "ceil-math", "round-math",
-                 "trunc-math", "sin-math", "cos-math", "tan-math", "asin-math", "acos-math",
-                 "atan-math", "pow-math", "isnan-math", "isinf-math"]
+    for name in
+        ["sqrt-math", "abs-math", "log-math", "floor-math", "ceil-math", "round-math",
+        "trunc-math", "sin-math", "cos-math", "tan-math", "asin-math", "acos-math",
+        "atan-math", "pow-math", "isnan-math", "isinf-math"]
         local _n = name
         MORK.register_grounded!(_n, args -> _delegate_grounded(_n, args))
     end
     # `exp-math` has NO counterpart in CoreMathOps (hyperon's math.rs does not define it) — it is our
     # own addition, so it is implemented here, following the same ALWAYS-Float + catch-domain rule.
-    MORK.register_grounded!("exp-math", args -> begin
-        isempty(args) && return nothing
-        x = tryparse(Float64, args[1])
-        x === nothing && return nothing
-        string(try exp(x) catch e; e isa DomainError ? NaN : rethrow() end)
-    end)
+    MORK.register_grounded!(
+        "exp-math", args -> begin
+            isempty(args) && return nothing
+            x = tryparse(Float64, args[1])
+            x === nothing && return nothing
+            string(
+                try
+                    exp(x)
+                catch e
+                    e isa DomainError ? NaN : rethrow()
+                end
+            )
+        end
+    )
 end
 
 # Vector ops are PRIMUS-specific extensions (ECAN, PLN cosine-similarity).
@@ -272,28 +310,32 @@ function _register_equality_ops!()
     # =alpha: structural equality ignoring variable names
     # (=alpha (Father $X) (Father $Y)) → True  (same structure, vars renamed)
     # (=alpha (Father $X) (Son $X))   → False (different head)
-    MORK.register_grounded!("=alpha", args -> begin
-        length(args) < 2 && return "False"
-        _alpha_eq(args[1], args[2]) ? "True" : "False"
-    end)
+    MORK.register_grounded!(
+        "=alpha", args -> begin
+            length(args) < 2 && return "False"
+            _alpha_eq(args[1], args[2]) ? "True" : "False"
+        end
+    )
 
     # noreduce-eq: structural equality WITHOUT evaluating args.
     # Grounded because it must receive unevaluated S-expression strings.
-    MORK.register_grounded!("noreduce-eq", args -> begin
-        length(args) < 2 && return "False"
-        args[1] == args[2] ? "True" : "False"
-    end)
+    MORK.register_grounded!(
+        "noreduce-eq", args -> begin
+            length(args) < 2 && return "False"
+            args[1] == args[2] ? "True" : "False"
+        end
+    )
 end
 
 # Alpha-equivalence: two expressions are alpha-equal if they have the same
 # structure with variables renamed consistently.
-function _alpha_eq(a::String, b::String) :: Bool
+function _alpha_eq(a::String, b::String)::Bool
     a_parsed = MeTTaCore.from_sexpr(a)
     b_parsed = MeTTaCore.from_sexpr(b)
-    _alpha_eq_val(a_parsed, b_parsed, Dict{Symbol,Symbol}(), Dict{Symbol,Symbol}())
+    _alpha_eq_val(a_parsed, b_parsed, Dict{Symbol, Symbol}(), Dict{Symbol, Symbol}())
 end
 
-function _alpha_eq_val(a, b, ab::Dict{Symbol,Symbol}, ba::Dict{Symbol,Symbol}) :: Bool
+function _alpha_eq_val(a, b, ab::Dict{Symbol, Symbol}, ba::Dict{Symbol, Symbol})::Bool
     a_is_var = a isa Symbol && startswith(string(a), "\$")
     b_is_var = b isa Symbol && startswith(string(b), "\$")
     if a_is_var && b_is_var
@@ -301,7 +343,9 @@ function _alpha_eq_val(a, b, ab::Dict{Symbol,Symbol}, ba::Dict{Symbol,Symbol}) :
         prev_ab = get(ab, a, nothing)
         prev_ba = get(ba, b, nothing)
         if prev_ab === nothing && prev_ba === nothing
-            ab[a] = b; ba[b] = a; return true
+            ab[a] = b
+            ba[b] = a
+            return true
         end
         return prev_ab === b && prev_ba === a
     end
@@ -386,81 +430,116 @@ function _register_type_ops!()
     # needs no space, and the interpreter's is a pure `Operation` (Eval.jl:2043), so it can be
     # delegated. Doing so fixes `(get-metatype True)`: Core's `True` is a `Sym`, not a grounded Bool,
     # so the answer is Symbol — the old local copy said Grounded.
-    MORK.register_grounded!("get-metatype", args -> _delegate_grounded("get-metatype", args))
+    MORK.register_grounded!(
+        "get-metatype", args -> _delegate_grounded("get-metatype", args)
+    )
 
-    MORK.register_grounded!("match-types", args -> begin
-        length(args) < 4 && return nothing
-        t1, t2, yes, no = args[1], args[2], args[3], args[4]
-        # Per MeTTa spec match_types:
-        #   if t1 == %Undefined% or t1 == Atom or t2 == %Undefined% or t2 == Atom:
-        #       return [bindings]
-        #   else return match_atoms(t1, t2)
-        # Five universal short-circuits (four meta-type cases + structural equality).
-        matches = (t1 == "%Undefined%" || t1 == "Atom" ||
-                   t2 == "%Undefined%" || t2 == "Atom" ||
-                   t1 == t2)
-        matches ? yes : no
-    end)
-
-    MORK.register_grounded!("type-cast", args -> begin
-        # (type-cast atom type space) → atom if type matches, Error if not
-        length(args) < 2 && return nothing
-        atom, typ = args[1], args[2]
-        inferred = begin
-            s = strip(atom)
-            tryparse(Int, s) !== nothing    ? "Number" :
-            tryparse(Float64, s) !== nothing ? "Number" :
-            (s == "True" || s == "False" || s == "true" || s == "false") ? "Bool" :
-            startswith(s, "\"")            ? "String" :
-            startswith(s, "(")             ? "Expression" : "Symbol"
+    MORK.register_grounded!(
+        "match-types",
+        args -> begin
+            length(args) < 4 && return nothing
+            t1, t2, yes, no = args[1], args[2], args[3], args[4]
+            # Per MeTTa spec match_types:
+            #   if t1 == %Undefined% or t1 == Atom or t2 == %Undefined% or t2 == Atom:
+            #       return [bindings]
+            #   else return match_atoms(t1, t2)
+            # Five universal short-circuits (four meta-type cases + structural equality).
+            matches = (
+                t1 == "%Undefined%" || t1 == "Atom" ||
+                t2 == "%Undefined%" || t2 == "Atom" ||
+                t1 == t2
+            )
+            matches ? yes : no
         end
-        (typ == "Atom" || typ == "%Undefined%" || typ == inferred) ? atom :
-            "(Error $atom (BadType $typ $inferred))"
-    end)
+    )
 
-    MORK.register_grounded!("match-type-or", args -> begin
-        length(args) < 3 && return "False"
-        val, t1, t2 = args[1], args[2], args[3]
-        (val == "True" && (t1 == "Bool" || t2 == "Bool")) ||
-        (t1 == t2) ? "True" : val
-    end)
-
-    MORK.register_grounded!("first-from-pair", args -> begin
-        isempty(args) && return nothing
-        s = strip(args[1])
-        if startswith(s, "(") && endswith(s, ")")
-            tokens = MeTTaCore._tokenise(s[2:end-1])
-            isempty(tokens) ? nothing : tokens[1]
-        else
-            s
+    MORK.register_grounded!(
+        "type-cast",
+        args -> begin
+            # (type-cast atom type space) → atom if type matches, Error if not
+            length(args) < 2 && return nothing
+            atom, typ = args[1], args[2]
+            inferred = begin
+                s = strip(atom)
+                if tryparse(Int, s) !== nothing
+                    "Number"
+                elseif tryparse(Float64, s) !== nothing
+                    "Number"
+                elseif (s == "True" || s == "False" || s == "true" || s == "false")
+                    "Bool"
+                elseif startswith(s, "\"")
+                    "String"
+                elseif startswith(s, "(")
+                    "Expression"
+                else
+                    "Symbol"
+                end
+            end
+            if (typ == "Atom" || typ == "%Undefined%" || typ == inferred)
+                atom
+            else
+                "(Error $atom (BadType $typ $inferred))"
+            end
         end
-    end)
+    )
+
+    MORK.register_grounded!(
+        "match-type-or",
+        args -> begin
+            length(args) < 3 && return "False"
+            val, t1, t2 = args[1], args[2], args[3]
+            if (val == "True" && (t1 == "Bool" || t2 == "Bool")) ||
+                (t1 == t2)
+                "True"
+            else
+                val
+            end
+        end
+    )
+
+    MORK.register_grounded!(
+        "first-from-pair", args -> begin
+            isempty(args) && return nothing
+            s = strip(args[1])
+            if startswith(s, "(") && endswith(s, ")")
+                tokens = MeTTaCore._tokenise(s[2:(end - 1)])
+                isempty(tokens) ? nothing : tokens[1]
+            else
+                s
+            end
+        end
+    )
 end
 
 # ── String / format ops ───────────────────────────────────────────────────────
 
 function _register_format_ops!()
-    MORK.register_grounded!("format-args", args -> begin
-        length(args) < 2 && return isempty(args) ? "\"\"" : args[1]
-        template = strip(args[1], ['"'])
-        vals_s   = strip(args[2])
-        vals = if startswith(vals_s, "(") && endswith(vals_s, ")")
-            MeTTaCore._tokenise(vals_s[2:end-1])
-        else
-            [vals_s]
+    MORK.register_grounded!(
+        "format-args",
+        args -> begin
+            length(args) < 2 && return isempty(args) ? "\"\"" : args[1]
+            template = strip(args[1], ['"'])
+            vals_s = strip(args[2])
+            vals = if startswith(vals_s, "(") && endswith(vals_s, ")")
+                MeTTaCore._tokenise(vals_s[2:(end - 1)])
+            else
+                [vals_s]
+            end
+            result = template
+            for v in vals
+                i = findfirst("{}", result)
+                i === nothing && break
+                result = result[1:(first(i) - 1)] * v * result[(last(i) + 1):end]
+            end
+            "\"$result\""
         end
-        result = template
-        for v in vals
-            i = findfirst("{}", result)
-            i === nothing && break
-            result = result[1:first(i)-1] * v * result[last(i)+1:end]
-        end
-        "\"$result\""
-    end)
+    )
 
-    MORK.register_grounded!("str-concat", args -> begin
-        "\"$(join(strip.(args, ['"']), ""))\""
-    end)
+    MORK.register_grounded!(
+        "str-concat", args -> begin
+            "\"$(join(strip.(args, ['"']), ""))\""
+        end
+    )
 end
 
 # ── Nondeterministic set ops (superpose-based, not -atom suffix) ──────────────
@@ -487,19 +566,25 @@ end
 # ── Random ops (stubbed — need RNG resource) ─────────────────────────────────
 
 function _register_random_ops!()
-    MORK.register_grounded!("random-int", args -> begin
-        length(args) < 2 && return "0"
-        lo = tryparse(Int, args[end-1]); hi = tryparse(Int, args[end])
-        (lo === nothing || hi === nothing) && return "0"
-        string(rand(lo:hi))
-    end)
+    MORK.register_grounded!(
+        "random-int", args -> begin
+            length(args) < 2 && return "0"
+            lo = tryparse(Int, args[end - 1])
+            hi = tryparse(Int, args[end])
+            (lo === nothing || hi === nothing) && return "0"
+            string(rand(lo:hi))
+        end
+    )
 
-    MORK.register_grounded!("random-float", args -> begin
-        length(args) < 2 && return "0.0"
-        lo = tryparse(Float64, args[end-1]); hi = tryparse(Float64, args[end])
-        (lo === nothing || hi === nothing) && return "0.0"
-        string(lo + rand() * (hi - lo))
-    end)
+    MORK.register_grounded!(
+        "random-float", args -> begin
+            length(args) < 2 && return "0.0"
+            lo = tryparse(Float64, args[end - 1])
+            hi = tryparse(Float64, args[end])
+            (lo === nothing || hi === nothing) && return "0.0"
+            string(lo + rand() * (hi - lo))
+        end
+    )
 end
 
 # ── WILLIAM algorithm primitives ─────────────────────────────────────────────
@@ -513,40 +598,62 @@ function _register_metamo_primitives!()
     # args = [alpha_str, current_vec_str, target_vec_str]
     # current/target are (G g1 g2 ...) or (M m1 m2 ...) atoms — tag preserved.
     # Returns a new atom of same type with blended numeric values.
-    MORK.register_grounded!("MetaMo.blend-vec", args -> begin
-        length(args) < 3 && return args[1]
-        alpha = tryparse(Float64, args[1])
-        alpha === nothing && return args[2]   # fallback: return current unchanged
-        cur_s = strip(args[2]); tgt_s = strip(args[3])
-        # Parse tagged vectors: (G 0.8 0.3) → tag="G", vals=[0.8, 0.3]
-        if !startswith(cur_s, "(") || !startswith(tgt_s, "(")
-            return args[2]
+    MORK.register_grounded!(
+        "MetaMo.blend-vec",
+        args -> begin
+            length(args) < 3 && return args[1]
+            alpha = tryparse(Float64, args[1])
+            alpha === nothing && return args[2]   # fallback: return current unchanged
+            cur_s = strip(args[2])
+            tgt_s = strip(args[3])
+            # Parse tagged vectors: (G 0.8 0.3) → tag="G", vals=[0.8, 0.3]
+            if !startswith(cur_s, "(") || !startswith(tgt_s, "(")
+                return args[2]
+            end
+            cur_toks = MeTTaCore._tokenise(cur_s[2:prevind(cur_s, lastindex(cur_s))])
+            tgt_toks = MeTTaCore._tokenise(tgt_s[2:prevind(tgt_s, lastindex(tgt_s))])
+            (isempty(cur_toks) || isempty(tgt_toks)) && return args[2]
+            tag = cur_toks[1]   # preserve the G or M tag
+            cur_nums = tryparse.(Float64, cur_toks[2:end])
+            tgt_nums = tryparse.(Float64, tgt_toks[2:end])
+            (any(isnothing, cur_nums) || any(isnothing, tgt_nums)) && return args[2]
+            length(cur_nums) != length(tgt_nums) && return args[2]
+            blended = [(1-alpha) * c + alpha * t
+                       for (c, t) in zip(cur_nums, tgt_nums)]
+            "($tag $(join(round.(blended, digits=6), " ")))"
         end
-        cur_toks = MeTTaCore._tokenise(cur_s[2:prevind(cur_s, lastindex(cur_s))])
-        tgt_toks = MeTTaCore._tokenise(tgt_s[2:prevind(tgt_s, lastindex(tgt_s))])
-        (isempty(cur_toks) || isempty(tgt_toks)) && return args[2]
-        tag = cur_toks[1]   # preserve the G or M tag
-        cur_nums = tryparse.(Float64, cur_toks[2:end])
-        tgt_nums = tryparse.(Float64, tgt_toks[2:end])
-        (any(isnothing, cur_nums) || any(isnothing, tgt_nums)) && return args[2]
-        length(cur_nums) != length(tgt_nums) && return args[2]
-        blended = [(1-alpha) * c + alpha * t
-                   for (c, t) in zip(cur_nums, tgt_nums)]
-        "($tag $(join(round.(blended, digits=6), " ")))"
-    end)
+    )
 end
 
 function _register_william_primitives!()
-    MORK.register_grounded!("WILLIAM.lgg", args -> begin
-        length(args) < 2 && return "\$"
-        a_str = args[1]; b_str = args[2]
-        a_expr = try MORK.sexpr_to_expr(a_str) catch; return "\$" end
-        b_expr = try MORK.sexpr_to_expr(b_str) catch; return "\$" end
-        out = sizehint!(Vector{UInt8}(), max(length(a_expr.buf), length(b_expr.buf), 16))
-        st  = MORK._AuState()
-        MORK._au_merge!(a_expr.buf, 1, b_expr.buf, 1, out, st)
-        try MORK.expr_serialize(out) catch; "\$" end
-    end)
+    MORK.register_grounded!(
+        "WILLIAM.lgg",
+        args -> begin
+            length(args) < 2 && return "\$"
+            a_str = args[1]
+            b_str = args[2]
+            a_expr = try
+                MORK.sexpr_to_expr(a_str)
+            catch
+                return "\$"
+            end
+            b_expr = try
+                MORK.sexpr_to_expr(b_str)
+            catch
+                return "\$"
+            end
+            out = sizehint!(
+                Vector{UInt8}(), max(length(a_expr.buf), length(b_expr.buf), 16)
+            )
+            st = MORK._AuState()
+            MORK._au_merge!(a_expr.buf, 1, b_expr.buf, 1, out, st)
+            try
+                MORK.expr_serialize(out)
+            catch
+                "\$"
+            end
+        end
+    )
 end
 
 # ── Registration entry point ──────────────────────────────────────────────────
@@ -570,38 +677,46 @@ end
 function _register_region_ops!()
     # (new-region! &name) -> (SpaceRef &name).  Idempotent: naming an existing region returns its
     # handle rather than erroring, so a script may declare its spaces at the top and re-run.
-    MORK.register_grounded!("new-region!", args -> begin
-        isempty(args) && return "(Error new-region! \"expects a &name\")"
-        nm = Symbol(strip(args[1]))
-        pfx = derive_prefix_from_name(nm)
-        pfx === nothing && return "(Error new-region! \"name must begin with & (got $(nm))\")"
-        if lookup_prefix(nm) === nothing
-            try
-                check_prefix_free(nm, pfx)          # CONTAINMENT_POLICY — loud, before it widens a query
-            catch err
-                return "(Error new-region! \"$(sprint(showerror, err))\")"
+    MORK.register_grounded!(
+        "new-region!",
+        args -> begin
+            isempty(args) && return "(Error new-region! \"expects a &name\")"
+            nm = Symbol(strip(args[1]))
+            pfx = derive_prefix_from_name(nm)
+            pfx === nothing &&
+                return "(Error new-region! \"name must begin with & (got $(nm))\")"
+            if lookup_prefix(nm) === nothing
+                try
+                    check_prefix_free(nm, pfx)          # CONTAINMENT_POLICY — loud, before it widens a query
+                catch err
+                    return "(Error new-region! \"$(sprint(showerror, err))\")"
+                end
+                register_prefix!(nm, pfx)
             end
-            register_prefix!(nm, pfx)
+            "(SpaceRef $(nm))"
         end
-        "(SpaceRef $(nm))"
-    end)
+    )
 
     # (space-ref &name) -> (SpaceRef &name) for an EXISTING region; () when unregistered, so a caller
     # can test reachability without creating anything. Creation is `new-region!`, and it should look
     # like a different act than lookup.
-    MORK.register_grounded!("space-ref", args -> begin
-        isempty(args) && return "()"
-        nm = Symbol(strip(args[1]))
-        lookup_prefix(nm) === nothing ? "()" : "(SpaceRef $(nm))"
-    end)
+    MORK.register_grounded!(
+        "space-ref", args -> begin
+            isempty(args) && return "()"
+            nm = Symbol(strip(args[1]))
+            lookup_prefix(nm) === nothing ? "()" : "(SpaceRef $(nm))"
+        end
+    )
 
     # (region-count (SpaceRef &name)) -> how many atoms the region holds. Small, but it is the op that
     # proves a handle RESOLVES to live storage rather than merely parsing.
-    MORK.register_grounded!("region-count", args -> begin
-        isempty(args) && return "0"
-        cs = _resolve_space(from_sexpr(strip(args[1])))
-        cs === nothing ? "0" : string(length(core_atoms(cs)))
-    end)
+    MORK.register_grounded!(
+        "region-count", args -> begin
+            isempty(args) && return "0"
+            cs = _resolve_space(from_sexpr(strip(args[1])))
+            cs === nothing ? "0" : string(length(core_atoms(cs)))
+        end
+    )
 end
 
 function register_core_primitives!()

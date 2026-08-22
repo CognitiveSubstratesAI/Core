@@ -29,52 +29,80 @@ const _I = MeTTaCore.Eval
 _pint(s) = _I.parse_from(_I.tokenize(s), Ref(1))       # string → interpreter Atom
 
 "min-of-K per-op wall time (s); adaptive repeats so O(N) cases don't run forever"
-function _best(f; N = 1, K = 7)
+function _best(f; N=1, K=7)
     reps = clamp(div(80_000, max(N, 1)), 1, 400)
     f()                                                # warm JIT
     t = Inf
     for _ in 1:K
-        e = @elapsed (for _ in 1:reps; f(); end)
+        e = @elapsed (
+            for _ in 1:reps
+                f()
+            end
+        )
         t = min(t, e / reps)
     end
     t
 end
-_us(t) = round(t * 1e6; digits = 3)
+_us(t) = round(t * 1e6; digits=3)
 
-function run_store_match_scaling(; Ns = [200, 2000, 20000])
+function run_store_match_scaling(; Ns=[200, 2000, 20000])
     rows = Dict{String, Vector{Float64}}()
     push_r(k, v) = (haskey(rows, k) || (rows[k] = Float64[]); push!(rows[k], v))
 
     for N in Ns
-        k = div(N, 2); khs = Symbol("f$k")
+        k = div(N, 2)
+        khs = Symbol("f$k")
         println("\n===== N = $N  (lookup head f$k) =====")
 
         sp = _I.Space()
-        for i in 1:N; _I.add_atom!(sp, _pint("(= (f$i a) b$i)")); end
+        for i in 1:N
+            _I.add_atom!(sp, _pint("(= (f$i a) b$i)"))
+        end
         patA = _pint("(= (f$k \$x) \$body)")
-        tA = _best(N = N) do; _I.query(sp, patA); end
-        println("  (A) INTERP query           $(_us(tA)) µs"); push_r("A", tA)
+        tA = _best(; N=N) do ;
+            _I.query(sp, patA)
+        end
+        println("  (A) INTERP query           $(_us(tA)) µs")
+        push_r("A", tA)
 
         cs = _M.new_core_space()
-        for i in 1:N; _M.core_add!(cs, "(= (f$i a) b$i)"); end
-        tB = _best(N = N) do; empty!(cs.rule_cache); _M.core_rules(cs, khs); end
-        println("  (B) core_rules COLD (walk) $(_us(tB)) µs"); push_r("B", tB)
+        for i in 1:N
+            _M.core_add!(cs, "(= (f$i a) b$i)")
+        end
+        tB = _best(; N=N) do ;
+            empty!(cs.rule_cache)
+            _M.core_rules(cs, khs)
+        end
+        println("  (B) core_rules COLD (walk) $(_us(tB)) µs")
+        push_r("B", tB)
         patD = [:(=), [khs, :a], Symbol("\$b")]
-        tD = _best(N = N) do; _M.core_match(cs, patD); end
-        println("  (D) core_match nested      $(_us(tD)) µs"); push_r("D", tD)
+        tD = _best(; N=N) do ;
+            _M.core_match(cs, patD)
+        end
+        println("  (D) core_match nested      $(_us(tD)) µs")
+        push_r("D", tD)
 
         cs2 = _M.new_core_space()
-        for i in 1:N; _M.core_add!(cs2, "(rule f$i a b$i)"); end
+        for i in 1:N
+            _M.core_add!(cs2, "(rule f$i a b$i)")
+        end
         patE = [:rule, khs, Symbol("\$a"), Symbol("\$b")]
-        tE = _best(N = N) do; _M.core_match(cs2, patE); end
-        println("  (E) core_match FLAT-prefix $(_us(tE)) µs"); push_r("E", tE)
+        tE = _best(; N=N) do ;
+            _M.core_match(cs2, patE)
+        end
+        println("  (E) core_match FLAT-prefix $(_us(tE)) µs")
+        push_r("E", tE)
     end
 
-    println("\n===== SCALING (t[N=$(Ns[end])]/t[N=$(Ns[1])]; ~1 = O(1), ~$(div(Ns[end],Ns[1])) = O(N)) =====")
+    println(
+        "\n===== SCALING (t[N=$(Ns[end])]/t[N=$(Ns[1])]; ~1 = O(1), ~$(div(Ns[end],Ns[1])) = O(N)) ====="
+    )
     for (k, label) in [("A", "(A) INTERP query"), ("B", "(B) core_rules COLD walk"),
-                       ("D", "(D) core_match nested"), ("E", "(E) core_match FLAT-prefix")]
+        ("D", "(D) core_match nested"), ("E", "(E) core_match FLAT-prefix")]
         v = rows[k]
-        println("  $label:  $(round(v[end]/v[1]; digits=1))×   ($(_us(v[1]))→$(_us(v[end])) µs)")
+        println(
+            "  $label:  $(round(v[end]/v[1]; digits=1))×   ($(_us(v[1]))→$(_us(v[end])) µs)"
+        )
     end
     rows
 end

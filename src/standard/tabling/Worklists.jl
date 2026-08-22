@@ -63,7 +63,7 @@ mutable struct Cluster
     answers::Vector{Atom}
     deps::Vector{Dependency}
 end
-answer_cluster(a::Atom)        = Cluster(CLUSTER_ANSWERS,     Atom[a],  Dependency[])
+answer_cluster(a::Atom) = Cluster(CLUSTER_ANSWERS, Atom[a], Dependency[])
 suspension_cluster(d::Dependency) = Cluster(CLUSTER_SUSPENSIONS, Atom[], Dependency[d])
 Base.length(c::Cluster) = c.kind == CLUSTER_ANSWERS ? length(c.answers) : length(c.deps)
 
@@ -118,9 +118,9 @@ Upstream's `wl->riac` (`pl-tabling.c:3099,3145,3170`), computed rather than cach
 That adjacency IS the uncombined-work test, by the invariant.
 """
 function wkl_riac(wl::Worklist)::Int
-    for i in length(wl.clusters)-1:-1:1
+    for i in (length(wl.clusters) - 1):-1:1
         wl.clusters[i].kind == CLUSTER_ANSWERS &&
-            wl.clusters[i+1].kind == CLUSTER_SUSPENSIONS && return i
+            wl.clusters[i + 1].kind == CLUSTER_SUSPENSIONS && return i
     end
     0
 end
@@ -134,7 +134,7 @@ wkl_has_work(wl::Worklist)::Bool = wkl_riac(wl) != 0
 answers to the RIGHT of those dependencies — which is how the invariant records "combined".
 """
 function wkl_swap_clusters!(wl::Worklist, i::Int)
-    wl.clusters[i], wl.clusters[i+1] = wl.clusters[i+1], wl.clusters[i]
+    wl.clusters[i], wl.clusters[i + 1] = wl.clusters[i + 1], wl.clusters[i]
     _wkl_merge_adjacent!(wl, i)
     wl
 end
@@ -151,7 +151,7 @@ decreases) — this is what makes the header's cost argument true."""
 function _wkl_merge_adjacent!(wl::Worklist, i::Int)
     for j in min(i + 1, length(wl.clusters) - 1):-1:max(i - 1, 1)
         j + 1 <= length(wl.clusters) || continue
-        a, b = wl.clusters[j], wl.clusters[j+1]
+        a, b = wl.clusters[j], wl.clusters[j + 1]
         a.kind == b.kind || continue
         if a.kind == CLUSTER_ANSWERS
             append!(a.answers, b.answers)
@@ -185,14 +185,14 @@ function wkl_get_work!(wl::Worklist)
     # creates (`_wkl_merge_adjacent!`), the surviving cluster's vector is `append!`ed to — so the
     # caller's `ans` would grow under it and the batch would no longer be the batch that was taken.
     # Copying makes the returned batch immutable-in-practice, which is what the caller assumes.
-    ans  = copy(wl.clusters[i].answers)
-    deps = copy(wl.clusters[i+1].deps)
+    ans = copy(wl.clusters[i].answers)
+    deps = copy(wl.clusters[i + 1].deps)
     wkl_swap_clusters!(wl, i)
     (ans, deps)
 end
 
 # ── the per-table registry ───────────────────────────────────────────────────────────────────────
-const _WORKLISTS = Dict{Atom,Worklist}()
+const _WORKLISTS = Dict{Atom, Worklist}()
 
 "The worklist for table `key`, created empty on first use (`new_worklist`, pl-tabling.c:2911)."
 worklist_for(key::Atom)::Worklist = get!(() -> Worklist(key), _WORKLISTS, key)

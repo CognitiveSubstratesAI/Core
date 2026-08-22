@@ -45,10 +45,10 @@ struct MonoDep
     lazy::Bool
 end
 
-const _MONO_DEPS  = Dict{Atom,Vector{MonoDep}}()   # source key ⇒ dependencies watching it
-const _MONO_QUEUE = Dict{Atom,Vector{Tuple{MonoDep,Atom}}}()  # target ⇒ (dep, answer) pairs a
-                                                    # LAZY dep deferred: the CONTINUATION IS NOT
-                                                    # RUN until drain (see `_mono_propagate!` #7)
+const _MONO_DEPS = Dict{Atom, Vector{MonoDep}}()   # source key ⇒ dependencies watching it
+const _MONO_QUEUE = Dict{Atom, Vector{Tuple{MonoDep, Atom}}}()  # target ⇒ (dep, answer) pairs a
+# LAZY dep deferred: the CONTINUATION IS NOT
+# RUN until drain (see `_mono_propagate!` #7)
 
 """
     mono_assert_dep!(source, cont, target; lazy=false)
@@ -56,8 +56,10 @@ const _MONO_QUEUE = Dict{Atom,Vector{Tuple{MonoDep,Atom}}}()  # target ⇒ (dep,
 `mon_assert_dep/4` (`boot/tabling.pl:1562`). Record that `target` must gain answers whenever
 `source` does, by resuming `cont`.
 """
-function mono_assert_dep!(source::Atom, cont::Continuation, target::Atom; lazy::Bool = false)
-    push!(get!(_MONO_DEPS, source, MonoDep[]), MonoDep(Dependency(source, cont, target), lazy))
+function mono_assert_dep!(source::Atom, cont::Continuation, target::Atom; lazy::Bool=false)
+    push!(
+        get!(_MONO_DEPS, source, MonoDep[]), MonoDep(Dependency(source, cont, target), lazy)
+    )
     nothing
 end
 
@@ -74,10 +76,12 @@ by TARGET table.
 EAGER dependencies propagate now. LAZY ones queue the (dependency, answer) pair against the target
 WITHOUT running the continuation, to be drained by `mono_drain_queue!`.
 """
-function mono_propagate_assert!(source::Atom, answer::Atom, space)::Dict{Atom,Vector{Atom}}
-    out = Dict{Atom,Vector{Atom}}()
+function mono_propagate_assert!(source::Atom, answer::Atom, space)::Dict{Atom, Vector{Atom}}
+    out = Dict{Atom, Vector{Atom}}()
     _mono_propagate!(out, source, answer, space)
-    for (k, v) in out; out[k] = _variant_unique(v); end
+    for (k, v) in out
+        out[k] = _variant_unique(v)
+    end
     out
 end
 
@@ -93,7 +97,7 @@ end
 # `if (node->value) return false` (`pl-tabling.c:7595-7597`), and the Prolog CONJUNCTION in `pdelim`
 # then stops — so a duplicate never reaches `propagate_answer`. Without that test the recursion above
 # loops FOREVER on any cycle in the monotonic graph, and cycles are the normal case in tabling.
-function _mono_propagate!(out::Dict{Atom,Vector{Atom}}, source::Atom, answer::Atom, space)
+function _mono_propagate!(out::Dict{Atom, Vector{Atom}}, source::Atom, answer::Atom, space)
     for md in mono_affects(source)
         d = md.dep
         if md.lazy
@@ -104,7 +108,7 @@ function _mono_propagate!(out::Dict{Atom,Vector{Atom}}, source::Atom, answer::At
             # in between. Upstream queues the ANSWER and sets `lazy_queued`
             # (`mdep_queue_answer`, `pl-tabling.c:7506-7546`); the continuation runs at the target's
             # next call. So what we queue is the (dependency, answer) PAIR, not a computed result.
-            push!(get!(_MONO_QUEUE, d.target, Tuple{MonoDep,Atom}[]), (md, answer))
+            push!(get!(_MONO_QUEUE, d.target, Tuple{MonoDep, Atom}[]), (md, answer))
             continue
         end
         for new in _mono_resume(d, answer, space)
@@ -135,12 +139,12 @@ Run the continuations a LAZY dependency deferred for `target` and insert what th
 Returns the answers that were NEW, and propagates them onward exactly as the eager path does.
 """
 function mono_drain_queue!(target::Atom, space)::Vector{Atom}
-    queued = get(_MONO_QUEUE, target, Tuple{MonoDep,Atom}[])
+    queued = get(_MONO_QUEUE, target, Tuple{MonoDep, Atom}[])
     isempty(queued) && return Atom[]
     delete!(_MONO_QUEUE, target)                       # consumed before running, so a re-entrant
     t = answer_trie_for(target)                        # propagation cannot drain it twice
     added = Atom[]
-    onward = Dict{Atom,Vector{Atom}}()
+    onward = Dict{Atom, Vector{Atom}}()
     for (md, answer) in queued
         for new in _mono_resume(md.dep, answer, space)
             trie_insert!(t, new) || continue
@@ -152,8 +156,8 @@ function mono_drain_queue!(target::Atom, space)::Vector{Atom}
 end
 
 "The (dependency, answer) pairs a lazy dependency has deferred for `target`."
-mono_queued(target::Atom)::Vector{Tuple{MonoDep,Atom}} =
-    copy(get(_MONO_QUEUE, target, Tuple{MonoDep,Atom}[]))
+mono_queued(target::Atom)::Vector{Tuple{MonoDep, Atom}} =
+    copy(get(_MONO_QUEUE, target, Tuple{MonoDep, Atom}[]))
 
 """
     mono_propagate_rollback!(action, source) -> Set{Atom}
@@ -169,8 +173,12 @@ Named in this file's header as one of `mon_propagate/3`'s three branches and pre
 function mono_propagate_rollback!(action::Symbol, source::Atom)::Set{Atom}
     action in (:asserta, :assertz) && return Set{Atom}()      # deliberate no-op, per upstream
     action === :retract && return mono_invalidate_dependents!(source)
-    throw(ArgumentError("domain_error(mono_rollback_action, $(action)) — " *
-                        "expected :asserta, :assertz or :retract"))
+    throw(
+        ArgumentError(
+            "domain_error(mono_rollback_action, $(action)) — " *
+            "expected :asserta, :assertz or :retract"
+        )
+    )
 end
 
 """

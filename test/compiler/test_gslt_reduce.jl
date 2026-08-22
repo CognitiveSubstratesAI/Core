@@ -29,14 +29,15 @@ const _RV = MeTTaCore.Eval
 "Parse a term the way a rule's sides are parsed — through MeTTa's reader, so `\$x` is a `Var`."
 function _t(src::AbstractString)
     sp = _RV.Space()
-    toks = _RV.tokenize(src); i = Ref(1)
+    toks = _RV.tokenize(src)
+    i = Ref(1)
     _RV.parse_from(toks, i, sp.tokens)
 end
 
 _lang_r(src::AbstractString) = _RA.parse_presentation(_t(src))
 
 const _MPATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "presentations",
-                        "mettail.metta")
+    "mettail.metta")
 
 @testset "GSLT reduction — the presentation engine" begin
 
@@ -99,17 +100,19 @@ const _MPATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "present
     @testset "apply_base_rewrite / base_reducts on LAMBDA — beta actually fires" begin
         # The presentation from `lambda.rs`, with LeaTTa's `Subst` built-in standing in for the Rust
         # surface's `eval`. If the sigil discipline is wrong anywhere, this testset is what fails.
-        p = _lang_r("""
-        (language Lambda
-          (types Term)
-          (terms
-            (: Lam (-> (bind x Term) (scope x Term) Term))
-            (: App (-> Term Term Term)))
-          (equations)
-          (rewrites
-            (rewrite Beta     ()             (~> (App (Lam \$x \$body) \$arg) (Subst \$body \$arg \$x)))
-            (rewrite AppCongL ((~> \$M0 \$M1)) (~> (App \$M0 \$N) (App \$M1 \$N)))))
-        """)
+        p = _lang_r(
+            """
+(language Lambda
+  (types Term)
+  (terms
+    (: Lam (-> (bind x Term) (scope x Term) Term))
+    (: App (-> Term Term Term)))
+  (equations)
+  (rewrites
+    (rewrite Beta     ()             (~> (App (Lam \$x \$body) \$arg) (Subst \$body \$arg \$x)))
+    (rewrite AppCongL ((~> \$M0 \$M1)) (~> (App \$M0 \$N) (App \$M1 \$N)))))
+"""
+        )
 
         beta = only(r for r in p.rewrites if r.name === :Beta)
         # (λv. (f v)) c  ⇝  (f c)
@@ -138,7 +141,8 @@ const _MPATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "present
         # (function (return X)) ⇝ X, for ANY X — which is only true because `$X` is sigiled. Before
         # the fix this rewrite matched the single literal term containing the symbol `X`.
         @test _RR.apply_base_rewrite(fr, _t("(function (return 42))")) == _t("42")
-        @test _RR.apply_base_rewrite(fr, _t("(function (return (foo bar)))")) == _t("(foo bar)")
+        @test _RR.apply_base_rewrite(fr, _t("(function (return (foo bar)))")) ==
+            _t("(foo bar)")
         @test _RR.apply_base_rewrite(fr, _t("(function (bar baz))")) === nothing
         @test _RR.base_reducts(p, _t("(function (return a))")) == [_t("a")]
 
@@ -148,7 +152,8 @@ const _MPATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "present
         # rule about the same redex — was added. The claim worth keeping is about premises, not terms.
         for r in p.rewrites
             isempty(_RP.premises_of(r.rw)) && continue
-            @test _RR.apply_base_rewrite(r, _t("(chain (function (return a)) \$v \$T)")) === nothing
+            @test _RR.apply_base_rewrite(r, _t("(chain (function (return a)) \$v \$T)")) ===
+                nothing
             @test _RR.apply_base_rewrite(r, _t("(function (return a))")) === nothing
         end
         @test length([r for r in p.rewrites if !isempty(_RP.premises_of(r.rw))]) == 2
@@ -157,20 +162,26 @@ const _MPATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "present
     @testset "an UNSIGILED pattern variable is REJECTED, not silently made ground" begin
         # The defect this check exists for, in the shape it actually occurred.
         @test_throws ErrorException _lang_r(
-            "(language L (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f X) X))))")
+            "(language L (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f X) X))))"
+        )
         # …and the same thing on the RIGHT side, which produces a rule that discards its input.
         @test_throws ErrorException _lang_r(
-            "(language L (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f \$X) Y))))")
+            "(language L (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f \$X) Y))))"
+        )
         # …and in an equation.
         @test_throws ErrorException _lang_r(
-            "(language L (types T) (terms (: f (-> T T))) (equations (equation E (f P) P)))")
+            "(language L (types T) (terms (: f (-> T T))) (equations (equation E (f P) P)))"
+        )
         # Sigiled, the same presentation is accepted and its rule is a real schema.
         q = _lang_r(
-            "(language L (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f \$X) \$X))))")
+            "(language L (types T) (terms (: f (-> T T))) (rewrites (rewrite R () (~> (f \$X) \$X))))"
+        )
         @test _RR.base_reducts(q, _t("(f anything)")) == [_t("anything")]
         # `Subst` needs no declaration — it is the ported AST's own node, not anyone's constructor.
-        r = _lang_r("(language L (types T) (terms (: f (-> T T T))) " *
-                    "(rewrites (rewrite R () (~> (f \$a \$b) (Subst \$a \$b \$a)))))")
+        r = _lang_r(
+            "(language L (types T) (terms (: f (-> T T T))) " *
+            "(rewrites (rewrite R () (~> (f \$a \$b) (Subst \$a \$b \$a)))))"
+        )
         @test length(r.rewrites) == 1
     end
 end

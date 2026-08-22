@@ -42,6 +42,10 @@ using Test
 
     # nested expression + shared var: (f $x (g $x)) ~ (f A (g A)) ok; (f A (g B)) fails
     f, g = Sym("f"), Sym("g")
-    @test length(match_atoms(Expression(f, x, Expression(g, x)), Expression(f, A, Expression(g, A)))) == 1
-    @test isempty(match_atoms(Expression(f, x, Expression(g, x)), Expression(f, A, Expression(g, B))))
+    @test length(
+        match_atoms(Expression(f, x, Expression(g, x)), Expression(f, A, Expression(g, A)))
+    ) == 1
+    @test isempty(
+        match_atoms(Expression(f, x, Expression(g, x)), Expression(f, A, Expression(g, B)))
+    )
 end

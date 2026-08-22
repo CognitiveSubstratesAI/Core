@@ -11,9 +11,23 @@ P = raw"""
          (car-atom $hit))))
 """
 for n in (15, 20, 25, 30)
-    sp = IV.Space(); IV.load_core_stdlib!(sp); IV.load_metta!(sp, P)
+    sp = IV.Space()
+    IV.load_core_stdlib!(sp)
+    IV.load_metta!(sp, P)
     t = time_ns()
-    r = try IV.load_metta!(sp, "!(fib $n)\n") catch e; "ERR " * first(sprint(showerror,e),60) end
-    println("  explicit-memo fib(", n, ") = ", r, "   [", round((time_ns()-t)/1e6, digits=1), " ms]")
+    r = try
+        IV.load_metta!(sp, "!(fib $n)\n")
+    catch e
+        "ERR " * first(sprint(showerror, e), 60)
+    end
+    println(
+        "  explicit-memo fib(",
+        n,
+        ") = ",
+        r,
+        "   [",
+        round((time_ns()-t)/1e6; digits=1),
+        " ms]"
+    )
     flush(stdout)
 end

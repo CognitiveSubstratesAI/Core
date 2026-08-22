@@ -34,14 +34,20 @@ only worked because completion LEAKED its worklists and suspensions — audit fi
 correct the sample read ZERO for a run that had done real resumption work, and this file's whole
 anti-vacuity argument would have inverted: a green run would again mean nothing. Counting the EVENT
 instead of its residue cannot be falsified by correct cleanup."""
-function _cr_run(prog::AbstractString, query::AbstractString, heads::Vector{Symbol}, resume::Bool)
+function _cr_run(
+    prog::AbstractString, query::AbstractString, heads::Vector{Symbol}, resume::Bool
+)
     _CR.untable_all!()
     _CR._RESUME_COMPLETION[] = resume
-    _CR._DEPS_RECORD[]       = resume
+    _CR._DEPS_RECORD[] = resume
     deps = 0
     try
-        s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
-        for h in heads; _CR.table!(h); end
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(s, prog)
+        for h in heads
+            _CR.table!(h)
+        end
         r = load_metta!(s, query)
         deps = _CR._DEPS_COUNT[]
         (sort(String[string(x) for y in r for x in (y isa AbstractVector ? y : [y])]), deps)
@@ -51,10 +57,11 @@ function _cr_run(prog::AbstractString, query::AbstractString, heads::Vector{Symb
     end
 end
 
-const _CR_REACH = "(edge a b)\n(edge b c)\n" *
-                  raw"(= (reach $x $y) (match &self (edge $x $y) True))" * "\n" *
-                  raw"(= (reach $x $y) (reach $y $x))" * "\n"
-const _CR_FIB   = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n"
+const _CR_REACH =
+    "(edge a b)\n(edge b c)\n" *
+    raw"(= (reach $x $y) (match &self (edge $x $y) True))" * "\n" *
+    raw"(= (reach $x $y) (reach $y $x))" * "\n"
+const _CR_FIB = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n"
 
 @testset "completion by resumption agrees with recomputation (§1.0 step 4)" begin
 
@@ -72,7 +79,7 @@ const _CR_FIB   = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2
     end
 
     @testset "LEFT RECURSION — resumption really runs, and agrees" begin
-        (a, _)  = _cr_run(_CR_REACH, "!(reach b a)\n", [:reach], false)
+        (a, _) = _cr_run(_CR_REACH, "!(reach b a)\n", [:reach], false)
         (b, dp) = _cr_run(_CR_REACH, "!(reach b a)\n", [:reach], true)
         # ANTI-VACUITY FIRST: prove the resumption path had work before trusting the agreement.
         @test dp > 0
@@ -84,7 +91,7 @@ const _CR_FIB   = raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2
         # `(fib (- $n 1))` reduces to a different variant key per call, so there is no variant
         # re-entry and no suspension: fib is a plain memo. Asserting the ZERO here is what stops a
         # later reader taking fib's agreement as evidence about resumption.
-        (a, _)  = _cr_run(_CR_FIB, "!(fib 10)\n", [:fib], false)
+        (a, _) = _cr_run(_CR_FIB, "!(fib 10)\n", [:fib], false)
         (b, dp) = _cr_run(_CR_FIB, "!(fib 10)\n", [:fib], true)
         @test a == b == ["55"]
         @test dp == 0                       # VACUOUS by construction — that is the point

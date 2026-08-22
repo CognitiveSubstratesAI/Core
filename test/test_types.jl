@@ -30,10 +30,14 @@ end
     # ── seed the Nat algebra (b5_types_prelim) ──
     qt(raw"(= (Add $x Z) $x)")
     qt(raw"(= (Add $x (S $y)) (Add (S $x) $y))")
-    qt("(: Z Nat)"); qt("(: S (-> Nat Nat))"); qt("(: Add (-> Nat Nat Nat))")
+    qt("(: Z Nat)")
+    qt("(: S (-> Nat Nat))")
+    qt("(: Add (-> Nat Nat Nat))")
 
     @testset "intro / atom_types: get-type + gradual %Undefined%" begin
-        qt("(: a A)"); qt("(: A Type)"); qt("(: b B)")
+        qt("(: a A)")
+        qt("(: A Type)")
+        qt("(: b B)")
         @test ok("!(assertEqual (get-type a) A)")
         @test ok("!(assertEqual (get-type A) Type)")
         @test ok("!(assertEqual (get-type 42) Number)")
@@ -45,7 +49,9 @@ end
     @testset "function types: runtime BadArgType checking" begin
         @test ok("!(assertEqual (Add (S Z) Z) (S Z))")                    # well-typed reduces
         @test ok("!(assertEqual (Add Z (S Z)) (S Z))")
-        @test ok("!(assertEqual (Add S Z) (Error (Add S Z) (BadArgType 1 Nat (-> Nat Nat))))")
+        @test ok(
+            "!(assertEqual (Add S Z) (Error (Add S Z) (BadArgType 1 Nat (-> Nat Nat))))"
+        )
         @test ok("!(assertEqual (Add Something Z) Something)")            # undeclared = %Undefined% matches Nat
     end
 
@@ -64,7 +70,9 @@ end
         @test ok("!(assertEqual (get-type (MyCons (S Z) (MyCons Z MyNil))) (MyList Nat))")
         # ill-typed: S and Z are different types → BadArgType at position 2,
         # and the reported types are substituted ((-> Nat Nat) vs Nat).
-        @test ok("!(assertEqual (MyCons S (MyCons Z MyNil)) (Error (MyCons S (MyCons Z MyNil)) (BadArgType 2 (MyList (-> Nat Nat)) (MyList Nat))))")
+        @test ok(
+            "!(assertEqual (MyCons S (MyCons Z MyNil)) (Error (MyCons S (MyCons Z MyNil)) (BadArgType 2 (MyList (-> Nat Nat)) (MyList Nat))))"
+        )
     end
 
     @testset "metatypes" begin
@@ -75,13 +83,17 @@ end
     end
 
     @testset "types as propositions (d4_type_prop)" begin
-        qt("(: Entity Type)"); qt("(: Plato Entity)"); qt("(: Socrates Entity)")
+        qt("(: Entity Type)")
+        qt("(: Plato Entity)")
+        qt("(: Socrates Entity)")
         qt(raw"(: Mortal (-> Entity Type))")
         qt(raw"(: Human (-> Entity Type))")
         qt(raw"(: HumansAreMortal (-> (Human $t) (Mortal $t)))")
         qt("(: SocratesIsHuman (Human Socrates))")
         @test ok("!(assertEqual (get-type (Mortal Plato)) Type)")
-        @test ok("!(assertEqual (get-type (HumansAreMortal SocratesIsHuman)) (Mortal Socrates))")
+        @test ok(
+            "!(assertEqual (get-type (HumansAreMortal SocratesIsHuman)) (Mortal Socrates))"
+        )
     end
 
     @testset "match_control: let pattern destructure + Atom-typed match" begin

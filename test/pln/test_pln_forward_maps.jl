@@ -50,7 +50,9 @@ using MeTTaCore.StandardMeTTa          # Space, load_metta!, Expression, Sym, â€
     !(assertEqual (Truth_Revision (stv 0.8 0.6) (stv 0.7 0.4)) (stv 0.7692307692307692 0.6842105263157895))
     """
     rs = load_metta!(sp, goldens)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 4          # all four directives ran (guards against silent load failure)
 end

@@ -42,11 +42,12 @@ const _E1_V = MeTTaCore.Eval
 const _E1_S = MeTTaCore.StandardMeTTa
 
 const _E1_CETTA = "/home/shivaji1012/JuliaAGI/dev-zone/CeTTa"
-const _E1_OURS  = normpath(joinpath(dirname(pathof(MeTTaCore)), ".."))
+const _E1_OURS = normpath(joinpath(dirname(pathof(MeTTaCore)), ".."))
 
 "Heads whose ARGUMENTS are patterns/templates/spaces — never things to reduce first."
-const _E1_TEMPLATE = Set(["match","evalc","unify","superpose","collapse","quote","add-atom",
-                          "remove-atom","new-space","get-type","case","if","if-equal","if-error"])
+const _E1_TEMPLATE = Set(["match", "evalc", "unify", "superpose", "collapse", "quote",
+    "add-atom",
+    "remove-atom", "new-space", "get-type", "case", "if", "if-equal", "if-error"])
 
 """Minimal-MeTTa instructions that COMPUTE A VALUE, and so are reducible in argument position.
 
@@ -58,8 +59,8 @@ first testset below. An absence in one registry is not an absence in the languag
 
 Control instructions (`chain`/`function`/`return`/`unify`) are deliberately NOT here: they do not
 appear in argument position as values to be pre-reduced."""
-const _E1_REDUCING_INSTR = Set(["car-atom","cdr-atom","cons-atom","decons-atom",
-                                "size-atom","index-atom","eval","collapse-bind"])
+const _E1_REDUCING_INSTR = Set(["car-atom", "cdr-atom", "cons-atom", "decons-atom",
+    "size-atom", "index-atom", "eval", "collapse-bind"])
 
 # ⚠️ BOTH READERS MUST SKIP STRING LITERALS. Measured: without this, `(eval (== $token "("))` — the
 # paren INSIDE the string — desynchronises the depth counter and the "form" reported runs off into
@@ -69,7 +70,9 @@ const _E1_REDUCING_INSTR = Set(["car-atom","cdr-atom","cons-atom","decons-atom",
 
 "The balanced parenthesised group of `s` beginning at byte index `i`, ignoring string literals."
 function _e1_balanced(s::AbstractString, i::Int)
-    depth = 0; j = i; instr = false
+    depth = 0
+    j = i
+    instr = false
     while j <= lastindex(s)
         c = s[j]
         if c == '"'
@@ -85,15 +88,20 @@ end
 
 "Top-level parenthesised groups inside `s`, ignoring string literals."
 function _e1_subforms(s::AbstractString)
-    out = String[]; depth = 0; start = 0; instr = false
+    out = String[]
+    depth = 0
+    start = 0
+    instr = false
     for (k, ch) in enumerate(s)
         if ch == '"'
             instr = !instr
         elseif !instr
             if ch == '('
-                depth += 1; depth == 1 && (start = k)
+                depth += 1
+                depth == 1 && (start = k)
             elseif ch == ')'
-                depth -= 1; depth == 0 && start > 0 && push!(out, s[start:k])
+                depth -= 1
+                depth == 0 && start > 0 && push!(out, s[start:k])
             end
         end
     end
@@ -128,11 +136,11 @@ end
 #
 # Kept deliberately in sync with `ANormal._BINDER_KEEP_FROM`; both are derived from the declared
 # types in `stdlib.metta`, where a `Variable` in an argument position IS the binder marker.
-const _E1_BINDER_KEEP_FROM = Dict{String,Int}(
-    "foldl-atom"      => 3,
-    "map-atom"        => 2,
-    "filter-atom"     => 2,
-    "if-decons-expr"  => 2,
+const _E1_BINDER_KEEP_FROM = Dict{String, Int}(
+    "foldl-atom" => 3,
+    "map-atom" => 2,
+    "filter-atom" => 2,
+    "if-decons-expr" => 2
 )
 
 """Argument slices of `inner` (an `(head a1 a2 …)` string), in order, INCLUDING atoms and variables.
@@ -141,18 +149,23 @@ const _E1_BINDER_KEEP_FROM = Dict{String,Int}(
 decides whether an argument is a binder template. Needed by `_e1_violations`."""
 function _e1_args(inner::AbstractString)
     body = inner[nextind(inner, 1):prevind(inner, lastindex(inner))]
-    out = String[]; depth = 0; instr = false; start = 0; seen_head = false
+    out = String[]
+    depth = 0
+    instr = false
+    start = 0
+    seen_head = false
     for (k, ch) in enumerate(body)
         if ch == '"'
             instr = !instr
         elseif !instr
             if ch == '('
-                depth == 0 && (start = k); depth += 1
+                depth == 0 && (start = k)
+                depth += 1
             elseif ch == ')'
                 depth -= 1
-                depth == 0 && start > 0 && (push!(out, body[start:k]); start = 0)
+                depth == 0 && start > 0 && (push!(out, body[start:k]); start=0)
             elseif depth == 0 && isspace(ch)
-                start > 0 && (push!(out, body[start:prevind(body, k)]); start = 0)
+                start > 0 && (push!(out, body[start:prevind(body, k)]); start=0)
             elseif depth == 0 && start == 0
                 start = k
             end
@@ -167,10 +180,12 @@ end
 A violation is an `(eval X)` where X is headed by a GROUNDED primitive and some parenthesised
 argument of X is headed by something that REDUCES (a grounded primitive, or a head defined anywhere
 in the corpus being scanned) — EXCLUDING binder template positions, which are unreduced by design."""
-function _e1_violations(clause::AbstractString, reducible::Set{String}, grounded::Set{String})
+function _e1_violations(
+    clause::AbstractString, reducible::Set{String}, grounded::Set{String}
+)
     bad = String[]
     for m in eachmatch(r"\(eval ", clause)
-        form  = _e1_balanced(clause, m.offset)
+        form = _e1_balanced(clause, m.offset)
         inner = strip(form[6:max(6, prevind(form, lastindex(form)))])
         startswith(inner, "(") || continue          # (eval $v) / (eval sym) — already atomic
         h0 = _e1_head(inner)
@@ -181,7 +196,8 @@ function _e1_violations(clause::AbstractString, reducible::Set{String}, grounded
             startswith(a, "(") || continue          # only parenthesised args can be a call
             h = _e1_head(a)
             (isempty(h) || startswith(h, "\$") || !(h in reducible)) && continue
-            push!(bad, form); break
+            push!(bad, form)
+            break
         end
     end
     bad
@@ -201,42 +217,72 @@ direction for a ratchet — a gate with false positives blocks real work and get
 is worse than a gate that catches less. The same choice PLeaTTa's `compiler-mismatch-witnesses.tsv`
 states for its normalization: fail closed by erasing a divergence rather than manufacturing one."""
 function _e1_scan(root::AbstractString, dirs, cap::Int)
-    sp = _E1_V.Space(); _E1_V.load_core_stdlib!(sp)
+    sp = _E1_V.Space()
+    _E1_V.load_core_stdlib!(sp)
     grounded = Set{String}(String(k) for k in keys(_E1_V.TOKEN_REGISTRY))
     files = String[]
     for d in dirs
-        p = joinpath(root, d); isdir(p) || continue
+        p = joinpath(root, d)
+        isdir(p) || continue
         for (rt, _, fs) in walkdir(p), f in fs
             endswith(f, ".metta") && push!(files, joinpath(rt, f))
         end
     end
-    sort!(files); length(files) > cap && (files = files[1:cap])
+    sort!(files)
+    length(files) > cap && (files = files[1:cap])
 
-    nfile = 0; nclause = 0; hits = Tuple{String, String}[]
+    nfile = 0
+    nclause = 0
+    hits = Tuple{String, String}[]
     for f in files
-        src = try read(f, String) catch; continue end
+        src = try
+            read(f, String)
+        catch
+            continue
+        end
         atoms = try
-            toks = _E1_V.tokenize(src); i = Ref(1); out = _E1_S.Atom[]
+            toks = _E1_V.tokenize(src)
+            i = Ref(1)
+            out = _E1_S.Atom[]
             while i[] <= length(toks)
-                toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+                toks[i[]] == "!" && (i[] += 1)
+                i[] > length(toks) && break
                 push!(out, _E1_V.parse_from(toks, i, sp.tokens))
             end
             out
-        catch; continue end
-        prog = try _E1_F.lower_program(atoms) catch; continue end
+        catch
+            continue
+        end
+        prog = try
+            _E1_F.lower_program(atoms)
+        catch
+            continue
+        end
         isempty(prog.definitions) && continue
         # PER FILE, per the scope decision above: this file's own heads, plus grounded primitives.
         reducible = union(grounded, _E1_REDUCING_INSTR)
-        for d in prog.definitions; push!(reducible, String(d.name)); end
-        cls = try _E1_A.translate_program(prog) catch; continue end
-        r = try _E1_E.emit_il_program(cls) catch; continue end
+        for d in prog.definitions
+            push!(reducible, String(d.name))
+        end
+        cls = try
+            _E1_A.translate_program(prog)
+        catch
+            continue
+        end
+        r = try
+            _E1_E.emit_il_program(cls)
+        catch
+            continue
+        end
         nfile += 1
         for c in r.clauses
             nclause += 1
-            for b in _e1_violations(c, reducible, grounded); push!(hits, (basename(f), b)); end
+            for b in _e1_violations(c, reducible, grounded)
+                push!(hits, (basename(f), b))
+            end
         end
     end
-    (files = nfile, clauses = nclause, hits = hits)
+    (files=nfile, clauses=nclause, hits=hits)
 end
 
 @testset "`eval` makes ONE STEP — no grounded primitive may get an unreduced call as an argument" begin
@@ -246,11 +292,15 @@ end
     # class was imaginary. This asserts the language behaviour the counts are counting.
     @testset "the behaviour itself: one-step eval gives a SILENTLY WRONG boolean" begin
         function answers(q)
-            prev = _E1_V._INTERPRET_MAX[]; _E1_V.interpret_max_steps!(4_000)
+            prev = _E1_V._INTERPRET_MAX[]
+            _E1_V.interpret_max_steps!(4_000)
             try
-                sp = _E1_V.Space(); _E1_V.load_core_stdlib!(sp)
+                sp = _E1_V.Space()
+                _E1_V.load_core_stdlib!(sp)
                 rs = _E1_V.load_metta!(sp, "!" * q)
-                sort(String[string(x) for y in rs for x in (y isa AbstractVector ? y : [y])])
+                sort(
+                    String[string(x) for y in rs for x in (y isa AbstractVector ? y : [y])]
+                )
             finally
                 _E1_V._INTERPRET_MAX[] = prev
             end
@@ -263,14 +313,18 @@ end
 
         # …and a USER-DEFINED head is NOT affected, which is why the predicate is narrow. Measured
         # on CeTTa; reproduced here so the narrowing cannot be quietly widened later.
-        defs = "(= (m2 \$x \$l) (if (== \$l ()) False " *
-               "(if (== \$x (car-atom \$l)) True (m2 \$x (cdr-atom \$l)))))\n"
-        prev = _E1_V._INTERPRET_MAX[]; _E1_V.interpret_max_steps!(4_000)
+        defs =
+            "(= (m2 \$x \$l) (if (== \$l ()) False " *
+            "(if (== \$x (car-atom \$l)) True (m2 \$x (cdr-atom \$l)))))\n"
+        prev = _E1_V._INTERPRET_MAX[]
+        _E1_V.interpret_max_steps!(4_000)
         try
-            sp = _E1_V.Space(); _E1_V.load_core_stdlib!(sp); _E1_V.load_metta!(sp, defs)
+            sp = _E1_V.Space()
+            _E1_V.load_core_stdlib!(sp)
+            _E1_V.load_metta!(sp, defs)
             rs = _E1_V.load_metta!(sp, "!(eval (m2 b (a b c)))")
             @test "True" in String[string(x) for y in rs
-                                   for x in (y isa AbstractVector ? y : [y])]
+                         for x in (y isa AbstractVector ? y : [y])]
         finally
             _E1_V._INTERPRET_MAX[] = prev
         end
@@ -291,21 +345,30 @@ end
         # ② a binder's VALUE argument holding an unreduced call is a REAL violation and must still be
         # caught. This is why the exemption is an INDEX, not a whole-head entry: `foldl-atom`'s LIST
         # argument is position 1 and is not a template.
-        @test length(_e1_violations(
-            "(eval (foldl-atom (some-call x) () \$a \$i (_collapse-add-next \$a \$i)))", red, gnd)) == 1
+        @test length(
+            _e1_violations(
+                "(eval (foldl-atom (some-call x) () \$a \$i (_collapse-add-next \$a \$i)))",
+                red, gnd)
+        ) == 1
 
         # ③ …while the TEMPLATE argument alone being a call is CORRECT emission — the 57 false
         # positives. Position 3+ for foldl-atom.
-        @test isempty(_e1_violations(
-            "(eval (foldl-atom \$xs () \$a \$i (_collapse-add-next \$a \$i)))", red, gnd))
+        @test isempty(
+            _e1_violations(
+                "(eval (foldl-atom \$xs () \$a \$i (_collapse-add-next \$a \$i)))", red, gnd
+            )
+        )
 
         # ④ map-atom binds from position 2, so a call in position 1 is still a violation.
-        @test length(_e1_violations("(eval (map-atom (some-call x) \$i (car-atom \$i)))", red, gnd)) == 1
+        @test length(
+            _e1_violations("(eval (map-atom (some-call x) \$i (car-atom \$i)))", red, gnd)
+        ) == 1
         @test isempty(_e1_violations("(eval (map-atom \$xs \$i (car-atom \$i)))", red, gnd))
 
         # ⑤ the arg splitter must count ATOMS and VARIABLES, not only parenthesised forms — if it
         # skipped them, every index would shift left and the exemption would cover the wrong slots.
-        @test _e1_args("(foldl-atom \$xs () \$a \$i (f \$a))") == ["\$xs", "()", "\$a", "\$i", "(f \$a)"]
+        @test _e1_args("(foldl-atom \$xs () \$a \$i (f \$a))") ==
+            ["\$xs", "()", "\$a", "\$i", "(f \$a)"]
     end
 
     # ── OUR OWN corpus — the ratchet. ────────────────────────────────────────────────────────────
@@ -314,7 +377,9 @@ end
         for (f, b) in first(r.hits, 6)
             @info "eval-one-step violation (ours)" file=f form=first(b, 100)
         end
-        println("     ours: files=$(r.files) clauses=$(r.clauses) violations=$(length(r.hits))")
+        println(
+            "     ours: files=$(r.files) clauses=$(r.clauses) violations=$(length(r.hits))"
+        )
         # 🟢 ZERO — and it was 21 when this gate was written, hours earlier the same day.
         #
         # The 21 were nearly all `(eval (== (car-atom $x) SYM))`, the exact shape the first testset
@@ -359,7 +424,9 @@ end
             for (f, b) in first(r.hits, 6)
                 @info "eval-one-step violation (CeTTa)" file=f form=first(b, 100)
             end
-            println("     CeTTa: files=$(r.files) clauses=$(r.clauses) violations=$(length(r.hits))")
+            println(
+                "     CeTTa: files=$(r.files) clauses=$(r.clauses) violations=$(length(r.hits))"
+            )
             # 🟢 ZERO, from 3 — same cause as the our-corpus drop above (`866d723`). Worth keeping the
             # external half even at zero: it is what falsified three versions of this predicate, and a
             # future emitter change is exactly when that matters again.

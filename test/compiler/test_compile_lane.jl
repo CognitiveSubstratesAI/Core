@@ -16,20 +16,31 @@ const _CL_V = MeTTaCore.Eval
 
 "Interpreter oracle: the same forms, in order, through one Space."
 function _cl_interp(program::AbstractString)::Vector{Tuple{String, Vector{String}}}
-    sp = _CL_V.Space(); _CL_V.load_core_stdlib!(sp)
+    sp = _CL_V.Space()
+    _CL_V.load_core_stdlib!(sp)
     out = Tuple{String, Vector{String}}[]
     for (bang, f) in MeTTaCore.mm2_split_forms(program)
         res = _CL_V.load_metta!(sp, bang ? "!" * f : f)
-        bang && push!(out, (String(f),
-              sort(String[string(x) for y in res for x in (y isa AbstractVector ? y : [y])])))
+        bang && push!(
+            out,
+            (String(f),
+                sort(
+                    String[
+                        string(x) for y in res for x in (y isa AbstractVector ? y : [y])
+                    ]
+                ))
+        )
     end
     out
 end
 
 "Parse program text to surface atoms without evaluating — for emitter-level assertions."
 function _cl_parse(text::AbstractString)
-    sp = _CL_V.Space(); _CL_V.load_core_stdlib!(sp)
-    toks = _CL_V.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]
+    sp = _CL_V.Space()
+    _CL_V.load_core_stdlib!(sp)
+    toks = _CL_V.tokenize(text)
+    i = Ref(1)
+    out = MeTTaCore.StandardMeTTa.Atom[]
     while i[] <= length(toks)
         toks[i[]] == "!" && (i[] += 1)
         i[] > length(toks) && break
@@ -44,8 +55,8 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
 
     @testset "DIFFERENTIAL: compiled answers == interpreter answers, with NOTHING falling back" begin
         for src in ("(= (f \$x) (g \$x))\n(= (g \$x) \$x)\n!(f 7)\n",
-                    "(= (inc \$x) (+ \$x 1))\n!(inc 41)\n",
-                    "(= (h \$x) (let \$y \$x (pair \$y \$y)))\n!(h 3)\n")
+            "(= (inc \$x) (+ \$x 1))\n!(inc 41)\n",
+            "(= (h \$x) (let \$y \$x (pair \$y \$y)))\n!(h 3)\n")
             r = MeTTaCore.compile_run(src)
             @test r.fell_back == 0                        # the COMPILER produced this, not the fallback
             @test r.compiled > 0
@@ -55,7 +66,9 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
 
     @testset "fallback=false proves the compiled path alone answered" begin
         # If any definition were declined this errors instead of quietly producing the right answer.
-        r = MeTTaCore.compile_run("(= (f \$x) (g \$x))\n(= (g \$x) \$x)\n!(f 7)\n"; fallback = false)
+        r = MeTTaCore.compile_run(
+            "(= (f \$x) (g \$x))\n(= (g \$x) \$x)\n!(f 7)\n"; fallback=false
+        )
         @test r.answers == [("(f 7)", ["7"])]
         @test r.fell_back == 0
     end
@@ -115,8 +128,9 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # there would query a space with no facts in it and pass for the wrong reason.
 
         # DATA-SHAPED PATTERN ⇒ lowered, and it must answer what the interpreter answers.
-        src = "(likes alice bob)\n(likes carol dave)\n" *
-              "(= (who \$y) (match &self (likes \$x \$y) \$x))\n!(who bob)\n!(who dave)\n"
+        src =
+            "(likes alice bob)\n(likes carol dave)\n" *
+            "(= (who \$y) (match &self (likes \$x \$y) \$x))\n!(who bob)\n!(who dave)\n"
         r = MeTTaCore.compile_run(src)
         # ⚠️ `fell_back` IS NOT ZERO HERE, and expecting it to be was a wrong assertion about the
         # LANE, not a compiler defect. `compile_run` counts every non-compilable DEF FORM as a
@@ -129,8 +143,9 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # …and with a multi-answer query, where a duplicated goal would show up as a duplicated answer.
         # That is the failure mode of hoisting `match`'s arguments before lowering the node verbatim,
         # which is why `ANormal` leaves them untouched.
-        src2 = "(edge a b)\n(edge a c)\n(edge b d)\n" *
-               "(= (succ \$x) (match &self (edge \$x \$y) \$y))\n!(succ a)\n!(succ b)\n!(succ z)\n"
+        src2 =
+            "(edge a b)\n(edge a c)\n(edge b d)\n" *
+            "(= (succ \$x) (match &self (edge \$x \$y) \$y))\n!(succ a)\n!(succ b)\n!(succ z)\n"
         r2 = MeTTaCore.compile_run(src2)
         @test r2.compiled == 1                          # `succ` compiled; the 3 edges are facts
         @test r2.fell_back == 3
@@ -148,11 +163,11 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # the suite was OOM-KILLED (exit 137) after ~10 minutes. The claim here is "the guard declines
         # this clause"; executing a space-wide match tests the interpreter's appetite, not the guard.
         for src_guarded in ("(= (rules) (match &self (= \$h \$b) \$h))\n",       # rule-shaped
-                            "(= (types) (match &self (: \$s \$ty) \$s))\n",      # type-shaped
-                            "(= (all) (match &self \$a \$a))\n",                 # bare variable
-                            "(= (dyn \$p) (match &self (\$p x) \$p))\n")         # variable head
+            "(= (types) (match &self (: \$s \$ty) \$s))\n",      # type-shaped
+            "(= (all) (match &self \$a \$a))\n",                 # bare variable
+            "(= (dyn \$p) (match &self (\$p x) \$p))\n")         # variable head
             cls = MeTTaCore.CompilerANormal.translate_program(
-                      MeTTaCore.CompilerFrontend.lower_program(_cl_parse(src_guarded)))
+                MeTTaCore.CompilerFrontend.lower_program(_cl_parse(src_guarded)))
             r = MeTTaCore.CompilerEmitIL.emit_il_program(cls)
             @test r.emitted == 0
             @test !isempty(r.declined)
@@ -161,8 +176,8 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # …and the positive control for the same harness: a data-shaped pattern DOES emit, so the
         # four declines above are the guard firing and not the harness failing to compile anything.
         cls_ok = MeTTaCore.CompilerANormal.translate_program(
-                     MeTTaCore.CompilerFrontend.lower_program(
-                         _cl_parse("(= (who \$y) (match &self (likes \$x \$y) \$x))\n")))
+            MeTTaCore.CompilerFrontend.lower_program(
+                _cl_parse("(= (who \$y) (match &self (likes \$x \$y) \$x))\n")))
         @test MeTTaCore.CompilerEmitIL.emit_il_program(cls_ok).emitted == 1
     end
 
@@ -175,8 +190,9 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # definition.
 
         # The `car-atom` shape, through the compiler, answering what the interpreter answers.
-        src = "(= (hd \$p) (chain (decons-atom \$p) \$ht (unify (\$h \$t) \$ht \$h nope)))\n" *
-              "!(hd (a b c))\n!(hd (x))\n"
+        src =
+            "(= (hd \$p) (chain (decons-atom \$p) \$ht (unify (\$h \$t) \$ht \$h nope)))\n" *
+            "!(hd (a b c))\n!(hd (x))\n"
         r = MeTTaCore.compile_run(src)
         @test r.compiled == 1
         @test r.fell_back == 0
@@ -191,9 +207,10 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
 
         # NESTED, and mixed with an ordinary call — the instruction must compose with the chain the
         # emitter builds around it rather than only working as a whole body.
-        src3 = "(= (dbl \$x) (+ \$x \$x))\n" *
-               "(= (both \$p) (chain (decons-atom \$p) \$ht (unify (\$h \$t) \$ht (dbl \$h) nope)))\n" *
-               "!(both (4 z))\n"
+        src3 =
+            "(= (dbl \$x) (+ \$x \$x))\n" *
+            "(= (both \$p) (chain (decons-atom \$p) \$ht (unify (\$h \$t) \$ht (dbl \$h) nope)))\n" *
+            "!(both (4 z))\n"
         r3 = MeTTaCore.compile_run(src3)
         @test r3.compiled == 2 && r3.fell_back == 0
         @test _cl_sorted(r3.answers) == _cl_interp(src3)
@@ -201,8 +218,8 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
 
         # …and `fallback=false`, which turns a decline into an error rather than a silent rescue. This
         # is the assertion that proves the COMPILED path produced these answers.
-        @test MeTTaCore.compile_run(src; fallback = false).fell_back == 0
-        @test MeTTaCore.compile_run(src2; fallback = false).fell_back == 0
+        @test MeTTaCore.compile_run(src; fallback=false).fell_back == 0
+        @test MeTTaCore.compile_run(src2; fallback=false).fell_back == 0
 
         # ⚠️ NONDETERMINISM IS THE CASE THAT WOULD EXPOSE DOUBLE-EVALUATION. Only `chain` is kept
         # whole by `ANormal`; the other three have their argument BOTH hoisted into a goal AND
@@ -210,9 +227,10 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # `(= (w) (function (return (nd))))` emits three evaluations of `(nd)`. With a
         # nondeterministic `(nd)` that would surface as DUPLICATED ANSWERS if it were a real branch
         # duplication rather than repeated work. It does not, and this is what says so.
-        for (defs, q) in (("(= (nd) a)\n(= (nd) b)\n(= (w) (function (return (nd))))\n", "(w)"),
-                          ("(= (nd) a)\n(= (nd) b)\n(= (w2) (eval (nd)))\n",             "(w2)"),
-                          ("(= (nd) a)\n(= (nd) b)\n(= (w3) (chain (nd) \$v \$v))\n",    "(w3)"))
+        for (defs, q) in
+            (("(= (nd) a)\n(= (nd) b)\n(= (w) (function (return (nd))))\n", "(w)"),
+            ("(= (nd) a)\n(= (nd) b)\n(= (w2) (eval (nd)))\n", "(w2)"),
+            ("(= (nd) a)\n(= (nd) b)\n(= (w3) (chain (nd) \$v \$v))\n", "(w3)"))
             whole = defs * "!" * q * "\n"
             rn = MeTTaCore.compile_run(whole)
             @test rn.fell_back == 0
@@ -240,9 +258,9 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         # compiled, so no per-clause guard can see it. The question is not "may this match be
         # compiled" but "may this program's definitions be compiled at all".
         introspecting = ("(= (f) T)\n!(match &self (= (\$p) T) \$p)\n",          # rule-shaped
-                         "(= (g) T)\n!(match &self (: \$s \$ty) \$s)\n",         # type-shaped
-                         "(= (h) T)\n!(match &self \$a \$a)\n",                  # bare variable
-                         "(= (i) T)\n!(match &self (\$p x) \$p)\n")              # variable head
+            "(= (g) T)\n!(match &self (: \$s \$ty) \$s)\n",         # type-shaped
+            "(= (h) T)\n!(match &self \$a \$a)\n",                  # bare variable
+            "(= (i) T)\n!(match &self (\$p x) \$p)\n")              # variable head
         for src in introspecting
             r = MeTTaCore.compile_run(src)
             @test r.introspects
@@ -263,7 +281,7 @@ _cl_sorted(a) = Tuple{String, Vector{String}}[(q, sort(v)) for (q, v) in a]
         _alpha(v) = [replace(s, r"#\d+" => "") for s in v]
         for src in introspecting
             r = MeTTaCore.compile_run(src)
-            got  = [(q, _alpha(a)) for (q, a) in _cl_sorted(r.answers)]
+            got = [(q, _alpha(a)) for (q, a) in _cl_sorted(r.answers)]
             want = [(q, _alpha(a)) for (q, a) in _cl_interp(src)]
             @test got == want
         end

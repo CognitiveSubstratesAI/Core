@@ -21,16 +21,16 @@ makedocs(;
         "Query Optimization (MeTTa→MM2→Trie-Join)" => "query-optimization.md",
         "MeTTa-IL" => [
             "MeTTa-IL Lane" => "mettail.md",
-            "GSLT Theory Algebra" => "gslt.md",
+            "GSLT Theory Algebra" => "gslt.md"
         ],
         "Pattern Mining" => [
             "Overview" => "pattern_mining/overview.md",
             "Mining Dialects" => "pattern_mining/dialects.md",
-            "MORK-Native Miner" => "pattern_mining/mork_miner.md",
+            "MORK-Native Miner" => "pattern_mining/mork_miner.md"
         ],
         "Dialect gaps (porting PeTTa-targeted algorithms)" => "dialect-gaps.md",
         "MeTTa Typing Conventions" => "typing-conventions.md",
-        "API Reference" => "api.md",
+        "API Reference" => "api.md"
     ],
     warnonly=true
 )

@@ -256,11 +256,11 @@ dispatches through `translate_expr`/`constrain_args` before these were added (20
 function translate_expr end
 
 # base cases — a leaf is its own value, no goals (translator.pl:96)
-translate_expr(::ANCtx, a::IRVariable)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
-translate_expr(::ANCtx, a::IRSymbol)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
-translate_expr(::ANCtx, a::IRGrounded)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
-translate_expr(::ANCtx, a::IRResolvedSymbol)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
-translate_expr(::ANCtx, a::IRPredefined)::Tuple{Vector{Goal},IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRVariable)::Tuple{Vector{Goal}, IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRSymbol)::Tuple{Vector{Goal}, IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRGrounded)::Tuple{Vector{Goal}, IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRResolvedSymbol)::Tuple{Vector{Goal}, IRAtom} = (Goal[], a)
+translate_expr(::ANCtx, a::IRPredefined)::Tuple{Vector{Goal}, IRAtom} = (Goal[], a)
 
 """Head ⇒ the 1-based ARGUMENT INDEX from which arguments are kept VERBATIM, because the callee BINDS
 variables there.
@@ -284,17 +284,21 @@ rather than `IRSpecial`, so they never reach that tuple. Naive widening of `_KEE
 the space's `(: …)` declarations, so if a fifth binder is declared in `stdlib.metta` it must be added
 here too. The check is one grep:
     grep -nE '^\\(: [^ ]+ \\(->[^)]*Variable' src/standard/stdlib.metta"""
-const _BINDER_KEEP_FROM = Dict{Base.Symbol,Int}(
-    Base.Symbol("foldl-atom")     => 3,
-    Base.Symbol("map-atom")       => 2,
-    Base.Symbol("filter-atom")    => 2,
-    Base.Symbol("if-decons-expr") => 2,
+const _BINDER_KEEP_FROM = Dict{Base.Symbol, Int}(
+    Base.Symbol("foldl-atom") => 3,
+    Base.Symbol("map-atom") => 2,
+    Base.Symbol("filter-atom") => 2,
+    Base.Symbol("if-decons-expr") => 2
 )
 
 _binder_keep_from(h::IRAtom)::Int =
-    h isa IRSymbol     ? get(_BINDER_KEEP_FROM, (h::IRSymbol).name, typemax(Int)) :
-    h isa IRPredefined ? get(_BINDER_KEEP_FROM, (h::IRPredefined).name, typemax(Int)) :
-                         typemax(Int)
+    if h isa IRSymbol
+        get(_BINDER_KEEP_FROM, (h::IRSymbol).name, typemax(Int))
+    elseif h isa IRPredefined
+        get(_BINDER_KEEP_FROM, (h::IRPredefined).name, typemax(Int))
+    else
+        typemax(Int)
+    end
 
 """
 An application. Arguments are flattened FIRST (their goals precede the call), then the call itself
@@ -305,7 +309,7 @@ than a wrong guess. PeTTa handles that case with `partial/2` closures at RUNTIME
 representation yet, and inventing one here would be exactly the kind of unreferenced improvisation
 this file avoids.
 """
-function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
+function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal}, IRAtom}
     goals = Goal[]
     args = IRAtom[]
     # 🔴 BINDER SCOPES — added 2026-08-16. Arguments at or after `keep` are a bound VARIABLE or a
@@ -320,7 +324,8 @@ function translate_expr(c::ANCtx, a::IRExpression)::Tuple{Vector{Goal},IRAtom}
             continue
         end
         g, v = translate_expr(c, x)
-        append!(goals, g); push!(args, v)
+        append!(goals, g)
+        push!(args, v)
     end
     # A SYMBOL head is a user function; a PREDEFINED head is a primitive. Both are calls, and both
     # get result-as-last-argument. Distinguishing them is the emitter's job, not this stage's.
@@ -411,7 +416,7 @@ translate_pattern(a::IRAtom)::IRAtom = a
 `let*` → `letstar_to_rec_let` then recurse. Sequential binding is nested `let`, so the scoping is
          handled by the nesting itself and never by this function.
 """
-function translate_expr(c::ANCtx, a::IRDestructiveBinding)::Tuple{Vector{Goal},IRAtom}
+function translate_expr(c::ANCtx, a::IRDestructiveBinding)::Tuple{Vector{Goal}, IRAtom}
     goals = Goal[]
     # `let*` and `let` differ ONLY in nesting, and the frontend already recorded which this is.
     # Emitting the bindings in order gives `let*`; for plain `let` the values were lowered in the
@@ -435,7 +440,7 @@ An `IRMatch` with the frontend's True/False arms is an `if`; anything else is a 
 A `case` with more than two arms folds right into nested branches — PeTTa's `translate_case` builds
 the same if-then-else chain.
 """
-function translate_expr(c::ANCtx, a::IRMatch)::Tuple{Vector{Goal},IRAtom}
+function translate_expr(c::ANCtx, a::IRMatch)::Tuple{Vector{Goal}, IRAtom}
     gs, scrutval = translate_expr(c, a.scrutinee)
     out = fresh_var(c)
     isempty(a.branches) && (push!(gs, GResidual(a, out)); return (gs, out))
@@ -445,7 +450,7 @@ end
 
 "Fold arms right into nested `GBranch`es, all sharing `out` (PeTTa `translate_case`)."
 function _branch_chain(c::ANCtx, brs::Vector{IRMatchBranch}, i::Int,
-                       scrutval::IRAtom, out::IRAtom)::Goal
+    scrutval::IRAtom, out::IRAtom)::Goal
     b = brs[i]
     pv = translate_pattern(b.pattern)
     gt, tv = translate_expr(c, b.body)
@@ -473,7 +478,7 @@ function _branch_chain(c::ANCtx, brs::Vector{IRMatchBranch}, i::Int,
 end
 
 "`superpose` — PeTTa `build_superpose_branches` + `disj_list` (translator.pl:110)."
-function translate_expr(c::ANCtx, a::IRSuperpose)::Tuple{Vector{Goal},IRAtom}
+function translate_expr(c::ANCtx, a::IRSuperpose)::Tuple{Vector{Goal}, IRAtom}
     out = fresh_var(c)
     branches = Vector{Goal}[]
     for alt in a.alternatives
@@ -519,7 +524,7 @@ const _KEEP_WHOLE = (SPECIAL_CHAIN,)
 Remaining special forms. `collapse` is PeTTa's `findall` (translator.pl:116); anything without a
 reference lowering becomes a residual rather than a guess.
 """
-function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal},IRAtom}
+function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal}, IRAtom}
     if a.kind === SPECIAL_COLLAPSE && length(a.args) == 1
         g, v = translate_expr(c, a.args[1])
         out = fresh_var(c)
@@ -576,7 +581,7 @@ end
 
 # catch-all so the function is TOTAL over IRAtom — an unmatched node becomes a counted residual, not
 # a MethodError at compile time and not a silent drop.
-function translate_expr(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
+function translate_expr(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal}, IRAtom}
     out = fresh_var(c)
     (Goal[GResidual(a, out)], out)
 end
@@ -642,7 +647,7 @@ This is what keeps the head matchable. It is also the piece that makes first-arg
 possible at all — the mechanism by which Prolog decides a call is deterministic, which is the same
 question §3c of the JeTTa spec says we have no answer to.
 """
-function constrain_args(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
+function constrain_args(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal}, IRAtom}
     (a isa IRVariable || a isa IRSymbol || a isa IRGrounded) && return (Goal[], a)
     if a isa IRExpression
         # A CALL in head position: hoist it. A CONSTRUCTOR PATTERN: keep it, and recurse into its
@@ -654,10 +659,12 @@ function constrain_args(c::ANCtx, a::IRAtom)::Tuple{Vector{Goal},IRAtom}
             g, v = translate_expr(c, a)
             return (g, v)
         end
-        goals = Goal[]; kids = IRAtom[]
+        goals = Goal[]
+        kids = IRAtom[]
         for x in a.args
             g, v = constrain_args(c, x)
-            append!(goals, g); push!(kids, v)
+            append!(goals, g)
+            push!(kids, v)
         end
         return (goals, IRExpression(a.head, kids, a.id, a.src))
     end
@@ -684,7 +691,8 @@ function constrain_head(c::ANCtx, lhs::IRAtom)::Tuple{Vector{Goal}, IRAtom}
     args = IRAtom[]
     for x in (lhs::IRExpression).args
         g, v = constrain_args(c, x)
-        append!(goals, g); push!(args, v)
+        append!(goals, g)
+        push!(args, v)
     end
     (goals, IRExpression(h, args, (lhs::IRExpression).id, (lhs::IRExpression).src))
 end
@@ -707,7 +715,8 @@ function translate_clause(c::ANCtx, name::Base.Symbol, clause::IRBoundAtom)::ANC
     if lhs isa IRExpression
         for x in lhs.args
             g, v = constrain_args(c, x)
-            append!(prefix, g); push!(head_args, v)
+            append!(prefix, g)
+            push!(head_args, v)
         end
     end
     body, out = translate_expr(c, clause.value)
@@ -761,9 +770,13 @@ function all_goals(gs::Vector{Goal})::Vector{Goal}
     for g in gs
         push!(acc, g)
         if g isa GBranch
-            append!(acc, all_goals(g.cond)); append!(acc, all_goals(g.then)); append!(acc, all_goals(g.els))
+            append!(acc, all_goals(g.cond))
+            append!(acc, all_goals(g.then))
+            append!(acc, all_goals(g.els))
         elseif g isa GDisj
-            for b in g.branches; append!(acc, all_goals(b)); end
+            for b in g.branches
+                append!(acc, all_goals(b))
+            end
         elseif g isa GFindall
             append!(acc, all_goals(g.body))
         end
@@ -819,19 +832,23 @@ fragment (a non-ground arm pattern, a `GFindall`, or a path count over `max_path
 one body is already 8 paths. Declining past the cap keeps a pathological clause from generating
 hundreds of exec rules that would each have to fire.
 """
-function expand_control(clause::ANClause; max_paths::Int = 32)::Union{Vector{ANClause},Nothing}
+function expand_control(
+    clause::ANClause; max_paths::Int=32
+)::Union{Vector{ANClause}, Nothing}
     paths = _expand_goals(clause.goals, max_paths)
     paths === nothing && return nothing
     # PROPAGATE `nested_head` — a reconstruction that drops it silently re-enables the flattened-head
     # emission the flag exists to prevent. The 4-arg convenience constructor defaults it to `false`,
     # which is exactly the wrong default on a path that COPIES an existing clause; caught by reading
     # the consumers of the field the same day it was added, not by a test.
-    ANClause[ANClause(clause.name, clause.head_args, gs, clause.out, clause.nested_head)
-             for gs in paths]
+    ANClause[
+        ANClause(clause.name, clause.head_args, gs, clause.out, clause.nested_head)
+        for gs in paths
+    ]
 end
 
 "Cartesian product over the goal list — each goal contributes its own alternatives."
-function _expand_goals(gs::Vector{Goal}, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
+function _expand_goals(gs::Vector{Goal}, cap::Int)::Union{Vector{Vector{Goal}}, Nothing}
     acc = Vector{Goal}[Goal[]]
     for g in gs
         alts = _expand_goal(g, cap)
@@ -864,7 +881,7 @@ function _static_test(lhs::IRAtom, rhs::IRAtom)::Base.Symbol
     :no                                             # a symbol and a grounded literal never unify
 end
 
-function _expand_goal(g::GBranch, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
+function _expand_goal(g::GBranch, cap::Int)::Union{Vector{Vector{Goal}}, Nothing}
     # The arm test is the GUnify `_branch_chain` puts first in `cond`.
     test = isempty(g.cond) ? nothing : g.cond[1]
     static = test isa GUnify ? _static_test(test.lhs, test.rhs) : :dynamic
@@ -875,7 +892,8 @@ function _expand_goal(g::GBranch, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
     out = Vector{Goal}[]
     if static !== :no                               # :no ⇒ this arm is unreachable, drop it entirely
         # A statically-true test carries no information; emitting it would decline on ground-vs-ground.
-        rest = static === :yes ? Goal[g.cond[2:end]..., g.then...] : Goal[g.cond..., g.then...]
+        rest =
+            static === :yes ? Goal[g.cond[2:end]..., g.then...] : Goal[g.cond..., g.then...]
         thens = _expand_goals(rest, cap)
         thens === nothing && return nothing
         append!(out, thens)
@@ -890,7 +908,7 @@ function _expand_goal(g::GBranch, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
     length(out) > cap ? nothing : out
 end
 
-function _expand_goal(g::GDisj, cap::Int)::Union{Vector{Vector{Goal}},Nothing}
+function _expand_goal(g::GDisj, cap::Int)::Union{Vector{Vector{Goal}}, Nothing}
     out = Vector{Goal}[]
     for b in g.branches
         e = _expand_goals(b, cap)
@@ -902,11 +920,11 @@ end
 
 # `collapse` gathers EVERY solution into one list value — saturation-then-collect, not a path split.
 # Expansion cannot express it, so it stays declined and stays counted.
-_expand_goal(::GFindall, ::Int)::Union{Vector{Vector{Goal}},Nothing} = nothing
-_expand_goal(g::Goal, ::Int)::Union{Vector{Vector{Goal}},Nothing} = Vector{Goal}[Goal[g]]
+_expand_goal(::GFindall, ::Int)::Union{Vector{Vector{Goal}}, Nothing} = nothing
+_expand_goal(g::Goal, ::Int)::Union{Vector{Vector{Goal}}, Nothing} = Vector{Goal}[Goal[g]]
 
 export Goal, GUnify, GCall, GBranch, GDisj, GFindall, GResidual, expand_control,
-       ANCtx, fresh_var, translate_expr, constrain_args, translate_clause, translate_program,
-       ANClause, all_goals, residuals, is_flat
+    ANCtx, fresh_var, translate_expr, constrain_args, translate_clause, translate_program,
+    ANClause, all_goals, residuals, is_flat
 
 end # module CompilerANormal

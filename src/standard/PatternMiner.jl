@@ -26,7 +26,9 @@
 "Support via the RAW-MeTTa interpreter dialect: `(size-atom (collapse (match &self P P)))` over `data`.
 `pattern` uses dollar-prefixed query variables; counts distinct matching atoms."
 function pattern_support_interp(data::AbstractString, pattern::AbstractString)::Int
-    sp = Eval.Space(); Eval.load_core_stdlib!(sp); Eval.load_metta!(sp, data)
+    sp = Eval.Space()
+    Eval.load_core_stdlib!(sp)
+    Eval.load_metta!(sp, data)
     r = Eval.load_metta!(sp, "!(size-atom (collapse (match &self $pattern $pattern)))")
     vs = [string(x) for rr in r for x in (rr isa AbstractVector ? rr : [rr])]
     isempty(vs) ? 0 : something(tryparse(Int, vs[1]), 0)
@@ -118,7 +120,8 @@ end
 function prefix_counter(data::AbstractString)::PrefixCounter
     pc = PrefixCounter()
     for line in split(data, '\n')
-        a = strip(line); (isempty(a) || !startswith(a, "(")) && continue
+        a = strip(line)
+        (isempty(a) || !startswith(a, "(")) && continue
         prefix_insert!(pc, a)
     end
     pc
@@ -135,7 +138,8 @@ function prefix_support(cs::CoreSpace, prefix::AbstractVector{<:AbstractString})
         atom = strip(line)
         (isempty(atom) || !startswith(atom, "(")) && continue
         toks = mm2_expr_args(atom)
-        length(toks) >= length(prefix) && all(((p, t),) -> p == t, zip(prefix, toks)) && (n += 1)
+        length(toks) >= length(prefix) && all(((p, t),) -> p == t, zip(prefix, toks)) &&
+            (n += 1)
     end
     n
 end
@@ -155,7 +159,11 @@ function mine_prefix_patterns(cs::CoreSpace, depth::Integer, minsup::Integer)
         length(toks) > depth || continue                 # proper prefix: atom extends past `depth`
         counts[toks[1:depth]] = get(counts, toks[1:depth], 0) + 1
     end
-    sort(Tuple{String, Int}[("(" * join(p, " ") * " _)", n) for (p, n) in counts if n >= minsup])
+    sort(
+        Tuple{String, Int}[
+            ("(" * join(p, " ") * " _)", n) for (p, n) in counts if n >= minsup
+        ]
+    )
 end
 
 """
@@ -164,15 +172,22 @@ end
 MORK-native growth: extend a frequent `prefix` (token vector) by one token via prefix proximity, keeping
 the deeper prefixes whose support ≥ `minsup`.
 """
-function grow_prefix(cs::CoreSpace, prefix::AbstractVector{<:AbstractString}, minsup::Integer)
+function grow_prefix(
+    cs::CoreSpace, prefix::AbstractVector{<:AbstractString}, minsup::Integer
+)
     counts = Dict{String, Int}()
     for line in split(space_dump_all_sexpr(cs.inner), '\n')
         atom = strip(line)
         (isempty(atom) || !startswith(atom, "(")) && continue
         toks = mm2_expr_args(atom)
-        (length(toks) > length(prefix) && all(((p, t),) -> p == t, zip(prefix, toks))) || continue
+        (length(toks) > length(prefix) && all(((p, t),) -> p == t, zip(prefix, toks))) ||
+            continue
         counts[toks[length(prefix) + 1]] = get(counts, toks[length(prefix) + 1], 0) + 1
     end
-    sort(Tuple{String, Int}[("(" * join(vcat(prefix, [t]), " ") * " _)", n)
-                            for (t, n) in counts if n >= minsup])
+    sort(
+        Tuple{String, Int}[
+            ("(" * join(vcat(prefix, [t]), " ") * " _)", n)
+            for (t, n) in counts if n >= minsup
+        ]
+    )
 end

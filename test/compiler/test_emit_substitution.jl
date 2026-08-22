@@ -27,7 +27,9 @@ const _UE = MeTTaCore.CompilerEmit
 const _UI = MeTTaCore.Eval
 
 function _sub_parse(sp, text::AbstractString)
-    toks = _UI.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]
+    toks = _UI.tokenize(text)
+    i = Ref(1)
+    out = MeTTaCore.StandardMeTTa.Atom[]
     while i[] <= length(toks)
         toks[i[]] == "!" && (i[] += 1)
         i[] > length(toks) && break
@@ -39,24 +41,25 @@ end
 @testset "emitter substitution — whole names only" begin
 
     @testset "a substituted name must not rewrite a longer name sharing its prefix" begin
-        sub = Dict{Base.Symbol,String}(:x => "red")
-        @test _UE._apply_subst("(f \$x)",       sub) == "(f red)"
-        @test _UE._apply_subst("(f \$x1 \$x)",  sub) == "(f \$x1 red)"     # digit suffix
-        @test _UE._apply_subst("(g \$xs \$x)",  sub) == "(g \$xs red)"     # letter suffix
-        @test _UE._apply_subst("(h \$x_2)",     sub) == "(h \$x_2)"        # underscore suffix
-        @test _UE._apply_subst("(h \$x-2)",     sub) == "(h \$x-2)"        # hyphen is a name char here
+        sub = Dict{Base.Symbol, String}(:x => "red")
+        @test _UE._apply_subst("(f \$x)", sub) == "(f red)"
+        @test _UE._apply_subst("(f \$x1 \$x)", sub) == "(f \$x1 red)"     # digit suffix
+        @test _UE._apply_subst("(g \$xs \$x)", sub) == "(g \$xs red)"     # letter suffix
+        @test _UE._apply_subst("(h \$x_2)", sub) == "(h \$x_2)"        # underscore suffix
+        @test _UE._apply_subst("(h \$x-2)", sub) == "(h \$x-2)"        # hyphen is a name char here
     end
 
     @testset "order-insensitivity: no key may partially rewrite another" begin
         # The old implementation depended on iteration order and sorted by length to compensate. One
         # pass over whole tokens removes the dependence entirely, so BOTH keys resolve independently.
-        sub = Dict{Base.Symbol,String}(:x => "A", :x1 => "B")
+        sub = Dict{Base.Symbol, String}(:x => "A", :x1 => "B")
         @test _UE._apply_subst("(f \$x \$x1)", sub) == "(f A B)"
         @test _UE._apply_subst("(f \$x1 \$x)", sub) == "(f B A)"
     end
 
     @testset "END-TO-END: the head variable survives a let over a prefix-sharing name" begin
-        sp = _UI.Space(); _UI.load_core_stdlib!(sp)
+        sp = _UI.Space()
+        _UI.load_core_stdlib!(sp)
         src = "(= (bug \$x1) (let \$x pinned (pair \$x \$x1)))\n"
         cls = _UA.translate_program(_UF.lower_program(_sub_parse(sp, src)))
         r = _UE.emit_program(cls)
@@ -68,7 +71,8 @@ end
     end
 
     @testset "a variable with no binding is left alone" begin
-        @test _UE._apply_subst("(f \$y)", Dict{Base.Symbol,String}(:x => "red")) == "(f \$y)"
-        @test _UE._apply_subst("(f \$y)", Dict{Base.Symbol,String}()) == "(f \$y)"
+        @test _UE._apply_subst("(f \$y)", Dict{Base.Symbol, String}(:x => "red")) ==
+            "(f \$y)"
+        @test _UE._apply_subst("(f \$y)", Dict{Base.Symbol, String}()) == "(f \$y)"
     end
 end

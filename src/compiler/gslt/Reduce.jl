@@ -74,24 +74,27 @@ Every `Var` in a pattern is a pattern variable. Upstream distinguishes `.var (.b
 qualified path — the latter matching only itself — but we emit no qualified variables (a dotted path
 is represented as a dotted NAME), so that case has no instances here.
 """
-function match_pat(pattern::Atom, term::Atom, bnds::Bnds = Bnds())::Union{Bnds, Nothing}
+function match_pat(pattern::Atom, term::Atom, bnds::Bnds=Bnds())::Union{Bnds, Nothing}
     if pattern isa Var
         v = _varname(pattern::Var)
         if haskey(bnds, v)
             return bnds[v] == term ? bnds : nothing     # CONSISTENCY: a recurring var must agree
         end
-        out = copy(bnds); out[v] = term
+        out = copy(bnds)
+        out[v] = term
         return out
     end
     if _is_subst(pattern) && _is_subst(term)
-        pc = (pattern::Expression).children; tc = (term::Expression).children
+        pc = (pattern::Expression).children
+        tc = (term::Expression).children
         pc[4] == tc[4] || return nothing                # the substituted variable must agree
         b1 = match_pat(pc[2], tc[2], bnds)
         b1 === nothing && return nothing
         return match_pat(pc[3], tc[3], b1)
     end
     if pattern isa Expression && term isa Expression
-        pc = (pattern::Expression).children; tc = (term::Expression).children
+        pc = (pattern::Expression).children
+        tc = (term::Expression).children
         length(pc) == length(tc) || return nothing
         b = bnds
         for k in eachindex(pc)
@@ -146,8 +149,13 @@ function inst(bnds::Bnds, term::Atom)::Atom
             bound = get(bnds, _varname(w::Var), nothing)
             bound isa Var && (target = bound)           # target the BOUND variable, as upstream
         end
-        tname = target isa Var ? _varname(target::Var) :
-                target isa Sym ? (target::Sym).name : Base.Symbol(string(target))
+        tname = if target isa Var
+            _varname(target::Var)
+        elseif target isa Sym
+            (target::Sym).name
+        else
+            Base.Symbol(string(target))
+        end
         return subst1(tname, inst(bnds, c[3]), inst(bnds, c[2]))
     elseif term isa Expression
         return Expression(Atom[inst(bnds, x) for x in (term::Expression).children])

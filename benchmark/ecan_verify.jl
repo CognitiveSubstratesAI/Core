@@ -17,10 +17,12 @@ let prev = 0
         I._DIAG_STEPS[] = 0
         I.load_metta!(sp, "!(heartbeat! g $d)")
         steps = I._DIAG_STEPS[]
-        ratio = prev == 0 ? 0.0 : round(steps / prev, digits = 2)
+        ratio = prev == 0 ? 0.0 : round(steps / prev; digits=2)
         println("  depth=$(lpad(d,2))  steps=$(lpad(steps,10))  x_vs_prev=$(ratio)")
         prev = steps
     end
 end
-println("  (x≈2 per doubling = LINEAR; x≈4 = QUADRATIC)  extrapolate to depth=50 from the trend")
+println(
+    "  (x≈2 per doubling = LINEAR; x≈4 = QUADRATIC)  extrapolate to depth=50 from the trend"
+)
 println("PROBE_DONE")

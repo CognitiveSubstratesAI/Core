@@ -20,7 +20,7 @@ bindings (an `AbstractDict{ExprVar,ExprEnv}` — MORK's `Bindings` slab) on succ
 """
 function mork_unify(query::MORK.Expr, data::MORK.Expr)
     r = MORK.expr_unify([(MORK.ExprEnv(UInt8(0), UInt8(0), UInt32(0), query),
-                          MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), data))])
+        MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), data))])
     # ⚠️ TEST THE FAILURE TYPE, NOT THE SUCCESS TYPE. This read `r isa Dict`, which broke silently
     # on 2026-08-20 when `expr_unify` began returning MORK's `Bindings` (a direct-indexed slab).
     # `Bindings <: AbstractDict` but NOT `<: Dict`, so every SUCCESSFUL unification would have
@@ -62,7 +62,9 @@ function mork_rule_rewrite(rule::MORK.Expr, data::MORK.Expr)
     mork_apply(rule, body_ee.offset, b)
 end
 function mork_rule_rewrite(rule::AbstractString, data::AbstractString)
-    r = mork_rule_rewrite(MORK.sexpr_to_expr(String(rule)), MORK.sexpr_to_expr(String(data)))
+    r = mork_rule_rewrite(
+        MORK.sexpr_to_expr(String(rule)), MORK.sexpr_to_expr(String(data))
+    )
     r === nothing ? nothing : strip(MORK.expr_serialize(r.buf))
 end
 
@@ -175,8 +177,10 @@ function core_rule_exprs(cs::CoreSpace)::Vector{MORK.Expr}
             h = args[1]
             hb = h.base.buf
             o = Int(h.offset) + 1
-            (o <= length(hb) && hb[o] >= 0xC1 && Int(hb[o] & 0x3F) == 1 &&
-             o + 1 <= length(hb) && hb[o + 1] == UInt8('=')) || continue
+            (
+                o <= length(hb) && hb[o] >= 0xC1 && Int(hb[o] & 0x3F) == 1 &&
+                o + 1 <= length(hb) && hb[o + 1] == UInt8('=')
+            ) || continue
             push!(rules, e)
         end
     end
@@ -239,7 +243,7 @@ which Core already populates with ~40 primitives via `register_core_primitives!`
 that is the fallback lane's table and reaching into it from here would invert the standing
 compiler-primary directive.
 """
-function core_normalize(cs::CoreSpace, term::AbstractString; max_steps::Int = 1000)::String
+function core_normalize(cs::CoreSpace, term::AbstractString; max_steps::Int=1000)::String
     rules = core_rule_exprs(cs)
     cur = MORK.sexpr_to_expr(String(term))
     for _ in 1:max_steps

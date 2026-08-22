@@ -65,7 +65,8 @@ fresh() = load_stdlib!(new_core_space())
 
     @testset "Stage 1 — .act snapshot / load round-trip" begin
         using MeTTaCore:
-            get_node_shared, new_core_space, set_act_dir!, snapshot_space_to_act!, act_exists, load_act_source
+            get_node_shared, new_core_space, set_act_dir!, snapshot_space_to_act!,
+            act_exists, load_act_source
         tmpdir = mktempdir()
         set_act_dir!(tmpdir)
         shared = get_node_shared()
@@ -127,7 +128,9 @@ fresh() = load_stdlib!(new_core_space())
         one = core_match(s2, [:in, 720575940612305506, Symbol("\$r"), Symbol("\$w")])
         @test length(one) == 1 && one[1][2] == 720575940612305506
         # narrowed result is exactly the full-walk result (correctness, not just count)
-        @test Set(string.(got)) == Set(string.(filter(a -> a isa Vector && a[1] === :in && a[2] === :p, core_atoms(s))))
+        @test Set(string.(got)) == Set(
+            string.(filter(a -> a isa Vector && a[1] === :in && a[2] === :p, core_atoms(s)))
+        )
     end
 end
 

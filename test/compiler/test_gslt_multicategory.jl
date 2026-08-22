@@ -21,7 +21,8 @@ const _XV = MeTTaCore.Eval
 
 function _xt(src::AbstractString)
     sp = _XV.Space()
-    toks = _XV.tokenize(src); i = Ref(1)
+    toks = _XV.tokenize(src)
+    i = Ref(1)
     _XV.parse_from(toks, i, sp.tokens)
 end
 _xlang(src::AbstractString) = _XA.parse_presentation(_xt(src))
@@ -48,13 +49,15 @@ const _LAM = _xlang(
     @testset "plugging a TERM fills every occurrence of that hole and no other" begin
         c = _xc("(App (Hole 1) (Hole 2))")
         @test _XM.plug_term(c, 1, _xt("a")).term == _xt("(App a (Hole 2))")
-        @test _XM.plug_term(_xc("(App (Hole 1) (Hole 1))"), 1, _xt("a")).term == _xt("(App a a)")
+        @test _XM.plug_term(_xc("(App (Hole 1) (Hole 1))"), 1, _xt("a")).term ==
+            _xt("(App a a)")
         @test _XM.plug_term(c, 3, _xt("a")).term == c.term        # no such hole ⇒ unchanged
     end
 
     @testset "IDENTITY — the unit laws of the multicategory" begin
         id = _XM.identity_context()
-        for src in ("(App (Hole 1) a)", "(Lam \$x (Hole 1))", "(App (Hole 1) (Hole 2))", "(K)")
+        for src in
+            ("(App (Hole 1) a)", "(Lam \$x (Hole 1))", "(App (Hole 1) (Hole 2))", "(K)")
             c = _xc(src)
             # plugging the identity INTO a hole changes nothing (right unit)
             isempty(_XM.holes_of(c)) && continue
@@ -134,7 +137,9 @@ const _LAM = _xlang(
         # One input, two positions, two different binding stages. A multicategory input has ONE
         # interface, so this is not a well-formed context — reported rather than resolved by picking
         # whichever occurrence the traversal happened to reach first.
-        @test_throws ErrorException _XM.interface_at(_LAM, _xc("(App (Lam \$x (Hole 1)) (Hole 1))"), 1)
+        @test_throws ErrorException _XM.interface_at(
+            _LAM, _xc("(App (Lam \$x (Hole 1)) (Hole 1))"), 1
+        )
         # …and the agreeing case still works, so the check is not simply always-throwing.
         @test _XM.interface_at(_LAM, _xc("(App (Hole 1) (Hole 1))"), 1).binding_stage == 0
     end

@@ -28,9 +28,9 @@ using Test
 
     # Exempt BY NAME with a reason. Never a pattern: a pattern is how the next orphan hides.
     exempt = Dict(
-        "health.jl"       => "the health GATE itself — run by `bin/health`, not by runtests.jl",
+        "health.jl" => "the health GATE itself — run by `bin/health`, not by runtests.jl",
         "assert_guard.jl" => "shared helper, included via joinpath by its consumers (not a suite entry)",
-        "runtests.jl"     => "the root",
+        "runtests.jl" => "the root",
         # 🔴 EXEMPT BECAUSE ITS PROGRAM DOES NOT TERMINATE — and that is CONFORMANT, not a defect.
         # Its program `(= (q) 1)  (= (q) (S (q)))` has an INFINITE tabled answer set (1, (S 1), …).
         #
@@ -48,7 +48,7 @@ using Test
         # FINITE program — not by "fixing" a fixpoint that behaves as upstream's does.
         "test_dependency_firing.jl" =>
             "its program has an INFINITE tabled answer set, which does not terminate in SWI " *
-            "either (verified); needs a max_answers bound or a finite program, not an engine fix",
+            "either (verified); needs a max_answers bound or a finite program, not an engine fix"
     )
 
     # THREE FILTERS, each for a FALSE POSITIVE this scan actually produced when first run:
@@ -59,17 +59,21 @@ using Test
     #   * stay under `test/` — `tools/repl.jl` is not a test file and its includes are not this
     #     gate's business.
     # A gate whose failures are noise gets disabled, so these are load-bearing, not tidiness.
-    _decomment(txt) = join((occursin(r"^\s*#", l) ? "" : split(l, '#')[1] for l in split(txt, '\n')), '\n')
+    _decomment(txt) = join(
+        (occursin(r"^\s*#", l) ? "" : split(l, '#')[1] for l in split(txt, '\n')), '\n'
+    )
     _under(p) = startswith(normpath(p), normpath(testdir))
 
     reached = Set{String}()
     function scan(path)
-        txt = _decomment(read(path, String)); dir = dirname(path)
+        txt = _decomment(read(path, String))
+        dir = dirname(path)
         function take(p)
-            (occursin('$', p) || !_under(p)) && return
+            (occursin('$', p) || !_under(p)) && return nothing
             p = normpath(p)
-            p in reached && return
-            push!(reached, p); isfile(p) && scan(p)
+            p in reached && return nothing
+            push!(reached, p)
+            isfile(p) && scan(p)
         end
         # BOTH entry forms: raw `include(...)` (used inside individual test files) and runtests.jl's
         # `Main.@suite(...)` recording wrapper. Missing the second would report the ENTIRE suite as
@@ -101,21 +105,25 @@ using Test
     @test length(all_tests) > 40
     @test length(reached) > 40
 
-    orphans = [p for p in sort(all_tests)
-               if !(p in reached) && !haskey(exempt, basename(p))]
+    orphans = [
+        p for p in sort(all_tests)
+              if !(p in reached) && !haskey(exempt, basename(p))
+    ]
     @test isempty(orphans) ||
-          (@info """A TEST FILE IS NOT RUN BY THE SUITE.
-                   Either add an include() to runtests.jl, or add it to `exempt` above WITH A REASON.
-                   An unregistered test is a test that does not run.""" orphans; false)
+        (
+        @info """A TEST FILE IS NOT RUN BY THE SUITE.
+                Either add an include() to runtests.jl, or add it to `exempt` above WITH A REASON.
+                An unregistered test is a test that does not run.""" orphans; false)
 
     # every exemption must still name a real file, or the list rots into fiction
     for (name, why) in exempt
         @test any(p -> basename(p) == name, all_tests) ||
-              (@info "stale exemption — no such test file" name why; false)
+            (@info "stale exemption — no such test file" name why; false)
     end
 
     # and every include() must resolve, so a rename cannot leave a dangling target (failure #2 above)
     for p in reached
-        @test isfile(p) || (@info "runtests.jl includes a file that does not exist" path=p; false)
+        @test isfile(p) ||
+            (@info "runtests.jl includes a file that does not exist" path=p; false)
     end
 end

@@ -70,7 +70,7 @@ _at_ex(xs...) = Expression(Atom[xs...])
             _AT.trie_insert!(t, _at_ex(Sym(:g), v))
         end
         @test String[string(a) for a in _AT.trie_answers(t)] ==
-              ["(g zeta)", "(g alpha)", "(g 9)", "(g mid)"]
+            ["(g zeta)", "(g alpha)", "(g 9)", "(g mid)"]
     end
 
     @testset "delete unmarks, and the count tracks it" begin
@@ -136,13 +136,20 @@ end
         # Order matters as much as content: answer order is user-visible (Eval propagates store
         # order into answer order), so a switch that quietly reordered would be a behaviour change
         # hiding inside a storage change. `==` on the vectors checks both at once.
-        _AT.untable_all!(); _AT.abolish_all_tables!()
+        _AT.untable_all!()
+        _AT.abolish_all_tables!()
         try
-            s = Space(); load_core_stdlib!(s)
-            load_metta!(s, raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n")
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(
+                s,
+                raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n"
+            )
             _AT.table!(:fib)
-            @test String[string(x) for y in load_metta!(s, "!(fib 12)\n")
-                         for x in (y isa AbstractVector ? y : [y])] == ["144"]
+            @test String[
+                string(x) for y in load_metta!(s, "!(fib 12)\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ] == ["144"]
 
             tabled = collect(keys(_AT._ANSWER_TABLE))
             @test length(tabled) > 5                       # ANTI-VACUITY: real tables exist…
@@ -152,7 +159,8 @@ end
                 @test _AT.trie_answers(_AT.answer_trie_for(k)) == _AT._ANSWER_TABLE[k]
             end                                            # …holding the same answers, same order
         finally
-            _AT.untable_all!(); _AT.abolish_all_tables!()
+            _AT.untable_all!()
+            _AT.abolish_all_tables!()
         end
     end
 end

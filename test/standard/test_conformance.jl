@@ -23,35 +23,55 @@ const CONF_DIR = joinpath(@__DIR__, "conformance")
 # test. `test/oracle/leatta/test_leatta_oracle.jl:123-124,179` already did this correctly
 # (push + filter! to restore); this file did not. Idempotent so repeated includes cannot duplicate.
 CONF_DIR in Eval._MODULE_PATH[] || push!(Eval._MODULE_PATH[], CONF_DIR)
-const STDLIB   = read(joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String)
+const STDLIB = read(
+    joinpath(@__DIR__, "..", "..", "src", "standard", "stdlib.metta"), String
+)
 
 # baseline = expected number of error directives per script (0 = fully passing).
 const BASELINE = Dict(
     "a1_symbols.metta"=>0, "a2_opencoggy.metta"=>0, "a3_twoside.metta"=>0,
     "b0_chaining_prelim.metta"=>0, "b1_equal_chain.metta"=>0, "b2_backchain.metta"=>0,
     "b3_direct.metta"=>0, "b4_nondeterm.metta"=>0, "b5_types_prelim.metta"=>0,
-    "c1_grounded_basic.metta"=>0, "c2_spaces.metta"=>0, "c2_spaces_kb.metta"=>0, "c3_pln_stv.metta"=>0,
-    "d1_gadt.metta"=>0, "d2_higherfunc.metta"=>0, "d3_deptypes.metta"=>0, "d4_type_prop.metta"=>0,
+    "c1_grounded_basic.metta"=>0, "c2_spaces.metta"=>0, "c2_spaces_kb.metta"=>0,
+    "c3_pln_stv.metta"=>0,
+    "d1_gadt.metta"=>0, "d2_higherfunc.metta"=>0, "d3_deptypes.metta"=>0,
+    "d4_type_prop.metta"=>0,
     "d5_auto_types.metta"=>0,
     "e1_kb_write.metta"=>0, "e2_states.metta"=>0, "e3_match_states.metta"=>0,
-    "f1_imports.metta"=>0, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0, "f1_moduleC.metta"=>0,
+    "f1_imports.metta"=>0, "f1_moduleA.metta"=>0, "f1_moduleB.metta"=>0,
+    "f1_moduleC.metta"=>0,
     "g1_docs.metta"=>0)
 
 function script_errors(name)
-    sp = Space(); load_core_stdlib!(sp)   # stdlib.metta + CoreExtensions.metta (lib, hidden from get-atoms)
-    rs = try load_metta!(sp, read(joinpath(CONF_DIR, name), String)) catch e; return (-1, "CRASH $(typeof(e))"); end
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    sp = Space()
+    load_core_stdlib!(sp)   # stdlib.metta + CoreExtensions.metta (lib, hidden from get-atoms)
+    rs = try
+        load_metta!(sp, read(joinpath(CONF_DIR, name), String))
+    catch e
+        return (-1, "CRASH $(typeof(e))")
+    end
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     (length(errs), "$(length(rs)-length(errs))/$(length(rs)) pass")
 end
 
 @testset "conformance — FULL hyperon corpus matrix (26 scripts, exact baseline)" begin
     println("\n  ── conformance matrix (StandardMeTTa vs upstream b/a/c/d/e/f/g) ──")
-    totpass = 0; tot = 0
+    totpass = 0
+    tot = 0
     for name in sort(collect(keys(BASELINE)))
         n, summary = script_errors(name)
         m = match(r"(\d+)/(\d+)", summary)
-        if m !== nothing; totpass += parse(Int, m[1]); tot += parse(Int, m[2]); end
-        flag = n == BASELINE[name] ? (n == 0 ? "✓" : "· ($n known)") : "‼ CHANGED $(BASELINE[name])→$n"
+        if m !== nothing
+            totpass += parse(Int, m[1])
+            tot += parse(Int, m[2])
+        end
+        flag = if n == BASELINE[name]
+            (n == 0 ? "✓" : "· ($n known)")
+        else
+            "‼ CHANGED $(BASELINE[name])→$n"
+        end
         println("    ", rpad(name, 26), rpad(summary, 12), flag)
         @testset "$name" begin
             @test n == BASELINE[name]      # exact: regression OR unrecorded improvement both fail

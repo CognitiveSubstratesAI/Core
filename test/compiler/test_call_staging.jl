@@ -36,7 +36,9 @@ const _SE = MeTTaCore.CompilerEmit
 const _SI = MeTTaCore.Eval
 
 function _stage_parse(sp, text::AbstractString)
-    toks = _SI.tokenize(text); i = Ref(1); out = MeTTaCore.StandardMeTTa.Atom[]
+    toks = _SI.tokenize(text)
+    i = Ref(1)
+    out = MeTTaCore.StandardMeTTa.Atom[]
     while i[] <= length(toks)
         toks[i[]] == "!" && (i[] += 1)
         i[] > length(toks) && break
@@ -47,7 +49,8 @@ end
 
 "Compile `src`, load it plus `seed` into a REAL MORK space, run the calculus, return the dump."
 function _stage_run(src::AbstractString, seed::AbstractString)
-    sp = _SI.Space(); _SI.load_core_stdlib!(sp)
+    sp = _SI.Space()
+    _SI.load_core_stdlib!(sp)
     cls = _SA.translate_program(_SF.lower_program(_stage_parse(sp, src)))
     r = _SE.emit_program(cls)
     cs = MeTTaCore.new_core_space()
@@ -56,7 +59,7 @@ function _stage_run(src::AbstractString, seed::AbstractString)
         MeTTaCore.space_add_all_sexpr!(cs.inner, rule)
     end
     MeTTaCore.space_metta_calculus!(cs.inner, 1_000_000)
-    (dump = MeTTaCore.space_dump_all_sexpr(cs.inner), result = r)
+    (dump=MeTTaCore.space_dump_all_sexpr(cs.inner), result=r)
 end
 
 @testset "staged call convention — emitted rules must FIRE" begin
@@ -71,7 +74,9 @@ end
     end
 
     @testset "depth-2: the chain composes" begin
-        d, r = _stage_run("(= (f) (let \$v (g) done))\n(= (g) (let \$w (h) mid))\n(= (h) 42)\n", "(f)")
+        d, r = _stage_run(
+            "(= (f) (let \$v (g) done))\n(= (g) (let \$w (h) mid))\n(= (h) 42)\n", "(f)"
+        )
         @test r.staged == 2
         @test occursin("mid", d)           # g consumed h
         @test occursin("done", d)          # f consumed g — the whole chain, not just one hop
@@ -96,8 +101,11 @@ end
         # A stage number comes from call DEPTH and a cycle has none. Emitting one with a made-up depth
         # would fire once and then silently stop — worse than declining, because coverage would count
         # it as compiled.
-        sp = _SI.Space(); _SI.load_core_stdlib!(sp)
-        cls = _SA.translate_program(_SF.lower_program(_stage_parse(sp, "(= (loop \$n) (loop \$n))\n")))
+        sp = _SI.Space()
+        _SI.load_core_stdlib!(sp)
+        cls = _SA.translate_program(
+            _SF.lower_program(_stage_parse(sp, "(= (loop \$n) (loop \$n))\n"))
+        )
         r = _SE.emit_program(cls)
         @test r.emitted == 0
         @test length(r.declined) == 1
@@ -115,7 +123,8 @@ end
     @testset "REGRESSION: numbering degenerates when nothing is staged" begin
         # With no calls anywhere, lmax == 0, so PRODUCE lands on `priority` and CLEANUP on
         # `priority + 1` — byte-identical to the pre-staging two-stage scheme.
-        sp = _SI.Space(); _SI.load_core_stdlib!(sp)
+        sp = _SI.Space()
+        _SI.load_core_stdlib!(sp)
         cls = _SA.translate_program(_SF.lower_program(_stage_parse(sp, "(= (c) 1)\n")))
         r = _SE.emit_program(cls)
         @test r.staged == 0
@@ -146,16 +155,20 @@ end
     _mk() = MeTTaCore.new_core_space()
     _run(execs, redex) = begin
         cs = _mk()
-        for e in execs; MeTTaCore.space_add_all_sexpr!(cs.inner, e); end
+        for e in execs
+            MeTTaCore.space_add_all_sexpr!(cs.inner, e)
+        end
         MeTTaCore.space_add_all_sexpr!(cs.inner, redex)
         MeTTaCore.core_calculus!(cs, 1_000)
-        [strip(l) for l in split(MeTTaCore.space_dump_all_sexpr(cs.inner), '\n')
-         if !isempty(strip(l)) && !startswith(strip(l), "(exec")]
+        [
+            strip(l) for l in split(MeTTaCore.space_dump_all_sexpr(cs.inner), '\n')
+            if !isempty(strip(l)) && !startswith(strip(l), "(exec")
+        ]
     end
     green_first = "(exec 0 (, (green \$x)) (O (+ (frog \$x)) (- (green \$x))))"
     frog_second = "(exec 1 (, (frog \$y)) (O (+ True) (- (frog \$y))))"
-    green_last  = "(exec 1 (, (green \$x)) (O (+ (frog \$x)) (- (green \$x))))"
-    frog_first  = "(exec 0 (, (frog \$y)) (O (+ True) (- (frog \$y))))"
+    green_last = "(exec 1 (, (green \$x)) (O (+ (frog \$x)) (- (green \$x))))"
+    frog_first = "(exec 0 (, (frog \$y)) (O (+ True) (- (frog \$y))))"
 
     # CORRECT: caller at the lower priority, so it is selected first and the callee's rule survives.
     @test _run([green_first, frog_second], "(green a)") == ["True"]

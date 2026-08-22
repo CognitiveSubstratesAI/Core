@@ -67,19 +67,27 @@ function _il_assert_all_rewrites(program::AbstractString, who::AbstractString)
         end
     end
     (isempty(bad) && isempty(bangs)) && return nothing
-    msg = "$who: this lane lowers ONLY `(~> LHS RHS)` base rewrites, but the program contains " *
-          "forms it would silently discard.\n"
-    isempty(bad) || (msg *= "  unsupported forms ($(length(bad))): " *
-                            join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n")
-    isempty(bangs) || (msg *= "  `!` directives ($(length(bangs))): " *
-                              join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n")
+    msg =
+        "$who: this lane lowers ONLY `(~> LHS RHS)` base rewrites, but the program contains " *
+        "forms it would silently discard.\n"
+    isempty(bad) || (
+        msg *=
+            "  unsupported forms ($(length(bad))): " *
+            join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n"
+    )
+    isempty(bangs) || (
+        msg *=
+            "  `!` directives ($(length(bangs))): " *
+            join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n"
+    )
     # ⚠️ This advice used to name the `:direct` lane (`mc_run mode=:direct`). That lane was the
     # MeTTa→MM2 direct-lowering arrow and is DELETED — whitepaper Figure 2 has exactly one compile
     # arrow, MeTTa→MeTTa-IL, and gives MM2 a dashed "runs on" edge instead. Pointing a user at a
     # removed entry point is worse than pointing at nothing, so the advice names the surviving route.
-    msg *= "  → ground FACTS belong in the `data` argument, not the program.\n" *
-           "  → `(=)` rules are not lowered by this lane; compile them (`compile_run`) or express " *
-           "them as `(~> LHS RHS)`."
+    msg *=
+        "  → ground FACTS belong in the `data` argument, not the program.\n" *
+        "  → `(=)` rules are not lowered by this lane; compile them (`compile_run`) or express " *
+        "them as `(~> LHS RHS)`."
     error(msg)
 end
 
@@ -97,7 +105,7 @@ one of three. That is the recurring shape: derive the rule and sweep the candida
 the instance that happened to be looked at.
 """
 function _il_assert_only(program::AbstractString, who::AbstractString, head::AbstractString,
-                         shape::AbstractString, hint::AbstractString)
+    shape::AbstractString, hint::AbstractString)
     bad = String[]
     bangs = String[]
     for (bang, f) in mm2_split_forms(program)
@@ -108,12 +116,19 @@ function _il_assert_only(program::AbstractString, who::AbstractString, head::Abs
         end
     end
     (isempty(bad) && isempty(bangs)) && return nothing
-    msg = "$who: this lane lowers ONLY $shape, but the program contains " *
-          "forms it would silently discard.\n"
-    isempty(bad) || (msg *= "  unsupported forms ($(length(bad))): " *
-                            join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n")
-    isempty(bangs) || (msg *= "  `!` directives ($(length(bangs))): " *
-                              join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n")
+    msg =
+        "$who: this lane lowers ONLY $shape, but the program contains " *
+        "forms it would silently discard.\n"
+    isempty(bad) || (
+        msg *=
+            "  unsupported forms ($(length(bad))): " *
+            join(first(bad, 5), "  ") * (length(bad) > 5 ? "  …" : "") * "\n"
+    )
+    isempty(bangs) || (
+        msg *=
+            "  `!` directives ($(length(bangs))): " *
+            join(first(bangs, 5), "  ") * (length(bangs) > 5 ? "  …" : "") * "\n"
+    )
     error(msg * hint)
 end
 
@@ -121,8 +136,11 @@ end
 RAISES on any non-`~>` form rather than dropping it — see `_il_assert_all_rewrites`."
 function metta_il_lower(program::AbstractString)::String
     _il_assert_all_rewrites(program, "metta_il_lower")
-    join([metta_il_lower_rewrite(strip(f)) for (bang, f) in mm2_split_forms(program)
-          if !bang && mm2_head(f) == "~>"], "\n")
+    join(
+        [
+            metta_il_lower_rewrite(strip(f)) for (bang, f) in mm2_split_forms(program)
+            if !bang && mm2_head(f) == "~>"
+        ], "\n")
 end
 
 "Lower a MeTTa-IL program's rewrites to KBSaturation forward rules `(==> LHS RHS)` (for recursive
@@ -130,8 +148,11 @@ closure). `(~> LHS RHS)` and `(==> BODY HEAD)` are the same forward-derivation; 
 RAISES on any non-`~>` form rather than dropping it — see `_il_assert_all_rewrites`."
 function metta_il_lower_saturation(program::AbstractString)::String
     _il_assert_all_rewrites(program, "metta_il_lower_saturation")
-    join(["(==> $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))"
-          for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"], "\n")
+    join(
+        [
+            "(==> $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))"
+            for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"
+        ], "\n")
 end
 
 """
@@ -144,8 +165,8 @@ Run a MeTTa-IL program's rewrites over `data` on the native MORK `cs`, returning
     for RECURSIVE rewrites (a rewrite whose RHS head also appears in a body), e.g. transitive closure.
 """
 function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractString;
-                       steps::Int = 1_000_000, saturate::Bool = false,
-                       use_magic_sets::Bool = false, magic_query::AbstractString = "", magic_bound::Int = 0)
+    steps::Int=1_000_000, saturate::Bool=false,
+    use_magic_sets::Bool=false, magic_query::AbstractString="", magic_bound::Int=0)
     # Guard FIRST — before `data` touches the space. The lowering entries below also check, but by
     # then we would have mutated `cs` and then thrown, leaving a half-loaded space behind.
     _il_assert_all_rewrites(program, "metta_il_run!")
@@ -154,8 +175,12 @@ function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractStr
         rules = metta_il_lower_saturation(program)
         isempty(rules) && return String[]
         # opt-in magic-sets goal-direction (same shared SCOptions stage the Direct lane reaches)
-        sc_execute!(cs, rules; opts = SCOptions(saturate = true, use_magic_sets = use_magic_sets,
-            magic_query = String(magic_query), magic_bound = magic_bound))
+        sc_execute!(
+            cs,
+            rules;
+            opts=SCOptions(; saturate=true, use_magic_sets=use_magic_sets,
+                magic_query=String(magic_query), magic_bound=magic_bound)
+        )
     else
         exec = metta_il_lower(program)
         isempty(exec) && return String[]
@@ -167,8 +192,14 @@ function metta_il_run!(cs::CoreSpace, data::AbstractString, program::AbstractStr
         (bang || mm2_head(f) != "~>") && continue
         push!(heads, mm2_head(mm2_expr_args(f)[3]))   # RHS head
     end
-    sort(unique(String[strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
-                        if mm2_head(strip(l)) in heads]))
+    sort(
+        unique(
+            String[
+                strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
+                if mm2_head(strip(l)) in heads
+            ]
+        )
+    )
 end
 
 # --- Congruence: calculus reduction via subterm rewriting --------------------------------------------
@@ -193,7 +224,9 @@ end
 function _normalize_subterm(rules::Vector{MORK.Expr}, term::AbstractString)::String
     term = strip(term)
     if startswith(term, "(")                          # compound: normalize children first (← congruence)
-        term = "(" * join([_normalize_subterm(rules, a) for a in mm2_expr_args(term)], " ") * ")"
+        term =
+            "(" * join([_normalize_subterm(rules, a) for a in mm2_expr_args(term)], " ") *
+            ")"
     end
     te = MORK.sexpr_to_expr(String(term))             # parse the TERM once, not once per rule
     for rule in rules                                 # then a top-level reduction; renormalize on success
@@ -222,8 +255,10 @@ function metta_il_normalize(program::AbstractString, term::AbstractString)::Stri
     # profile note on `_normalize_subterm`). Head and body must stay in ONE parsed expr so they
     # share a variable namespace — MORK vars are POSITIONAL (MorkBridge.jl CRUX); parsing them
     # separately silently reorders indices, e.g. `(q $y $x)` over `(p a b)` yielding `(q a b)`.
-    rules = MORK.Expr[MORK.sexpr_to_expr("(= $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))")
-                      for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"]
+    rules = MORK.Expr[
+        MORK.sexpr_to_expr("(= $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))")
+        for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"
+    ]
     _normalize_subterm(rules, term)
 end
 
@@ -242,7 +277,9 @@ function _parse_def_match(def::AbstractString)
         error("def: expected (def NAME (params) (match …)), got: $def")
     m = mm2_expr_args(a[4])
     m[1] == "match" || error("def body must be (match …), got '$(m[1])'")
-    pats = String[]; emits = String[]; guards = String[]
+    pats = String[]
+    emits = String[]
+    guards = String[]
     for arg in m[2:end]
         h = mm2_head(arg)
         if h == "emit"
@@ -257,11 +294,11 @@ function _parse_def_match(def::AbstractString)
             push!(pats, arg)                            # a match pattern
         end
     end
-    (pats = pats, emits = emits, guards = guards)
+    (pats=pats, emits=emits, guards=guards)
 end
 
 "Lower one `def/match/emit` stage to MM2 `(exec PRIORITY (, PATS GUARDS) (, EMITS))` (§9.2 `defreact`)."
-function metta_il_lower_def(def::AbstractString, priority::Integer = 0)::String
+function metta_il_lower_def(def::AbstractString, priority::Integer=0)::String
     p = _parse_def_match(def)
     isempty(p.emits) && error("metta_il_lower_def: (match …) has no (emit …)")
     "(exec $priority (, $(join(vcat(p.pats, p.guards), " "))) (, $(join(p.emits, " "))))"
@@ -269,13 +306,18 @@ end
 
 "Lower a `def/match/emit` pipeline → MM2 exec program; each def's PRIORITY is its stage order."
 metta_il_lower_pipeline(program::AbstractString)::String =
-    join([metta_il_lower_def(strip(f), i)
-          for (i, (bang, f)) in enumerate(mm2_split_forms(program)) if !bang && mm2_head(f) == "def"],
-         "\n")
+    join(
+        [
+            metta_il_lower_def(strip(f), i)
+            for (i, (bang, f)) in enumerate(mm2_split_forms(program)) if
+            !bang && mm2_head(f) == "def"
+        ],
+        "\n")
 
 _pipeline_emit_heads(program) = Set{String}(
-    mm2_head(e) for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "def"
-                for e in _parse_def_match(strip(f)).emits)
+    mm2_head(e) for
+    (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "def"
+    for e in _parse_def_match(strip(f)).emits)
 
 """
     metta_il_run_pipeline!(cs, data, program; steps=1_000_000) -> Vector{String}
@@ -283,18 +325,27 @@ _pipeline_emit_heads(program) = Set{String}(
 Run a `def/match/emit` pipeline (§9.1) over `data`: lower each stage to a priority-ordered MM2 exec
 rule (§9.2), step the calculus, return the emitted atoms (by every stage's emit head).
 """
-function metta_il_run_pipeline!(cs::CoreSpace, data::AbstractString, program::AbstractString;
-                                steps::Int = 1_000_000)
+function metta_il_run_pipeline!(cs::CoreSpace, data::AbstractString,
+    program::AbstractString;
+    steps::Int=1_000_000)
     # SWEPT 2026-08-10 — the `~>` lane refused a mixed program and this one accepted it in silence.
-    _il_assert_only(program, "metta_il_run_pipeline!", "def", "`(def NAME (args…) BODY)` stages",
+    _il_assert_only(program, "metta_il_run_pipeline!", "def",
+        "`(def NAME (args…) BODY)` stages",
         "  → ground FACTS belong in the `data` argument, not the program.\n" *
-        "  → a `!` query is not run by this lane; the pipeline's output is its `(emit …)` heads.")
+        "  → a `!` query is not run by this lane; the pipeline's output is its `(emit …)` heads."
+    )
     isempty(strip(data)) || space_add_all_sexpr!(cs.inner, data)
     exec = metta_il_lower_pipeline(program)
     isempty(exec) && return String[]
     space_add_all_sexpr!(cs.inner, exec)
     space_metta_calculus!(cs.inner, steps)
     heads = _pipeline_emit_heads(program)
-    sort(unique(String[strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
-                        if mm2_head(strip(l)) in heads]))
+    sort(
+        unique(
+            String[
+                strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
+                if mm2_head(strip(l)) in heads
+            ]
+        )
+    )
 end

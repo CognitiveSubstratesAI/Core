@@ -27,66 +27,91 @@ step(s) = println("  · ", s)
 sx(a) = a isa AbstractVector ? "(" * join(sx.(a), " ") * ")" : string(a)
 atoms(sp) = isempty(MC.core_atoms(sp)) ? "(none)" : join(sx.(MC.core_atoms(sp)), " ")
 
-hdr("1. :vector — the interpreter's store. The ONLY kind MeTTa can currently reduce against.")
+hdr(
+    "1. :vector — the interpreter's store. The ONLY kind MeTTa can currently reduce against."
+)
 vs = MC.make_space(:vector)
 step("make_space(:vector) → $(typeof(vs))")
 EV.load_metta!(vs, raw"(= (twice $x) (+ $x $x))")
 EV.load_metta!(vs, "(belief a 0.9 0.8)\n(belief b 0.1 0.2)")
 step("evaluate  !(twice 21)                        → $(EV.load_metta!(vs, "!(twice 21)"))")
-step("bind      !(match &self (belief \$k \$s \$c) \$k) → $(EV.load_metta!(vs, raw"!(match &self (belief $k $s $c) $k)"))")
+step(
+    "bind      !(match &self (belief \$k \$s \$c) \$k) → $(EV.load_metta!(vs, raw"!(match &self (belief $k $s $c) $k)"))"
+)
 step("↑ the variable's WITNESS comes back. No MORK-backed kind below can do this yet.")
 
 hdr("2. :vector; parent = … — a FORK is a seeded PRIVATE region, not a kind of its own.")
-fk = MC.make_space(:vector; parent = vs)
+fk = MC.make_space(:vector; parent=vs)
 EV.load_metta!(fk, "(only-in-the-fork)")
-step("parent sees the fork's new atom?  $(!isempty(EV.load_metta!(vs, "!(match &self (only-in-the-fork) yes)")))  ← must be false")
-step("fork sees it?                     $(!isempty(EV.load_metta!(fk, "!(match &self (only-in-the-fork) yes)")))  ← must be true")
-step("fork still has the parent's snapshot? $(!isempty(EV.load_metta!(fk, "!(match &self (belief a 0.9 0.8) yes)")))")
+step(
+    "parent sees the fork's new atom?  $(!isempty(EV.load_metta!(vs, "!(match &self (only-in-the-fork) yes)")))  ← must be false"
+)
+step(
+    "fork sees it?                     $(!isempty(EV.load_metta!(fk, "!(match &self (only-in-the-fork) yes)")))  ← must be true"
+)
+step(
+    "fork still has the parent's snapshot? $(!isempty(EV.load_metta!(fk, "!(match &self (belief a 0.9 0.8) yes)")))"
+)
 
 hdr("3. :mork at Private — an ISOLATED MORK atomspace. Its own trie, root prefix.")
 m1 = MC.make_space(:mork)
 m2 = MC.make_space(:mork)
 MC.core_add!(m1, [:only_in_m1, 1])
 step("make_space(:mork) → $(typeof(m1))")
-step("two :mork spaces share a trie?  $(m1.inner === m2.inner)  ← must be false (isolated by construction)")
+step(
+    "two :mork spaces share a trie?  $(m1.inner === m2.inner)  ← must be false (isolated by construction)"
+)
 step("m1 atoms: $(atoms(m1))   m2 atoms: $(atoms(m2))")
 step("...but MeTTa cannot RUN here — this is compile-arrow 6:")
 try
     MC.load_metta!(m1, "!(+ 1 2)")
-    step("  ⚠️ UNEXPECTED: the directive was accepted. The ledger is now STALE — update :mork's caps.")
+    step(
+        "  ⚠️ UNEXPECTED: the directive was accepted. The ledger is now STALE — update :mork's caps."
+    )
 catch e
     msg = sprint(showerror, e)
     step("  raises, as declared: " * first(split(msg, '\n')))
 end
 
-hdr("4. :mork at Shared — SHARED SPACES. Same KIND, different ACCESS MODE. Whitepaper Fig. 4.")
-common = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&common"))
-games  = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/games"))
-social = MC.make_space(:mork; mode = MC.Shared, name = Symbol("&app/social"))
+hdr(
+    "4. :mork at Shared — SHARED SPACES. Same KIND, different ACCESS MODE. Whitepaper Fig. 4."
+)
+common = MC.make_space(:mork; mode=MC.Shared, name=Symbol("&common"))
+games = MC.make_space(:mork; mode=MC.Shared, name=Symbol("&app/games"))
+social = MC.make_space(:mork; mode=MC.Shared, name=Symbol("&app/social"))
 step("one shared trie behind all three?  $(common.inner === games.inner === social.inner)")
 for (nm, sp) in (("&common", common), ("&app/games", games), ("&app/social", social))
     step("  $(rpad(nm, 12)) prefix = $(String(copy(sp.prefix)))")
 end
 MC.core_add!(common, [:shared_fact, :visible_to_its_own_region])
-MC.core_add!(games,  [:score, 10])
+MC.core_add!(games, [:score, 10])
 MC.core_add!(social, [:score, 99])
 step("games sees its own score only:   $(atoms(games))")
 step("social sees its own score only:  $(atoms(social))")
-step("cross-prefix match does not bleed: games match (score \$v) → $(length(MC.core_match(games, [:score, Symbol("\$v")]))) hit(s)")
-step("addressable BY NAME (the prefix registry): lookup_prefix(:&app/games) = " *
-     "$(String(copy(MC.lookup_prefix(Symbol("&app/games")))))")
+step(
+    "cross-prefix match does not bleed: games match (score \$v) → $(length(MC.core_match(games, [:score, Symbol("\$v")]))) hit(s)"
+)
+step(
+    "addressable BY NAME (the prefix registry): lookup_prefix(:&app/games) = " *
+    "$(String(copy(MC.lookup_prefix(Symbol("&app/games")))))"
+)
 
 hdr("5. Persistence — declared on the MORK kinds, and exercised here.")
 dir = mktempdir()
 MC.set_act_dir!(dir)
-step("empty region snapshot → $(MC.snapshot_space_to_act!(MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("empty_probe/")), "zoo_empty"))  ← false: nothing to save")
-step("filled region snapshot → $(MC.snapshot_space_to_act!(games, "zoo_games"))   act_exists → $(MC.act_exists("zoo_games"))")
+step(
+    "empty region snapshot → $(MC.snapshot_space_to_act!(MC.make_space(:mork; mode = MC.Shared, prefix = Vector{UInt8}("empty_probe/")), "zoo_empty"))  ← false: nothing to save"
+)
+step(
+    "filled region snapshot → $(MC.snapshot_space_to_act!(games, "zoo_games"))   act_exists → $(MC.act_exists("zoo_games"))"
+)
 
 hdr("6. THE CAPABILITY LEDGER — read this as the gap list")
 MC.space_ledger(stdout)
 
 hdr("7. What is NOT here, and why")
-println("""
+println(
+    """
   Kinds are OPEN: a package that owns a backend registers it itself via `register_space_kind!`, so
   Core never has to depend on it. Nothing outside Core registers a kind yet, so these are absent:
 
@@ -108,4 +133,5 @@ println("""
   And the big one: NO kind above except :vector answers `evaluate`. That is compile-arrow 6
   (docs/specs/COMPILE_ARROW_STATUS.md) — the trie-backed store loads but does not evaluate. Creating
   MORK-backed spaces is solved; RUNNING MeTTa against one is not.
-""")
+"""
+)

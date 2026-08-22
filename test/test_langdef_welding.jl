@@ -6,9 +6,9 @@ using MeTTaCore
 const SM = MeTTaCore.Eval
 using Test
 
-_eval(q) = (sp = SM.Space(); SM.load_core_stdlib!(sp);
-            res = SM.load_metta!(sp, q);
-            sort([string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
+_eval(q) = (sp=SM.Space(); SM.load_core_stdlib!(sp);
+    res=SM.load_metta!(sp, q);
+    sort([string(x) for r in res for x in (r isa AbstractVector ? r : [r])]))
 
 @testset "LangDef disable-to-prove (HES_Chain welded)" begin
     try
@@ -45,7 +45,7 @@ end
         @test_throws Exception SM.rule_enabled("")
         @test_throws Exception SM.rule_enabled("not-a-rule-at-all")
         # every live rule in the table is known to the interpreter, and agrees with the table
-        live_names  = String[r.name for r in MeTTaCore.HE_SMALL_STEP_RULES if r.live]
+        live_names = String[r.name for r in MeTTaCore.HE_SMALL_STEP_RULES if r.live]
         struct_names = String[r.name for r in MeTTaCore.HE_SMALL_STEP_RULES if !r.live]
         @test !isempty(live_names) && !isempty(struct_names)         # both classes exist to test
         for n in live_names

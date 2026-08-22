@@ -29,7 +29,7 @@ using MeTTaCore.StandardMeTTa
     sp = Space()
     load_core_stdlib!(sp)
     res(expr) = string.(load_metta!(sp, "!$expr"))
-    one(expr) = (r = res(expr); isempty(r) ? "" : r[1])
+    one(expr) = (r=res(expr); isempty(r) ? "" : r[1])
 
     # ── (1) a real space still works, by name and by value ────────────────────────────────────────
     load_metta!(sp, "!(bind! &kb2 (new-space))")

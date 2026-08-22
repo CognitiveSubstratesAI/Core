@@ -75,27 +75,35 @@ const BASELINE = Dict(
     #     12 format-only      — benign error-message text divergence (Core `AssertionFailed` vs hyperon detail);
     #      2 NoReturn-subject — `function` reports subject `(function X)` vs hyperon `(X)`;
     #      1 step-limit       — busy-beaver hits Core's step cap where hyperon completes.
-    "interpreter.metta" => 15,
+    "interpreter.metta" => 15
 )
 
 "Run one unit .metta file; return (npass, nfail, fails::Vector{String})."
 function run_unit_file(path)
-    s = SM.Space(); SM.load_core_stdlib!(s)
+    s = SM.Space()
+    SM.load_core_stdlib!(s)
     get!(s.tokens, "&self", SM.Grounded(s))
-    npass = 0; fails = String[]
+    npass = 0
+    fails = String[]
     # TOKEN-AWARE incremental parse-eval (mirrors load_metta!): parse each atom against s.tokens so a
     # `bind!`-bound space token (&stateAB, &ns, …) substitutes to its Grounded value before the next atom
     # is parsed. (parse_program does NOT substitute tokens, so custom bound spaces fell through to &self.)
-    toks = SM.tokenize(read(path, String)); i = Ref(1)
+    toks = SM.tokenize(read(path, String))
+    i = Ref(1)
     while i[] <= length(toks)
         directive = false
-        toks[i[]] == "!" && (directive = true; i[] += 1)
+        toks[i[]] == "!" && (directive=true; i[] += 1)
         i[] > length(toks) && break
         a = SM.parse_from(toks, i, s.tokens)
         directive || (SM.add_atom!(s, a); continue)
-        r = try SM.metta_run(a, s) catch e; [SM.Sym("EXC:$(typeof(e))")] end
+        r = try
+            SM.metta_run(a, s)
+        catch e
+            [SM.Sym("EXC:$(typeof(e))")]
+        end
         ok = !isempty(r) && all(x -> x isa SM.Expression && isempty(x.children), r)   # () = assert passed
-        if ok; npass += 1
+        if ok
+            npass += 1
         else
             q = a isa SM.Expression && length(a.children) >= 2 ? a.children[2] : a
             push!(fails, first(string(SM.subst(q, SM.Bindings())), 70))
@@ -111,9 +119,11 @@ end
     for f in files
         np, nf, fails = run_unit_file(joinpath(UNIT_DIR, f))
         base = get(BASELINE, f, 0)
-        mark = nf == base ? "✓" : (nf > base ? "✗ REGRESSION" : "✗ IMPROVED→update baseline")
-        printstyled("  $(rpad(f,22)) $(lpad(np,4))  $(lpad(nf,4))  $(lpad(base,4))  $mark\n";
-                    color = nf == base ? :green : :red)
+        mark =
+            nf == base ? "✓" : (nf > base ? "✗ REGRESSION" : "✗ IMPROVED→update baseline")
+        printstyled(
+            "  $(rpad(f,22)) $(lpad(np,4))  $(lpad(nf,4))  $(lpad(base,4))  $mark\n";
+            color=nf == base ? :green : :red)
         @testset "$f" begin
             @test nf == base
         end

@@ -28,7 +28,9 @@ const _TD_IR = MeTTaCore.CompilerIR
 
 "Parse every top-level form of `src`."
 function _td_parse(src::AbstractString)::Vector{_TD_SM.Atom}
-    sp = _TD_V.Space(); toks = _TD_V.tokenize(String(src)); i = Ref(1)
+    sp = _TD_V.Space()
+    toks = _TD_V.tokenize(String(src))
+    i = Ref(1)
     out = _TD_SM.Atom[]
     while i[] <= length(toks)
         push!(out, _TD_V.parse_from(toks, i, sp.tokens))
@@ -75,8 +77,10 @@ end
     # `parse_from` substitutes bound tokens at parse time (Eval.jl:2648), so a registered name can
     # arrive as `Grounded{Operation}` rather than `Sym`. Checking only `Sym` is the exact bug that made
     # `Frontend.lower` miss special forms — see its own comment. Same trap, same guard.
-    sp = _TD_V.Space(); _TD_V.load_core_stdlib!(sp)
-    toks = _TD_V.tokenize("(: h (-> Number Bool))"); i = Ref(1)
+    sp = _TD_V.Space()
+    _TD_V.load_core_stdlib!(sp)
+    toks = _TD_V.tokenize("(: h (-> Number Bool))")
+    i = Ref(1)
     a = _TD_V.parse_from(toks, i, sp.tokens)           # `:` resolved through the stdlib token table
     prog = _TD_FR.lower_program(_TD_SM.Atom[a])
     @test _TD_IR.has_arrow_type(prog, :h)

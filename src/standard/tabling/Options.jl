@@ -42,26 +42,28 @@ mutable struct TableOptions
     monotonic::Bool
     lazy::Bool
     dynamic::Bool
-    tshared::Union{Bool,Nothing} # shared/private; `nothing` = unspecified, as upstream's absent key
+    tshared::Union{Bool, Nothing} # shared/private; `nothing` = unspecified, as upstream's absent key
     max_answers::Int             # NO_RESTRAINT when unset
     subgoal_abstract::Int
     answer_abstract::Int
 end
 TableOptions() = TableOptions(:variant, false, false, false, false, false, nothing,
-                              NO_RESTRAINT, NO_RESTRAINT, NO_RESTRAINT)
+    NO_RESTRAINT, NO_RESTRAINT, NO_RESTRAINT)
 
 """Options we cannot honour yet: option ⇒ (roadmap item, why).
 
 Declarable and REFUSED, never silently accepted. Each names the item that would make it honourable,
 so a reader learns what is missing rather than that something is."""
-const _REFUSED_OPTIONS = Dict{Symbol,Tuple{String,String}}(
-    :incremental      => ("§7.7",     "needs the IDG (idg_add_edge / falsecount) — no dependency graph yet"),
-    :opaque           => ("§7.7",     "the paired inverse of `incremental`; meaningless without it"),
-    :monotonic        => ("§7.8",     "needs the same dependency graph, monotone-update variant"),
-    :lazy             => ("§7.8",     "the eager/lazy propagation split of monotonic tabling"),
-    :dynamic          => ("§7.4",     "tabling for impure/dynamic predicates — interaction rules unbuilt"),
-    :shared           => ("§7.9",     "needs a THREADING model; MettaJam is the intended first consumer"),
-    :private          => ("§7.9",     "the paired inverse of `shared`; meaningless without it"),
+const _REFUSED_OPTIONS = Dict{Symbol, Tuple{String, String}}(
+    :incremental =>
+        ("§7.7", "needs the IDG (idg_add_edge / falsecount) — no dependency graph yet"),
+    :opaque => ("§7.7", "the paired inverse of `incremental`; meaningless without it"),
+    :monotonic => ("§7.8", "needs the same dependency graph, monotone-update variant"),
+    :lazy => ("§7.8", "the eager/lazy propagation split of monotonic tabling"),
+    :dynamic =>
+        ("§7.4", "tabling for impure/dynamic predicates — interaction rules unbuilt"),
+    :shared => ("§7.9", "needs a THREADING model; MettaJam is the intended first consumer"),
+    :private => ("§7.9", "the paired inverse of `shared`; meaningless without it")
     # ✅ `:subgoal_abstract` IS NO LONGER HERE — §7.11.1 is BUILT (`tabling/Abstract.jl`, 2026-08-17).
     # Its refusal reason had been wrong AND load-bearing: it said the option needed "abstraction over
     # TRIE TERMS at a depth — trie walk not built", i.e. that the answer trie was the prerequisite.
@@ -83,10 +85,14 @@ const _REFUSED_OPTIONS = Dict{Symbol,Tuple{String,String}}(
 
 _refuse(opt::Symbol) = begin
     (item, why) = _REFUSED_OPTIONS[opt]
-    throw(ArgumentError("table option `$(opt)` is a REAL SWI option we cannot honour yet ($(item)): " *
-                        "$(why). Refused rather than silently accepted — an option that appears to " *
-                        "apply and does not is worse than one that is missing. " *
-                        "See Core/docs/TABLING_ROADMAP.md."))
+    throw(
+        ArgumentError(
+            "table option `$(opt)` is a REAL SWI option we cannot honour yet ($(item)): " *
+            "$(why). Refused rather than silently accepted — an option that appears to " *
+            "apply and does not is worse than one that is missing. " *
+            "See Core/docs/TABLING_ROADMAP.md."
+        )
+    )
 end
 
 """
@@ -111,16 +117,28 @@ fields in the same assignment.
 """
 function table_options!(o::TableOptions, spec)::TableOptions
     if spec isa Symbol
-        if spec === :subsumptive;  o.mode = :subsumptive
-        elseif spec === :variant;  o.mode = :variant
-        elseif haskey(_REFUSED_OPTIONS, spec); _refuse(spec)
+        if spec === :subsumptive
+            o.mode = :subsumptive
+        elseif spec === :variant
+            o.mode = :variant
+        elseif haskey(_REFUSED_OPTIONS, spec)
+            _refuse(spec)
         else
-            throw(ArgumentError("domain_error(table_option, $(spec)) — known: " *
-                  join(sort(String[String(k) for k in
-                       (:subsumptive, :variant, keys(_REFUSED_OPTIONS)...)]), ", ") *
-                  ", max_answers => N, subgoal_abstract => N, answer_abstract => N"))
+            throw(
+                ArgumentError(
+                    "domain_error(table_option, $(spec)) — known: " *
+                    join(
+                        sort(
+                            String[
+                                String(k) for k in
+                                (:subsumptive, :variant, keys(_REFUSED_OPTIONS)...)
+                            ]
+                        ), ", ") *
+                    ", max_answers => N, subgoal_abstract => N, answer_abstract => N"
+                )
+            )
         end
-    elseif spec isa Pair{Symbol,<:Integer}
+    elseif spec isa Pair{Symbol, <:Integer}
         (opt, n) = spec
         if opt === :max_answers
             # `restraint/4`: a NEGATIVE value REMOVES the restraint rather than storing it.
@@ -135,7 +153,11 @@ function table_options!(o::TableOptions, spec)::TableOptions
             throw(ArgumentError("domain_error(table_option, $(opt)($(n)))"))
         end
     else
-        throw(ArgumentError("domain_error(table_option, $(spec)) — expected a Symbol or `opt => N`"))
+        throw(
+            ArgumentError(
+                "domain_error(table_option, $(spec)) — expected a Symbol or `opt => N`"
+            )
+        )
     end
     o
 end
@@ -147,12 +169,15 @@ Upstream's `(A,B)` conjunction clause: fold every spec into one record, left to 
 """
 function parse_table_options(specs)::TableOptions
     o = TableOptions()
-    for sp in specs; table_options!(o, sp); end
+    for sp in specs
+        table_options!(o, sp)
+    end
     o
 end
 
-const _TABLE_OPTIONS = Dict{Symbol,TableOptions}()
-table_options_for(head::Symbol)::TableOptions = get(() -> TableOptions(), _TABLE_OPTIONS, head)
+const _TABLE_OPTIONS = Dict{Symbol, TableOptions}()
+table_options_for(head::Symbol)::TableOptions =
+    get(() -> TableOptions(), _TABLE_OPTIONS, head)
 
 """
     table_as!(head, specs...)

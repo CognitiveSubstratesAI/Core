@@ -117,7 +117,7 @@ mutable struct IDGNode
     new_answer::Bool               # an answer was ADDED during this re-evaluation (`pl-tabling.h:200`)
     monotonic::Bool                # §7.8
     lazy::Bool                     # §7.8's eager/lazy split
-    snapshot::Union{ReevalSnapshot,Nothing}   # the previous complete state, frozen by `prepare_reeval!`
+    snapshot::Union{ReevalSnapshot, Nothing}   # the previous complete state, frozen by `prepare_reeval!`
     # ── `stats` (`pl-tabling.h:216-219`, upstream's O_TRIE_STATS block) ──────────────────────────
     # ⚠️ NOT DECORATION. `reevaluated` is what makes the ANTI-VACUITY assertion in `test_reeval.jl`
     # possible: every other re-evaluation test passes on an implementation that never re-evaluates,
@@ -127,9 +127,9 @@ mutable struct IDGNode
     reevaluated::Int               # # times `reeval_complete!` finished
 end
 IDGNode(key::Atom) = IDGNode(key, Set{Atom}(), Set{Atom}(), 0, 0,
-                             false, false, false, false, false, nothing, 0, 0)
+    false, false, false, false, false, nothing, 0, 0)
 
-const _IDG = Dict{Atom,IDGNode}()
+const _IDG = Dict{Atom, IDGNode}()
 
 "The IDG node for a table, created on first use (`new_idg_node`)."
 idg_node_for(key::Atom)::IDGNode = get!(() -> IDGNode(key), _IDG, key)
@@ -138,8 +138,12 @@ drop_idg_node!(key::Atom) = begin
     n = get(_IDG, key, nothing)
     n === nothing && return nothing
     # unlink BOTH directions, or a dropped table leaves dangling edges that propagate into nothing
-    for p in n.affected;  haskey(_IDG, p) && delete!(_IDG[p].dependent, key); end
-    for c in n.dependent; haskey(_IDG, c) && delete!(_IDG[c].affected,  key); end
+    for p in n.affected
+        haskey(_IDG, p) && delete!(_IDG[p].dependent, key)
+    end
+    for c in n.dependent
+        haskey(_IDG, c) && delete!(_IDG[c].affected, key)
+    end
     delete!(_IDG, key)
     nothing
 end
@@ -228,14 +232,18 @@ end
    error upstream, not a silent corruption of a running fixpoint. `mono=true` is upstream's
    `IDG_CHANGED_MONO`, which STOPS propagation on an incomplete table instead of erroring.
 """
-function idg_changed!(key::Atom; mono::Bool = false)::Set{Atom}
+function idg_changed!(key::Atom; mono::Bool=false)::Set{Atom}
     n = get(_IDG, key, nothing)
     n === nothing && return Set{Atom}()
     n.falsecount == 0 || return Set{Atom}()                 # (1) already invalid ⇒ done
     if key in _TABLE_INPROG                                 # (3) `table_is_incomplete`
         mono && return Set{Atom}()
-        throw(ArgumentError("permission_error(update, variant, $(key)) — a table cannot be " *
-                            "invalidated while it is being completed (pl-tabling.c:7148)"))
+        throw(
+            ArgumentError(
+                "permission_error(update, variant, $(key)) — a table cannot be " *
+                "invalidated while it is being completed (pl-tabling.c:7148)"
+            )
+        )
     end
     n.falsecount += 1                                       # (2) the CHANGED table is invalidated
     n.invalidated += 1                                      # TRIE_STAT_INC(n, invalidated) (:7159)
@@ -245,7 +253,8 @@ function idg_changed!(key::Atom; mono::Bool = false)::Set{Atom}
 end
 
 "Is this table invalidated? `complete_or_invalid_status`: `n->falsecount > 0` ⇒ `invalid`."
-idg_is_invalid(key::Atom)::Bool = (n = get(_IDG, key, nothing); n !== nothing && n.falsecount > 0)
+idg_is_invalid(key::Atom)::Bool =
+    (n=get(_IDG, key, nothing); n !== nothing && n.falsecount > 0)
 
 """
     idg_reset_falsecount!(key)
@@ -256,16 +265,16 @@ new dependency… similar to re-evaluating an incremental tabled predicate when 
 A table re-evaluated with a NEW dependency set must not carry invalidation counted against its OLD
 one.
 """
-idg_reset_falsecount!(key::Atom) = (n = get(_IDG, key, nothing);
-                                    n === nothing || (n.falsecount = 0); nothing)
+idg_reset_falsecount!(key::Atom) = (n=get(_IDG, key, nothing);
+    n === nothing || (n.falsecount = 0); nothing)
 
 "Is a re-evaluation in progress? `complete_or_invalid_status` reports such a table as `fresh`\n(`pl-tabling.c:3235`), which is why `prepare_reeval!` sets the trie status to `:fresh` and not to a\nstatus of our own invention."
 idg_is_reevaluating(key::Atom)::Bool =
-    (n = get(_IDG, key, nothing); n !== nothing && n.reevaluating)
+    (n=get(_IDG, key, nothing); n !== nothing && n.reevaluating)
 
 "Every table currently invalid — `idg_falsecount`-style querying (`pl-tabling.c:6612`)."
 idg_invalid_tables()::Vector{Atom} =
-    sort!(Atom[k for (k, n) in _IDG if n.falsecount > 0]; by = string)
+    sort!(Atom[k for (k, n) in _IDG if n.falsecount > 0]; by=string)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §7.7, SECOND HALF — RE-EVALUATION.
@@ -398,27 +407,27 @@ Ours do not: `tabled_eval`'s `finally` calls `drop_worklist!(m)` for every compl
 upstream's own justification quoted there — `complete_worklist`'s `destroy` is always true in our
 configuration). A complete table therefore has no live worklist to reset.
 """
-function prepare_reeval!(key::Atom; force::Bool = false)::Bool
+function prepare_reeval!(key::Atom; force::Bool=false)::Bool
     n = get(_IDG, key, nothing)
     n === nothing && return false
     (n.falsecount == 0 && !force) && return false        # :8358 / :8393 — someone else did it
     n.reevaluating && return false                       # already in progress ⇒ not re-prepared
     t = answer_trie_for(key)
-    n.snapshot     = ReevalSnapshot(trie_answers(t), table_digest(t), t.root, t.count)
+    n.snapshot = ReevalSnapshot(trie_answers(t), table_digest(t), t.root, t.count)
     # ⚠️ RECORDED, NOT THE VERDICT. `idg->answer_count = atrie->value_count` (:8323) is the number
     # `reeval_complete` compares against, and that comparison is the one thing here we do NOT port
     # (see the header, and the digest argument in AnswerTrie.jl). Kept because it is genuinely
     # upstream's field and `library(tables)`-style introspection is entitled to it — but nothing
     # decides anything from it, and a reader who assumes otherwise should find this note first.
     n.answer_count = t.count
-    n.new_answer   = false                               # :8324
-    n.falsecount   = 0                                   # :8325
+    n.new_answer = false                               # :8324
+    n.falsecount = 0                                   # :8325
     idg_clean_dependent!(n)                              # :8326
     # `t.inserts` is NOT reset: its docstring makes it a monotonic stamp source, "never decremented
     # on delete". Re-derived answers therefore get FRESH, HIGHER `seq` values, so insertion order
     # inside the new root is correct, and an abort that restores the old root restores its old,
     # lower stamps untouched.
-    t.root  = TrieNode()
+    t.root = TrieNode()
     t.count = 0
     set_table_status!(t, :fresh)                         # `complete_or_invalid_status` -> fresh (:3235)
     n.reevaluating = true                                # :8331
@@ -470,7 +479,7 @@ either way, so no content comparison could see it. Here the condition RIDES ON T
 conditionality change IS a value change and `answers_identical` catches it directly. That is why
 nothing in our insert path needs to replicate `reeval_complete_node`'s three-way mark inspection.
 """
-function reeval_complete!(key::Atom; verdict::Function = reeval_same_answers)::Symbol
+function reeval_complete!(key::Atom; verdict::Function=reeval_same_answers)::Symbol
     n = get(_IDG, key, nothing)
     (n === nothing || !n.reevaluating) && return :not_reevaluating      # :8480
     snap = n.snapshot
@@ -480,9 +489,9 @@ function reeval_complete!(key::Atom; verdict::Function = reeval_same_answers)::S
     set_table_status!(t, :complete)
     n.answer_count = t.count
     n.reevaluating = false                                              # :4815, after reeval_complete
-    n.aborted      = false                                              # :8503
-    n.new_answer   = false
-    n.snapshot     = nothing
+    n.aborted = false                                              # :8503
+    n.new_answer = false
+    n.snapshot = nothing
     n.reevaluated += 1                                                  # TRIE_STAT_INC(n, reevaluated)
     same && idg_propagate_revalidate!(key)                              # :8495
     same ? :same : :changed
@@ -518,13 +527,13 @@ function reset_reevaluation!(key::Atom)::Bool
     snap = n.snapshot
     snap === nothing && return false
     t = answer_trie_for(key)
-    t.root  = snap.root                       # the old answers, same TrieNode objects ⇒ `instances` intact
+    t.root = snap.root                       # the old answers, same TrieNode objects ⇒ `instances` intact
     t.count = snap.count
-    n.new_answer   = false                    # :8557
-    n.aborted      = true                     # :8558
-    n.falsecount   = 1                        # :8559 — still INVALID, so the next call retries
+    n.new_answer = false                    # :8557
+    n.aborted = true                     # :8558
+    n.falsecount = 1                        # :8559 — still INVALID, so the next call retries
     n.reevaluating = false                    # :8562 (COMPLETE_WORKLIST's argument)
-    n.snapshot     = nothing
+    n.snapshot = nothing
     set_table_status!(t, :complete)           # `set(atrie, TRIE_COMPLETE)` (:8561)
     true
 end
@@ -545,7 +554,7 @@ the retry is not, and inventing one would be fiction. Rethrow, having left the t
 invalid, and let the caller's next call re-evaluate.
 """
 function with_reeval(recompute::Function, key::Atom;
-                     verdict::Function = reeval_same_answers)::Symbol
+    verdict::Function=reeval_same_answers)::Symbol
     prepare_reeval!(key) || return :already_valid
     try
         recompute()
@@ -553,7 +562,7 @@ function with_reeval(recompute::Function, key::Atom;
         reset_reevaluation!(key)
         rethrow()
     end
-    reeval_complete!(key; verdict = verdict)
+    reeval_complete!(key; verdict=verdict)
 end
 
 """Record that re-evaluation ADDED an answer — `idg->new_answer = true` (`pl-tabling.c:3669-3671`).
@@ -561,19 +570,20 @@ end
 A no-op unless a re-evaluation is in progress, exactly as upstream's guard
 (`if ( (idg=...) && idg->reevaluating )`). Conservative only: it can force a `:changed` verdict, it
 can never force a `:same` one."""
-idg_note_new_answer!(key::Atom) = (n = get(_IDG, key, nothing);
-                                   (n === nothing || !n.reevaluating) || (n.new_answer = true);
-                                   nothing)
+idg_note_new_answer!(key::Atom) = (n=get(_IDG, key, nothing);
+    (n === nothing || !n.reevaluating) || (n.new_answer = true);
+    nothing)
 
 "Was this table's last re-evaluation aborted? — `idg_node.aborted` (`pl-tabling.h:202`)."
-idg_was_aborted(key::Atom)::Bool = (n = get(_IDG, key, nothing); n !== nothing && n.aborted)
+idg_was_aborted(key::Atom)::Bool = (n=get(_IDG, key, nothing); n !== nothing && n.aborted)
 
 """How many times this table has been RE-EVALUATED — upstream's `stats.reevaluated`.
 
 The anti-vacuity instrument: a table that was not re-evaluated by a change must be able to PROVE it,
 because returning the right answers proves nothing (the revision stamp would too)."""
-idg_reeval_count(key::Atom)::Int = (n = get(_IDG, key, nothing); n === nothing ? 0 : n.reevaluated)
+idg_reeval_count(key::Atom)::Int =
+    (n=get(_IDG, key, nothing); n === nothing ? 0 : n.reevaluated)
 
 "How many times this table has been INVALIDATED (0 -> 1 transitions) — `stats.invalidated`."
 idg_invalidated_count(key::Atom)::Int =
-    (n = get(_IDG, key, nothing); n === nothing ? 0 : n.invalidated)
+    (n=get(_IDG, key, nothing); n === nothing ? 0 : n.invalidated)

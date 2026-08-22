@@ -44,7 +44,7 @@ using ..CompilerGSLTPresentation: GPresentation
 using ..CompilerGSLTReduce: base_reducts
 
 export one_step, one_step_list, has_redex, has_redex_list, normalize, is_normal,
-       step_with, normalize_with
+    step_with, normalize_with
 
 """`(Subst body repl v)` — the reserved head, as in `Reduce.jl`. Kept in step with that file: the
 traversal must descend into a `Subst`'s BODY and REPLACEMENT but never into its variable."""
@@ -102,9 +102,13 @@ A head is skipped when it is a name (`Sym`, or a `Grounded` operator, which is h
 MeTTa reads back its own operator names). It is traversed when it is an `Expression`, a shape Lean's
 `String` label cannot hold."""
 _arg_range(ch::Vector{Atom})::UnitRange{Int} =
-    isempty(ch)                ? (1:0) :
-    (ch[1] isa Expression)     ? (1:length(ch)) :
-                                 (2:length(ch))
+    if isempty(ch)
+        (1:0)
+    elseif (ch[1] isa Expression)
+        (1:length(ch))
+    else
+        (2:length(ch))
+    end
 
 """
     step_with_list(root, args) -> Union{Vector{Atom}, Nothing}
@@ -178,8 +182,9 @@ the call site — and the second silently looks like a normal form. Lean recover
 `IsNormal`, a separate decidable check; returning the residual fuel gives it directly, and `fuel > 0`
 ⇒ the result is normal for this strategy.
 """
-function normalize_with(root::F, t::Atom; fuel::Int = 1024)::Tuple{Atom, Int} where {F}
-    fuel >= 0 || throw(ArgumentError("normalize_with: fuel must be non-negative, got $fuel"))
+function normalize_with(root::F, t::Atom; fuel::Int=1024)::Tuple{Atom, Int} where {F}
+    fuel >= 0 ||
+        throw(ArgumentError("normalize_with: fuel must be non-negative, got $fuel"))
     cur = t
     while fuel > 0
         nxt = step_with(root, cur)
@@ -195,8 +200,8 @@ end
 
 `eval` (Eval.lean:45) over BASE rewrites. See `normalize_with` for why the fuel comes back.
 """
-normalize(p::GPresentation, t::Atom; fuel::Int = 1024)::Tuple{Atom, Int} =
-    normalize_with(x -> base_reducts(p, x), t; fuel = fuel)
+normalize(p::GPresentation, t::Atom; fuel::Int=1024)::Tuple{Atom, Int} =
+    normalize_with(x -> base_reducts(p, x), t; fuel=fuel)
 
 """
     is_normal(p, t) -> Bool

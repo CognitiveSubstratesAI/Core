@@ -21,7 +21,7 @@ const _AB = Eval
 # that did NOT set it would be testing a different configuration from the one it is differentialled
 # against, which is the failure this comment exists to prevent.
 _ab_abstract_mode!() = _AB.set_max_table_subgoal_size_action!(_AB.TW_ABSTRACT)
-_ab_strict_mode!()   = _AB.set_max_table_subgoal_size_action!(_AB.TW_ERROR)
+_ab_strict_mode!() = _AB.set_max_table_subgoal_size_action!(_AB.TW_ERROR)
 
 # (p (s (s (s a)))) — the chain from the SWI manual, built directly so the test does not depend on
 # the parser's treatment of nesting.
@@ -106,7 +106,7 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
 
         # a2(f(g(h(a))), k(l(m(b)))) N=2 -> a2(f(g(_)), k(l(_)))  — budget of 2, RE-ARMED per argument
         a2 = f(Sym(:a2), f(Sym(:f), f(Sym(:g), f(Sym(:h), A))),
-                         f(Sym(:k), f(Sym(:l), f(Sym(:m), B))))
+            f(Sym(:k), f(Sym(:l), f(Sym(:m), B))))
         (g5, h5) = _AB.size_abstract(a2, 2)
         @test h5
         ch5 = (g5::Expression).children
@@ -131,9 +131,11 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
     @testset "abstracted subterms get DISTINCT variables" begin
         # Sharing one variable across two abstraction sites would force them EQUAL, turning "we don't
         # know these" into "these are the same" — an unsound generalisation, and a silent one.
-        t = Expression(Atom[Sym(:q),
-                            Expression(Atom[Sym(:f), Sym(:a)]),
-                            Expression(Atom[Sym(:g), Sym(:b)])])
+        t = Expression(
+            Atom[Sym(:q),
+                Expression(Atom[Sym(:f), Sym(:a)]),
+                Expression(Atom[Sym(:g), Sym(:b)])]
+        )
         (g, _) = _AB.size_abstract(t, 0)
         ch = (g::Expression).children
         @test ch[2] isa Var && ch[3] isa Var
@@ -152,7 +154,8 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
     end
 
     @testset "the declaration surface, and the negative-removes convention" begin
-        _AB.untable_all!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.clear_subgoal_abstract!()
         @test _AB.subgoal_abstract_for(:p) == _AB.NO_RESTRAINT
         _ab_abstract_mode!()
         o = _AB.table_as!(:p, :subgoal_abstract => 2)          # no longer REFUSED — §7.11.1 is built
@@ -161,9 +164,11 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
 
         # `restraint/4`: a NEGATIVE value REMOVES the restraint. Same convention as `max_answers`,
         # asserted here so the two cannot drift apart.
-        _ab_abstract_mode!(); _AB.table_as!(:p, :subgoal_abstract => -1)
+        _ab_abstract_mode!()
+        _AB.table_as!(:p, :subgoal_abstract => -1)
         @test _AB.subgoal_abstract_for(:p) == _AB.NO_RESTRAINT
-        _AB.untable_all!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.clear_subgoal_abstract!()
     end
 
     @testset "🔴 END TO END — the abstracted call is ANSWERED, and from the GENERAL table" begin
@@ -171,14 +176,20 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         # produce the right answers, because the unabstracted program produces them too. So this
         # asserts BOTH halves: the answers are right, AND the table that holds them is the GENERAL
         # one — i.e. the specific variant key was never tabled.
-        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.abolish_all_tables!()
+        _AB.clear_subgoal_abstract!()
         try
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, raw"(= (depth $x) ok)" * "\n")
-            _ab_abstract_mode!(); _AB.table_as!(:depth, :subgoal_abstract => 1)
+            _ab_abstract_mode!()
+            _AB.table_as!(:depth, :subgoal_abstract => 1)
 
-            r = String[string(x) for y in load_metta!(s, "!(depth (s (s (s a))))\n")
-                       for x in (y isa AbstractVector ? y : [y])]
+            r = String[
+                string(x) for y in load_metta!(s, "!(depth (s (s (s a))))\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
             @test r == ["ok"]                                   # …answered correctly
 
             keys_tabled = collect(keys(_AB._ANSWER_TABLE))
@@ -187,7 +198,9 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
             specific = _AB._variant_rename(_ab_p(3))
             @test !(specific in keys_tabled)
         finally
-            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _AB.clear_subgoal_abstract!()
         end
     end
 
@@ -195,26 +208,37 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         # Without abstraction, N calls over a growing term make N tables. With it they collapse onto
         # the general one. Asserting the COUNT is what distinguishes "it ran" from "it restrained":
         # every other assertion in this file passes on an implementation that abstracts nothing.
-        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.abolish_all_tables!()
+        _AB.clear_subgoal_abstract!()
         try
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, raw"(= (grow $x) ok)" * "\n")
 
             # baseline: no restraint ⇒ a table per distinct goal
             _AB.table!(:grow)
-            for n in 1:6; load_metta!(s, "!(grow $(_ab_s(n)))\n"); end
+            for n in 1:6
+                load_metta!(s, "!(grow $(_ab_s(n)))\n")
+            end
             unrestrained = length(_AB._ANSWER_TABLE)
             @test unrestrained >= 6
 
-            _AB.untable_all!(); _AB.abolish_all_tables!()
-            _ab_abstract_mode!(); _AB.table_as!(:grow, :subgoal_abstract => 1)
-            for n in 1:6; load_metta!(s, "!(grow $(_ab_s(n)))\n"); end
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _ab_abstract_mode!()
+            _AB.table_as!(:grow, :subgoal_abstract => 1)
+            for n in 1:6
+                load_metta!(s, "!(grow $(_ab_s(n)))\n")
+            end
             restrained = length(_AB._ANSWER_TABLE)
 
             @test restrained < unrestrained                     # …genuinely fewer
             @test restrained <= 3                               # …and BOUNDED, not merely smaller
         finally
-            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _AB.clear_subgoal_abstract!()
         end
     end
 
@@ -223,17 +247,25 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         # Prolog answer IS a substitution over that skeleton. A MeTTa answer is a VALUE. What we can
         # still recover is the ABSTRACTION BINDING — `gen` came FROM `red`, so matching them back
         # says what the fresh variables stood for. When the answer mentions them, that is EXACT.
-        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.abolish_all_tables!()
+        _AB.clear_subgoal_abstract!()
         try
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, raw"(= (peel (s $x)) (found $x))" * "\n")
-            _ab_abstract_mode!(); _AB.table_as!(:peel, :subgoal_abstract => 1)
-            r = String[string(x) for y in load_metta!(s, "!(peel (s (s (s a))))\n")
-                       for x in (y isa AbstractVector ? y : [y])]
+            _ab_abstract_mode!()
+            _AB.table_as!(:peel, :subgoal_abstract => 1)
+            r = String[
+                string(x) for y in load_metta!(s, "!(peel (s (s (s a))))\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
             # the abstracted subterm comes BACK — not `(found $_sa1)`, and not the general answer
             @test r == ["(found (s (s a)))"]
         finally
-            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _AB.clear_subgoal_abstract!()
         end
     end
 
@@ -250,35 +282,57 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         # `d` here is NON-REDUCING (both rules are facts), so `_self_reaching_heads` clears it and the
         # filter runs: the result is EXACT. The reducing counterpart is the testset below, which must
         # stay coarse — and must not lose its answer.
-        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.abolish_all_tables!()
+        _AB.clear_subgoal_abstract!()
         try
-            s = Space(); load_core_stdlib!(s)
-            load_metta!(s, raw"(= (d (s (s (s a)))) deep)" * "\n" *
-                           raw"(= (d (s a)) shallow)" * "\n")
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(
+                s,
+                raw"(= (d (s (s (s a)))) deep)" * "\n" *
+                raw"(= (d (s a)) shallow)" * "\n"
+            )
             _AB.table!(:d)
-            exact = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
-                                for x in (y isa AbstractVector ? y : [y])])
+            exact = sort(
+                String[
+                    string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
+                    for x in (y isa AbstractVector ? y : [y])
+                ]
+            )
             @test exact == ["deep"]
 
-            _AB.untable_all!(); _AB.abolish_all_tables!()
-            _ab_abstract_mode!(); _AB.table_as!(:d, :subgoal_abstract => 1)
-            got = sort(String[string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
-                              for x in (y isa AbstractVector ? y : [y])])
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _ab_abstract_mode!()
+            _AB.table_as!(:d, :subgoal_abstract => 1)
+            got = sort(
+                String[
+                    string(x) for y in load_metta!(s, "!(d (s (s (s a))))\n")
+                    for x in (y isa AbstractVector ? y : [y])
+                ]
+            )
             @test got == exact                  # EXACT — the restraint costs no precision here
             @test !("shallow" in got)           # …and this is what the coarse version let through
         finally
-            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _AB.clear_subgoal_abstract!()
         end
     end
 
     @testset "the GATE itself — `_self_reaching_heads` is what separates the two cases" begin
         # Asserting the gate directly, so a future change to the call-graph analysis cannot silently
         # re-enable the filter on a reducing head (which is the unsound direction).
-        s = Space(); load_core_stdlib!(s)
-        load_metta!(s, raw"(= (d (s a)) shallow)" * "\n" *
-                       raw"(= (e (f a)) v)" * "\n" *
-                       raw"(= (e (f (g $x))) (e (f $x)))" * "\n" *
-                       raw"(= (m1) (m2))" * "\n" * raw"(= (m2) (m1))" * "\n")
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(
+            s,
+            raw"(= (d (s a)) shallow)" * "\n" *
+            raw"(= (e (f a)) v)" * "\n" *
+            raw"(= (e (f (g $x))) (e (f $x)))" * "\n" *
+            raw"(= (m1) (m2))" * "\n" * raw"(= (m2) (m1))" * "\n"
+        )
         sr = _AB._self_reaching_heads(_AB.all_atoms(s))
         @test !(:d in sr)                       # facts only ⇒ cannot reduce into itself
         @test :e in sr                          # directly recursive
@@ -291,23 +345,37 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         # instance — yet `v` is CORRECT, because the call REDUCES into `(e (f a))` via the recursive
         # rule. Any future "precision" filter keyed on instance provenance fails here, which is why
         # this is pinned as its own testset rather than folded into the one above.
-        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.abolish_all_tables!()
+        _AB.clear_subgoal_abstract!()
         try
             prog = raw"(= (e (f a)) v)" * "\n" * raw"(= (e (f (g $x))) (e (f $x)))" * "\n"
-            s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(s, prog)
             _AB.table!(:e)
-            base = String[string(x) for y in load_metta!(s, "!(e (f (g (g a))))\n")
-                          for x in (y isa AbstractVector ? y : [y])]
+            base = String[
+                string(x) for y in load_metta!(s, "!(e (f (g (g a))))\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
             @test base == ["v"]                 # ANTI-VACUITY: the program really does answer
 
-            _AB.untable_all!(); _AB.abolish_all_tables!()
-            s2 = Space(); load_core_stdlib!(s2); load_metta!(s2, prog)
-            _ab_abstract_mode!(); _AB.table_as!(:e, :subgoal_abstract => 1)
-            got = String[string(x) for y in load_metta!(s2, "!(e (f (g (g a))))\n")
-                         for x in (y isa AbstractVector ? y : [y])]
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            s2 = Space()
+            load_core_stdlib!(s2)
+            load_metta!(s2, prog)
+            _ab_abstract_mode!()
+            _AB.table_as!(:e, :subgoal_abstract => 1)
+            got = String[
+                string(x) for y in load_metta!(s2, "!(e (f (g (g a))))\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
             @test got == base                   # the restraint must not LOSE it (it did, until today)
         finally
-            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _AB.clear_subgoal_abstract!()
         end
     end
 
@@ -335,11 +403,14 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
         #     ?- p(s(s(s(a)))).   ERROR: resource_error(tripwire(max_table_subgoal_size, user:p(_)))
         # We abstracted unconditionally until 2026-08-18 — silently doing what SWI refuses to do,
         # which is the worst kind of divergence because the program appears to work.
-        _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+        _AB.untable_all!()
+        _AB.abolish_all_tables!()
+        _AB.clear_subgoal_abstract!()
         try
             _ab_strict_mode!()
             @test _AB.max_table_subgoal_size_action() == _AB.TW_ERROR      # OUR default, unset
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, raw"(= (depth $x) ok)" * "\n")
             _AB.table_as!(:depth, :subgoal_abstract => 1)
             # a goal WITHIN the bound is untouched and must NOT trip anything
@@ -360,7 +431,9 @@ _ab_p(n::Int) = Expression(Atom[Sym(:p), _ab_s(n)])
             @test hit2 && g2 != big           # only TW_ABSTRACT actually abstracts
         finally
             _ab_abstract_mode!()
-            _AB.untable_all!(); _AB.abolish_all_tables!(); _AB.clear_subgoal_abstract!()
+            _AB.untable_all!()
+            _AB.abolish_all_tables!()
+            _AB.clear_subgoal_abstract!()
         end
     end
 
@@ -392,14 +465,18 @@ end
 # the two flags this section needs, saved/restored so a failure cannot leak into the §7.11.1 block
 _aa_answer_action!(a) = _AB.set_max_table_answer_size_action!(a)
 _aa_reset!() = (_AB.clear_answer_abstract!(); _AB.clear_answer_delays!();
-                _AB.clear_all_restraints!(); _AB.clear_answer_count_restraints!();
-                _AB.set_max_table_answer_size!(-1);
-                _AB.set_max_table_answer_size_action!(_AB.TW_ERROR))
+    _AB.clear_all_restraints!(); _AB.clear_answer_count_restraints!();
+    _AB.set_max_table_answer_size!(-1);
+    _AB.set_max_table_answer_size_action!(_AB.TW_ERROR))
 
 # a branching answer: f(g(h(a)), k(l(m(b)))) — the shape a depth-limit implementation gets wrong
-_aa_branch() = Expression(Atom[Sym(:f),
-    Expression(Atom[Sym(:g), Expression(Atom[Sym(:h), Sym(:a)])]),
-    Expression(Atom[Sym(:k), Expression(Atom[Sym(:l), Expression(Atom[Sym(:m), Sym(:b)])])])])
+_aa_branch() = Expression(
+    Atom[Sym(:f),
+        Expression(Atom[Sym(:g), Expression(Atom[Sym(:h), Sym(:a)])]),
+        Expression(
+            Atom[Sym(:k), Expression(Atom[Sym(:l), Expression(Atom[Sym(:m), Sym(:b)])])]
+        )]
+)
 
 @testset "SWI §7.11.2 — answer abstraction" begin
 
@@ -439,8 +516,10 @@ _aa_branch() = Expression(Atom[Sym(:f),
         (b1, hb1) = _AB.answer_size_abstract(_aa_branch(), 1)        # oracle: f(g(_), k(_))
         @test hb1
         bc = (b1::Expression).children
-        @test (bc[2]::Expression).children[1] == Sym(:g) && (bc[2]::Expression).children[2] isa Var
-        @test (bc[3]::Expression).children[1] == Sym(:k) && (bc[3]::Expression).children[2] isa Var
+        @test (bc[2]::Expression).children[1] == Sym(:g) &&
+            (bc[2]::Expression).children[2] isa Var
+        @test (bc[3]::Expression).children[1] == Sym(:k) &&
+            (bc[3]::Expression).children[2] isa Var
 
         # branching, N=2: the SHALLOWER argument survives whole, the deeper one is cut. A single
         # shared budget would have spent it all on the first argument and abstracted the second.
@@ -517,7 +596,9 @@ _aa_branch() = Expression(Atom[Sym(:f),
         chain(n) = n == 0 ? Sym(:a) : Expression(Atom[Sym(:s), chain(n - 1)])
         big, small = chain(3), chain(1)
         _aa_run(act) = begin
-            _aa_reset!(); _aa_answer_action!(act); _AB.answer_abstract!(:p, 1)
+            _aa_reset!()
+            _aa_answer_action!(act)
+            _AB.answer_abstract!(:p, 1)
             t = _AB.AnswerTrie()
             r = _AB.trie_insert_answer_restrained!(t, :p, big)
             _AB.trie_insert_answer_restrained!(t, :p, small)
@@ -530,7 +611,9 @@ _aa_branch() = Expression(Atom[Sym(:f),
             # would be silently more permissive than the reference if this defaulted to storing.
             @test _AB.max_table_answer_size_action() == _AB.TW_ERROR
             _AB.answer_abstract!(:p, 1)
-            @test_throws ArgumentError _AB.trie_insert_answer_restrained!(_AB.AnswerTrie(), :p, big)
+            @test_throws ArgumentError _AB.trie_insert_answer_restrained!(
+                _AB.AnswerTrie(), :p, big
+            )
 
             # `fail`: the oversized answer is DROPPED — under-approximates, sound the other way.
             (tf, rf) = _aa_run(_AB.TW_FAIL)
@@ -556,11 +639,14 @@ _aa_branch() = Expression(Atom[Sym(:f),
             # (`pl-tabling.c:8871-8877`). Verified upstream:
             #     ?- set_prolog_flag(max_table_answer_size_action, abstract).
             #     ERROR: domain_error(restraint_action, abstract)
-            @test_throws ArgumentError _AB.set_max_table_answer_size_action!(_AB.TW_ABSTRACT)
+            @test_throws ArgumentError _AB.set_max_table_answer_size_action!(
+                _AB.TW_ABSTRACT
+            )
             @test _AB.max_table_subgoal_size_action() isa _AB.TripwireAction  # …and it IS legal there
             _AB.set_max_table_subgoal_size_action!(_AB.TW_ABSTRACT)           # no throw
         finally
-            _aa_reset!(); _ab_abstract_mode!()
+            _aa_reset!()
+            _ab_abstract_mode!()
         end
     end
 
@@ -683,12 +769,16 @@ _aa_branch() = Expression(Atom[Sym(:f),
 
             # VALUE-level: a WFS bottom stored as an answer reports `:u` through the SAME reader,
             # from its own DNF. A consumer never has to know which carrier applied.
-            und = _AB.undefined_with(_AB.DelayDNF([_AB.DelaySet([_AB.delay_negative(Sym(:g))])]))
+            und = _AB.undefined_with(
+                _AB.DelayDNF([_AB.DelaySet([_AB.delay_negative(Sym(:g))])])
+            )
             @test _AB.trie_insert!(t, und)
             @test _AB.answer_truth_value(t, und) == :u
             @test _AB.answer_residual_in(t, und) == Expression(Atom[Sym(:not), Sym(:g)])
             # …and it is NOT in the node-level table, so the two never shadow each other
-            @test isempty(get(_AB._ANSWER_DELAYS, _AB.trie_lookup!(t, und, false), _AB.DelayDNF()))
+            @test isempty(
+                get(_AB._ANSWER_DELAYS, _AB.trie_lookup!(t, und, false), _AB.DelayDNF())
+            )
         finally
             _aa_reset!()
         end

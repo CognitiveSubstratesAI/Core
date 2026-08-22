@@ -13,12 +13,14 @@
 using MeTTaCore
 const SM = MeTTaCore.Eval
 
-sp = SM.Space(); SM.load_core_stdlib!(sp)
+sp = SM.Space();
+SM.load_core_stdlib!(sp)
 SM.load_metta!(sp, "!(import! &self (library MOSES))")   # proven loader (index_diag.jl)
 
 # sanity: is reduce-to actually defined now?
 println("reduce-to rule present: ",
-        haskey(sp.index, ("=", "reduce-to")) ? length(sp.index[("=","reduce-to")]) : 0, " rule(s)")
+    haskey(sp.index, ("=", "reduce-to")) ? length(sp.index[("=", "reduce-to")]) : 0,
+    " rule(s)")
 
 call = SM.parse_program("(reduce-to (AND A B))")[1][2]
 
@@ -36,8 +38,10 @@ println("\ntotal reductions: ", total, "   distinct heads: ", length(SM._RHEAD))
 
 # classify each head: is it a compilable user function (A2′ target) or interpreter/builtin?
 # user MOSES/stdlib functions are compilable; minimal-ops & grounded ops are NOT reduced here.
-sorted = sort(collect(SM._RHEAD); by = kv -> -kv[2])
+sorted = sort(collect(SM._RHEAD); by=kv -> -kv[2])
 println("\n  reductions   share   head")
 for (h, n) in first(sorted, 30)
-    println(lpad(n, 12), "   ", lpad(string(round(100n/max(total,1); digits=1)), 5), "%   ", h)
+    println(
+        lpad(n, 12), "   ", lpad(string(round(100n/max(total, 1); digits=1)), 5), "%   ", h
+    )
 end

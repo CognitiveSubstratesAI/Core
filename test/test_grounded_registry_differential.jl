@@ -31,15 +31,16 @@ const MKg = MeTTaCore.MORK
 
     "run the same op through the interpreter, as real MeTTa evaluation"
     function icall(op, args)
-        sp = INg.Space(); INg.load_core_stdlib!(sp)
+        sp = INg.Space()
+        INg.load_core_stdlib!(sp)
         q = "!(" * op * " " * join(string.(args), " ") * ")"
         [string(x) for x in INg.metta_run(INg.parse_program(q)[1][2], sp)]
     end
 
     @testset "INTEGER arithmetic is EXACT (was done in Float64 ⇒ wrong past 2^53)" begin
-        @test gcall("*", [123456789, 987654321])      == "121932631112635269"
-        @test gcall("+", [9007199254740993, 1])       == "9007199254740994"
-        @test gcall("+", [9007199254740992, 1])       == "9007199254740993"
+        @test gcall("*", [123456789, 987654321]) == "121932631112635269"
+        @test gcall("+", [9007199254740993, 1]) == "9007199254740994"
+        @test gcall("+", [9007199254740992, 1]) == "9007199254740993"
         # …and the same defect hit COMPARISON: two distinct Int64s above 2^53 coerced to one Float64
         @test gcall("<", [9007199254740993, 9007199254740994]) == "True"
         @test gcall("==", [9007199254740993, 9007199254740994]) == "False"
@@ -50,17 +51,17 @@ const MKg = MeTTaCore.MORK
         # 🔴 REVERTED to "5" on 2026-08-06. The `# was "5"` note records when Int÷Int→Float was
         # introduced; it was never conformant — hyperon returns Number::Integer(a/b). The type
         # distinction this testset asserts still holds, it just no longer applies to Int÷Int.
-        @test gcall("/", [10, 2])    == "5"
-        @test gcall("+", [1, 2])     == "3"        # Int⊕Int stays Int
-        @test MCg.from_sexpr("4")   isa Int64      # …which is why the distinction is observable
+        @test gcall("/", [10, 2]) == "5"
+        @test gcall("+", [1, 2]) == "3"        # Int⊕Int stays Int
+        @test MCg.from_sexpr("4") isa Int64      # …which is why the distinction is observable
         @test MCg.from_sexpr("4.0") isa Float64
     end
 
     @testset "both lanes agree, op by op" begin
         cases = [("+", [1, 2]), ("+", [1.5, 2.5]), ("-", [5, 3]), ("*", [3, 4]),
-                 ("/", [10, 3]), ("/", [10, 2]), ("%", [7, 3]),
-                 ("<", [1, 2]), (">", [2, 1]), ("<=", [2, 2]), (">=", [1, 2]), ("==", [1, 1]),
-                 ("*", [123456789, 987654321])]
+            ("/", [10, 3]), ("/", [10, 2]), ("%", [7, 3]),
+            ("<", [1, 2]), (">", [2, 1]), ("<=", [2, 2]), (">=", [1, 2]), ("==", [1, 1]),
+            ("*", [123456789, 987654321])]
         for (op, args) in cases
             mork = gcall(op, args)
             interp = icall(op, args)
@@ -79,9 +80,9 @@ const MKg = MeTTaCore.MORK
         #                   (MORK/src/kernel/Space.jl:556) SILENTLY DROPS THE WHOLE JOIN MATCH —
         #                   no Error atom, no warning, the row just disappears.
         # Same signal, different blast radius. That is a real gap in the shim, tracked separately.
-        @test gcall("+", [1])       === nothing        # wrong arity
+        @test gcall("+", [1]) === nothing        # wrong arity
         @test gcall("+", ["a", "b"]) === nothing        # non-numeric
-        @test gcall("<", ["a", 1])  === nothing
+        @test gcall("<", ["a", 1]) === nothing
     end
 
     @testset "*-math delegates to the hyperon-faithful implementation" begin
@@ -97,19 +98,19 @@ const MKg = MeTTaCore.MORK
         #                       a DIFFERENT surface, TOKEN_REGISTRY only, no MORK counterpart.
 
         # ALWAYS Float — even when the result is integral
-        @test gcall("sqrt-math", [4])  == "2.0"        # was "2"
-        @test gcall("sin-math", [0])   == "0.0"        # was "0"
+        @test gcall("sqrt-math", [4]) == "2.0"        # was "2"
+        @test gcall("sin-math", [0]) == "0.0"        # was "0"
 
         # PRESERVE type — Int stays Int, Float stays Float
-        @test gcall("abs-math", [-5])     == "5"
-        @test gcall("abs-math", [-5.5])   == "5.5"
-        @test gcall("floor-math", [2.7])  == "2.0"     # was "2"
-        @test gcall("ceil-math", [2.1])   == "3.0"     # was "3"
-        @test gcall("trunc-math", [2.9])  == "2.0"     # was "2"
+        @test gcall("abs-math", [-5]) == "5"
+        @test gcall("abs-math", [-5.5]) == "5.5"
+        @test gcall("floor-math", [2.7]) == "2.0"     # was "2"
+        @test gcall("ceil-math", [2.1]) == "3.0"     # was "3"
+        @test gcall("trunc-math", [2.9]) == "2.0"     # was "2"
 
         # domain errors become NaN "like Rust f64" — they must NOT throw out of MeTTa
         @test gcall("sqrt-math", [-4]) == "NaN"        # was THREW DomainError
-        @test gcall("asin-math", [2])  == "NaN"        # was THREW DomainError
+        @test gcall("asin-math", [2]) == "NaN"        # was THREW DomainError
 
         # symbols, not booleans
         @test gcall("isnan-math", [1]) == "False"
@@ -121,9 +122,9 @@ const MKg = MeTTaCore.MORK
 
         # and every shared *-math op agrees with the interpreter on a normal input
         for (op, args) in [("sqrt-math", [4]), ("abs-math", [-5]), ("abs-math", [-5.5]),
-                           ("floor-math", [2.7]), ("ceil-math", [2.1]), ("trunc-math", [2.9]),
-                           ("round-math", [2.5]), ("sin-math", [0]), ("cos-math", [0]),
-                           ("pow-math", [2, 3]), ("isnan-math", [1]), ("isinf-math", [1])]
+            ("floor-math", [2.7]), ("ceil-math", [2.1]), ("trunc-math", [2.9]),
+            ("round-math", [2.5]), ("sin-math", [0]), ("cos-math", [0]),
+            ("pow-math", [2, 3]), ("isnan-math", [1]), ("isinf-math", [1])]
             @test gcall(op, args) == icall(op, args)[1]
         end
     end
@@ -133,14 +134,15 @@ const MKg = MeTTaCore.MORK
         #     (+ 1 2 3)  -> "3"     argument 3 silently dropped
         # The interpreter is strict (`length(xs) == 2 || ExecNoReduce`), so it left the term
         # unreduced. Now both refuse.
-        for (op, args) in [("+", [1,2,3]), ("-", [10,1,1]), ("*", [2,3,4]), ("/", [8,2,2]),
-                           ("%", [7,3,1]), ("<", [1,2,3]), (">", [3,2,1]), ("<=", [1,2,3]),
-                           (">=", [3,2,1]), ("==", [1,1,9])]
+        for (op, args) in
+            [("+", [1, 2, 3]), ("-", [10, 1, 1]), ("*", [2, 3, 4]), ("/", [8, 2, 2]),
+            ("%", [7, 3, 1]), ("<", [1, 2, 3]), (">", [3, 2, 1]), ("<=", [1, 2, 3]),
+            (">=", [3, 2, 1]), ("==", [1, 1, 9])]
             @test gcall(op, args) === nothing          # declines instead of truncating
         end
         # …and the binary cases still work
-        @test gcall("+", [1,2]) == "3"
-        @test gcall("<", [1,2]) == "True"
+        @test gcall("+", [1, 2]) == "3"
+        @test gcall("<", [1, 2]) == "True"
         # under-arity was already declined; keep it pinned
         @test gcall("+", [1]) === nothing
         @test gcall("+", Int[]) === nothing
@@ -183,23 +185,23 @@ const MKg = MeTTaCore.MORK
         # is why the numeric probe below expects Grounded while the bare word expects Symbol.
         A = MCg.StandardMeTTa
 
-        @test MCg._g2atom("42")      isa A.Grounded      # GROUNDED via numeric WORD
-        @test MCg._g2atom("3.5")     isa A.Grounded
-        @test MCg._g2atom("\"hi\"")  isa A.Grounded      # GROUNDED via STRING  (was Sym)
+        @test MCg._g2atom("42") isa A.Grounded      # GROUNDED via numeric WORD
+        @test MCg._g2atom("3.5") isa A.Grounded
+        @test MCg._g2atom("\"hi\"") isa A.Grounded      # GROUNDED via STRING  (was Sym)
         @test MCg._g2atom("\"hi\"").value == "hi"        # …and unquoted, as parse_atom does
-        @test MCg._g2atom("foo")     isa A.Sym           # SYMBOL
-        @test MCg._g2atom("#tag")    isa A.Sym           # WORD may LEAD with '#'
-        @test MCg._g2atom("fo\"o")   isa A.Sym           # '"' legal in a WORD body
-        @test MCg._g2atom("\$x")     isa A.Var           # VARIABLE
+        @test MCg._g2atom("foo") isa A.Sym           # SYMBOL
+        @test MCg._g2atom("#tag") isa A.Sym           # WORD may LEAD with '#'
+        @test MCg._g2atom("fo\"o") isa A.Sym           # '"' legal in a WORD body
+        @test MCg._g2atom("\$x") isa A.Var           # VARIABLE
         @test MCg._g2atom("__var_x") isa A.Var           # VARIABLE, Core's stored spelling
-        @test MCg._g2atom("(A B)")   isa A.Expression    # EXPRESSION, via expr_to_atom
+        @test MCg._g2atom("(A B)") isa A.Expression    # EXPRESSION, via expr_to_atom
 
         # and the four kinds must be DISTINGUISHED, not merely constructed — this is the collapse
         # (SYMBOL == VARIABLE as one Julia Symbol) that SExprConvertible has and `__var_` patches.
-        @test A.metatype(MCg._g2atom("foo"))     != A.metatype(MCg._g2atom("\$x"))
-        @test A.metatype(MCg._g2atom("42"))      != A.metatype(MCg._g2atom("foo"))
-        @test A.metatype(MCg._g2atom("(A B)"))   != A.metatype(MCg._g2atom("foo"))
-        @test A.metatype(MCg._g2atom("\"hi\""))  == A.metatype(MCg._g2atom("42"))   # both GROUNDED
+        @test A.metatype(MCg._g2atom("foo")) != A.metatype(MCg._g2atom("\$x"))
+        @test A.metatype(MCg._g2atom("42")) != A.metatype(MCg._g2atom("foo"))
+        @test A.metatype(MCg._g2atom("(A B)")) != A.metatype(MCg._g2atom("foo"))
+        @test A.metatype(MCg._g2atom("\"hi\"")) == A.metatype(MCg._g2atom("42"))   # both GROUNDED
     end
 
     @testset "⚠️ KNOWN DIVERGENCE, pinned not fixed: (% x 0)" begin

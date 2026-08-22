@@ -23,12 +23,14 @@ const _MR = MeTTaCore.CompilerGSLTReduce
 const _ML = MeTTaCore.CompilerGSLTRelation
 const _MS = MeTTaCore.StandardMeTTa
 
-const _MODULE_PATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt", "presentations",
-                              "mettail.metta")
+const _MODULE_PATH = joinpath(dirname(pathof(MeTTaCore)), "compiler", "gslt",
+    "presentations",
+    "mettail.metta")
 
 function _load_mettail()
     sp = _MV.Space()
-    toks = _MV.tokenize(read(_MODULE_PATH, String)); i = Ref(1)
+    toks = _MV.tokenize(read(_MODULE_PATH, String))
+    i = Ref(1)
     _MA.parse_presentation(_MV.parse_from(toks, i, sp.tokens))
 end
 
@@ -48,7 +50,7 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         p = _load_mettail()
         @test p.name == :MeTTaIL
         @test Set(Base.Symbol[_MP.cat_name(c) for c in p.exports]) ==
-              Set(Base.Symbol[:Atom, :Space, :Type])
+            Set(Base.Symbol[:Atom, :Space, :Type])
     end
 
     @testset "all 13 instructions, with the arities the SPEC gives" begin
@@ -67,10 +69,11 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # <template>)` substitutes the var IN the template, so the var is bound there.
         p = _load_mettail()
         @test _MP.is_lambda_theory(p)
-        @test [(r.label::_MP.LabelId).name for r in _MP.binders_of(p)] == Base.Symbol[:chain]
+        @test [(r.label::_MP.LabelId).name for r in _MP.binders_of(p)] ==
+            Base.Symbol[:chain]
         chain = only(r for r in p.terms if (r.label::_MP.LabelId).name === :chain)
         @test any(i -> i isa _MP.ItemBind, chain.items)       # (bind v Atom) — DECLARES
-        @test any(i -> i isa _MP.ItemAbs,  chain.items)       # (scope v Atom) — SCOPES
+        @test any(i -> i isa _MP.ItemAbs, chain.items)       # (scope v Atom) — SCOPES
         # and the two agree on the variable, which is the whole point of keeping them separate
         b = only(i for i in chain.items if i isa _MP.ItemBind)
         s = only(i for i in chain.items if i isa _MP.ItemAbs)
@@ -86,7 +89,7 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # be a deliberate change to this assertion, not a silent drift.
         @test length(p.rewrites) == 4
         @test Set(r.name for r in p.rewrites) ==
-              Set(Base.Symbol[:FunctionReturn, :ChainStep, :ChainSubst, :FunctionStep])
+            Set(Base.Symbol[:FunctionReturn, :ChainStep, :ChainSubst, :FunctionStep])
         @test _MP.ddl_rung(p) == 3          # terms + rewrites ⇒ a DSL, even with R incomplete
 
         # NINE of the thirteen instructions have NO rule, and the file says why per instruction. This
@@ -97,8 +100,14 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
             lhs, _ = _MP.conclusion_of(r.rw)
             lhs isa _MS.Expression || continue
             h = (lhs::_MS.Expression).children[1]
-            push!(covered, h isa _MS.Sym ? (h::_MS.Sym).name :
-                           Base.Symbol(getfield((h::_MS.Grounded).value, :name)))
+            push!(
+                covered,
+                if h isa _MS.Sym
+                    (h::_MS.Sym).name
+                else
+                    Base.Symbol(getfield((h::_MS.Grounded).value, :name))
+                end
+            )
         end
         @test covered == Set(Base.Symbol[:function, :chain])
         @test length(setdiff(Set(keys(_SPEC_ARITY)), covered)) == 11
@@ -108,10 +117,13 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         p = _load_mettail()
         # QUOTED from the table ⇒ AXIOMS. A premise on either would be an invention.
         for name in (:FunctionReturn, :ChainSubst)
-            @test isempty(_MP.premises_of(only(r for r in p.rewrites if r.name === name).rw))
+            @test isempty(
+                _MP.premises_of(only(r for r in p.rewrites if r.name === name).rw)
+            )
         end
         # READ OFF A VERB ("interpret <atom>", "evaluate <body>") ⇒ CONGRUENCE rules, one premise each.
-        for (name, hyp) in ((:ChainStep, _MP.GHyp(:A, :A2)), (:FunctionStep, _MP.GHyp(:B, :B2)))
+        for (name, hyp) in
+            ((:ChainStep, _MP.GHyp(:A, :A2)), (:FunctionStep, _MP.GHyp(:B, :B2)))
             prems = _MP.premises_of(only(r for r in p.rewrites if r.name === name).rw)
             @test length(prems) == 1
             @test prems[1] == hyp
@@ -135,13 +147,13 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # corpus, not a weakening: a rule that only agrees on hand-picked terms is exactly what this is
         # meant to catch, so the corpus varies the payload across every metatype the sort admits.
         p = _load_mettail()
-        _p(src) = (sp = _MV.Space(); toks = _MV.tokenize(src); i = Ref(1);
-                   _MV.parse_from(toks, i, sp.tokens))
+        _p(src) = (sp=_MV.Space(); toks=_MV.tokenize(src); i=Ref(1);
+            _MV.parse_from(toks, i, sp.tokens))
 
         for payload in ("a", "42", "3.5", "\"s\"", "(foo bar)", "()", "\$x", "(return b)")
             term = _p("(function (return $payload))")
             reducts = _MR.base_reducts(p, term)
-            interp  = _MV.bare_eval(term, _MV.Space())
+            interp = _MV.bare_eval(term, _MV.Space())
             @test length(reducts) == 1
             @test length(interp) == 1
             @test reducts[1] == interp[1]
@@ -158,7 +170,8 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # documented scope and the assertion below pins it.
         cs = only(r for r in p.rewrites if r.name === :ChainStep)
         @test !isempty(_MP.premises_of(cs.rw))
-        @test _MR.apply_base_rewrite(cs, _p("(chain (function (return a)) \$v \$T)")) === nothing
+        @test _MR.apply_base_rewrite(cs, _p("(chain (function (return a)) \$v \$T)")) ===
+            nothing
     end
 
     @testset "R NORMALIZES to what the interpreter computes — the full-R differential" begin
@@ -172,26 +185,26 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # Then `ChainSubst`/`FunctionStep` landed and it became what it is now: full normalization,
         # required to equal the interpreter's answer. Each version was red before it was green.
         p = _load_mettail()
-        _p(src) = (sp = _MV.Space(); toks = _MV.tokenize(src); i = Ref(1);
-                   _MV.parse_from(toks, i, sp.tokens))
+        _p(src) = (sp=_MV.Space(); toks=_MV.tokenize(src); i=Ref(1);
+            _MV.parse_from(toks, i, sp.tokens))
 
         # `cond_normalize` drives the whole rule set; `bare_eval` drives the interpreter. Same term,
         # same answer — including through NESTED chains, and through a template that USES the bound
         # variable (which is what makes `Subst` load-bearing rather than decorative).
         for src in ("(function (return a))",
-                    "(function (return 42))",
-                    "(chain (function (return a)) \$v \$v)",
-                    "(chain (function (return a)) \$v (foo \$v))",
-                    "(chain (function (return 42)) \$v \$v)",
-                    "(chain (chain (function (return a)) \$w \$w) \$v \$v)",
-                    "(function (chain (function (return a)) \$v (return \$v)))",
-                    # ALREADY-NORMAL first argument: nothing to interpret, so `chain` is pure
-                    # substitution. This is the case `ChainSubst` alone has to get right, and the one
-                    # where an over-eager `ChainStep` would loop instead of stopping.
-                    "(chain a \$v \$v)",
-                    "(chain (foo bar) \$v (bar \$v))")
+            "(function (return 42))",
+            "(chain (function (return a)) \$v \$v)",
+            "(chain (function (return a)) \$v (foo \$v))",
+            "(chain (function (return 42)) \$v \$v)",
+            "(chain (chain (function (return a)) \$w \$w) \$v \$v)",
+            "(function (chain (function (return a)) \$v (return \$v)))",
+            # ALREADY-NORMAL first argument: nothing to interpret, so `chain` is pure
+            # substitution. This is the case `ChainSubst` alone has to get right, and the one
+            # where an over-eager `ChainStep` would loop instead of stopping.
+            "(chain a \$v \$v)",
+            "(chain (foo bar) \$v (bar \$v))")
             term = _p(src)
-            got, left = _ML.cond_normalize(p, term; fuel = 64)
+            got, left = _ML.cond_normalize(p, term; fuel=64)
             want = _MV.bare_eval(term, _MV.Space())
             @test length(want) == 1
             @test got == want[1]
@@ -204,7 +217,9 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
         # relation and both are rules about `chain` — so the check is per-rule, not on the term.)
         cs = only(r for r in p.rewrites if r.name === :ChainStep)
         @test isempty(_ML.apply_rewrite(p, cs, _p("(chain stuck \$v \$T)"), 8))
-        @test !isempty(_ML.apply_rewrite(p, cs, _p("(chain (function (return a)) \$v \$T)"), 8))
+        @test !isempty(
+            _ML.apply_rewrite(p, cs, _p("(chain (function (return a)) \$v \$T)"), 8)
+        )
 
         # R IS A RELATION, AND BOTH `chain` RULES APPLY AT ONCE. `reducts` returns both; only the
         # leftmost-outermost STRATEGY picks one. Asserted so that a future change collapsing R to a
@@ -216,8 +231,9 @@ const _SPEC_ARITY = Dict{Base.Symbol, Int}(
 
         # AND THE NEGATIVE HALF — an instruction R deliberately does NOT cover must produce no step,
         # rather than a plausible-looking wrong one. These are the nine the file lists.
-        for src in ("(cons-atom a (b c))", "(decons-atom (a b c))", "(unify a a then else)",
-                    "(collapse-bind (foo))", "(context-space)")
+        for src in
+            ("(cons-atom a (b c))", "(decons-atom (a b c))", "(unify a a then else)",
+            "(collapse-bind (foo))", "(context-space)")
             @test _ML.cond_step(p, _p(src)) === nothing
         end
     end

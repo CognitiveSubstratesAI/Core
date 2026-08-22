@@ -178,7 +178,8 @@ struct IRExpression <: IRAtom
     id::NodeId
     src::SourcePosition
 end
-IRExpression(head::IRAtom, args::Vector{IRAtom}) = IRExpression(head, args, NO_ID, NO_SOURCE)
+IRExpression(head::IRAtom, args::Vector{IRAtom}) =
+    IRExpression(head, args, NO_ID, NO_SOURCE)
 
 """
 JeTTa `Special` — a special form, carrying BOTH its surface spelling and its IR kind.
@@ -189,9 +190,20 @@ can quote what the user wrote, and the IR can be raised back to source form for 
 `kind` is what passes dispatch on, so a pass never string-compares a head.
 """
 @enum SpecialKind begin
-    SPECIAL_LET; SPECIAL_LET_SEQ; SPECIAL_IF; SPECIAL_CASE; SPECIAL_MATCH
-    SPECIAL_SUPERPOSE; SPECIAL_COLLAPSE; SPECIAL_QUOTE; SPECIAL_EVAL; SPECIAL_CHAIN
-    SPECIAL_FUNCTION; SPECIAL_RETURN; SPECIAL_ERROR; SPECIAL_CATCH
+    SPECIAL_LET
+    SPECIAL_LET_SEQ
+    SPECIAL_IF
+    SPECIAL_CASE
+    SPECIAL_MATCH
+    SPECIAL_SUPERPOSE
+    SPECIAL_COLLAPSE
+    SPECIAL_QUOTE
+    SPECIAL_EVAL
+    SPECIAL_CHAIN
+    SPECIAL_FUNCTION
+    SPECIAL_RETURN
+    SPECIAL_ERROR
+    SPECIAL_CATCH
 end
 
 struct IRSpecial <: IRAtom
@@ -365,8 +377,8 @@ struct IRProgram
     gen::UniqueAtomIdGenerator
 end
 IRProgram() = IRProgram(IRFunctionDefinition[], IRRun[], Dict{Base.Symbol, IRPredefined}(),
-                        Dict{Base.Symbol, Dict{NodeId, NodeId}}(),
-                        Dict{Base.Symbol, Vector{IRAtom}}(), UniqueAtomIdGenerator())
+    Dict{Base.Symbol, Dict{NodeId, NodeId}}(),
+    Dict{Base.Symbol, Vector{IRAtom}}(), UniqueAtomIdGenerator())
 
 # ── type inference, ported from `Eval.jl` ────────────────────────────────────────────────────────
 #
@@ -391,7 +403,7 @@ ir_is_function_type(t::IRAtom)::Bool =
 
 "The argument types of an arrow type; the trailing element is the RETURN type, as in `fn_arg_types`."
 ir_fn_arg_types(t::IRExpression)::Vector{IRAtom} =
-    isempty(t.args) ? IRAtom[] : t.args[1:end-1]
+    isempty(t.args) ? IRAtom[] : t.args[1:(end - 1)]
 
 "The return type of an arrow type — `fn_ret_type`."
 ir_fn_ret_type(t::IRExpression)::Union{IRAtom, Nothing} =
@@ -441,7 +453,8 @@ function ir_denotes_call(p::IRProgram, a::IRAtom)::Bool
     e = a::IRExpression
     nargs = length(e.args)
     for ht in ir_types(p, e.head)
-        ir_is_function_type(ht) && length(ir_fn_arg_types(ht::IRExpression)) == nargs && return true
+        ir_is_function_type(ht) && length(ir_fn_arg_types(ht::IRExpression)) == nargs &&
+            return true
     end
     false
 end
@@ -528,19 +541,19 @@ function walk(f, a::IRAtom)
 end
 
 export NodeId, NO_ID, UniqueAtomIdGenerator, next_id!,
-       Position, SourcePosition, NO_POSITION, NO_SOURCE,
-       IRAtom, IRSymbol, IRVariable, IRGrounded, GroundedType,
-       GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL, GROUNDED_STRING, GROUNDED_OPAQUE,
-       UNIT_HEAD,
-       IRResolvedSymbol, IRExpression, IRSpecial, SpecialKind,
-       declared_types, has_arrow_type, ir_types, ir_denotes_call,
-       ir_is_function_type, ir_fn_arg_types, ir_fn_ret_type,
-       SPECIAL_LET, SPECIAL_LET_SEQ, SPECIAL_IF, SPECIAL_CASE, SPECIAL_MATCH,
-       SPECIAL_SUPERPOSE, SPECIAL_COLLAPSE, SPECIAL_QUOTE, SPECIAL_EVAL, SPECIAL_CHAIN,
-       SPECIAL_FUNCTION, SPECIAL_RETURN, SPECIAL_ERROR, SPECIAL_CATCH,
-       IRBoundAtom, IRDestructiveBinding, IRMatchBranch, IRMatch, IRSuperpose,
-       IRArrowType, IRSeqType, IRFunctionLike, IRLambda, IRFunctionDefinition,
-       IRRun, IRPredefined, IRProgram,
-       id, source, is_resolved, is_destructuring, annotate!, annotation, children, walk
+    Position, SourcePosition, NO_POSITION, NO_SOURCE,
+    IRAtom, IRSymbol, IRVariable, IRGrounded, GroundedType,
+    GROUNDED_INT, GROUNDED_FLOAT, GROUNDED_BOOL, GROUNDED_STRING, GROUNDED_OPAQUE,
+    UNIT_HEAD,
+    IRResolvedSymbol, IRExpression, IRSpecial, SpecialKind,
+    declared_types, has_arrow_type, ir_types, ir_denotes_call,
+    ir_is_function_type, ir_fn_arg_types, ir_fn_ret_type,
+    SPECIAL_LET, SPECIAL_LET_SEQ, SPECIAL_IF, SPECIAL_CASE, SPECIAL_MATCH,
+    SPECIAL_SUPERPOSE, SPECIAL_COLLAPSE, SPECIAL_QUOTE, SPECIAL_EVAL, SPECIAL_CHAIN,
+    SPECIAL_FUNCTION, SPECIAL_RETURN, SPECIAL_ERROR, SPECIAL_CATCH,
+    IRBoundAtom, IRDestructiveBinding, IRMatchBranch, IRMatch, IRSuperpose,
+    IRArrowType, IRSeqType, IRFunctionLike, IRLambda, IRFunctionDefinition,
+    IRRun, IRPredefined, IRProgram,
+    id, source, is_resolved, is_destructuring, annotate!, annotation, children, walk
 
 end # module CompilerIR

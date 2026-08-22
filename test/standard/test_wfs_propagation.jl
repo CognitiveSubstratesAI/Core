@@ -19,12 +19,17 @@ const _WP = Eval
 
 "A space with a paradox `(para)` — the only way to obtain a genuine ⊥ VALUE — plus a marker."
 function _wp_space()
-    _WP.untable_all!(); _WP.abolish_all_tables!()
-    s = Space(); load_core_stdlib!(s)
-    load_metta!(s, raw"(= (para) (tnot (para)))" * "\n" *
-                   raw"(= (marker) True)" * "\n" *
-                   raw"(= (ignore1 $x) (marker))" * "\n" *
-                   raw"(= (useit $x) $x)" * "\n")
+    _WP.untable_all!()
+    _WP.abolish_all_tables!()
+    s = Space()
+    load_core_stdlib!(s)
+    load_metta!(
+        s,
+        raw"(= (para) (tnot (para)))" * "\n" *
+        raw"(= (marker) True)" * "\n" *
+        raw"(= (ignore1 $x) (marker))" * "\n" *
+        raw"(= (useit $x) $x)" * "\n"
+    )
     _WP.table!(:para)
     s
 end
@@ -68,7 +73,8 @@ _wp_undef(xs) = !isempty(xs) && all(_WP.is_undefined, xs)
         # different position, different verdict. XSB gold p31 is the case that needs it.
         @test _wp_undef(_wp_run(s, raw"!(let $x (para) (marker))"))
     finally
-        _WP.untable_all!(); _WP.abolish_all_tables!()
+        _WP.untable_all!()
+        _WP.abolish_all_tables!()
     end
 end
 
@@ -84,7 +90,9 @@ end
         # its arguments UNEVALUATED, and `chain` binds the UNREDUCED atom (traced: satom=(para),
         # undef=false). Only `let` reaches `unify` with a reduced argument. A version of this test
         # written with `chain` passes while testing nothing.
-        @test _wp_undef(_wp_run(s, raw"!(let $b (para) (unify $b (SomeConcreteThing) Then Else))"))
+        @test _wp_undef(
+            _wp_run(s, raw"!(let $b (para) (unify $b (SomeConcreteThing) Then Else))")
+        )
 
         # …and a BARE VARIABLE pattern also comes back undefined now — NOT because the branch choice
         # changed, but because the OUTER `let` is a conjunction and 7.B makes it conditional.
@@ -105,6 +113,7 @@ end
         @test _wp_run(s, raw"!(unify (Foo) (Foo) Then Else)") == Atom[Sym("Then")]
         @test _wp_run(s, raw"!(unify (Foo) (Bar) Then Else)") == Atom[Sym("Else")]
     finally
-        _WP.untable_all!(); _WP.abolish_all_tables!()
+        _WP.untable_all!()
+        _WP.abolish_all_tables!()
     end
 end

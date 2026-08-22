@@ -31,23 +31,34 @@ struct Theory
 end
 
 _theory_section(args, key) =
-    (i = findfirst(s -> mm2_head(s) == key, args)) === nothing ? String[] : mm2_expr_args(args[i])[2:end]
+    if (i = findfirst(s -> mm2_head(s) == key, args)) === nothing
+        String[]
+    else
+        mm2_expr_args(args[i])[2:end]
+    end
 
 "Parse one `(theory NAME BASE SECTIONS…)` definition."
 function parse_theory(def::AbstractString)::Theory
     a = mm2_expr_args(def)
-    (length(a) >= 3 && a[1] == "theory") || error("parse_theory: expected (theory NAME BASE …), got: $def")
+    (length(a) >= 3 && a[1] == "theory") ||
+        error("parse_theory: expected (theory NAME BASE …), got: $def")
     name = a[2]
     bspec = mm2_expr_args(a[3])
-    base = isempty(bspec) ? (:none, String[]) :
-           bspec[1] == "extends" ? (:extends, String[bspec[2]]) :
-           bspec[1] == "union" ? (:union, String[bspec[2:end]...]) :
-           error("parse_theory: base must be (), (extends P), or (union A B…); got '$(a[3])'")
+    base = if isempty(bspec)
+        (:none, String[])
+    elseif bspec[1] == "extends"
+        (:extends, String[bspec[2]])
+    elseif bspec[1] == "union"
+        (:union, String[bspec[2:end]...])
+    else
+        error("parse_theory: base must be (), (extends P), or (union A B…); got '$(a[3])'")
+    end
     sections = a[4:end]
     reps = Tuple{String, String}[]
     for r in _theory_section(sections, "replacements")
         ra = mm2_expr_args(r)
-        (ra[1] == "=>" && length(ra) == 3) || error("replacement must be (=> Old New), got: $r")
+        (ra[1] == "=>" && length(ra) == 3) ||
+            error("replacement must be (=> Old New), got: $r")
         push!(reps, (ra[2], ra[3]))
     end
     params = Tuple{String, String}[]
@@ -57,10 +68,10 @@ function parse_theory(def::AbstractString)::Theory
         push!(params, (pa[1], pa[2]))
     end
     Theory(name, base, params,
-           _theory_section(sections, "terms"),
-           _theory_section(sections, "equations"),
-           _theory_section(sections, "rewrites"),
-           reps)
+        _theory_section(sections, "terms"),
+        _theory_section(sections, "equations"),
+        _theory_section(sections, "rewrites"),
+        reps)
 end
 
 "Parse all `(theory …)` definitions in a program → name→Theory env."
@@ -68,7 +79,8 @@ function load_theories(program::AbstractString)::Dict{String, Theory}
     env = Dict{String, Theory}()
     for (bang, f) in mm2_split_forms(program)
         (bang || mm2_head(f) != "theory") && continue
-        t = parse_theory(strip(f)); env[t.name] = t
+        t = parse_theory(strip(f))
+        env[t.name] = t
     end
     env
 end
@@ -86,7 +98,7 @@ Base references that name a PARAMETER (`Theory T(p: P)`) resolve through `bindin
 override), else the param's default theory, else the reference is taken as a direct theory name.
 """
 function theory_flatten(name::AbstractString, env::Dict{String, Theory};
-                        bindings::Dict{String, String} = Dict{String, String}())
+    bindings::Dict{String, String}=Dict{String, String}())
     haskey(env, name) || error("theory_flatten: unknown theory '$name'")
     t = env[name]
     function resolve(ref)                                   # param override > param default > direct name
@@ -94,21 +106,31 @@ function theory_flatten(name::AbstractString, env::Dict{String, Theory};
         i = findfirst(p -> p[1] == ref, t.params)
         i === nothing ? ref : t.params[i][2]
     end
-    terms = String[]; eqs = String[]; rws = String[]
+    terms = String[]
+    eqs = String[]
+    rws = String[]
     if t.base[1] == :extends
-        b = theory_flatten(resolve(t.base[2][1]), env); append!(terms, b.terms); append!(eqs, b.equations); append!(rws, b.rewrites)
+        b = theory_flatten(resolve(t.base[2][1]), env)
+        append!(terms, b.terms)
+        append!(eqs, b.equations)
+        append!(rws, b.rewrites)
     elseif t.base[1] == :union
         for p in t.base[2]
-            b = theory_flatten(resolve(p), env); append!(terms, b.terms); append!(eqs, b.equations); append!(rws, b.rewrites)
+            b = theory_flatten(resolve(p), env)
+            append!(terms, b.terms)
+            append!(eqs, b.equations)
+            append!(rws, b.rewrites)
         end
     end
-    append!(terms, t.terms); append!(eqs, t.equations); append!(rws, t.rewrites)
+    append!(terms, t.terms)
+    append!(eqs, t.equations)
+    append!(rws, t.rewrites)
     for (old, new) in t.replacements
         terms = String[_rename_ctor(s, old, new) for s in terms]
-        eqs   = String[_rename_ctor(s, old, new) for s in eqs]
-        rws   = String[_rename_ctor(s, old, new) for s in rws]
+        eqs = String[_rename_ctor(s, old, new) for s in eqs]
+        rws = String[_rename_ctor(s, old, new) for s in rws]
     end
-    (terms = unique(terms), equations = unique(eqs), rewrites = unique(rws))
+    (terms=unique(terms), equations=unique(eqs), rewrites=unique(rws))
 end
 
 "The flattened rewrites of a theory (the executable reduction relation)."
@@ -121,8 +143,10 @@ theory_rewrites(name::AbstractString, env::Dict{String, Theory})::Vector{String}
 Flatten a parameterized theory with its parameters bound to concrete theories (`overrides`, a
 param-name→theory map). Unbound params fall back to their declared default theory.
 """
-theory_instantiate(name::AbstractString, env::Dict{String, Theory}, overrides::Dict{String, String}) =
-    theory_flatten(name, env; bindings = overrides)
+theory_instantiate(
+    name::AbstractString, env::Dict{String, Theory}, overrides::Dict{String, String}
+) =
+    theory_flatten(name, env; bindings=overrides)
 
 # --- Equation orientation (a-tail) -------------------------------------------------------------------
 # Knuth-Bendix orientation is undecidable in general; this is a SOUND, INCOMPLETE fragment: orient
@@ -133,7 +157,8 @@ theory_instantiate(name::AbstractString, env::Dict{String, Theory}, overrides::D
 # unit/simplification laws and FLAGS the rest (commutativity, associativity, distributivity — equal-or-
 # larger RHS) as non-orientable; those need AC-matching or an explicit reduction order (LPO/KBO), the
 # deeper follow-on. Oriented rewrites are usable directly by `metta_il_normalize`.
-_eq_tokens(s::AbstractString) = filter(!isempty, split(replace(String(s), '(' => ' ', ')' => ' ')))
+_eq_tokens(s::AbstractString) =
+    filter(!isempty, split(replace(String(s), '(' => ' ', ')' => ' ')))
 _eq_vars(s::AbstractString) = Set(t for t in _eq_tokens(s) if startswith(t, "\$"))
 
 """
@@ -182,17 +207,18 @@ Orient a flattened theory's equations into terminating rewrites where provable. 
 un-oriented (commutativity/associativity/…), reported honestly rather than silently dropped.
 """
 function theory_orient_equations(name::AbstractString, env::Dict{String, Theory})
-    oriented = String[]; flagged = String[]
+    oriented = String[]
+    flagged = String[]
     for eq in theory_flatten(name, env).equations
         a = mm2_expr_args(eq)
         if length(a) == 3 && a[1] == "=" &&
-           _eq_symbols(a[3]) < _eq_symbols(a[2]) && _eq_non_duplicating(a[2], a[3])
+            _eq_symbols(a[3]) < _eq_symbols(a[2]) && _eq_non_duplicating(a[2], a[3])
             push!(oriented, "(~> $(a[2]) $(a[3]))")
         else
             push!(flagged, eq)
         end
     end
-    (oriented = oriented, flagged = flagged)
+    (oriented=oriented, flagged=flagged)
 end
 
 """
@@ -201,16 +227,20 @@ end
 Flatten theory `name` from `program`, lower its rewrites, run over `data` on native MORK. `saturate=true`
 runs the rewrites to fixpoint (recursive closure) via KBSaturation; default does one exec generation.
 """
-function theory_run!(cs::CoreSpace, data::AbstractString, program::AbstractString, name::AbstractString;
-                     steps::Int = 1_000_000, saturate::Bool = false,
-                     use_magic_sets::Bool = false, magic_query::AbstractString = "", magic_bound::Int = 0)
+function theory_run!(cs::CoreSpace, data::AbstractString, program::AbstractString,
+    name::AbstractString;
+    steps::Int=1_000_000, saturate::Bool=false,
+    use_magic_sets::Bool=false, magic_query::AbstractString="", magic_bound::Int=0)
     # SWEPT 2026-08-10 — same silent-discard hole as the pipeline lane had. `load_theories` filters to
     # `(theory …)` forms, so anything else in the program (a ground fact, a `(=)` rule, a `!` query)
     # vanished without a word while the lane returned its own output as if the program were clean.
-    _il_assert_only(program, "theory_run!", "theory", "`(theory NAME (extends…) …)` declarations",
+    _il_assert_only(program, "theory_run!", "theory",
+        "`(theory NAME (extends…) …)` declarations",
         "  → ground FACTS belong in the `data` argument, not the program.\n" *
-        "  → a `!` query is not run by this lane; the theory's rewrites produce its results.")
+        "  → a `!` query is not run by this lane; the theory's rewrites produce its results."
+    )
     env = load_theories(program)
-    metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps = steps, saturate = saturate,
-        use_magic_sets = use_magic_sets, magic_query = magic_query, magic_bound = magic_bound)
+    metta_il_run!(cs, data, join(theory_rewrites(name, env), "\n"); steps=steps,
+        saturate=saturate,
+        use_magic_sets=use_magic_sets, magic_query=magic_query, magic_bound=magic_bound)
 end

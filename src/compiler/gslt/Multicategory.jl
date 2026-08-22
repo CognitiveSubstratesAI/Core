@@ -57,11 +57,11 @@ module CompilerGSLTMulticategory
 
 using ..StandardMeTTa: Atom, Sym, Var, Expression, Grounded
 using ..CompilerGSLTPresentation: GPresentation, GRule, GCat, GItem,
-                                  ItemNonTerminal, ItemAbs, ItemBind, LabelId,
-                                  cat_name, binders_of
+    ItemNonTerminal, ItemAbs, ItemBind, LabelId,
+    cat_name, binders_of
 
 export GHole, GContext, GInterface, hole, is_hole, arity, holes_of, plug, plug_term,
-       identity_context, context_of, interface_at, binding_stage
+    identity_context, context_of, interface_at, binding_stage
 
 """The reserved head marking a hole: `(Hole i)`, `i` a 1-based index.
 
@@ -93,7 +93,7 @@ function _hole_index(a::Atom)::Int
     h = (a::Expression).children[2]
     h isa Grounded && (h::Grounded).value isa Integer && return Int((h::Grounded).value)
     h isa Sym && return something(tryparse(Int, String((h::Sym).name)),
-                                  error("GSLT context: hole index is not an integer in $(a)"))
+        error("GSLT context: hole index is not an integer in $(a)"))
     error("GSLT context: malformed hole $(a)")
 end
 
@@ -113,7 +113,9 @@ function holes_of(c::GContext)::Vector{Int}
         if is_hole(a)
             push!(out, _hole_index(a))
         elseif a isa Expression
-            for x in (a::Expression).children; walk(x); end
+            for x in (a::Expression).children
+                walk(x)
+            end
         end
         nothing
     end
@@ -138,8 +140,13 @@ Fill hole `i` with the TERM `t`. Every occurrence of `(Hole i)` is replaced.
 """
 function plug_term(c::GContext, i::Int, t::Atom)::GContext
     subst(a::Atom)::Atom =
-        is_hole(a) ? (_hole_index(a) == i ? t : a) :
-        a isa Expression ? Expression(Atom[subst(x) for x in (a::Expression).children]) : a
+        if is_hole(a)
+            (_hole_index(a) == i ? t : a)
+        elseif a isa Expression
+            Expression(Atom[subst(x) for x in (a::Expression).children])
+        else
+            a
+        end
     GContext(subst(c.term))
 end
 
@@ -173,7 +180,7 @@ function plug(outer::GContext, i::Int, inner::GContext)::GContext
     ih = holes_of(inner)
     n = length(ih)
 
-    inmap  = Dict{Int, Int}(k => pos - 1 + q for (q, k) in enumerate(ih))
+    inmap = Dict{Int, Int}(k => pos - 1 + q for (q, k) in enumerate(ih))
     outmap = Dict{Int, Int}()
     for (p, k) in enumerate(oh)
         k == i && continue
@@ -181,13 +188,23 @@ function plug(outer::GContext, i::Int, inner::GContext)::GContext
     end
 
     renum_inner(a::Atom)::Atom =
-        is_hole(a) ? hole(inmap[_hole_index(a)]) :
-        a isa Expression ? Expression(Atom[renum_inner(x) for x in (a::Expression).children]) : a
+        if is_hole(a)
+            hole(inmap[_hole_index(a)])
+        elseif a isa Expression
+            Expression(Atom[renum_inner(x) for x in (a::Expression).children])
+        else
+            a
+        end
     filled = renum_inner(inner.term)
 
     build(a::Atom)::Atom =
-        is_hole(a) ? (_hole_index(a) == i ? filled : hole(outmap[_hole_index(a)])) :
-        a isa Expression ? Expression(Atom[build(x) for x in (a::Expression).children]) : a
+        if is_hole(a)
+            (_hole_index(a) == i ? filled : hole(outmap[_hole_index(a)]))
+        elseif a isa Expression
+            Expression(Atom[build(x) for x in (a::Expression).children])
+        else
+            a
+        end
 
     GContext(build(outer.term))
 end
@@ -214,8 +231,10 @@ contexts whose holes are its own terms."""
 function context_of(p::GPresentation, t::Atom)::GContext
     for r in p.terms
         (r.label::LabelId).name === HOLE &&
-            error("GSLT context: presentation `$(p.name)` declares a constructor named `$HOLE`, " *
-                  "which is the reserved hole marker")
+            error(
+                "GSLT context: presentation `$(p.name)` declares a constructor named `$HOLE`, " *
+                "which is the reserved hole marker"
+            )
     end
     GContext(t)
 end
@@ -252,14 +271,21 @@ function interface_at(p::GPresentation, c::GContext, i::Int)::GInterface
             s = nothing
             if r !== nothing && k - 1 <= length(r.items)
                 it = r.items[k - 1]
-                cat = it isa ItemNonTerminal ? (it::ItemNonTerminal).cat :
-                      it isa ItemBind        ? (it::ItemBind).cat :
-                      it isa ItemAbs && (it::ItemAbs).item isa ItemNonTerminal ?
-                          ((it::ItemAbs).item::ItemNonTerminal).cat : nothing
+                cat = if it isa ItemNonTerminal
+                    (it::ItemNonTerminal).cat
+                elseif it isa ItemBind
+                    (it::ItemBind).cat
+                elseif it isa ItemAbs && (it::ItemAbs).item isa ItemNonTerminal
+                    ((it::ItemAbs).item::ItemNonTerminal).cat
+                else
+                    nothing
+                end
                 s = cat === nothing ? nothing : cat_name(cat)
             end
             # a hole under an `ItemAbs` position of a binding constructor is one stage deeper
-            deeper = under && r !== nothing && k - 1 <= length(r.items) && r.items[k - 1] isa ItemAbs
+            deeper =
+                under && r !== nothing && k - 1 <= length(r.items) &&
+                r.items[k - 1] isa ItemAbs
             walk(x, stage + (deeper ? 1 : 0), s)
         end
         nothing
@@ -268,12 +294,15 @@ function interface_at(p::GPresentation, c::GContext, i::Int)::GInterface
 
     isempty(found) && error("GSLT context: no hole $i in $(c.term)")
     all(==(found[1]), found) ||
-        error("GSLT context: hole $i occurs with DISAGREEING interfaces $(unique(found)) — a " *
-              "multicategory input has one interface, so this context is not well-formed")
+        error(
+            "GSLT context: hole $i occurs with DISAGREEING interfaces $(unique(found)) — a " *
+            "multicategory input has one interface, so this context is not well-formed"
+        )
     found[1]
 end
 
 "How many binders hole `i` sits under — the `binding_stage` component, on its own."
-binding_stage(p::GPresentation, c::GContext, i::Int)::Int = interface_at(p, c, i).binding_stage
+binding_stage(p::GPresentation, c::GContext, i::Int)::Int =
+    interface_at(p, c, i).binding_stage
 
 end # module CompilerGSLTMulticategory

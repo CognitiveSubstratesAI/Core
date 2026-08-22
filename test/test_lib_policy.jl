@@ -50,7 +50,14 @@ using MeTTaCore
         load_core_lib!(cs, :ecan)
         names = lib_policy_names(:ecan)
         @test length(names) >= 30
-        unreadable = [n for n in names if (try lib_policy(cs, n); false catch; true end)]
+        unreadable = [n for n in names if (
+            try
+                lib_policy(cs, n)
+                false
+            catch
+                true
+            end
+        )]
         @test isempty(unreadable)
     end
 

@@ -27,18 +27,31 @@ module Eval
 using ..StandardMeTTa
 
 export interpret, bare_eval, Space, add_atom!, Operation, PLUS, MINUS, LT, is_executable
-export metta_run, metta_results, parse_program, load_metta!, load_core_stdlib!, tokenize, metta_debug!
+export metta_run,
+    metta_results, parse_program, load_metta!, load_core_stdlib!, tokenize, metta_debug!
 export interpret_max_steps!, metta_max_steps!
 export table!, untable_all!, auto_table!
 
 # instruction symbols
-const EVAL = Sym("eval"); const EVALC = Sym("evalc"); const CHAIN = Sym("chain")
-const FUNCTION = Sym("function"); const RETURN = Sym("return"); const UNIFY = Sym("unify")
-const CONS = Sym("cons-atom"); const DECONS = Sym("decons-atom")
-const COLLAPSE_BIND = Sym("collapse-bind"); const SUPERPOSE_BIND = Sym("superpose-bind")
-const EMPTY = Sym("Empty"); const NOT_REDUCIBLE = Sym("NotReducible"); const ERROR = Sym("Error")
-const MINIMAL_OPS = Set(Symbol[ Symbol("eval"),Symbol("evalc"),Symbol("chain"),Symbol("function"),Symbol("unify"),
-                                 Symbol("cons-atom"),Symbol("decons-atom"),Symbol("collapse-bind"),Symbol("superpose-bind") ])
+const EVAL = Sym("eval")
+const EVALC = Sym("evalc")
+const CHAIN = Sym("chain")
+const FUNCTION = Sym("function")
+const RETURN = Sym("return")
+const UNIFY = Sym("unify")
+const CONS = Sym("cons-atom")
+const DECONS = Sym("decons-atom")
+const COLLAPSE_BIND = Sym("collapse-bind")
+const SUPERPOSE_BIND = Sym("superpose-bind")
+const EMPTY = Sym("Empty")
+const NOT_REDUCIBLE = Sym("NotReducible")
+const ERROR = Sym("Error")
+const MINIMAL_OPS = Set(
+    Symbol[Symbol("eval"), Symbol("evalc"), Symbol("chain"), Symbol("function"),
+        Symbol("unify"),
+        Symbol("cons-atom"), Symbol("decons-atom"), Symbol("collapse-bind"),
+        Symbol("superpose-bind")]
+)
 
 # ── LangDef disable-to-prove hook (CeTTa-adopted, langdef_pack.{c,h}) ───────────
 # A covered HE-rule branch fires ONLY when its rule is enabled, so disabling a rule (via
@@ -95,20 +108,26 @@ disable-to-prove test surfaces immediately instead of quietly proving nothing.
             "rule_enabled(\"$name\"): the LangDef rule table was never registered. " *
             "LangDefPack.jl must call Eval._langdef_register! at load; without it every " *
             "gated branch would fall open.")
-        error("rule_enabled(\"$name\"): not a rule in HE_SMALL_STEP_RULES. Known rules: " *
-              join(sort(collect(keys(_LANGDEF_LIVE))), ", ") *
-              ". (A mistyped name previously read as ENABLED, so a disable-to-prove test could " *
-              "silently prove nothing.)")
+        error(
+            "rule_enabled(\"$name\"): not a rule in HE_SMALL_STEP_RULES. Known rules: " *
+            join(sort(collect(keys(_LANGDEF_LIVE))), ", ") *
+            ". (A mistyped name previously read as ENABLED, so a disable-to-prove test could " *
+            "silently prove nothing.)"
+        )
     end
     live::Bool || return false          # table says the rule is structural, not executable
     !(name in _langdef_disabled())
 end
-langdef_disable!(names::String...) = (_LANGDEF_DISABLED[] = Set(collect(names)); nothing)  # disable-to-prove
-langdef_reset!() = (_LANGDEF_DISABLED[] = nothing; nothing)                                 # re-read env on next check
+langdef_disable!(names::String...) = (_LANGDEF_DISABLED[]=Set(collect(names)); nothing)  # disable-to-prove
+langdef_reset!() = (_LANGDEF_DISABLED[]=nothing; nothing)                                 # re-read env on next check
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-head_name(a::Atom) = (a isa Expression && !isempty(a.children) && a.children[1] isa Sym) ?
-                     (a.children[1]::Sym).name : Symbol("")
+head_name(a::Atom) =
+    if (a isa Expression && !isempty(a.children) && a.children[1] isa Sym)
+        (a.children[1]::Sym).name
+    else
+        Symbol("")
+    end
 is_minimal_op(a::Atom) = head_name(a) in MINIMAL_OPS
 args(a::Expression) = a.children[2:end]
 
@@ -164,7 +183,9 @@ function collect_vars!(s::Set{Var}, a::Atom)
     a isa Var && (push!(s, a); return s)
     a isa Expression || return s
     a.has_vars || return s                    # ground subtree ⇒ no vars, O(1) (has_vars fast path)
-    for c in a.children; collect_vars!(s, c); end
+    for c in a.children
+        collect_vars!(s, c)
+    end
     s
 end
 collect_vars(a::Atom) = collect_vars!(Set{Var}(), a)
@@ -173,19 +194,27 @@ collect_vars(a::Atom) = collect_vars!(Set{Var}(), a)
 mutable struct Frame
     atom::Atom
     vars::Set{Var}
-    prev::Union{Frame,Nothing}
+    prev::Union{Frame, Nothing}
     ret::Function          # continuation invoked (by interpret_stack) when a child finishes
     finished::Bool
     depth::Int
     tco::Bool              # PROVENANCE: set true ONLY on driver-generated metta reduce-again frames (metta_instr →
-                           # push_nested tco=true), never derivable from atom syntax. The TCO frame-collapse
-                           # (:~1440) collapses ONLY tco frames, so a user-written `(chain (metta-call…) $r $r)`
-                           # (same shape, tco=false) is immune — a GUARANTEE, not a shape-match convention.
+    # push_nested tco=true), never derivable from atom syntax. The TCO frame-collapse
+    # (:~1440) collapses ONLY tco frames, so a user-written `(chain (metta-call…) $r $r)`
+    # (same shape, tco=false) is immune — a GUARANTEE, not a shape-match convention.
     # Default tco=false so every existing 6-arg `Frame(a,v,p,r,f,d)` construction stays valid & non-collapsible.
-    Frame(a::Atom, v::Set{Var}, p::Union{Frame,Nothing}, r::Function, f::Bool, d::Int, tco::Bool=false) =
+    Frame(
+        a::Atom,
+        v::Set{Var},
+        p::Union{Frame, Nothing},
+        r::Function,
+        f::Bool,
+        d::Int,
+        tco::Bool=false
+    ) =
         new(a, v, p, r, f, d, tco)
 end
-const Plan = Vector{Tuple{Frame,Bindings}}
+const Plan = Vector{Tuple{Frame, Bindings}}
 
 no_handler(::Frame, ::Atom, ::Bindings) = nothing   # a finished child with no_handler just pops
 
@@ -196,8 +225,8 @@ no_handler(::Frame, ::Atom, ::Bindings) = nothing   # a finished child with no_h
 const EMPTY_VARS = Set{Var}()
 
 # finished_result (interpreter.rs:474): a finished frame holding `atom`, linked to `prev`
-finished_result(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}) =
-    Tuple{Frame,Bindings}[(Frame(atom, EMPTY_VARS, prev, no_handler, true, 0), b)]
+finished_result(atom::Atom, b::Bindings, prev::Union{Frame, Nothing}) =
+    Tuple{Frame, Bindings}[(Frame(atom, EMPTY_VARS, prev, no_handler, true, 0), b)]
 
 # ── per-step binding-narrowing (the step the faithful Minimal port had OMITTED) ───────────────
 # hyperon `Bindings::apply_and_retain` (matcher.rs:693) / `narrow_vars` (:518); CeTTa eval.c
@@ -215,15 +244,20 @@ function narrow_bindings(b::Bindings, live)::Bindings
     # FLAT scratch (measured on obc: ≤11 roots, ≤28 seen per call) — parallel Vectors + linear lookup
     # replace Dict{Var,Vector{Var}}+Set{Var}: cheaper than hashing at these sizes and far less alloc per
     # step. `live` stays a Set (membership target, up to ~113 — a linear scan there WOULD regress).
-    seen = Var[]; roots = Var[]; groups = Vector{Var}[]
+    seen = Var[]
+    roots = Var[]
+    groups = Vector{Var}[]
     any_drop = false
     @inbounds for e in b.entries
         for v in (e.val isa Var ? (e.var, e.val::Var) : (e.var,))
-            v in seen && continue; push!(seen, v)
+            v in seen && continue
+            push!(seen, v)
             if v in live
                 r = canonical_var(b, v)
                 idx = 0
-                for j in eachindex(roots); roots[j] == r && (idx = j; break); end
+                for j in eachindex(roots)
+                    roots[j] == r && (idx=j; break)
+                end
                 idx == 0 ? (push!(roots, r); push!(groups, Var[v])) : push!(groups[idx], v)
             else
                 any_drop = true
@@ -237,18 +271,21 @@ function narrow_bindings(b::Bindings, live)::Bindings
     # frame narrows — which is most of them.
     nb.delay = b.delay
     @inbounds for k in eachindex(roots)
-        root = roots[k]; vars = groups[k]
+        root = roots[k]
+        vars = groups[k]
         val = resolve(b, root)
         if val === nothing
             length(vars) < 2 && continue                   # lone value-less var ≡ unbound → drop
             v1 = vars[1]
             for i in 2:length(vars)                        # re-root the equality among the LIVE vars
-                r = add_var_equality(nb, v1, vars[i]); isempty(r) || (nb = r[1])
+                r = add_var_equality(nb, v1, vars[i])
+                isempty(r) || (nb = r[1])
             end
         else
             sval = subst(val, b)                           # materialize removed vars referenced in value
             for v in vars
-                r = add_var_binding(nb, v, sval); isempty(r) || (nb = r[1])
+                r = add_var_binding(nb, v, sval)
+                isempty(r) || (nb = r[1])
             end
         end
     end
@@ -263,7 +300,7 @@ end
 # deep-copying it (Set `union!` is O(n); the set is immutable/read-only — verified: only read in
 # narrow_bindings + here, never mutated). This is the O(1)-clone case hyperon gets free from im::HashSet;
 # it avoids the per-frame copy of the ≤113-var cumulative set.
-function _cumvars(prev::Union{Frame,Nothing}, atom::Atom)::Set{Var}
+function _cumvars(prev::Union{Frame, Nothing}, atom::Atom)::Set{Var}
     prev === nothing && return collect_vars(atom)
     pv = prev.vars
     _atom_introduces_var(atom, pv) || return pv
@@ -324,23 +361,23 @@ needed one. Under-guarding is safe — an atom behaves as it does today; over-gu
 programs. Measurement is what tells the two apart, and reading the bodies would not have: the crashes
 are in the INTERNAL continuations, which no arity table in the §3 spec covers."""
 const _INSTR_MIN_CHILDREN = Dict{Symbol, Int}(
-    Symbol("return-on-error")    => 3,
-    Symbol("interpret-tuple")    => 2,
+    Symbol("return-on-error") => 3,
+    Symbol("interpret-tuple") => 2,
     Symbol("interpret-function") => 3,
-    Symbol("interpret-args")     => 3,
-    Symbol("metta-call")         => 3,
-    Symbol("args-cont")          => 4,
-    Symbol("metta-noreduce")     => 4,
+    Symbol("interpret-args") => 3,
+    Symbol("metta-call") => 3,
+    Symbol("args-cont") => 4,
+    Symbol("metta-noreduce") => 4
 )
 
 # ── the dispatch step (interpreter.rs interpret_stack:374) ────────────────────
-function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindings}}
+function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame, Bindings}}
     if f.finished
         f.prev === nothing && return [(f, b)]                  # final result
         atom = subst(f.atom, b)                                # apply bindings on the way up (materialize)
         nb = narrow_bindings(b, f.prev.vars)                   # drop bindings no pending frame references
         cont = f.prev.ret(f.prev, atom, nb)                    # (apply_and_retain, interpreter.rs:387)
-        return cont === nothing ? Tuple{Frame,Bindings}[] : [cont]
+        return cont === nothing ? Tuple{Frame, Bindings}[] : [cont]
     end
     name = head_name(f.atom)
     # ARITY GUARD — see `_INSTR_MIN_CHILDREN`. An atom carrying an instruction's NAME but not its
@@ -351,23 +388,40 @@ function interpret_stack(f::Frame, b::Bindings, space)::Vector{Tuple{Frame,Bindi
         req > 0 && length((f.atom::Expression).children) < req &&
             return finished_result(f.atom, b, f.prev)
     end
-    if name === Symbol("cons-atom");    return cons_atom(f, b)
-    elseif name === Symbol("decons-atom"); return decons_atom(f, b)
-    elseif name === Symbol("unify");    return unify_op(f, b)
-    elseif name === Symbol("eval");     return eval_op(f, b, space)
-    elseif name === Symbol("evalc");    return evalc_op(f, b, space)
-    elseif name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(f.atom, b, f.prev, f.depth)
-    elseif name === Symbol("function"); return setup_function(f.atom, b, f.prev, f.depth)
-    elseif name === Symbol("collapse-bind");  return collapse_bind_op(f, b, space)
-    elseif name === Symbol("superpose-bind"); return superpose_bind_op(f, b, space)
-    elseif name === Symbol("metta");            return metta_instr(f, b, space)            # metta driver (stack-machine)
-    elseif name === Symbol("interpret-tuple");  return interpret_tuple_instr(f, b, space)
-    elseif name === Symbol("interpret-function"); return interpret_function_instr(f, b, space)
-    elseif name === Symbol("interpret-args");   return interpret_args_instr(f, b, space)
-    elseif name === Symbol("metta-call");       return metta_call_instr(f, b, space)
-    elseif name === Symbol("return-on-error");  return return_on_error_instr(f, b)
-    elseif name === Symbol("args-cont");        return args_cont_instr(f, b)
-    elseif name === Symbol("metta-noreduce");   return metta_noreduce_instr(f, b)        # NotReducible backstop
+    if name === Symbol("cons-atom")
+        return cons_atom(f, b)
+    elseif name === Symbol("decons-atom")
+        return decons_atom(f, b)
+    elseif name === Symbol("unify")
+        return unify_op(f, b)
+    elseif name === Symbol("eval")
+        return eval_op(f, b, space)
+    elseif name === Symbol("evalc")
+        return evalc_op(f, b, space)
+    elseif name === Symbol("chain") && rule_enabled("HES_Chain")
+        return setup_chain(f.atom, b, f.prev, f.depth)
+    elseif name === Symbol("function")
+        return setup_function(f.atom, b, f.prev, f.depth)
+    elseif name === Symbol("collapse-bind")
+        return collapse_bind_op(f, b, space)
+    elseif name === Symbol("superpose-bind")
+        return superpose_bind_op(f, b, space)
+    elseif name === Symbol("metta")
+        return metta_instr(f, b, space)            # metta driver (stack-machine)
+    elseif name === Symbol("interpret-tuple")
+        return interpret_tuple_instr(f, b, space)
+    elseif name === Symbol("interpret-function")
+        return interpret_function_instr(f, b, space)
+    elseif name === Symbol("interpret-args")
+        return interpret_args_instr(f, b, space)
+    elseif name === Symbol("metta-call")
+        return metta_call_instr(f, b, space)
+    elseif name === Symbol("return-on-error")
+        return return_on_error_instr(f, b)
+    elseif name === Symbol("args-cont")
+        return args_cont_instr(f, b)
+    elseif name === Symbol("metta-noreduce")
+        return metta_noreduce_instr(f, b)        # NotReducible backstop
     else
         return finished_result(f.atom, b, f.prev)              # not a minimal op → data, as-is
     end
@@ -379,7 +433,9 @@ end
 function unify_op(f::Frame, b::Bindings)
     a = f.atom
     (a isa Expression && length(a.children) == 5) ||
-        return finished_result(error_atom(a, "expected (unify <atom> <pattern> <then> <else>)"), b, f.prev)
+        return finished_result(
+            error_atom(a, "expected (unify <atom> <pattern> <then> <else>)"), b, f.prev
+        )
     atom, pattern, then, else_ = a.children[2], a.children[3], a.children[4], a.children[5]
     satom = subst(atom, b)
     # 🔴 A WFS BOTTOM MUST NOT BE LAUNDERED INTO A DEFINITE ANSWER — audit 2026-08-18.
@@ -396,7 +452,7 @@ function unify_op(f::Frame, b::Bindings)
     # undefined value collapse, which truncated rule bodies at their first undefined literal.
     # The anti-laundering property is preserved BELOW instead: if nothing matched AND the atom is a
     # bottom, we return the bottom rather than deciding the `else` branch.
-    out = Tuple{Frame,Bindings}[]
+    out = Tuple{Frame, Bindings}[]
     # hyperon: a Grounded Space implements a custom match_ → `unify` QUERIES the space (used by get-doc)
     if satom isa Grounded && satom.value isa Space
         for mb in _match_pat(satom.value::Space, subst(pattern, b), b)
@@ -412,8 +468,11 @@ function unify_op(f::Frame, b::Bindings)
             # bindings that travel with exactly this one — and answer production makes it undefined.
             # CONJOIN rather than overwrite: two bottoms in one body mean the answer depends on both.
             if is_undefined(satom)
-                mb.delay = mb.delay === nothing ? satom :
-                           undefined_with(dnf_and(delays_of(mb.delay::Atom), delays_of(satom)))
+                mb.delay = if mb.delay === nothing
+                    satom
+                else
+                    undefined_with(dnf_and(delays_of(mb.delay::Atom), delays_of(satom)))
+                end
             end
             append!(out, finished_result(subst(then, mb), mb, f.prev))
         end
@@ -437,8 +496,13 @@ function decons_atom(f::Frame, b::Bindings)
     e = subst(a.children[2], b)
     is_undefined(e) && return finished_result(e, b, f.prev)           # contagious — and `e` CARRIES the condition
     (e isa Expression && !isempty(e.children)) ||
-        return finished_result(error_atom(a, "expected: (decons-atom (: <expr> Expression)), found: $(a)"), b, f.prev)
-    head = e.children[1]; tail = Expression(e.children[2:end])
+        return finished_result(
+            error_atom(a, "expected: (decons-atom (: <expr> Expression)), found: $(a)"),
+            b,
+            f.prev
+        )
+    head = e.children[1]
+    tail = Expression(e.children[2:end])
     finished_result(Expression(head, tail), b, f.prev)
 end
 
@@ -446,8 +510,11 @@ end
 function cons_atom(f::Frame, b::Bindings)
     a = f.atom
     (a isa Expression && length(a.children) == 3) ||
-        return finished_result(error_atom(a, "expected (cons-atom <head> <tail>)"), b, f.prev)
-    head = subst(a.children[2], b); tail = subst(a.children[3], b)
+        return finished_result(
+            error_atom(a, "expected (cons-atom <head> <tail>)"), b, f.prev
+        )
+    head = subst(a.children[2], b)
+    tail = subst(a.children[3], b)
     # 🔴 `cons-atom` IS A CONSTRUCTOR, NOT A STRICT OPERATION — it must NOT absorb a ⊥ element.
     # It used to run `propagated_undefined` here, and that single line is why a rule body stopped at
     # its first undefined literal. The minimal-MeTTa interpreter REBUILDS a reduced expression with
@@ -465,7 +532,9 @@ function cons_atom(f::Frame, b::Bindings)
     # `tnot` on a member of the other half falls through and returns ⊥. Four XSB WFS gold programs
     # (p15/p17/p26/p27) were wrong because of it.
     (tail isa Expression) ||
-        return finished_result(error_atom(a, "expected: (cons-atom <head> (: <tail> Expression))"), b, f.prev)
+        return finished_result(
+            error_atom(a, "expected: (cons-atom <head> (: <tail> Expression))"), b, f.prev
+        )
     finished_result(Expression(Atom[head; tail.children]), b, f.prev)
 end
 
@@ -474,11 +543,16 @@ end
 # parametric Grounded{T} replace hyperon's `Box<dyn GroundedAtom>` / downcast.
 # grounded success: result atoms, each optionally with bindings to propagate to the caller
 # (hyperon execute_bindings). `binds[i]` aligns with `results[i]`; empty `binds` = no propagation.
-struct ExecOk; results::Vector{Atom}; binds::Vector{Bindings}; end
+struct ExecOk
+    results::Vector{Atom}
+    binds::Vector{Bindings}
+end
 ExecOk(results::Vector{Atom}) = ExecOk(results, Bindings[])
 struct ExecNoReduce end
-struct ExecRuntime; msg::String; end
-const ExecResult = Union{ExecOk,ExecNoReduce,ExecRuntime}
+struct ExecRuntime
+    msg::String
+end
+const ExecResult = Union{ExecOk, ExecNoReduce, ExecRuntime}
 
 struct Operation
     name::String
@@ -511,13 +585,22 @@ execute(g::Grounded, opargs::Vector{Atom}, space)::ExecResult =
 
 # arithmetic (normal order — eval passes args UNreduced; non-numbers ⇒ NoReduce ⇒ NotReducible)
 function _num_binop(name, f)
-    Grounded(Operation(name, function (xs::Vector{Atom})
-        length(xs) == 2 || return ExecNoReduce()
-        x, y = xs[1], xs[2]
-        (_u = propagated_undefined(Atom[x, y])) === nothing || return ExecOk(Atom[_u])   # WFS bottom is contagious through strict ops
-        (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
-        ExecOk(Atom[Grounded(f(x.value, y.value))])
-    end))
+    Grounded(
+        Operation(
+            name,
+            function (xs::Vector{Atom})
+                length(xs) == 2 || return ExecNoReduce()
+                x, y = xs[1], xs[2]
+                (_u = propagated_undefined(Atom[x, y])) === nothing ||
+                    return ExecOk(Atom[_u])   # WFS bottom is contagious through strict ops
+                (
+                    x isa Grounded && x.value isa Number && y isa Grounded &&
+                    y.value isa Number
+                ) || return ExecNoReduce()
+                ExecOk(Atom[Grounded(f(x.value, y.value))])
+            end
+        )
+    )
 end
 # `/` and `%` do NOT use Julia's operators: Int÷Int must be INTEGER division and a zero divisor
 # must be a DivisionByZero decision, not Inf/NaN or an escaping host DivideError. Both come from
@@ -525,29 +608,52 @@ end
 using ..NumericSeam: SeamError, seam_div, seam_mod
 
 function _num_binop_seam(name, f)
-    Grounded(Operation(name, function (xs::Vector{Atom})
-        length(xs) == 2 || return ExecNoReduce()
-        x, y = xs[1], xs[2]
-        (_u = propagated_undefined(Atom[x, y])) === nothing || return ExecOk(Atom[_u])
-        (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
-        r = f(x.value, y.value)
-        r isa SeamError && return ExecOk(Atom[Expression(Atom[
-            Sym("Error"), Expression(Atom[Sym(name), x, y]), Sym("DivisionByZero")])])
-        ExecOk(Atom[Grounded(r)])
-    end))
+    Grounded(
+        Operation(
+            name,
+            function (xs::Vector{Atom})
+                length(xs) == 2 || return ExecNoReduce()
+                x, y = xs[1], xs[2]
+                (_u = propagated_undefined(Atom[x, y])) === nothing ||
+                    return ExecOk(Atom[_u])
+                (
+                    x isa Grounded && x.value isa Number && y isa Grounded &&
+                    y.value isa Number
+                ) || return ExecNoReduce()
+                r = f(x.value, y.value)
+                r isa SeamError && return ExecOk(
+                    Atom[Expression(
+                        Atom[
+                            Sym("Error"), Expression(Atom[Sym(name), x, y]),
+                            Sym("DivisionByZero")]
+                    )]
+                )
+                ExecOk(Atom[Grounded(r)])
+            end
+        )
+    )
 end
 
-const PLUS  = _num_binop("+", +)
+const PLUS = _num_binop("+", +)
 const MINUS = _num_binop("-", -)
 # comparisons return the True/False SYMBOLS (so unify against `True` works)
 function _num_cmp(name, f)
-    Grounded(Operation(name, function (xs::Vector{Atom})
-        length(xs) == 2 || return ExecNoReduce()
-        x, y = xs[1], xs[2]
-        (_u = propagated_undefined(Atom[x, y])) === nothing || return ExecOk(Atom[_u])   # WFS bottom is contagious through strict ops
-        (x isa Grounded && x.value isa Number && y isa Grounded && y.value isa Number) || return ExecNoReduce()
-        ExecOk(Atom[f(x.value, y.value) ? Sym("True") : Sym("False")])
-    end))
+    Grounded(
+        Operation(
+            name,
+            function (xs::Vector{Atom})
+                length(xs) == 2 || return ExecNoReduce()
+                x, y = xs[1], xs[2]
+                (_u = propagated_undefined(Atom[x, y])) === nothing ||
+                    return ExecOk(Atom[_u])   # WFS bottom is contagious through strict ops
+                (
+                    x isa Grounded && x.value isa Number && y isa Grounded &&
+                    y.value isa Number
+                ) || return ExecNoReduce()
+                ExecOk(Atom[f(x.value, y.value) ? Sym("True") : Sym("False")])
+            end
+        )
+    )
 end
 const LT = _num_cmp("<", <)
 
@@ -579,9 +685,9 @@ abstract type AbstractStore end
 mutable struct VectorStore <: AbstractStore
     atoms::Vector{Atom}
     lib_count::Int                # leading atoms that came from an imported LIBRARY (stdlib). Core keeps
-                                  # the library flattened (so &self/match/query stay single-space), but
-                                  # `get-atoms` returns only atoms[lib_count+1:end] — the space's OWN
-                                  # atoms — mirroring hyperon where get-atoms excludes dependency spaces.
+    # the library flattened (so &self/match/query stay single-space), but
+    # `get-atoms` returns only atoms[lib_count+1:end] — the space's OWN
+    # atoms — mirroring hyperon where get-atoms excludes dependency spaces.
     # ── first-argument index (the "Control" half of Algorithm=Logic+Control). `query` is on the hot
     # path of every reduction; a naive O(all-atoms) scan (interpreter.rs's reference path) made deep
     # programs (e.g. reduct) quadratic. EVERY faithful peer indexes: hyperon's AtomIndex (a
@@ -591,7 +697,7 @@ mutable struct VectorStore <: AbstractStore
     # var/var-headed 2nd child, <2 children) live in `wildcard` and are checked on every query —
     # they can match any discriminant (e.g. a var-LHS rule `(= $x …)`). `atoms` stays authoritative
     # (get-atoms/lib_count/order); the index is a parallel acceleration kept in sync at add/remove.
-    index::Dict{Tuple{Symbol,Symbol},Vector{Atom}}
+    index::Dict{Tuple{Symbol, Symbol}, Vector{Atom}}
     wildcard::Vector{Atom}
     # Control accel #2 (CeTTa subst_tree, space.c:497): a LAZY per-bucket discrimination trie. The 2-symbol
     # `index` narrows to same-(head,arg1-head) atoms, but a WIDE bucket (many rules/facts sharing that key,
@@ -601,19 +707,19 @@ mutable struct VectorStore <: AbstractStore
     # invalidated (deleted) on any add/remove to the bucket. Built only for buckets over `_TRIE_MIN_BUCKET`
     # (small buckets keep the zero-overhead linear scan). Field is LAST + inner-ctor-defaulted ⇒ existing
     # 6/7-arg positional Space(...) calls keep working.
-    bucket_trie::Dict{Tuple{Symbol,Symbol},Any}
+    bucket_trie::Dict{Tuple{Symbol, Symbol}, Any}
     VectorStore(atoms, lib_count, index, wildcard) =
-        new(atoms, lib_count, index, wildcard, Dict{Tuple{Symbol,Symbol},Any}())
+        new(atoms, lib_count, index, wildcard, Dict{Tuple{Symbol, Symbol}, Any}())
 end
-VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol,Symbol},Vector{Atom}}(), Atom[])
+VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol, Symbol}, Vector{Atom}}(), Atom[])
 
 mutable struct Space
     store::VectorStore            # ← the swappable half. Concrete today; see the note above.
-    tokens::Dict{String,Atom}     # bind! token table: token-name → atom (parse-time substitution)
+    tokens::Dict{String, Atom}     # bind! token table: token-name → atom (parse-time substitution)
     imported::Set{String}         # modules already imported here — re-import is ignored (+ cycle guard)
     type_epoch::Int               # monotonic; bumped ONLY when a (: …) type decl is added/removed (see
-                                  # add_atom!/remove_atom!). Keys the arg_actual_types memo — actual types
-                                  # derive solely from `:` decls, so cached types invalidate exactly on change.
+    # add_atom!/remove_atom!). Keys the arg_actual_types memo — actual types
+    # derive solely from `:` decls, so cached types invalidate exactly on change.
     # monotonic mutation counter (bumped on EVERY add/remove). Stamps SLG answer-table entries (CeTTa
     # table_store.c:153 per-space `revision`): a tabled answer computed at revision r is stale once the space
     # mutates (r'≠r) and is auto-evicted on lookup — closes the "table can go silently stale" hole (§7.7).
@@ -626,8 +732,14 @@ end
 # signature was already preserved deliberately once. It now packs the store instead of setting fields.
 Space(atoms, tokens, imported, lib_count, index, wildcard, type_epoch=0) =
     Space(VectorStore(atoms, lib_count, index, wildcard), tokens, imported, type_epoch)
-Space() = Space(VectorStore(), Dict{String,Atom}(), Set{String}(), 0)
-Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end; s)
+Space() = Space(VectorStore(), Dict{String, Atom}(), Set{String}(), 0)
+Space(atoms::Vector{Atom}) = (
+    s=Space();
+    for a in atoms
+        add_atom!(s, a)
+    end;
+    s
+)
 # Bounded display: a Space embedded in a result/error atom (e.g. `&self` passed as an argument to an
 # undefined op, which then echoes back) must NOT dump its entire atom list — the default struct show
 # recurses the whole KB and stack-overflows the REPL render. Core is single-flattened-space, so a grounded
@@ -635,19 +747,25 @@ Space(atoms::Vector{Atom}) = (s = Space(); for a in atoms; add_atom!(s, a); end;
 Base.show(io::IO, ::Space) = print(io, "&self")
 
 # discriminant head of an atom-position: a Sym's name, or an Expression's Sym head; else nothing.
-_idx_head(x::Atom)::Union{Symbol,Nothing} =
-    x isa Sym ? x.name :
-    (x isa Expression && !isempty(x.children) && x.children[1] isa Sym) ? (x.children[1]::Sym).name :
-    nothing
+_idx_head(x::Atom)::Union{Symbol, Nothing} =
+    if x isa Sym
+        x.name
+    elseif (x isa Expression && !isempty(x.children) && x.children[1] isa Sym)
+        (x.children[1]::Sym).name
+    else
+        nothing
+    end
 # (outer-head, 2nd-child-head) discriminant; nothing ⇒ not indexable ⇒ wildcard bucket.
-function _index_key(a::Atom)::Union{Tuple{Symbol,Symbol},Nothing}
+function _index_key(a::Atom)::Union{Tuple{Symbol, Symbol}, Nothing}
     (a isa Expression && length(a.children) >= 2 && a.children[1] isa Sym) || return nothing
-    sub = _idx_head(a.children[2]); sub === nothing && return nothing
+    sub = _idx_head(a.children[2])
+    sub === nothing && return nothing
     ((a.children[1]::Sym).name, sub)
 end
 # a `(: atom T)` type declaration — the ONLY atom shape whose add/remove changes actual-type inference
 # (atom_types queries exactly `(: atom $T)`; Core has no (:< ) supertype closure). Bumps the memo epoch.
-_is_type_decl(a::Atom)::Bool = a isa Expression && length(a.children) >= 2 &&
+_is_type_decl(a::Atom)::Bool =
+    a isa Expression && length(a.children) >= 2 &&
     a.children[1] isa Sym && (a.children[1]::Sym).name === Symbol(":")
 function add_atom!(s::Space, a::Atom)
     push!(s.store.atoms, a)
@@ -670,7 +788,8 @@ function remove_atom!(s::Space, a::Atom)
     if k === nothing
         filter!(x -> x != a, s.store.wildcard)
     else
-        b = get(s.store.index, k, nothing); b !== nothing && filter!(x -> x != a, b)
+        b = get(s.store.index, k, nothing)
+        b !== nothing && filter!(x -> x != a, b)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
     dyn_changed!(k)                              # §7.7: invalidate the tables that READ this bucket
@@ -690,14 +809,15 @@ own_atoms(s::Space) = @view s.store.atoms[(s.store.lib_count + 1):end]      # ow
 atom_count(s::Space) = length(s.store.atoms)
 own_atom_count(s::Space) = length(s.store.atoms) - s.store.lib_count
 contains_atom(s::Space, a::Atom) = any(==(a), s.store.atoms)
-clone_store(s::Space) = (f = Space(copy(s.store.atoms)); f.store.lib_count = s.store.lib_count; f)
+clone_store(s::Space) =
+    (f=Space(copy(s.store.atoms)); f.store.lib_count=s.store.lib_count; f)
 # 🔴 THE 10th CONTRACT OP, added 2026-08-15. `own_atoms`/`own_atom_count` READ `lib_count`, but
 # nothing SET it — `load_metta!` wrote `space.store.lib_count` directly, the only store-field write
 # outside this block. A trie-backed store cannot be dropped in while sealing the library boundary
 # is inexpressible, so the seam needs this op regardless of which store implements it.
 # Precedent for why field-reaching is not harmless: MettaJam reached for `Space.atoms` after the
 # store seam landed and silently died, staying dead until `af05996`.
-seal_library!(s::Space) = (s.store.lib_count = length(s.store.atoms); s)
+seal_library!(s::Space) = (s.store.lib_count=length(s.store.atoms); s)
 
 const _VAR_COUNTER = Ref(UInt64(0))
 freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
@@ -716,12 +836,14 @@ freshvar(name) = (_VAR_COUNTER[] += UInt64(1); Var(name, _VAR_COUNTER[]))
 # parse (verified `$x===$x`), `freshvar` mints one object per key, and `subst` returns the input var object
 # for unbound vars, so identity is preserved end-to-end. (A `==` scan would also be correct, but identity is
 # already guaranteed, making `===` both safe and ~free.)
-const VarRenameMap = Vector{Pair{Var,Var}}
+const VarRenameMap = Vector{Pair{Var, Var}}
 function _rename_get!(m::VarRenameMap, v::Var)::Var
     @inbounds for i in eachindex(m)
         m[i].first === v && return m[i].second
     end
-    fv = freshvar(v.name); push!(m, v => fv); fv
+    fv = freshvar(v.name)
+    push!(m, v => fv)
+    fv
 end
 
 function rename_fresh(a::Atom, m::VarRenameMap=VarRenameMap(), d::Int=0)
@@ -754,17 +876,19 @@ end
 # (fib's body). Gated behind `_FAST_MATCH[]` (default false) so the 234-conformance path is byte-identical
 # by construction until the harness proves the fast path equivalent.
 const _FAST_MATCH = Ref(false)
-fast_match!(on::Bool = true) = (_FAST_MATCH[] = on)
-const _CLOSED_RULE_MEMO = Dict{UInt,Bool}()      # objectid(stored) → vars(RHS)⊆vars(LHS); rules are stable objects
-_is_eq_rule(a::Atom) = a isa Expression && length(a.children) == 3 &&
-                       a.children[1] isa Sym && (a.children[1]::Sym).name == Symbol("=")
+fast_match!(on::Bool=true) = (_FAST_MATCH[] = on)
+const _CLOSED_RULE_MEMO = Dict{UInt, Bool}()      # objectid(stored) → vars(RHS)⊆vars(LHS); rules are stable objects
+_is_eq_rule(a::Atom) =
+    a isa Expression && length(a.children) == 3 &&
+    a.children[1] isa Sym && (a.children[1]::Sym).name == Symbol("=")
 function _is_closed_rule(stored::Atom)::Bool
     _is_eq_rule(stored) || return false
     get!(_CLOSED_RULE_MEMO, objectid(stored)) do
         issubset(collect_vars(stored.children[3]), collect_vars(stored.children[2]))
     end
 end
-@inline _ground_atom(x::Atom)::Bool = x isa Var ? false : (x isa Expression ? !x.has_vars : true)
+@inline _ground_atom(x::Atom)::Bool =
+    x isa Var ? false : (x isa Expression ? !x.has_vars : true)
 
 # ── per-bucket discrimination trie: a conservative candidate filter ─────────────────────────────────────
 # Prunes a WIDE same-discriminant bucket by shared LHS structure. Tokens are the pre-order flattening of an
@@ -780,38 +904,48 @@ const _TRIE_MIN_BUCKET = 16                # build/use the trie only for buckets
 # what the JIT wants). A Var is a wildcard (`_KVAR`); a Sym/Grounded is keyed by the 64-bit hash of its name/value
 # (a hash collision only WIDENS the candidate set — match_atoms stays authoritative — so a match is never dropped);
 # an Expression by its arity. `kind` disambiguates hash spaces (a Sym and a Grounded with equal hashes stay separate).
-const _KVAR  = 0x00
-const _KSYM  = 0x01
+const _KVAR = 0x00
+const _KSYM = 0x01
 const _KEXPR = 0x02
-const _KGND  = 0x03
+const _KGND = 0x03
 struct _Tok
     kind::UInt8
     pay::UInt64
 end
 @inline _tok(a::Atom)::_Tok =
-    a isa Sym        ? _Tok(_KSYM,  hash(a.name)) :
-    a isa Expression ? _Tok(_KEXPR, UInt64(length(a.children))) :
-    a isa Grounded   ? _Tok(_KGND,  hash(a.value)) :
-                       _Tok(_KVAR,  UInt64(0))               # Var (or unknown) = wildcard
+    if a isa Sym
+        _Tok(_KSYM, hash(a.name))
+    elseif a isa Expression
+        _Tok(_KEXPR, UInt64(length(a.children)))
+    elseif a isa Grounded
+        _Tok(_KGND, hash(a.value))
+    else
+        _Tok(_KVAR, UInt64(0))
+    end               # Var (or unknown) = wildcard
 
 function _flat_tokens!(toks::Vector{_Tok}, a::Atom, d::Int)
     if d > _MAX_ATOM_DEPTH
-        push!(toks, _Tok(_KVAR, UInt64(0))); return          # depth cap → wildcard (conservative)
+        push!(toks, _Tok(_KVAR, UInt64(0)))
+        return nothing          # depth cap → wildcard (conservative)
     elseif a isa Expression
         push!(toks, _Tok(_KEXPR, UInt64(length(a.children))))
-        for c in a.children; _flat_tokens!(toks, c, d + 1); end
+        for c in a.children
+            _flat_tokens!(toks, c, d + 1)
+        end
     else
         push!(toks, _tok(a))
     end
-    return
+    return nothing
 end
-_flat_tokens(a::Atom) = (t = _Tok[]; _flat_tokens!(t, a, 0); t)
+_flat_tokens(a::Atom) = (t=_Tok[]; _flat_tokens!(t, a, 0); t)
 
 function _skip_term(toks::Vector{_Tok}, i::Int)::Int         # advance past one whole term (isbits ⇒ alloc-free)
     @inbounds t = toks[i]
     if t.kind == _KEXPR
         i += 1
-        for _ in 1:Int(t.pay); i = _skip_term(toks, i); end
+        for _ in 1:Int(t.pay)
+            i = _skip_term(toks, i)
+        end
         return i
     end
     i + 1
@@ -819,9 +953,9 @@ end
 
 mutable struct _TNode
     atoms::Vector{Atom}                    # every stored atom routed through this node (⇒ query-var collect)
-    concrete::Dict{_Tok,_TNode}
-    star::Union{_TNode,Nothing}
-    _TNode() = new(Atom[], Dict{_Tok,_TNode}(), nothing)
+    concrete::Dict{_Tok, _TNode}
+    star::Union{_TNode, Nothing}
+    _TNode() = new(Atom[], Dict{_Tok, _TNode}(), nothing)
 end
 
 function _trie_insert!(root::_TNode, a::Atom)
@@ -836,12 +970,12 @@ function _trie_insert!(root::_TNode, a::Atom)
         end
         push!(node.atoms, a)
     end
-    return
+    return nothing
 end
 
 function _trie_build(bucket::Vector{Atom})
     root = _TNode()
-    pos = IdDict{Atom,Int}()
+    pos = IdDict{Atom, Int}()
     for (i, a) in enumerate(bucket)
         pos[a] = i
         _trie_insert!(root, a)
@@ -851,25 +985,28 @@ end
 
 function _trie_collect!(acc::Vector{Atom}, node::_TNode, q::Vector{_Tok}, qi::Int)
     if qi > length(q) || (@inbounds q[qi].kind == _KVAR)
-        append!(acc, node.atoms); return                     # query exhausted / query-var → all in subtrie
+        append!(acc, node.atoms)
+        return nothing                     # query exhausted / query-var → all in subtrie
     end
     @inbounds t = q[qi]
     c = get(node.concrete, t, nothing)
     c !== nothing && _trie_collect!(acc, c, q, qi + 1)        # ground token → matching concrete edge
     node.star !== nothing && _trie_collect!(acc, node.star, q, _skip_term(q, qi))  # stored var → skip query subterm
-    return
+    return nothing
 end
 
-function _bucket_candidates(space::Space, k::Tuple{Symbol,Symbol}, b::Vector{Atom}, pattern::Atom)::Vector{Atom}
+function _bucket_candidates(
+    space::Space, k::Tuple{Symbol, Symbol}, b::Vector{Atom}, pattern::Atom
+)::Vector{Atom}
     entry = get(space.store.bucket_trie, k, nothing)
     if entry === nothing
         entry = _trie_build(b)
         space.store.bucket_trie[k] = entry
     end
-    root, pos = entry::Tuple{_TNode,IdDict{Atom,Int}}
+    root, pos = entry::Tuple{_TNode, IdDict{Atom, Int}}
     acc = Atom[]
     _trie_collect!(acc, root, _flat_tokens(pattern), 1)
-    sort!(acc; by = a -> get(pos, a, typemax(Int)))          # preserve linear-scan order (⇒ identical results)
+    sort!(acc; by=a -> get(pos, a, typemax(Int)))          # preserve linear-scan order (⇒ identical results)
     acc
 end
 
@@ -881,7 +1018,8 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     # FAST-MATCH (opt-in): for a `(= ground-goal $X)` query, a CLOSED rule's rename is a no-op on the (ground)
     # result ⇒ skip it. `gg` = the goal is ground (so no query var to separate). Default OFF ⇒ always renames.
     gg = _FAST_MATCH[] && _is_eq_rule(pattern) && _ground_atom(pattern.children[2])
-    @inline prep(stored::Atom) = (gg && _is_closed_rule(stored)) ? stored : rename_fresh(stored)
+    @inline prep(stored::Atom) =
+        (gg && _is_closed_rule(stored)) ? stored : rename_fresh(stored)
     k = _index_key(pattern)
     dyn_read!(k)                                       # §7.7: record what this tabled derivation READ
     if k === nothing                                   # non-discriminable pattern (var head) → full scan (rare)
@@ -914,14 +1052,17 @@ function eval_op(f::Frame, b::Bindings, space)
     (a isa Expression && length(a.children) == 2) ||
         return finished_result(error_atom(a, "expected (eval <atom>)"), b, f.prev)
     to_eval = subst(a.children[2], b)
-    if to_eval isa Expression && !isempty(to_eval.children) && is_executable(to_eval.children[1])
+    if to_eval isa Expression && !isempty(to_eval.children) &&
+        is_executable(to_eval.children[1])
         r = execute(to_eval.children[1]::Grounded, Atom[to_eval.children[2:end]...], space)
         if r isa ExecOk
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
-            out = Tuple{Frame,Bindings}[]
+            out = Tuple{Frame, Bindings}[]
             for (j, res) in enumerate(r.results)
                 if j <= length(r.binds)
-                    for mb in merge_bindings(b, r.binds[j]); append!(out, eval_result(res, mb, f.prev, f.depth + 1)); end
+                    for mb in merge_bindings(b, r.binds[j])
+                        append!(out, eval_result(res, mb, f.prev, f.depth + 1))
+                    end
                 else
                     append!(out, eval_result(res, b, f.prev, f.depth + 1))
                 end
@@ -933,13 +1074,23 @@ function eval_op(f::Frame, b::Bindings, space)
             return finished_result(error_atom(to_eval, (r::ExecRuntime).msg), b, f.prev)
         end
     elseif is_minimal_op(to_eval)
-        return [(Frame(to_eval, _cumvars(f.prev, to_eval), f.prev, no_handler, false, f.depth + 1), b)]
+        return [(
+            Frame(
+                to_eval, _cumvars(f.prev, to_eval), f.prev, no_handler, false, f.depth + 1
+            ),
+            b
+        )]
     else
-        (space === nothing || (to_eval isa Expression && !isempty(to_eval.children) && to_eval.children[1] isa Var)) &&
+        (
+            space === nothing || (
+                to_eval isa Expression && !isempty(to_eval.children) &&
+                to_eval.children[1] isa Var
+            )
+        ) &&
             return finished_result(NOT_REDUCIBLE, b, f.prev)   # variable-headed expr not reducible
         X = freshvar("X")
         results = query(space::Space, Expression(Sym("="), to_eval, X))
-        out = Tuple{Frame,Bindings}[]
+        out = Tuple{Frame, Bindings}[]
         for qb in results, mb in merge_bindings(b, qb)
             # resolve-filter (mirrors hyperon interpreter.rs query:619 `resolve(&var_x)→None`): drop a query match
             # where the rewrite-RHS X is TRULY unbound — a bare variable space atom binds itself to the whole
@@ -976,18 +1127,27 @@ end
 # `tco` marks driver-generated metta reduce continuations (originates ONLY at metta_instr's reduce-prog push;
 # users cannot invoke push_nested, so the flag is unforgeable). It flows to setup_chain, which marks the frame
 # and propagates one hop to the `(chain (metta-call…) $r $r)` wrapper — see setup_chain.
-function push_nested(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int, tco::Bool=false)::Vector{Tuple{Frame,Bindings}}
+function push_nested(
+    atom::Atom, b::Bindings, prev::Union{Frame, Nothing}, depth::Int, tco::Bool=false
+)::Vector{Tuple{Frame, Bindings}}
     name = head_name(atom)
-    if name === Symbol("chain") && rule_enabled("HES_Chain"); return setup_chain(atom, b, prev, depth, tco)
-    elseif name === Symbol("function"); return setup_function(atom, b, prev, depth)
-    else;                      return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth, tco), b)]
+    if name === Symbol("chain") && rule_enabled("HES_Chain")
+        return setup_chain(atom, b, prev, depth, tco)
+    elseif name === Symbol("function")
+        return setup_function(atom, b, prev, depth)
+    else
+        return [(Frame(atom, _cumvars(prev, atom), prev, no_handler, false, depth, tco), b)]
     end
 end
 
 # function-special-when-returned (interpreter.rs eval_result:559): a returned `function`
 # op is set up (looped), not treated as data.
-function eval_result(res::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
-    head_name(res) === Symbol("function") ? setup_function(res, b, prev, depth) : finished_result(res, b, prev)
+function eval_result(res::Atom, b::Bindings, prev::Union{Frame, Nothing}, depth::Int)
+    if head_name(res) === Symbol("function")
+        setup_function(res, b, prev, depth)
+    else
+        finished_result(res, b, prev)
+    end
 end
 
 # chain (interpreter.rs chain:687 / chain_ret:675): one-step nested, bind var, subst templ, EXECUTE it.
@@ -995,12 +1155,18 @@ end
 # to the templ — but STOP at the `metta-call` wrapper (its templ is the identity var, not another driver chain).
 # That marks exactly the interpret-tuple/function outer chain and its `(chain (metta-call…) $r $r)` inner wrapper
 # (the collapsible frame), and nothing downstream — so `tco` is a precise, unforgeable provenance signal.
-function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int, tco::Bool=false)
+function setup_chain(
+    atom::Atom, b::Bindings, prev::Union{Frame, Nothing}, depth::Int, tco::Bool=false
+)
     (atom isa Expression && length(atom.children) == 4) ||
-        return finished_result(error_atom(atom, "expected (chain <nested> <var> <templ>)"), b, prev)
+        return finished_result(
+            error_atom(atom, "expected (chain <nested> <var> <templ>)"), b, prev
+        )
     nested, var, templ = atom.children[2], atom.children[3], atom.children[4]
     var isa Var ||
-        return finished_result(error_atom(atom, "chain: second argument must be a variable"), b, prev)
+        return finished_result(
+            error_atom(atom, "chain: second argument must be a variable"), b, prev
+        )
     propagate = tco && head_name(nested) !== Symbol("metta-call")   # C1(interpret-tuple)→C2(metta-call): yes; C2→templ: no
     cont = function (self::Frame, result::Atom, rb::Bindings)
         bs = add_var_binding(rb, var, result)
@@ -1014,18 +1180,31 @@ function setup_chain(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth:
 end
 
 # function/return (interpreter.rs function_to_stack:704 / function_ret:723): loop until (return x)
-function setup_function(atom::Atom, b::Bindings, prev::Union{Frame,Nothing}, depth::Int)
+function setup_function(atom::Atom, b::Bindings, prev::Union{Frame, Nothing}, depth::Int)
     (atom isa Expression && length(atom.children) == 2) ||
         return finished_result(error_atom(atom, "expected (function <body>)"), b, prev)
     body = atom.children[2]
     fret = function (self::Frame, result::Atom, rb::Bindings)
         if result isa Expression && length(result.children) == 2 && result.children[1] == RETURN
-            return (Frame(result.children[2], EMPTY_VARS, self.prev, no_handler, true, depth), rb)  # return x
+            return (
+                Frame(result.children[2], EMPTY_VARS, self.prev, no_handler, true, depth),
+                rb
+            )  # return x
         elseif is_minimal_op(result)
             pushed = push_nested(result, rb, self, depth + 1)                                        # loop
             isempty(pushed) ? nothing : pushed[1]
         else
-            return (Frame(error_atom(atom, "NoReturn"), EMPTY_VARS, self.prev, no_handler, true, depth), rb)
+            return (
+                Frame(
+                    error_atom(atom, "NoReturn"),
+                    EMPTY_VARS,
+                    self.prev,
+                    no_handler,
+                    true,
+                    depth
+                ),
+                rb
+            )
         end
     end
     fframe = Frame(atom, _cumvars(prev, atom), prev, fret, false, depth)
@@ -1051,11 +1230,15 @@ end
 function superpose_bind_op(f::Frame, b::Bindings, space)
     a = f.atom
     (a isa Expression && length(a.children) == 2) ||
-        return finished_result(error_atom(a, "expected (superpose-bind <collapsed>)"), b, f.prev)
+        return finished_result(
+            error_atom(a, "expected (superpose-bind <collapsed>)"), b, f.prev
+        )
     list = subst(a.children[2], b)
     (list isa Expression) ||
-        return finished_result(error_atom(a, "superpose-bind: expected an expression"), b, f.prev)
-    out = Tuple{Frame,Bindings}[]
+        return finished_result(
+            error_atom(a, "superpose-bind: expected an expression"), b, f.prev
+        )
+    out = Tuple{Frame, Bindings}[]
     for pair in list.children
         (pair isa Expression && length(pair.children) == 2) || continue
         atom, bnd = pair.children[1], pair.children[2]
@@ -1118,50 +1301,74 @@ function metta_instr(f::Frame, b::Bindings, space)
     # falls back to the ambient context space (Core's single-space model). This also fixes the prior hard
     # rejection of the canonical 3-arg form, which embedded the whole &self Space into an Error atom.
     (a isa Expression && (length(a.children) == 3 || length(a.children) == 4)) ||
-        return finished_result(error_atom(a, "expected (metta atom type [space])"), b, f.prev)
-    atom = subst(a.children[2], b); typ = a.children[3]
+        return finished_result(
+            error_atom(a, "expected (metta atom type [space])"), b, f.prev
+        )
+    atom = subst(a.children[2], b)
+    typ = a.children[3]
     if length(a.children) == 4
         s3 = subst(a.children[4], b)
         s3 isa Grounded && s3.value isa Space && (space = s3.value::Space)
     end
     (is_empty_atom(atom) || is_error_atom(atom)) && return finished_result(atom, b, f.prev)
-    (typ == ATOM_T || typ == metatype_sym(atom) || atom isa Var) && return finished_result(atom, b, f.prev)
-    (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
+    (typ == ATOM_T || typ == metatype_sym(atom) || atom isa Var) &&
+        return finished_result(atom, b, f.prev)
+    (atom isa Expression && !isempty(atom.children)) ||
+        return finished_result(atom, b, f.prev)
     # SLG tabling (opt-in; default-OFF ⇒ is_tabled is false ⇒ never fires ⇒ 234 path unchanged): route a
     # tabled goal to the leader/consumer driver — memoise + suspend-on-variant (left-recursion terminates).
-    (space !== nothing && is_tabled(atom)) && return tabled_eval(atom, typ, space, b, f.prev)
+    (space !== nothing && is_tabled(atom)) &&
+        return tabled_eval(atom, typ, space, b, f.prev)
     if is_minimal_op(atom)                  # embedded minimal instruction → run it, then re-metta its result
         r = freshvar("r")                   # (a rule body like let*'s chain rewrites to (let …) which must reduce)
         # NotReducible backstop (hyperon metta_call_return interpreter.rs:1456): if the embedded minimal op
         # bottoms out in the INTERNAL NOT_REDUCIBLE sentinel, surface the ORIGINAL atom unchanged (keep-form,
         # matches hyperon — no engine shows the bare sentinel to the user); else re-metta r as before.
-        return push_nested(_chain(atom, r, _op("metta-noreduce", atom, r, typ)), b, f.prev, f.depth + 1)
+        return push_nested(
+            _chain(atom, r, _op("metta-noreduce", atom, r, typ)), b, f.prev, f.depth + 1
+        )
     end
-    op = atom.children[1]; nargs = length(atom.children) - 1
+    op = atom.children[1]
+    nargs = length(atom.children) - 1
     # No space ⇒ no type system (bare/minimal eval, e.g. interpret(atom)/bare_eval(atom) with the
     # space=nothing default): skip the typed-function path entirely (atom_types/type_check_errors
     # require ::Space). Falls through to the untyped tuple/grounded path below.
-    ftypes = (op isa Var || space === nothing) ? Atom[] :
-        filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
+    ftypes = if (op isa Var || space === nothing)
+        Atom[]
+    else
+        filter(
+            t -> is_function_type(t) && length(fn_arg_types(t)) == nargs,
+            atom_types(op, space)
+        )
+    end
     if !isempty(ftypes)                                       # TYPED path: type-check, then interpret-function
-        out = Tuple{Frame,Bindings}[]; errs = Tuple{Frame,Bindings}[]
+        out = Tuple{Frame, Bindings}[]
+        errs = Tuple{Frame, Bindings}[]
         for ft in ftypes
             # ftypes non-empty ⇒ line-565 guard took the filter branch ⇒ space was non-nothing ⇒ a real
             # Space. The ::Space narrow is a runtime no-op that lets the checker resolve type_check_errors.
             te = type_check_errors(atom, ft::Expression, space::Space)
-            if !isempty(te); for e in te; append!(errs, finished_result(e, b, f.prev)); end; continue; end
-            rt = fn_ret_type(ft::Expression); rt == Sym("Expression") && (rt = UNDEF)
-            reduced = freshvar("reduced"); result = freshvar("result")
+            if !isempty(te)
+                for e in te
+                    append!(errs, finished_result(e, b, f.prev))
+                end
+                continue
+            end
+            rt = fn_ret_type(ft::Expression)
+            rt == Sym("Expression") && (rt = UNDEF)
+            reduced = freshvar("reduced")
+            result = freshvar("result")
             prog = _chain(_op("interpret-function", atom, ft, rt), reduced,
-                     _chain(_op("metta-call", reduced, rt), result, result))
+                _chain(_op("metta-call", reduced, rt), result, result))
             append!(out, push_nested(prog, b, f.prev, f.depth + 1, true))   # tco=true: driver reduce-prog (see setup_chain)
         end
         !isempty(out) && return out                          # some function type applied
         !isempty(errs) && return errs                        # all rejected → type errors (BadArgType)
     end
-    reduced = freshvar("reduced"); result = freshvar("result")  # untyped tuple path
+    reduced = freshvar("reduced")
+    result = freshvar("result")  # untyped tuple path
     prog = _chain(_op("interpret-tuple", atom), reduced,
-              _chain(_op("metta-call", reduced, typ), result, result))
+        _chain(_op("metta-call", reduced, typ), result, result))
     push_nested(prog, b, f.prev, f.depth + 1, true)   # tco=true: driver reduce-prog (see setup_chain)
 end
 
@@ -1169,17 +1376,21 @@ end
 # declared types, then build (op . evaluated-args).
 function interpret_function_instr(f::Frame, b::Bindings, space)
     a = f.atom
-    expr = subst(a.children[2], b); op_type = a.children[3]
+    expr = subst(a.children[2], b)
+    op_type = a.children[3]
     (expr isa Expression && op_type isa Expression) ||
         return finished_result(error_atom(a, "interpret-function"), b, f.prev)
-    op = expr.children[1]; theargs = Expression(expr.children[2:end])
+    op = expr.children[1]
+    theargs = Expression(expr.children[2:end])
     arg_types = Expression(fn_arg_types(op_type::Expression))
-    h = freshvar("h"); targs = freshvar("targs"); res = freshvar("res")
+    h = freshvar("h")
+    targs = freshvar("targs")
+    res = freshvar("res")
     prog = _chain(_metta(op, UNDEF), h,
-             _op("return-on-error", h,
-               _chain(_op("interpret-args", theargs, arg_types), targs,
-                 _op("return-on-error", targs,
-                   _chain(_op("cons-atom", h, targs), res, res)))))
+        _op("return-on-error", h,
+            _chain(_op("interpret-args", theargs, arg_types), targs,
+                _op("return-on-error", targs,
+                    _chain(_op("cons-atom", h, targs), res, res)))))
     push_nested(prog, b, f.prev, f.depth + 1)
 end
 
@@ -1188,17 +1399,22 @@ end
 # `(interpret-args tail)` FRAME. Finishes with the evaluated-args expression, or an Empty/Error.
 function interpret_args_instr(f::Frame, b::Bindings, space)
     a = f.atom
-    argsx = subst(a.children[2], b); typesx = a.children[3]
-    (argsx isa Expression) || return finished_result(error_atom(a, "interpret-args"), b, f.prev)
+    argsx = subst(a.children[2], b)
+    typesx = a.children[3]
+    (argsx isa Expression) ||
+        return finished_result(error_atom(a, "interpret-args"), b, f.prev)
     isempty(argsx.children) && return finished_result(Expression(Atom[]), b, f.prev)   # no args → ()
     types = typesx isa Expression ? typesx.children : Atom[]
-    ahead = argsx.children[1]; atail = Expression(argsx.children[2:end])
+    ahead = argsx.children[1]
+    atail = Expression(argsx.children[2:end])
     thead = isempty(types) ? UNDEF : types[1]
     ttail = Expression(isempty(types) ? Atom[] : types[2:end])
-    rhead = freshvar("rhead"); rtail = freshvar("rtail"); res = freshvar("res")
+    rhead = freshvar("rhead")
+    rtail = freshvar("rtail")
+    res = freshvar("res")
     recursion = _chain(_op("interpret-args", atail, ttail), rtail,
-                  _op("return-on-error", rtail,
-                    _chain(_op("cons-atom", rhead, rtail), res, res)))
+        _op("return-on-error", rtail,
+            _chain(_op("cons-atom", rhead, rtail), res, res)))
     # args-cont = hyperon's `(if-equal rhead ahead <recursion> (return-on-error rhead <recursion>))`:
     # only error-check an arg that CHANGED (was evaluated); an UNEVALUATED Atom-typed arg (rhead==ahead),
     # even if error-shaped (e.g. assertEqual's expected (Error …) literal), is a legit value to pass on.
@@ -1210,9 +1426,14 @@ end
 # else rhead was evaluated → propagate if it's Empty/Error, otherwise run recursion.
 function args_cont_instr(f::Frame, b::Bindings)
     a = f.atom
-    rhead = subst(a.children[2], b); ahead = subst(a.children[3], b); recursion = a.children[4]
-    (rhead != ahead && (is_empty_atom(rhead) || is_error_atom(rhead))) ?
-        finished_result(rhead, b, f.prev) : push_nested(subst(recursion, b), b, f.prev, f.depth)
+    rhead = subst(a.children[2], b)
+    ahead = subst(a.children[3], b)
+    recursion = a.children[4]
+    if (rhead != ahead && (is_empty_atom(rhead) || is_error_atom(rhead)))
+        finished_result(rhead, b, f.prev)
+    else
+        push_nested(subst(recursion, b), b, f.prev, f.depth)
+    end
 end
 
 # (interpret-tuple <expr>) — interpret_tuple (interpreter.rs:1191): metta each element, cons up, short-
@@ -1222,12 +1443,15 @@ function interpret_tuple_instr(f::Frame, b::Bindings, space)
     expr = subst(a.children[2], b)
     (expr isa Expression) || return finished_result(expr, b, f.prev)
     isempty(expr.children) && return finished_result(expr, b, f.prev)        # () → ()
-    head = expr.children[1]; tail = Expression(expr.children[2:end])
-    rhead = freshvar("rhead"); rtail = freshvar("rtail"); res = freshvar("res")
+    head = expr.children[1]
+    tail = Expression(expr.children[2:end])
+    rhead = freshvar("rhead")
+    rtail = freshvar("rtail")
+    res = freshvar("res")
     prog = _chain(_metta(head, UNDEF), rhead,
-              _op("return-on-error", rhead,
-                _chain(_op("interpret-tuple", tail), rtail,
-                  _op("return-on-error", rtail,
+        _op("return-on-error", rhead,
+            _chain(_op("interpret-tuple", tail), rtail,
+                _op("return-on-error", rtail,
                     _chain(_op("cons-atom", rhead, rtail), res, res)))))
     push_nested(prog, b, f.prev, f.depth + 1)
 end
@@ -1235,9 +1459,13 @@ end
 # (return-on-error <atom> <then>) (interpreter.rs:1398): Empty/Error → finish with it; else → run `then`.
 function return_on_error_instr(f::Frame, b::Bindings)
     a = f.atom
-    atom = subst(a.children[2], b); then = a.children[3]
-    (is_empty_atom(atom) || is_error_atom(atom)) ?
-        finished_result(atom, b, f.prev) : push_nested(subst(then, b), b, f.prev, f.depth)
+    atom = subst(a.children[2], b)
+    then = a.children[3]
+    if (is_empty_atom(atom) || is_error_atom(atom))
+        finished_result(atom, b, f.prev)
+    else
+        push_nested(subst(then, b), b, f.prev, f.depth)
+    end
 end
 
 # (metta-noreduce <orig> <r> <typ>) — hyperon's metta_call_return NOT_REDUCIBLE backstop (interpreter.rs:1456).
@@ -1249,8 +1477,11 @@ end
 function metta_noreduce_instr(f::Frame, b::Bindings)
     a = f.atom
     r = subst(a.children[3], b)
-    r == NOT_REDUCIBLE ? finished_result(a.children[2], b, f.prev) :
-                         push_nested(_metta(r, a.children[4]), b, f.prev, f.depth)
+    if r == NOT_REDUCIBLE
+        finished_result(a.children[2], b, f.prev)
+    else
+        push_nested(_metta(r, a.children[4]), b, f.prev, f.depth)
+    end
 end
 
 # ── tail-call frame-collapse (TCO) ────────────────────────────────────────────
@@ -1290,8 +1521,10 @@ tail_collapse!(on::Bool=true) = (_TAIL_COLLAPSE[] = on)
 @inline function _is_metta_reduce_cont(fr::Frame)::Bool
     fr.tco || return false
     a = fr.atom
-    (a isa Expression && length(a.children) == 4 && head_name(a) === Symbol("chain") &&
-        a.children[3] isa Var && a.children[3] === a.children[4]) || return false
+    (
+        a isa Expression && length(a.children) == 4 && head_name(a) === Symbol("chain") &&
+        a.children[3] isa Var && a.children[3] === a.children[4]
+    ) || return false
     n = a.children[2]
     n isa Expression && head_name(n) === Symbol("metta-call")
 end
@@ -1300,10 +1533,14 @@ end
 # by `typ`: under a lazy-return type (Atom/Expression) the metta-call may surface a bare function/chain that the
 # skipped frame's `push_nested` would EXECUTE — so we must NOT collapse there (safety depends on V, governed by
 # THIS typ, so gating the current metta-call's typ suffices even for multi-frame walks).
-@inline function _collapse_anchor(prev::Union{Frame,Nothing}, typ::Atom)::Union{Frame,Nothing}
+@inline function _collapse_anchor(
+    prev::Union{Frame, Nothing}, typ::Atom
+)::Union{Frame, Nothing}
     (_TAIL_COLLAPSE[] && typ != ATOM_T && typ != EXPRESSION_SYM) || return prev
     a = prev
-    while a !== nothing && _is_metta_reduce_cont(a); a = a.prev; end
+    while a !== nothing && _is_metta_reduce_cont(a)
+        a = a.prev
+    end
     a
 end
 
@@ -1313,21 +1550,25 @@ end
 # push anchors at `_collapse_anchor(f.prev, typ)` (TCO) so tail recursion does NOT retain the identity pass-through.
 function metta_call_instr(f::Frame, b::Bindings, space)
     a = f.atom
-    atom = subst(a.children[2], b); typ = a.children[3]
+    atom = subst(a.children[2], b)
+    typ = a.children[3]
     _METTA_DEBUG[] && println("metta_call: ", atom)
     is_error_atom(atom) && return finished_result(atom, b, f.prev)
-    (atom isa Expression && !isempty(atom.children)) || return finished_result(atom, b, f.prev)
+    (atom isa Expression && !isempty(atom.children)) ||
+        return finished_result(atom, b, f.prev)
     op = atom.children[1]
     op isa Var && return finished_result(atom, b, f.prev)
     anchor = _collapse_anchor(f.prev, typ)   # TCO: re-anchor past identity frames (gated: skip under lazy typ)
-    out = Tuple{Frame,Bindings}[]
+    out = Tuple{Frame, Bindings}[]
     if is_executable(op)
         r = execute(op::Grounded, Atom[atom.children[2:end]...], space)
         if r isa ExecOk
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
             for (j, res) in enumerate(r.results)
                 bset = (j <= length(r.binds)) ? merge_bindings(b, r.binds[j]) : Bindings[b]
-                for mb in bset; append!(out, push_nested(_metta(res, typ), mb, anchor, f.depth + 1)); end
+                for mb in bset
+                    append!(out, push_nested(_metta(res, typ), mb, anchor, f.depth + 1))
+                end
             end
             return out
         elseif r isa ExecNoReduce
@@ -1338,7 +1579,11 @@ function metta_call_instr(f::Frame, b::Bindings, space)
     else
         X = freshvar("X")
         # No space ⇒ no `=` rule base to query (bare/minimal eval): no rewrites, atom returned as-is.
-        qres = space === nothing ? Bindings[] : query(space::Space, Expression(Sym("="), atom, X))
+        qres = if space === nothing
+            Bindings[]
+        else
+            query(space::Space, Expression(Sym("="), atom, X))
+        end
         reduced = false
         for qb in qres, mb in merge_bindings(b, qb)
             is_present(mb, X) || continue                # resolve-filter (identical to Eval.jl :309)
@@ -1352,7 +1597,10 @@ end
 
 # Public entry for the new stack-machine driver (parallels metta_run; used to validate equivalence).
 metta_run_sm(atom::Atom, space::Space, b::Bindings=Bindings()) =
-    Atom[subst(at, bnd) for (at, bnd) in interpret(_metta(atom, UNDEF), space, b) if !is_empty_atom(at)]
+    Atom[
+        subst(at, bnd) for
+        (at, bnd) in interpret(_metta(atom, UNDEF), space, b) if !is_empty_atom(at)
+    ]
 
 # ── driver (interpreter.rs InterpreterState loop) ─────────────────────────────
 const _DIAG_STEPS = Ref(0)   # diagnostic: cumulative interpret() reduction steps (reset/read externally)
@@ -1369,8 +1617,10 @@ CAPTURED frame chain. Both must observe the same step cap, the same diagnostic c
 finished/root discipline — a second hand-rolled loop is how those silently diverge. This is a pure
 extraction: `interpret` below is the same function with its body moved here.
 """
-function _run_plan(plan::Vector{Tuple{Frame,Bindings}}, space)::Vector{Tuple{Atom,Bindings}}
-    out = Tuple{Atom,Bindings}[]
+function _run_plan(
+    plan::Vector{Tuple{Frame, Bindings}}, space
+)::Vector{Tuple{Atom, Bindings}}
+    out = Tuple{Atom, Bindings}[]
     steps = 0
     while !isempty(plan)
         _DIAG_STEPS[] += 1                                  # diagnostic step counter (tooling for the parked perf track)
@@ -1379,7 +1629,10 @@ function _run_plan(plan::Vector{Tuple{Frame,Bindings}}, space)::Vector{Tuple{Ato
         # inputs; all sub-helpers + the fold bounded). The real cost is PER-STEP (let*-nesting + per-call
         # rule-lookup overhead, the parked perf track); this cap comes back DOWN once that's optimized.
         # Bounded-generous over measured need (~120-300K) so a real runaway still fires in minutes, not an hour.
-        _INTERPRET_MAX[] > 0 && (steps += 1) > _INTERPRET_MAX[] && error("minimal interpreter step limit (raise via interpret_max_steps!(n); 0 = unlimited)")
+        _INTERPRET_MAX[] > 0 && (steps += 1) > _INTERPRET_MAX[] &&
+            error(
+                "minimal interpreter step limit (raise via interpret_max_steps!(n); 0 = unlimited)"
+            )
         f, fb = pop!(plan)
         for (nf, nb) in interpret_stack(f, fb, space)
             if nf.finished && nf.prev === nothing
@@ -1393,8 +1646,15 @@ function _run_plan(plan::Vector{Tuple{Frame,Bindings}}, space)::Vector{Tuple{Ato
 end
 
 "Run the minimal-MeTTa machine on `atom`; returns the list of (result, bindings)."
-interpret(atom::Atom, space=nothing, b::Bindings=Bindings())::Vector{Tuple{Atom,Bindings}} =
-    _run_plan(Tuple{Frame,Bindings}[(Frame(atom, collect_vars(atom), nothing, no_handler, false, 0), b)], space)
+interpret(
+    atom::Atom, space=nothing, b::Bindings=Bindings()
+)::Vector{Tuple{Atom, Bindings}} =
+    _run_plan(
+        Tuple{Frame, Bindings}[(
+            Frame(atom, collect_vars(atom), nothing, no_handler, false, 0), b
+        )],
+        space
+    )
 
 "Convenience: run and return just the result atoms."
 bare_eval(atom::Atom, space=nothing) = first.(interpret(atom, space))
@@ -1406,18 +1666,19 @@ bare_eval(atom::Atom, space=nothing) = first.(interpret(atom, space))
 # lazy-argument mechanism `if`/`let`/`case` rely on. Minimal instructions are recognized
 # as embedded ops and run on the minimal machine (normal order).
 # ═══════════════════════════════════════════════════════════════════════════════
-const _RESULT = Tuple{Atom,Bindings}
+const _RESULT = Tuple{Atom, Bindings}
 is_error_atom(a::Atom) = a isa Expression && !isempty(a.children) && a.children[1] == ERROR
 is_empty_atom(a::Atom) = a == EMPTY
 
-const UNDEF  = Sym("%Undefined%")
+const UNDEF = Sym("%Undefined%")
 const ATOM_T = Sym("Atom")
-const ARROW  = Sym("->")
+const ARROW = Sym("->")
 const ERROR_TYPE = Sym("ErrorType")   # hyperon ATOM_TYPE_ERROR — the type of an (Error …) atom
 metatype_sym(a::Atom) = Sym(String(metatype(a)))
-is_function_type(t::Atom) = t isa Expression && !isempty(t.children) && t.children[1] == ARROW
-fn_arg_types(t::Expression) = t.children[2:end-1]
-fn_ret_type(t::Expression)  = t.children[end]
+is_function_type(t::Atom) =
+    t isa Expression && !isempty(t.children) && t.children[1] == ARROW
+fn_arg_types(t::Expression) = t.children[2:(end - 1)]
+fn_ret_type(t::Expression) = t.children[end]
 
 # Step counter — bounds NON-termination (the iterative driver can't stack-overflow, so this is the only
 # bound needed for the reduce-chain; the subst/rename_fresh depth guards remain for pathological atoms).
@@ -1445,7 +1706,7 @@ metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
 # the space so they never appear in `match &self` — e.g. d4's type-reasoning rule matches every
 # `(: X (-> a b))` decl and infinite-loops on a polymorphic arrow, so state-op types as space atoms
 # would break it. Stored as source strings, parsed FRESH per lookup for variable hygiene.
-const _GROUNDED_OP_TYPES = Dict{Atom,String}()       # populated after the ops are defined (below)
+const _GROUNDED_OP_TYPES = Dict{Atom, String}()       # populated after the ops are defined (below)
 _parse_type(s::AbstractString)::Atom = parse_from(tokenize(s), Ref(1))
 # Parse-once cache for grounded-op intrinsic types. `atom_types` runs on every typed eval step;
 # re-tokenizing+parsing the type SOURCE STRING per lookup was the `Vector{Char}` churn AllocCheck/Profile
@@ -1453,19 +1714,19 @@ _parse_type(s::AbstractString)::Atom = parse_from(tokenize(s), Ref(1))
 # (same `Var("t",0)`, so type-matching is unchanged; atoms are immutable and bindings are per-call, so
 # the shared object is safe). Eval is serialized under the server LOCK, so the lazy fill needs no extra
 # guard. (NOT rename_fresh'd: that would assign new Var ids and change matching behavior — preserve parity.)
-const _GROUNDED_OP_TYPE_CACHE = Dict{Atom,Atom}()
+const _GROUNDED_OP_TYPE_CACHE = Dict{Atom, Atom}()
 # arg_actual_types memo (ADR-059). A GROUND atom's actual types are invariant until a `(: …)` decl mutates the
 # space, so cache atom → (objectid(space), type_epoch, types). On a later reduction step the same ground
 # subterm is a HIT instead of an O(term) re-query — collapsing the O(n²) re-descent (the dominant typed-program
 # allocator, ~71–79% of typed-Peano alloc) to O(n). Byte-identical to recomputation (semantics-preserving):
 # only `:`-decls change types and they bump type_epoch; the space objectid guards against a stale cross-space hit.
-const _ATOM_TYPE_MEMO = Dict{Atom,Tuple{UInt,Int,Vector{Atom}}}()
+const _ATOM_TYPE_MEMO = Dict{Atom, Tuple{UInt, Int, Vector{Atom}}}()
 const _TYPE_MEMO_ON = Ref(true)     # gate for one release; health 4/4 proves parity before it's load-bearing
 const _TYPE_MEMO_CAP = 1 << 20      # bound growth on long-running servers (clears wholesale on overflow)
-const _DECL_TYPE_MEMO = Dict{Atom,Tuple{UInt,Int,Vector{Atom}}}()   # declared-types memo (atom_types); same keying/invalidation as _ATOM_TYPE_MEMO
+const _DECL_TYPE_MEMO = Dict{Atom, Tuple{UInt, Int, Vector{Atom}}}()   # declared-types memo (atom_types); same keying/invalidation as _ATOM_TYPE_MEMO
 
 const NO_TYPES = Atom[]     # shared empty-types sentinel (no caller mutates an atom_types result); same
-                            # zero-alloc convention as EMPTY_VARS — the early-return below is alloc-free.
+# zero-alloc convention as EMPTY_VARS — the early-return below is alloc-free.
 # the declared types of `atom`: intrinsic grounded-op type (if any) + space decls (: atom $T)
 function atom_types(atom::Atom, space::Space)::Vector{Atom}
     # A VARIABLE has no declared type (types.rs:386). The `(: $v $T)` query below would otherwise unify $v
@@ -1494,11 +1755,18 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     _atom_types_uncached(atom, space)
 end
 function _atom_types_uncached(atom::Atom, space::Space)::Vector{Atom}
-    T = freshvar("T"); out = Atom[]
+    T = freshvar("T")
+    out = Atom[]
     haskey(_GROUNDED_OP_TYPES, atom) &&
-        push!(out, get!(() -> _parse_type(_GROUNDED_OP_TYPES[atom]), _GROUNDED_OP_TYPE_CACHE, atom))
+        push!(
+            out,
+            get!(
+                () -> _parse_type(_GROUNDED_OP_TYPES[atom]), _GROUNDED_OP_TYPE_CACHE, atom
+            )
+        )
     for qb in query(space, Expression(Sym(":"), atom, T))
-        t = resolve(qb, T); t !== nothing && push!(out, t)
+        t = resolve(qb, T)
+        t !== nothing && push!(out, t)
     end
     out
 end
@@ -1509,7 +1777,9 @@ end
 function match_types_b(t1::Atom, t2::Atom, b::Bindings)::Vector{Bindings}
     (t1 == UNDEF || t1 == ATOM_T || t2 == UNDEF || t2 == ATOM_T) && return Bindings[b]
     out = Bindings[]
-    for m in match_atoms(subst(t1, b), subst(t2, b)); append!(out, merge_bindings(b, m)); end
+    for m in match_atoms(subst(t1, b), subst(t2, b))
+        append!(out, merge_bindings(b, m))
+    end
     out
 end
 
@@ -1519,10 +1789,10 @@ end
 function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
     arg isa Var && return Atom[UNDEF]                            # types.rs:386 — variables have no types
     is_error_atom(arg) && return Atom[ERROR_TYPE]               # (Error …) : ErrorType (hyperon ATOM_TYPE_ERROR) —
-                                                                # so an Error LITERAL passed where a concrete type is
-                                                                # expected fails type-check → (BadArgType i T ErrorType),
-                                                                # matching hyperon. (Atom-typed args still bypass via
-                                                                # match_types_b's Atom short-circuit, so assertEqual etc. are unaffected.)
+    # so an Error LITERAL passed where a concrete type is
+    # expected fails type-check → (BadArgType i T ErrorType),
+    # matching hyperon. (Atom-typed args still bypass via
+    # match_types_b's Atom short-circuit, so assertEqual etc. are unaffected.)
     if arg isa Grounded
         arg.value isa Bool && return Atom[Sym("Bool")]
         arg.value isa Number && return Atom[Sym("Number")]
@@ -1554,19 +1824,22 @@ function _arg_actual_types_uncached(arg::Atom, space::Space)::Vector{Atom}
     # are got recursively (types.rs:400-403 op_value_types) — so an EXPRESSION head like `(curry +)` has
     # its type INFERRED, enabling higher-order/curried application `((curry +) 2)`.
     if arg isa Expression && !isempty(arg.children)
-        head = arg.children[1]; nargs = length(arg.children) - 1
-        head_types = head isa Expression ? arg_actual_types(head, space) : atom_types(head, space)
+        head = arg.children[1]
+        nargs = length(arg.children) - 1
+        head_types =
+            head isa Expression ? arg_actual_types(head, space) : atom_types(head, space)
         func_types = filter(is_function_type, head_types)
         if !isempty(func_types)                 # a function application
             for ft in filter(t -> length(fn_arg_types(t)) == nargs, func_types)
-                r = Bindings(); ok = true
+                r = Bindings()
+                ok = true
                 for i in 1:nargs
                     matched = false
-                    for ai in arg_actual_types(arg.children[i+1], space)
+                    for ai in arg_actual_types(arg.children[i + 1], space)
                         ms = match_types_b(fn_arg_types(ft)[i], ai, r)
-                        isempty(ms) || (r = ms[1]; matched = true; break)
+                        isempty(ms) || (r=ms[1]; matched=true; break)
                     end
-                    matched || (ok = false; break)
+                    matched || (ok=false; break)
                 end
                 ok && return Atom[subst(fn_ret_type(ft), r)]
             end
@@ -1581,17 +1854,30 @@ end
 # args; an arg with no matching actual type under any threaded binding → BadArgType. Returns the errors
 # only when NO valid type-assignment path survives (so a polymorphic (-> $t $t Bool) enforces same $t).
 function type_check_errors(a::Expression, ftype::Expression, space::Space)::Vector{Atom}
-    ats = fn_arg_types(ftype); errs = Atom[]; results = Bindings[Bindings()]
+    ats = fn_arg_types(ftype)
+    errs = Atom[]
+    results = Bindings[Bindings()]
     for i in 1:length(ats)
-        actuals = arg_actual_types(a.children[i+1], space)
+        actuals = arg_actual_types(a.children[i + 1], space)
         next = Bindings[]
         for r in results
             isempty(actuals) && (push!(next, r); continue)   # ill-typed sub-arg: stay permissive (gradual)
             for at in actuals
                 ms = match_types_b(ats[i], at, r)
-                isempty(ms) ?
-                    push!(errs, Expression(ERROR, a, Expression(Sym("BadArgType"), Grounded(i), subst(ats[i], r), at))) :
+                if isempty(ms)
+                    push!(
+                        errs,
+                        Expression(
+                            ERROR,
+                            a,
+                            Expression(
+                                Sym("BadArgType"), Grounded(i), subst(ats[i], r), at
+                            )
+                        )
+                    )
+                else
                     append!(next, ms)
+                end
             end
         end
         results = next
@@ -1600,7 +1886,7 @@ function type_check_errors(a::Expression, ftype::Expression, space::Space)::Vect
     Atom[]                                               # a path survived → applicable, no error
 end
 
-const _STEP = Tuple{Atom,Atom,Bindings,Bool}   # (atom, next-type, bindings, is_final)
+const _STEP = Tuple{Atom, Atom, Bindings, Bool}   # (atom, next-type, bindings, is_final)
 
 # ITERATIVE driver. The deep reduce-chain (rewrite → re-reduce → rewrite …) is a worklist LOOP, so it
 # never grows the Julia call stack (Julia has no TCO). interpret_function/args/tuple still recurse, but
@@ -1657,34 +1943,60 @@ end
 # ONE reduction step (metta.md:240). Returns each result tagged: is_final=true → terminal; false →
 # "reduce again" (the loop re-feeds it). No recursion into the reduce-chain.
 function metta_step(atom::Atom, type::Atom, space::Space, b::Bindings)::Vector{_STEP}
-    _METTA_MAX[] > 0 && (_METTA_STEPS[] += 1) > _METTA_MAX[] && error("metta: step limit reached (non-termination?)")
+    _METTA_MAX[] > 0 && (_METTA_STEPS[] += 1) > _METTA_MAX[] &&
+        error("metta: step limit reached (non-termination?)")
     a = subst(atom, b)
     (is_empty_atom(a) || is_error_atom(a)) && return _STEP[(a, type, b, true)]
-    (type == ATOM_T || type == metatype_sym(a) || a isa Var) && return _STEP[(a, type, b, true)]
-    (a isa Expression && !isempty(a.children)) ? interpret_expr_step(a, type, space, b) : _STEP[(a, type, b, true)]
+    (type == ATOM_T || type == metatype_sym(a) || a isa Var) &&
+        return _STEP[(a, type, b, true)]
+    if (a isa Expression && !isempty(a.children))
+        interpret_expr_step(a, type, space, b)
+    else
+        _STEP[(a, type, b, true)]
+    end
 end
 
 # interpret_expression (metta.md:316) as ONE step — type-directed; minimal ops + rewrites tagged "reduce"
-function interpret_expr_step(a::Expression, type::Atom, space::Space, b::Bindings)::Vector{_STEP}
+function interpret_expr_step(
+    a::Expression, type::Atom, space::Space, b::Bindings
+)::Vector{_STEP}
     if is_minimal_op(a)                                  # embedded minimal instruction (normal order)
         out = _STEP[]
-        for (r, rb) in interpret(a, space, b); push!(out, (r, type, rb, false)); end
+        for (r, rb) in interpret(a, space, b)
+            push!(out, (r, type, rb, false))
+        end
         return isempty(out) ? _STEP[(EMPTY, type, b, true)] : out
     end
-    op = a.children[1]; nargs = length(a.children) - 1
+    op = a.children[1]
+    nargs = length(a.children) - 1
     # variable-headed expr: skip type lookup (its query would spuriously match), still evaluate the tuple
-    ftypes = op isa Var ? Atom[] :
-        filter(t -> is_function_type(t) && length(fn_arg_types(t)) == nargs, atom_types(op, space))
+    ftypes = if op isa Var
+        Atom[]
+    else
+        filter(
+            t -> is_function_type(t) && length(fn_arg_types(t)) == nargs,
+            atom_types(op, space)
+        )
+    end
     if !isempty(ftypes)
-        out = _STEP[]; errs = _STEP[]
+        out = _STEP[]
+        errs = _STEP[]
         for f in ftypes
             te = type_check_errors(a, f::Expression, space)    # metta.md:384 check_argument_type → BadArgType
-            if !isempty(te); for e in te; push!(errs, (e, type, b, true)); end; continue; end
+            if !isempty(te)
+                for e in te
+                    push!(errs, (e, type, b, true))
+                end
+                continue
+            end
             rt = fn_ret_type(f::Expression)
             rt == Sym("Expression") && (rt = UNDEF)     # metta.md:341 — don't treat Expression like Atom
             for (fa, fb) in interpret_function(a, f, space, b)   # arg-eval (recursive, bounded by nesting)
-                (is_empty_atom(fa) || is_error_atom(fa)) ? push!(out, (fa, type, fb, true)) :
+                if (is_empty_atom(fa) || is_error_atom(fa))
+                    push!(out, (fa, type, fb, true))
+                else
                     append!(out, metta_call_step(fa, rt, space, fb))
+                end
             end
         end
         !isempty(out) && return out                     # some type applied → its results
@@ -1692,38 +2004,60 @@ function interpret_expr_step(a::Expression, type::Atom, space::Space, b::Binding
     end
     out = _STEP[]                                        # no applicable function type → untyped tuple
     for (t, tb) in interpret_tuple(a, space, b)
-        (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, type, tb, true)) :
+        if (is_empty_atom(t) || is_error_atom(t))
+            push!(out, (t, type, tb, true))
+        else
             append!(out, metta_call_step(t, type, space, tb))
+        end
     end
     out
 end
 
 # interpret_function (metta.md:452): evaluate op, then the args by their declared types
-function interpret_function(a::Expression, f::Expression, space::Space, b::Bindings)::Vector{_RESULT}
-    op = a.children[1]; theargs = Atom[a.children[2:end]...]; ats = Atom[fn_arg_types(f)...]
+function interpret_function(
+    a::Expression, f::Expression, space::Space, b::Bindings
+)::Vector{_RESULT}
+    op = a.children[1]
+    theargs = Atom[a.children[2:end]...]
+    ats = Atom[fn_arg_types(f)...]
     out = _RESULT[]
     for (h, hb) in _reduce(op, UNDEF, space, b)
-        if is_empty_atom(h) || is_error_atom(h); push!(out, (h, hb)); continue; end
+        if is_empty_atom(h) || is_error_atom(h)
+            push!(out, (h, hb))
+            continue
+        end
         for (targs, tb) in interpret_args(theargs, ats, space, hb)
-            (is_empty_atom(targs) || is_error_atom(targs)) ? push!(out, (targs, tb)) :
+            if (is_empty_atom(targs) || is_error_atom(targs))
+                push!(out, (targs, tb))
+            else
                 push!(out, (Expression(Atom[h; (targs::Expression).children]), tb))
+            end
         end
     end
     out
 end
 
 # interpret_args (metta.md:480): evaluate each arg with its expected type (Atom ⇒ unevaluated)
-function interpret_args(theargs::Vector{Atom}, types::Vector{Atom}, space::Space, b::Bindings)::Vector{_RESULT}
+function interpret_args(
+    theargs::Vector{Atom}, types::Vector{Atom}, space::Space, b::Bindings
+)::Vector{_RESULT}
     isempty(theargs) && return _RESULT[(Expression(Atom[]), b)]
-    arg = theargs[1]; rest = Atom[theargs[2:end]...]
+    arg = theargs[1]
+    rest = Atom[theargs[2:end]...]
     atype = isempty(types) ? UNDEF : types[1]
     rtypes = isempty(types) ? Atom[] : Atom[types[2:end]...]
     out = _RESULT[]
     for (h, hb) in _reduce(arg, atype, space, b)
-        if (is_empty_atom(h) || is_error_atom(h)) && h != arg; push!(out, (h, hb)); continue; end
+        if (is_empty_atom(h) || is_error_atom(h)) && h != arg
+            push!(out, (h, hb))
+            continue
+        end
         for (t, tb) in interpret_args(rest, rtypes, space, hb)
-            (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) :
+            if (is_empty_atom(t) || is_error_atom(t))
+                push!(out, (t, tb))
+            else
                 push!(out, (Expression(Atom[h; (t::Expression).children]), tb))
+            end
         end
     end
     out
@@ -1736,10 +2070,19 @@ function interpret_tuple(a::Atom, space::Space, b::Bindings)::Vector{_RESULT}
     head, tail = a.children[1], Expression(a.children[2:end])
     out = _RESULT[]
     for (h, hb) in _reduce(head, UNDEF, space, b)
-        if is_empty_atom(h) || is_error_atom(h); push!(out, (h, hb)); continue; end
+        if is_empty_atom(h) || is_error_atom(h)
+            push!(out, (h, hb))
+            continue
+        end
         for (t, tb) in interpret_tuple(tail, space, hb)
-            (is_empty_atom(t) || is_error_atom(t)) ? push!(out, (t, tb)) :
-                push!(out, (Expression(Atom[h; (t isa Expression ? t.children : Atom[t])]), tb))
+            if (is_empty_atom(t) || is_error_atom(t))
+                push!(out, (t, tb))
+            else
+                push!(
+                    out,
+                    (Expression(Atom[h; (t isa Expression ? t.children : Atom[t])]), tb)
+                )
+            end
         end
     end
     out
@@ -1760,7 +2103,9 @@ function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector
         if r isa ExecOk
             for (j, res) in enumerate(r.results)
                 if j <= length(r.binds)
-                    for mb in merge_bindings(b, r.binds[j]); push!(out, (res, type, mb, false)); end
+                    for mb in merge_bindings(b, r.binds[j])
+                        push!(out, (res, type, mb, false))
+                    end
                 else
                     push!(out, (res, type, b, false))
                 end
@@ -1788,55 +2133,111 @@ end
 # Parser (metta.md §Syntax) — MeTTa text → typed Atom. Grounded atoms are built by a
 # token registry (regex/string → constructor), exactly as the spec describes.
 # ═══════════════════════════════════════════════════════════════════════════════
-const TIMES  = _num_binop("*", *)
+const TIMES = _num_binop("*", *)
 # Kept for reference/back-compat; the REGISTRY binds the seam-routed pair below.
 const DIVIDE = _num_binop("/", /)
-const MOD    = _num_binop("%", %)
+const MOD = _num_binop("%", %)
 const DIVIDE_SEAM = _num_binop_seam("/", seam_div)
-const MOD_SEAM    = _num_binop_seam("%", seam_mod)
-const GT = _num_cmp(">", >); const LE = _num_cmp("<=", <=); const GE = _num_cmp(">=", >=)
-const EQ_OP = Grounded(Operation("==", xs -> length(xs) != 2 ? ExecNoReduce() :
-    (_u = propagated_undefined(Atom[xs[1], xs[2]])) !== nothing ? ExecOk(Atom[_u]) :        # WFS bottom contagious through ==
-    ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")])))
+const MOD_SEAM = _num_binop_seam("%", seam_mod)
+const GT = _num_cmp(">", >)
+const LE = _num_cmp("<=", <=)
+const GE = _num_cmp(">=", >=)
+const EQ_OP = Grounded(
+    Operation(
+        "==", xs -> if length(xs) != 2
+            ExecNoReduce()
+        elseif (_u = propagated_undefined(Atom[xs[1], xs[2]])) !== nothing
+            ExecOk(Atom[_u])        # WFS bottom contagious through ==
+        else
+            ExecOk(Atom[xs[1] == xs[2] ? Sym("True") : Sym("False")])
+        end
+    )
+)
 # Bool logic (grounded; True/False are symbols)
-_to_bool(a::Atom) = a == Sym("True") ? true : a == Sym("False") ? false : nothing
+_to_bool(a::Atom) =
+    if a == Sym("True")
+        true
+    elseif a == Sym("False")
+        false
+    else
+        nothing
+    end
 function _bool_binop(name, f)
-    Grounded(Operation(name, function (xs)
-        length(xs) == 2 || return ExecNoReduce()
-        # WFS: an undefined operand makes and/or undefined. SOUND (never a wrong definite answer), but
-        # OVER-CONSERVATIVE — full Kleene (⊥∧False=False, ⊥∨True=True) is a deferred precision refinement.
-        (_u = propagated_undefined(Atom[xs[1], xs[2]])) === nothing || return ExecOk(Atom[_u])
-        x = _to_bool(xs[1]); y = _to_bool(xs[2])
-        (x === nothing || y === nothing) ? ExecNoReduce() : ExecOk(Atom[f(x, y) ? Sym("True") : Sym("False")])
-    end))
+    Grounded(
+        Operation(
+            name,
+            function (xs)
+                length(xs) == 2 || return ExecNoReduce()
+                # WFS: an undefined operand makes and/or undefined. SOUND (never a wrong definite answer), but
+                # OVER-CONSERVATIVE — full Kleene (⊥∧False=False, ⊥∨True=True) is a deferred precision refinement.
+                (_u = propagated_undefined(Atom[xs[1], xs[2]])) === nothing ||
+                    return ExecOk(Atom[_u])
+                x = _to_bool(xs[1])
+                y = _to_bool(xs[2])
+                if (x === nothing || y === nothing)
+                    ExecNoReduce()
+                else
+                    ExecOk(Atom[f(x, y) ? Sym("True") : Sym("False")])
+                end
+            end
+        )
+    )
 end
 const AND = _bool_binop("and", &)
-const OR  = _bool_binop("or", |)
-const NOT = Grounded(Operation("not", xs -> length(xs) != 1 ? ExecNoReduce() :
-    is_undefined(xs[1]) ? ExecOk(Atom[xs[1]]) :                                # ¬⊥ = ⊥ (WFS Kleene = plain propagate)
-    (tb = _to_bool(xs[1])) !== nothing ? ExecOk(Atom[tb ? Sym("False") : Sym("True")]) : ExecNoReduce()))
-const ID  = Grounded(Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce()))
+const OR = _bool_binop("or", |)
+const NOT = Grounded(
+    Operation("not", xs -> if length(xs) != 1
+        ExecNoReduce()
+    elseif is_undefined(xs[1])
+        ExecOk(Atom[xs[1]])
+    elseif (                                # ¬⊥ = ⊥ (WFS Kleene = plain propagate)
+        (tb = _to_bool(xs[1])) !== nothing
+    )
+        ExecOk(Atom[tb ? Sym("False") : Sym("True")])
+    else
+        ExecNoReduce()
+    end)
+)
+const ID = Grounded(
+    Operation("id", xs -> length(xs) == 1 ? ExecOk(Atom[xs[1]]) : ExecNoReduce())
+)
 
 # if-equal (grounded): then if a==b else else (branches returned UNevaluated)
-const IF_EQUAL = Grounded(Operation("if-equal",
-    xs -> length(xs) == 4 ? ExecOk(Atom[xs[1] == xs[2] ? xs[3] : xs[4]]) : ExecNoReduce()))
+const IF_EQUAL = Grounded(
+    Operation("if-equal",
+        xs ->
+            length(xs) == 4 ? ExecOk(Atom[xs[1] == xs[2] ? xs[3] : xs[4]]) : ExecNoReduce()
+    )
+)
 
 # structural helpers for atom-subst / sealed
 _replace_var(a::Atom, v::Var, val::Atom) =
-    a isa Var ? (a == v ? val : a) :
-    a isa Expression ? Expression(Atom[_replace_var(c, v, val) for c in a.children]) : a
-_rename_with(a::Atom, m::Dict{Var,Var}) =
-    a isa Var ? get(m, a, a) :
-    a isa Expression ? Expression(Atom[_rename_with(c, m) for c in a.children]) : a
+    if a isa Var
+        (a == v ? val : a)
+    elseif a isa Expression
+        Expression(Atom[_replace_var(c, v, val) for c in a.children])
+    else
+        a
+    end
+_rename_with(a::Atom, m::Dict{Var, Var}) =
+    if a isa Var
+        get(m, a, a)
+    elseif a isa Expression
+        Expression(Atom[_rename_with(c, m) for c in a.children])
+    else
+        a
+    end
 
 # atom-subst (grounded): replace var (2nd) by value (1st) in template (3rd)
-const ATOM_SUBST = Grounded(Operation("atom-subst", function (xs)
-    (length(xs) == 3 && xs[2] isa Var) || return ExecNoReduce()
-    ExecOk(Atom[_replace_var(xs[3], xs[2]::Var, xs[1])])
-end))
+const ATOM_SUBST = Grounded(
+    Operation("atom-subst", function (xs)
+        (length(xs) == 3 && xs[2] isa Var) || return ExecNoReduce()
+        ExecOk(Atom[_replace_var(xs[3], xs[2]::Var, xs[1])])
+    end)
+)
 # sealed (grounded): rename all vars in the expr to fresh ones EXCEPT the listed ones
 # (spec: "replaces every var … except list of variables to ignore"). Local scoping.
-function _seal_rename(a::Atom, ignore::Set{Var}, m::Dict{Var,Var})
+function _seal_rename(a::Atom, ignore::Set{Var}, m::Dict{Var, Var})
     if a isa Var
         a in ignore && return a
         return get!(() -> freshvar(a.name), m, a)
@@ -1846,47 +2247,96 @@ function _seal_rename(a::Atom, ignore::Set{Var}, m::Dict{Var,Var})
         return a
     end
 end
-const SEALED = Grounded(Operation("sealed", function (xs)
-    (length(xs) == 2 && xs[1] isa Expression) || return ExecNoReduce()
-    ignore = Set{Var}(v for v in xs[1].children if v isa Var)
-    ExecOk(Atom[_seal_rename(xs[2], ignore, Dict{Var,Var}())])
-end))
+const SEALED = Grounded(
+    Operation(
+        "sealed", function (xs)
+            (length(xs) == 2 && xs[1] isa Expression) || return ExecNoReduce()
+            ignore = Set{Var}(v for v in xs[1].children if v isa Var)
+            ExecOk(Atom[_seal_rename(xs[2], ignore, Dict{Var, Var}())])
+        end
+    )
+)
 # size-atom / index-atom / get-metatype (grounded)
-const SIZE_ATOM = Grounded(Operation("size-atom", xs -> length(xs) != 1 ? ExecNoReduce() :
-    is_undefined(xs[1]) ? ExecOk(Atom[xs[1]]) :                                # WFS bottom contagious through strict ops
-    xs[1] isa Expression ? ExecOk(Atom[Grounded(length(xs[1].children))]) : ExecNoReduce()))
-const INDEX_ATOM = Grounded(Operation("index-atom", function (xs)
-    (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
-    # Core's number model is Float64, so computed indices arrive as integral Floats (e.g. (ceil 4.75) → 5.0,
-    # (+ $i 1) → Float). Accept any integral Real (Int or 4.0), matching hyperon/CeTTa's grounded index-atom
-    # semantics in Core's number model — without this, the canonical op no-ops on every computed index,
-    # forcing packages to hand-roll a recursive nth. Non-integral / Inf / NaN still don't reduce.
-    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Grounded &&
-        xs[2].value isa Real && isinteger(xs[2].value)) || return ExecNoReduce()
-    i = Int(xs[2].value)
-    (0 <= i < length(xs[1].children)) ? ExecOk(Atom[xs[1].children[i+1]]) :
-        ExecOk(Atom[Expression(ERROR, Expression(Sym("index-atom"), xs[1], xs[2]), Sym("IndexOutOfBounds"))])
-end))
-const GET_METATYPE = Grounded(Operation("get-metatype",
-    xs -> length(xs) == 1 ? ExecOk(Atom[metatype_sym(xs[1])]) : ExecNoReduce()))
+const SIZE_ATOM = Grounded(
+    Operation("size-atom", xs -> if length(xs) != 1
+        ExecNoReduce()
+    elseif is_undefined(xs[1])
+        ExecOk(Atom[xs[1]])
+    elseif (                                # WFS bottom contagious through strict ops
+        xs[1] isa Expression
+    )
+        ExecOk(Atom[Grounded(length(xs[1].children))])
+    else
+        ExecNoReduce()
+    end)
+)
+const INDEX_ATOM = Grounded(
+    Operation(
+        "index-atom",
+        function (xs)
+            (_u = propagated_undefined(xs)) === nothing || return ExecOk(Atom[_u])   # WFS bottom contagious through strict ops
+            # Core's number model is Float64, so computed indices arrive as integral Floats (e.g. (ceil 4.75) → 5.0,
+            # (+ $i 1) → Float). Accept any integral Real (Int or 4.0), matching hyperon/CeTTa's grounded index-atom
+            # semantics in Core's number model — without this, the canonical op no-ops on every computed index,
+            # forcing packages to hand-roll a recursive nth. Non-integral / Inf / NaN still don't reduce.
+            (
+                length(xs) == 2 && xs[1] isa Expression && xs[2] isa Grounded &&
+                xs[2].value isa Real && isinteger(xs[2].value)
+            ) || return ExecNoReduce()
+            i = Int(xs[2].value)
+            if (0 <= i < length(xs[1].children))
+                ExecOk(Atom[xs[1].children[i + 1]])
+            else
+                ExecOk(
+                    Atom[Expression(
+                        ERROR,
+                        Expression(Sym("index-atom"), xs[1], xs[2]),
+                        Sym("IndexOutOfBounds")
+                    )]
+                )
+            end
+        end
+    )
+)
+const GET_METATYPE = Grounded(
+    Operation("get-metatype",
+        xs -> length(xs) == 1 ? ExecOk(Atom[metatype_sym(xs[1])]) : ExecNoReduce())
+)
 
 # assertEqual / assertEqualToResult / context-space (space-aware: they call the evaluator)
 const UNIT = Expression(Atom[])     # () — unit; assert success
-_assert_fail(name, a, b) = Expression(ERROR, Expression(Sym(name), a, b), Sym("AssertionFailed"))
-const ASSERT_EQUAL = Grounded(SpaceOp("assertEqual", function (xs, space)
-    length(xs) == 2 || return ExecNoReduce()
-    Set(metta_run(xs[1], space)) == Set(metta_run(xs[2], space)) ?
-        ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertEqual", xs[1], xs[2])])
-end))
-const ASSERT_EQUAL_TO_RESULT = Grounded(SpaceOp("assertEqualToResult", function (xs, space)
-    (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
-    Set(metta_run(xs[1], space)) == Set(xs[2].children) ?
-        ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertEqualToResult", xs[1], xs[2])])
-end))
+_assert_fail(name, a, b) =
+    Expression(ERROR, Expression(Sym(name), a, b), Sym("AssertionFailed"))
+const ASSERT_EQUAL = Grounded(
+    SpaceOp(
+        "assertEqual",
+        function (xs, space)
+            length(xs) == 2 || return ExecNoReduce()
+            if Set(metta_run(xs[1], space)) == Set(metta_run(xs[2], space))
+                ExecOk(Atom[UNIT])
+            else
+                ExecOk(Atom[_assert_fail("assertEqual", xs[1], xs[2])])
+            end
+        end
+    )
+)
+const ASSERT_EQUAL_TO_RESULT = Grounded(
+    SpaceOp(
+        "assertEqualToResult",
+        function (xs, space)
+            (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
+            if Set(metta_run(xs[1], space)) == Set(xs[2].children)
+                ExecOk(Atom[UNIT])
+            else
+                ExecOk(Atom[_assert_fail("assertEqualToResult", xs[1], xs[2])])
+            end
+        end
+    )
+)
 # alpha-equality: canonicalize variables by first-encounter order so alpha-equivalent atoms compare
 # equal (a freshly-renamed $t' from type-checking ≡ the literal $t in an expected result). hyperon's
 # assertAlphaEqualToResult (stdlib.metta:1173) compares result sets up to variable renaming.
-function _alpha_canon(a::Atom, m::Dict{Var,Int})
+function _alpha_canon(a::Atom, m::Dict{Var, Int})
     if a isa Var
         return Var("\$α", UInt64(get!(m, a, length(m))))   # name+id determined purely by encounter order
     elseif a isa Expression
@@ -1895,44 +2345,100 @@ function _alpha_canon(a::Atom, m::Dict{Var,Int})
         return a
     end
 end
-_alpha1(a::Atom) = _alpha_canon(a, Dict{Var,Int}())          # each atom canonicalized independently
+_alpha1(a::Atom) = _alpha_canon(a, Dict{Var, Int}())          # each atom canonicalized independently
 # Multiset set ops on collapsed-list Expressions (hyperon atom.rs UniqueAtomOp/UnionAtomOp/
 # IntersectionAtomOp/SubtractionAtomOp). Element identity = alpha-equivalence (via _alpha1). unique =
 # dedup-keep-first; union = concat; intersection/subtraction = multiset min-multiplicity / difference.
-const UNIQUE_ATOM = Grounded(Operation("unique-atom", function (xs::Vector{Atom})
-    (length(xs) == 1 && xs[1] isa Expression) || return ExecNoReduce()
-    seen = Set{Atom}(); out = Atom[]
-    for c in xs[1].children; k = _alpha1(c); (k in seen) || (push!(seen, k); push!(out, c)); end
-    ExecOk(Atom[Expression(out)])
-end))
-const UNION_ATOM = Grounded(Operation("union-atom", function (xs::Vector{Atom})
-    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) || return ExecNoReduce()
-    ExecOk(Atom[Expression(Atom[xs[1].children; xs[2].children])])
-end))
-const INTERSECTION_ATOM = Grounded(Operation("intersection-atom", function (xs::Vector{Atom})
-    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) || return ExecNoReduce()
-    cnt = Dict{Atom,Int}(); for c in xs[2].children; k = _alpha1(c); cnt[k] = get(cnt, k, 0) + 1; end
-    out = Atom[]; for c in xs[1].children; k = _alpha1(c); (get(cnt, k, 0) > 0) && (push!(out, c); cnt[k] -= 1); end
-    ExecOk(Atom[Expression(out)])
-end))
-const SUBTRACTION_ATOM = Grounded(Operation("subtraction-atom", function (xs::Vector{Atom})
-    (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) || return ExecNoReduce()
-    cnt = Dict{Atom,Int}(); for c in xs[2].children; k = _alpha1(c); cnt[k] = get(cnt, k, 0) + 1; end
-    out = Atom[]; for c in xs[1].children; k = _alpha1(c); (get(cnt, k, 0) > 0) ? (cnt[k] -= 1) : push!(out, c); end
-    ExecOk(Atom[Expression(out)])
-end))
+const UNIQUE_ATOM = Grounded(
+    Operation(
+        "unique-atom",
+        function (xs::Vector{Atom})
+            (length(xs) == 1 && xs[1] isa Expression) || return ExecNoReduce()
+            seen = Set{Atom}()
+            out = Atom[]
+            for c in xs[1].children
+                k = _alpha1(c)
+                (k in seen) || (push!(seen, k); push!(out, c))
+            end
+            ExecOk(Atom[Expression(out)])
+        end
+    )
+)
+const UNION_ATOM = Grounded(
+    Operation(
+        "union-atom",
+        function (xs::Vector{Atom})
+            (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) ||
+                return ExecNoReduce()
+            ExecOk(Atom[Expression(Atom[xs[1].children; xs[2].children])])
+        end
+    )
+)
+const INTERSECTION_ATOM = Grounded(
+    Operation(
+        "intersection-atom",
+        function (xs::Vector{Atom})
+            (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) ||
+                return ExecNoReduce()
+            cnt = Dict{Atom, Int}()
+            for c in xs[2].children
+                k = _alpha1(c)
+                cnt[k] = get(cnt, k, 0) + 1
+            end
+            out = Atom[]
+            for c in xs[1].children
+                k = _alpha1(c)
+                (get(cnt, k, 0) > 0) && (push!(out, c); cnt[k] -= 1)
+            end
+            ExecOk(Atom[Expression(out)])
+        end
+    )
+)
+const SUBTRACTION_ATOM = Grounded(
+    Operation(
+        "subtraction-atom",
+        function (xs::Vector{Atom})
+            (length(xs) == 2 && xs[1] isa Expression && xs[2] isa Expression) ||
+                return ExecNoReduce()
+            cnt = Dict{Atom, Int}()
+            for c in xs[2].children
+                k = _alpha1(c)
+                cnt[k] = get(cnt, k, 0) + 1
+            end
+            out = Atom[]
+            for c in xs[1].children
+                k = _alpha1(c)
+                (get(cnt, k, 0) > 0) ? (cnt[k] -= 1) : push!(out, c)
+            end
+            ExecOk(Atom[Expression(out)])
+        end
+    )
+)
 # sort-atom / sort-strings (hyperon string.rs:65 / stdlib.metta:1292 ; LeaTTa sortAtomOp): the expression
 # with its children sorted by PRINTED form. Both names share one op (LeaTTa Stdlib.lean:247-248). A genuine
 # primitive — Core has no atom-ordering op to compose from; CeTTa and LeaTTa both ground it.
-const SORT_ATOM = Grounded(Operation("sort-atom", function (xs::Vector{Atom})
-    (length(xs) == 1 && xs[1] isa Expression) || return ExecNoReduce()
-    ExecOk(Atom[Expression(sort(xs[1].children; by=string))])
-end))
-const ASSERT_ALPHA_EQUAL_TO_RESULT = Grounded(SpaceOp("assertAlphaEqualToResult", function (xs, space)
-    (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
-    Set(_alpha1(x) for x in metta_run(xs[1], space)) == Set(_alpha1(x) for x in xs[2].children) ?
-        ExecOk(Atom[UNIT]) : ExecOk(Atom[_assert_fail("assertAlphaEqualToResult", xs[1], xs[2])])
-end))
+const SORT_ATOM = Grounded(
+    Operation(
+        "sort-atom", function (xs::Vector{Atom})
+            (length(xs) == 1 && xs[1] isa Expression) || return ExecNoReduce()
+            ExecOk(Atom[Expression(sort(xs[1].children; by=string))])
+        end
+    )
+)
+const ASSERT_ALPHA_EQUAL_TO_RESULT = Grounded(
+    SpaceOp(
+        "assertAlphaEqualToResult",
+        function (xs, space)
+            (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
+            if Set(_alpha1(x) for x in metta_run(xs[1], space)) ==
+                Set(_alpha1(x) for x in xs[2].children)
+                ExecOk(Atom[UNIT])
+            else
+                ExecOk(Atom[_assert_fail("assertAlphaEqualToResult", xs[1], xs[2])])
+            end
+        end
+    )
+)
 # ── space-argument resolution, failing CLOSED ─────────────────────────────────────────────────────
 #
 # `get-atoms`/`match`/`add-atom`/`remove-atom` each used to write
@@ -1950,7 +2456,7 @@ end))
 # MORK-trie-backed store can be passed as an argument, "not the concrete `Space` struct" stops meaning
 # "not a space" — and a silent fallback would send those writes to the interpreter's own store.
 # Returns `nothing` for "a concrete value that is not a Space"; callers must refuse.
-@inline function _space_arg(a::Atom, ambient::Space)::Union{Space,Nothing}
+@inline function _space_arg(a::Atom, ambient::Space)::Union{Space, Nothing}
     a isa Grounded || return ambient                 # unresolved token / variable ⇒ &self, as before
     a.value isa Space ? a.value::Space : nothing     # concrete non-Space ⇒ caller fails closed
 end
@@ -1959,14 +2465,22 @@ end
 # freshened (make_variables_unique). NOTE: Core FLATTENS imported stdlib into &self rather than keeping
 # it as a grounded child-space (hyperon's model), so `(get-atoms &self)` here returns the flattened rules
 # — the f1 directive that expects an empty &self at start-up stays a documented known-gap.
-const GET_ATOMS = Grounded(SpaceOp("get-atoms", function (xs, space)
-    length(xs) == 1 || return ExecNoReduce()
-    tgt = _space_arg(xs[1], space)
-    tgt === nothing && return ExecRuntime("get-atoms: first argument is not a Space")
-    own = own_atoms(tgt)                                    # own atoms only — not the imported library
-    ExecOk(Atom[rename_fresh(a) for a in own])
-end))
-const CONTEXT_SPACE = Grounded(SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)])))
+const GET_ATOMS = Grounded(
+    SpaceOp(
+        "get-atoms",
+        function (xs, space)
+            length(xs) == 1 || return ExecNoReduce()
+            tgt = _space_arg(xs[1], space)
+            tgt === nothing &&
+                return ExecRuntime("get-atoms: first argument is not a Space")
+            own = own_atoms(tgt)                                    # own atoms only — not the imported library
+            ExecOk(Atom[rename_fresh(a) for a in own])
+        end
+    )
+)
+const CONTEXT_SPACE = Grounded(
+    SpaceOp("context-space", (xs, space) -> ExecOk(Atom[Grounded(space)]))
+)
 # all binding sets under which `pat` matches some atom of `space`, extending `b0`
 function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     out = Bindings[]
@@ -1977,105 +2491,157 @@ function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
 end
 # match (grounded): (match <space> <pattern> <template>). A `(, p1 p2 …)` pattern is a CONJUNCTION —
 # all sub-patterns must match with consistent bindings (a join). Carries bindings to the caller.
-const MATCH = Grounded(SpaceOp("match", function (xs, space)
-    length(xs) == 3 || return ExecNoReduce()
-    tgt = _space_arg(xs[1], space)                          # named space or &self
-    tgt === nothing && return ExecRuntime("match: first argument is not a Space")
-    pat, tmpl = xs[2], xs[3]
-    binds = Bindings[Bindings()]
-    if pat isa Expression && !isempty(pat.children) && pat.children[1] == Sym(",")
-        for p in pat.children[2:end]                        # conjunctive: thread bindings across patterns
-            binds = Bindings[mb for r in binds for mb in _match_pat(tgt, p, r)]
+const MATCH = Grounded(
+    SpaceOp(
+        "match",
+        function (xs, space)
+            length(xs) == 3 || return ExecNoReduce()
+            tgt = _space_arg(xs[1], space)                          # named space or &self
+            tgt === nothing && return ExecRuntime("match: first argument is not a Space")
+            pat, tmpl = xs[2], xs[3]
+            binds = Bindings[Bindings()]
+            if pat isa Expression && !isempty(pat.children) && pat.children[1] == Sym(",")
+                for p in pat.children[2:end]                        # conjunctive: thread bindings across patterns
+                    binds = Bindings[mb for r in binds for mb in _match_pat(tgt, p, r)]
+                end
+            else
+                binds = _match_pat(tgt, pat, Bindings())
+            end
+            ExecOk(Atom[subst(tmpl, mb) for mb in binds], binds)
         end
-    else
-        binds = _match_pat(tgt, pat, Bindings())
-    end
-    ExecOk(Atom[subst(tmpl, mb) for mb in binds], binds)
-end))
+    )
+)
 # superpose (grounded): turn a tuple into a nondeterministic result (each child a separate result)
-const SUPERPOSE = Grounded(Operation("superpose",
-    xs -> (length(xs) == 1 && xs[1] isa Expression) ? ExecOk(collect(Atom, xs[1].children)) : ExecNoReduce()))
+const SUPERPOSE = Grounded(
+    Operation("superpose",
+        xs -> if (length(xs) == 1 && xs[1] isa Expression)
+            ExecOk(collect(Atom, xs[1].children))
+        else
+            ExecNoReduce()
+        end)
+)
 # collapse (grounded SpaceOp): collect all results of evaluating the arg into one tuple.
 # `reverse`: interpret()'s plan is a LIFO stack, so metta_run yields the nondeterministic alternatives in
 # REVERSE generation order; collapse freezes that order into a VALUE (unlike top-level display, where order is
 # cosmetic), diverging from hyperon+CeTTa which both give forward/source order — e.g. (collapse (superpose
 # (1 2 3)))→(1 2 3), not (3 2 1). Reversing here restores forward order for superpose, rule-fanout, AND match.
-const COLLAPSE = Grounded(SpaceOp("collapse", function (xs, space)
-    length(xs) == 1 || return ExecNoReduce()
-    ExecOk(Atom[Expression(reverse(metta_run(xs[1], space)))])
-end))
+const COLLAPSE = Grounded(
+    SpaceOp("collapse", function (xs, space)
+        length(xs) == 1 || return ExecNoReduce()
+        ExecOk(Atom[Expression(reverse(metta_run(xs[1], space)))])
+    end)
+)
 # get-type (grounded SpaceOp): the type(s) of the argument
-const GET_TYPE = Grounded(SpaceOp("get-type",
-    (xs, space) -> length(xs) == 1 ? ExecOk(arg_actual_types(xs[1], space)) : ExecNoReduce()))
+const GET_TYPE = Grounded(
+    SpaceOp("get-type",
+        (xs, space) ->
+            length(xs) == 1 ? ExecOk(arg_actual_types(xs[1], space)) : ExecNoReduce())
+)
 # foldl-atom (grounded SpaceOp): fold $op (using vars $a=accumulator, $b=item) over $list from $init
-const FOLDL_ATOM = Grounded(SpaceOp("foldl-atom", function (xs, space)
-    (length(xs) == 5 && xs[1] isa Expression && xs[3] isa Var && xs[4] isa Var) || return ExecNoReduce()
-    list, acc, avar, bvar, op = xs[1], xs[2], xs[3], xs[4], xs[5]
-    # foldl FORKS over a nondeterministic op: each op result is an independent accumulator path.
-    # Verified 3-engine (hyperon/CeTTa/MeTTa-TS): fold (superpose ((+ $a $b)(* $a $b))) over (1 2) → {0,2,2,3},
-    # not one path. Deterministic ops (sum-list/product-list) keep exactly one accumulator, unchanged.
-    accs = Atom[acc]
-    for item in list.children
-        next = Atom[]
-        for a in accs
-            rs = metta_run(_replace_var(_replace_var(op, avar, a), bvar, item), space)
-            isempty(rs) ? push!(next, EMPTY) : append!(next, reverse(rs))   # reverse: forward order
-        end
-        accs = next
-    end
-    ExecOk(accs)
-end))
-# case (grounded SpaceOp): evaluate $atom, return the body of the first case pattern it matches
-const CASE = Grounded(SpaceOp("case", function (xs, space)
-    (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
-    # hyperon (stdlib.metta case §): an EMPTY result set matches the special `Empty` case pattern (NOT `()`).
-    results = metta_run(xs[1], space); isempty(results) && (results = Atom[Sym("Empty")])
-    out = Atom[]; binds = Bindings[]
-    # case DISTRIBUTES over a nondeterministic scrutinee: EACH alternative independently yields its first
-    # matching clause's body. Verified 4-engine (hyperon/CeTTa/MeTTa-TS/PeTTa): (superpose (a b c)) → [a,b,c],
-    # not one result. A no-match alternative is dropped (hyperon/CeTTa arbiter). metta_run returns reverse
-    # order, so iterate reversed to emit forward (cf. COLLAPSE above).
-    for res in reverse(results)
-        if is_undefined(res)                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
-            # 🔴 PROPAGATE `res`, NOT THE BARE CONSTANT — the ELEVENTH site of the residuation sweep,
-            # missed because this one does not match the `ExecOk(Atom[UNDEFINED])` shape the sweep
-            # rewrote. Pushing the module constant ERASES the incoming bottom's delay condition, so a
-            # `case` anywhere in a derivation silently reduced its residual to `True` (= unconditional).
-            push!(out, res); push!(binds, Bindings())
-            continue
-        end
-        for clause in xs[2].children
-            (clause isa Expression && length(clause.children) == 2) || continue
-            ms = match_atoms(clause.children[1], res)
-            if !isempty(ms)
-                push!(out, subst(clause.children[2], ms[1])); push!(binds, ms[1])
-                break                                         # first matching clause for THIS alternative
+const FOLDL_ATOM = Grounded(
+    SpaceOp(
+        "foldl-atom",
+        function (xs, space)
+            (length(xs) == 5 && xs[1] isa Expression && xs[3] isa Var && xs[4] isa Var) ||
+                return ExecNoReduce()
+            list, acc, avar, bvar, op = xs[1], xs[2], xs[3], xs[4], xs[5]
+            # foldl FORKS over a nondeterministic op: each op result is an independent accumulator path.
+            # Verified 3-engine (hyperon/CeTTa/MeTTa-TS): fold (superpose ((+ $a $b)(* $a $b))) over (1 2) → {0,2,2,3},
+            # not one path. Deterministic ops (sum-list/product-list) keep exactly one accumulator, unchanged.
+            accs = Atom[acc]
+            for item in list.children
+                next = Atom[]
+                for a in accs
+                    rs = metta_run(
+                        _replace_var(_replace_var(op, avar, a), bvar, item), space
+                    )
+                    isempty(rs) ? push!(next, EMPTY) : append!(next, reverse(rs))   # reverse: forward order
+                end
+                accs = next
             end
+            ExecOk(accs)
         end
-    end
-    ExecOk(out, binds)
-end))
+    )
+)
+# case (grounded SpaceOp): evaluate $atom, return the body of the first case pattern it matches
+const CASE = Grounded(
+    SpaceOp(
+        "case",
+        function (xs, space)
+            (length(xs) == 2 && xs[2] isa Expression) || return ExecNoReduce()
+            # hyperon (stdlib.metta case §): an EMPTY result set matches the special `Empty` case pattern (NOT `()`).
+            results = metta_run(xs[1], space)
+            isempty(results) && (results = Atom[Sym("Empty")])
+            out = Atom[]
+            binds = Bindings[]
+            # case DISTRIBUTES over a nondeterministic scrutinee: EACH alternative independently yields its first
+            # matching clause's body. Verified 4-engine (hyperon/CeTTa/MeTTa-TS/PeTTa): (superpose (a b c)) → [a,b,c],
+            # not one result. A no-match alternative is dropped (hyperon/CeTTa arbiter). metta_run returns reverse
+            # order, so iterate reversed to emit forward (cf. COLLAPSE above).
+            for res in reverse(results)
+                if is_undefined(res)                                   # WFS bottom ⇒ undefined (no catch-all $other launder)
+                    # 🔴 PROPAGATE `res`, NOT THE BARE CONSTANT — the ELEVENTH site of the residuation sweep,
+                    # missed because this one does not match the `ExecOk(Atom[UNDEFINED])` shape the sweep
+                    # rewrote. Pushing the module constant ERASES the incoming bottom's delay condition, so a
+                    # `case` anywhere in a derivation silently reduced its residual to `True` (= unconditional).
+                    push!(out, res)
+                    push!(binds, Bindings())
+                    continue
+                end
+                for clause in xs[2].children
+                    (clause isa Expression && length(clause.children) == 2) || continue
+                    ms = match_atoms(clause.children[1], res)
+                    if !isempty(ms)
+                        push!(out, subst(clause.children[2], ms[1]))
+                        push!(binds, ms[1])
+                        break                                         # first matching clause for THIS alternative
+                    end
+                end
+            end
+            ExecOk(out, binds)
+        end
+    )
+)
 
 # ── State atoms (hyperon space.rs:55-122 / CeTTa eval.c:8323). new-state wraps a value + its
 # (StateMonad T) type; get-state reads it; change-state! MUTATES the shared cell in place. No type-check
 # inside change-state! — the generic checker emits (BadArgType 2 …) from its stdlib (-> (StateMonad $t)
 # $t (StateMonad $t)) signature (matches space.rs: BadArgType comes from the interpreter, not the op).
-const NEW_STATE = Grounded(SpaceOp("new-state", function (xs, space)
-    length(xs) == 1 || return ExecNoReduce()
-    ts = arg_actual_types(xs[1], space)
-    vt = isempty(ts) ? UNDEF : ts[1]
-    ExecOk(Atom[Grounded(StateCell(xs[1], Expression(Sym("StateMonad"), vt)))])
-end))
-const GET_STATE = Grounded(Operation("get-state", function (xs::Vector{Atom})
-    (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa StateCell) || return ExecNoReduce()
-    ExecOk(Atom[(xs[1].value::StateCell).value])
-end))
-const CHANGE_STATE = Grounded(Operation("change-state!", function (xs::Vector{Atom})
-    (length(xs) == 2 && xs[1] isa Grounded && xs[1].value isa StateCell) || return ExecNoReduce()
-    (xs[1].value::StateCell).value = xs[2]      # mutate the shared cell in place (all refs see it)
-    ExecOk(Atom[xs[1]])                          # return the state atom
-end))
-const NOP = Grounded(Operation("nop", (xs::Vector{Atom}) -> ExecOk(Atom[Expression(Atom[])])))  # arg reduced for effect → ()
+const NEW_STATE = Grounded(
+    SpaceOp(
+        "new-state",
+        function (xs, space)
+            length(xs) == 1 || return ExecNoReduce()
+            ts = arg_actual_types(xs[1], space)
+            vt = isempty(ts) ? UNDEF : ts[1]
+            ExecOk(Atom[Grounded(StateCell(xs[1], Expression(Sym("StateMonad"), vt)))])
+        end
+    )
+)
+const GET_STATE = Grounded(
+    Operation(
+        "get-state",
+        function (xs::Vector{Atom})
+            (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa StateCell) ||
+                return ExecNoReduce()
+            ExecOk(Atom[(xs[1].value::StateCell).value])
+        end
+    )
+)
+const CHANGE_STATE = Grounded(
+    Operation(
+        "change-state!",
+        function (xs::Vector{Atom})
+            (length(xs) == 2 && xs[1] isa Grounded && xs[1].value isa StateCell) ||
+                return ExecNoReduce()
+            (xs[1].value::StateCell).value = xs[2]      # mutate the shared cell in place (all refs see it)
+            ExecOk(Atom[xs[1]])                          # return the state atom
+        end
+    )
+)
+const NOP = Grounded(
+    Operation("nop", (xs::Vector{Atom}) -> ExecOk(Atom[Expression(Atom[])]))
+)  # arg reduced for effect → ()
 # println! / trace! — hyperon debug ops (string.rs PrintlnOp `(-> %Undefined% (->))` / debug.rs TraceOp
 # `(-> %Undefined% Atom %Undefined%)`). These are in HYPERON's stdlib (grounded), so they belong in
 # Minimal's CORE grounded set, not CoreExtensions. println! evaluates its arg, prints it, returns unit;
@@ -2090,87 +2656,120 @@ _print_form(a::Atom) = (a isa Grounded && a.value isa AbstractString) ? a.value 
 # COMPILER lowers `collapse` into minimal MeTTa, where the only capture primitive is `collapse-bind` —
 # which by contract returns pairs. Stripping them needs an append that minimal MeTTa does not have, so
 # upstream grounds exactly this one step, and so do we.
-const COLLAPSE_ADD_NEXT = Grounded(Operation("_collapse-add-next-atom-from-collapse-bind-result",
-    function (xs::Vector{Atom})
-        length(xs) == 2 || return ExecNoReduce()
-        acc, item = xs[1], xs[2]
-        acc isa Expression || return ExecNoReduce()
-        # `item` is `(atom bindings)`; take the ATOM. Anything else passes through unchanged rather
-        # than being silently dropped — a malformed pair is a bug to surface, not to hide.
-        at = (item isa Expression && length((item::Expression).children) == 2) ?
-             (item::Expression).children[1] : item
-        # ⚠️ TWO DIFFERENCES THAT CANCEL, AND THAT IS A SMELL WORTH NAMING. This PREPENDS where
-        # upstream's helper APPENDS, because `collapse_bind_op` yields alternatives in the opposite
-        # order to hyperon's — which our own `COLLAPSE` already compensates for with
-        # `reverse(metta_run(…))`. End to end the answer is right (5/5 engines agree on
-        # `(collapse (match &self (foo $x) $x))` → `(bar baz)`), but a caller invoking THIS op directly
-        # and expecting upstream's append semantics gets the other order.
-        #
-        # The principled fix is to make `collapse_bind_op` yield in hyperon's order and let this append
-        # faithfully — one difference instead of two. Not done here because `collapse_bind_op` is under
-        # test elsewhere and that is its own change with its own before/after.
-        #
-        # CeTTa has tests for exactly this surface (`tests/test_collapse_bind*.metta`,
-        # `tests/test_collapse_add_next_atom_from_collapse_bind_result.metta`). They do NOT settle the
-        # ordering question — they are written against CeTTa's symbolic `(Bindings …)` serialization,
-        # so hyperon fails them too — but they do confirm our compiled lane and interpreter agree.
-        # PREPENDS, where upstream's helper appends — the same
-        # compensation our own `COLLAPSE` already makes. `collapse_bind_op` yields alternatives in the
-        # opposite order to hyperon's, which is why `COLLAPSE` wraps `reverse(metta_run(…))`
-        # (Eval.jl, `const COLLAPSE`). A fold that appended would produce `(baz bar)` where every other
-        # engine returns `(bar baz)` — measured against hyperon, CeTTa, PeTTa and our interpreter.
-        ExecOk(Atom[Expression(Atom[at, (acc::Expression).children...])])
-    end))
+const COLLAPSE_ADD_NEXT = Grounded(
+    Operation("_collapse-add-next-atom-from-collapse-bind-result",
+        function (xs::Vector{Atom})
+            length(xs) == 2 || return ExecNoReduce()
+            acc, item = xs[1], xs[2]
+            acc isa Expression || return ExecNoReduce()
+            # `item` is `(atom bindings)`; take the ATOM. Anything else passes through unchanged rather
+            # than being silently dropped — a malformed pair is a bug to surface, not to hide.
+            at = if (item isa Expression && length((item::Expression).children) == 2)
+                (item::Expression).children[1]
+            else
+                item
+            end
+            # ⚠️ TWO DIFFERENCES THAT CANCEL, AND THAT IS A SMELL WORTH NAMING. This PREPENDS where
+            # upstream's helper APPENDS, because `collapse_bind_op` yields alternatives in the opposite
+            # order to hyperon's — which our own `COLLAPSE` already compensates for with
+            # `reverse(metta_run(…))`. End to end the answer is right (5/5 engines agree on
+            # `(collapse (match &self (foo $x) $x))` → `(bar baz)`), but a caller invoking THIS op directly
+            # and expecting upstream's append semantics gets the other order.
+            #
+            # The principled fix is to make `collapse_bind_op` yield in hyperon's order and let this append
+            # faithfully — one difference instead of two. Not done here because `collapse_bind_op` is under
+            # test elsewhere and that is its own change with its own before/after.
+            #
+            # CeTTa has tests for exactly this surface (`tests/test_collapse_bind*.metta`,
+            # `tests/test_collapse_add_next_atom_from_collapse_bind_result.metta`). They do NOT settle the
+            # ordering question — they are written against CeTTa's symbolic `(Bindings …)` serialization,
+            # so hyperon fails them too — but they do confirm our compiled lane and interpreter agree.
+            # PREPENDS, where upstream's helper appends — the same
+            # compensation our own `COLLAPSE` already makes. `collapse_bind_op` yields alternatives in the
+            # opposite order to hyperon's, which is why `COLLAPSE` wraps `reverse(metta_run(…))`
+            # (Eval.jl, `const COLLAPSE`). A fold that appended would produce `(baz bar)` where every other
+            # engine returns `(bar baz)` — measured against hyperon, CeTTa, PeTTa and our interpreter.
+            ExecOk(Atom[Expression(Atom[at, (acc::Expression).children...])])
+        end)
+)
 
-const PRINTLN_BANG = Grounded(Operation("println!", function (xs::Vector{Atom})
-    length(xs) == 1 || return ExecNoReduce()
-    println(_print_form(xs[1])); ExecOk(Atom[Expression(Atom[])])
-end))
-const TRACE_BANG = Grounded(Operation("trace!", function (xs::Vector{Atom})
-    length(xs) == 2 || return ExecNoReduce()
-    println(_print_form(xs[1])); ExecOk(Atom[xs[2]])
-end))
+const PRINTLN_BANG = Grounded(
+    Operation("println!", function (xs::Vector{Atom})
+        length(xs) == 1 || return ExecNoReduce()
+        println(_print_form(xs[1]))
+        ExecOk(Atom[Expression(Atom[])])
+    end)
+)
+const TRACE_BANG = Grounded(
+    Operation("trace!", function (xs::Vector{Atom})
+        length(xs) == 2 || return ExecNoReduce()
+        println(_print_form(xs[1]))
+        ExecOk(Atom[xs[2]])
+    end)
+)
 # bind! (hyperon module.rs:250): register a token → atom in the space's token table. The parser
 # substitutes the token in every SUBSEQUENT atom (parse-time, via the incremental load_metta! loop).
-const BIND_TOKEN = Grounded(SpaceOp("bind!", function (xs, space)
-    (length(xs) == 2 && xs[1] isa Sym) || return ExecNoReduce()
-    space.tokens[string((xs[1]::Sym).name)] = xs[2]   # tokens table is String-keyed (parser uses raw text)
-    ExecOk(Atom[Expression(Atom[])])            # unit ()
-end))
+const BIND_TOKEN = Grounded(
+    SpaceOp("bind!", function (xs, space)
+        (length(xs) == 2 && xs[1] isa Sym) || return ExecNoReduce()
+        space.tokens[string((xs[1]::Sym).name)] = xs[2]   # tokens table is String-keyed (parser uses raw text)
+        ExecOk(Atom[Expression(Atom[])])            # unit ()
+    end)
+)
 # Intrinsic state-op types (hyperon type_()): kept out of the space (see atom_types) so they don't
 # break d4's `(match &self (: $impl (-> $cause $type)) …)` reasoning rule.
-_GROUNDED_OP_TYPES[NEW_STATE]    = "(-> \$t (StateMonad \$t))"
-_GROUNDED_OP_TYPES[GET_STATE]    = "(-> (StateMonad \$t) \$t)"
+_GROUNDED_OP_TYPES[NEW_STATE] = "(-> \$t (StateMonad \$t))"
+_GROUNDED_OP_TYPES[GET_STATE] = "(-> (StateMonad \$t) \$t)"
 _GROUNDED_OP_TYPES[CHANGE_STATE] = "(-> (StateMonad \$t) \$t (StateMonad \$t))"
 
 # ── Named spaces (hyperon: new-space / add-atom; `&self` = the current space). A space is a
 # Grounded{Space}; `&self`/`&kb` resolve (parse-time tokens) to such a handle. add-atom/match take the
 # space as their first arg and operate on it (falling back to the context space when it isn't a handle).
-const NEW_SPACE = Grounded(Operation("new-space", (xs::Vector{Atom}) -> ExecOk(Atom[Grounded(Space())])))
+const NEW_SPACE = Grounded(
+    Operation("new-space", (xs::Vector{Atom}) -> ExecOk(Atom[Grounded(Space())]))
+)
 # fork-space (hyperon; LeaTTa Eval.lean:776): a fresh space seeded with a SNAPSHOT of the parent's
 # atoms — an INDEPENDENT copy, so a later add/remove on the fork does NOT propagate to the parent (the
 # c2_spaces isolation contract: parent→(A), child→(A B), grandchild→(A)). `Space(atoms)` rebuilds the index;
 # lib_count is preserved so `get-atoms` on the fork still excludes flattened library atoms.
-const FORK_SPACE = Grounded(Operation("fork-space", function (xs::Vector{Atom})
-    (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa Space) || return ExecNoReduce()
-    parent = xs[1].value
-    fork = clone_store(parent)
-    ExecOk(Atom[Grounded(fork)])
-end))
-const ADD_ATOM = Grounded(SpaceOp("add-atom", function (xs, space)
-    length(xs) == 2 || return ExecNoReduce()
-    tgt = _space_arg(xs[1], space)
-    tgt === nothing && return ExecRuntime("add-atom: first argument is not a Space")
-    add_atom!(tgt, xs[2])
-    ExecOk(Atom[Expression(Atom[])])             # unit ()
-end))
-const REMOVE_ATOM = Grounded(SpaceOp("remove-atom", function (xs, space)
-    length(xs) == 2 || return ExecNoReduce()
-    tgt = _space_arg(xs[1], space)
-    tgt === nothing && return ExecRuntime("remove-atom: first argument is not a Space")
-    remove_atom!(tgt, xs[2])
-    ExecOk(Atom[Expression(Atom[])])
-end))
+const FORK_SPACE = Grounded(
+    Operation(
+        "fork-space",
+        function (xs::Vector{Atom})
+            (length(xs) == 1 && xs[1] isa Grounded && xs[1].value isa Space) ||
+                return ExecNoReduce()
+            parent = xs[1].value
+            fork = clone_store(parent)
+            ExecOk(Atom[Grounded(fork)])
+        end
+    )
+)
+const ADD_ATOM = Grounded(
+    SpaceOp(
+        "add-atom",
+        function (xs, space)
+            length(xs) == 2 || return ExecNoReduce()
+            tgt = _space_arg(xs[1], space)
+            tgt === nothing &&
+                return ExecRuntime("add-atom: first argument is not a Space")
+            add_atom!(tgt, xs[2])
+            ExecOk(Atom[Expression(Atom[])])             # unit ()
+        end
+    )
+)
+const REMOVE_ATOM = Grounded(
+    SpaceOp(
+        "remove-atom",
+        function (xs, space)
+            length(xs) == 2 || return ExecNoReduce()
+            tgt = _space_arg(xs[1], space)
+            tgt === nothing &&
+                return ExecRuntime("remove-atom: first argument is not a Space")
+            remove_atom!(tgt, xs[2])
+            ExecOk(Atom[Expression(Atom[])])
+        end
+    )
+)
 
 # import! (hyperon): load module `<name>.metta` (found on the module search path). `(import! &kb mod)`
 # loads it into a NEW space bound to the &kb token; `(import! &self mod)` loads it into the current space.
@@ -2181,19 +2780,24 @@ end))
 # module's relative `import!`s (e.g. metamo.metta's `(import! &self "config.metta")`) resolve self-contained.
 const _MODULE_PATH = Ref(String[
     @__DIR__,                                              # src/standard/
-    normpath(joinpath(@__DIR__, "..", "..", "lib")),      # <pkg>/lib/
+    normpath(joinpath(@__DIR__, "..", "..", "lib"))      # <pkg>/lib/
 ])
 # Load a module file into `sp`, with its containing dir on the search path for the duration so the module's
 # own relative `import!`s resolve. try/finally keeps the global path balanced even if loading throws.
 function _load_module_file!(sp, file::String)
     d = dirname(file)
-    pushed = !(d in _MODULE_PATH[]); pushed && push!(_MODULE_PATH[], d)
-    try load_metta!(sp, read(file, String)) finally pushed && filter!(!=(d), _MODULE_PATH[]) end
+    pushed = !(d in _MODULE_PATH[])
+    pushed && push!(_MODULE_PATH[], d)
+    try
+        load_metta!(sp, read(file, String))
+    finally
+        pushed && filter!(!=(d), _MODULE_PATH[])
+    end
 end
 # module spec → name, accepting all the forms the reference impls take: a bare symbol (`f1_moduleA`),
 # a string (hyperon's stated target form; PeTTa coerces via atom_string), or a `(library X)` spec
 # (PeTTa/CeTTa). Cross-checked vs CeTTa eval.c resolve_import_destination + PeTTa metta.pl importer_helper.
-function _import_modname(mod::Atom)::Union{String,Nothing}
+function _import_modname(mod::Atom)::Union{String, Nothing}
     mod isa Sym && return string(mod.name)          # Sym name is a Symbol → String for the module path
     mod isa Grounded && mod.value isa AbstractString && return mod.value
     if mod isa Expression && length(mod.children) == 2 && mod.children[1] == Sym("library")
@@ -2203,48 +2807,60 @@ function _import_modname(mod::Atom)::Union{String,Nothing}
     end
     nothing
 end
-const IMPORT = Grounded(SpaceOp("import!", function (xs, space)
-    length(xs) == 2 || return ExecNoReduce()
-    target, mod = xs[1], xs[2]
-    modname = _import_modname(mod)
-    modname === nothing && return ExecRuntime("import!: expects a module name (symbol, string, or (library X))")
-    file = nothing
-    for d in _MODULE_PATH[]
-        # accept: an explicit/relative `<name>.metta` file, a bare `<name>`, or the `<name>/<name>.metta`
-        # entry-in-dir convention Core's multi-file algorithm libs use (lib/metamo/metamo.metta).
-        for cand in (modname, modname * ".metta", joinpath(modname, modname * ".metta"))
-            p = isabspath(cand) ? cand : joinpath(d, cand); isfile(p) && (file = p; break)
+const IMPORT = Grounded(
+    SpaceOp(
+        "import!",
+        function (xs, space)
+            length(xs) == 2 || return ExecNoReduce()
+            target, mod = xs[1], xs[2]
+            modname = _import_modname(mod)
+            modname === nothing && return ExecRuntime(
+                "import!: expects a module name (symbol, string, or (library X))"
+            )
+            file = nothing
+            for d in _MODULE_PATH[]
+                # accept: an explicit/relative `<name>.metta` file, a bare `<name>`, or the `<name>/<name>.metta`
+                # entry-in-dir convention Core's multi-file algorithm libs use (lib/metamo/metamo.metta).
+                for cand in
+                    (modname, modname * ".metta", joinpath(modname, modname * ".metta"))
+                    p = isabspath(cand) ? cand : joinpath(d, cand)
+                    isfile(p) && (file=p; break)
+                end
+                file !== nothing && break
+            end
+            file === nothing && return ExecRuntime("import!: module not found: $modname")
+            if target isa Grounded && target.value isa Space
+                tgt = target.value::Space
+                modname in tgt.imported && return ExecOk(Atom[Expression(Atom[])])  # already imported → ignore (dedup + cycle guard)
+                push!(tgt.imported, modname)                            # record BEFORE loading (guards cycles)
+                _load_module_file!(tgt, file)                           # &self: import into the current space
+            elseif target isa Sym
+                newsp = Space()
+                push!(newsp.imported, modname)
+                _load_module_file!(newsp, file)
+                space.tokens[string((target::Sym).name)] = Grounded(newsp)      # &kb: bind the token to a fresh space
+            else
+                return ExecRuntime("import!: first argument must be a space token")
+            end
+            ExecOk(Atom[Expression(Atom[])])
         end
-        file !== nothing && break
-    end
-    file === nothing && return ExecRuntime("import!: module not found: $modname")
-    if target isa Grounded && target.value isa Space
-        tgt = target.value::Space
-        modname in tgt.imported && return ExecOk(Atom[Expression(Atom[])])  # already imported → ignore (dedup + cycle guard)
-        push!(tgt.imported, modname)                            # record BEFORE loading (guards cycles)
-        _load_module_file!(tgt, file)                           # &self: import into the current space
-    elseif target isa Sym
-        newsp = Space(); push!(newsp.imported, modname)
-        _load_module_file!(newsp, file)
-        space.tokens[string((target::Sym).name)] = Grounded(newsp)      # &kb: bind the token to a fresh space
-    else
-        return ExecRuntime("import!: first argument must be a space token")
-    end
-    ExecOk(Atom[Expression(Atom[])])
-end))
+    )
+)
 
 # (mork-closure): OPT-IN substrate route — compute the MM2 forward-rewriting closure of this Space's relational
 # rules on the MORK lane and materialize the derived atoms back into the Space, then continue in the interpreter.
 # The implementation (`mc_closure!`) lives in the parent MeTTaCore (MM2Router, loaded after this); a hook bridges
 # the module order — MM2Router populates `_MORK_CLOSURE_HOOK[]` at load. See `MM2Router.mc_closure!`.
-const _MORK_CLOSURE_HOOK = Ref{Function}(_ -> error("mork-closure: substrate route not wired (load order)"))
+const _MORK_CLOSURE_HOOK = Ref{Function}(
+    _ -> error("mork-closure: substrate route not wired (load order)")
+)
 const MORK_CLOSURE = Grounded(SpaceOp("mork-closure", function (xs, space)
     _MORK_CLOSURE_HOOK[](space)                      # materialize the MORK closure into `space` (side effect)
     ExecOk(Atom[Expression(Atom[])])                 # unit ()
 end))
 
 # token registry: operator words → their grounded atoms (the tokenizer constructors)
-const TOKEN_REGISTRY = Dict{String,Atom}(
+const TOKEN_REGISTRY = Dict{String, Atom}(
     "mork-closure" => MORK_CLOSURE,
     "+" => PLUS, "-" => MINUS, "*" => TIMES, "/" => DIVIDE_SEAM, "%" => MOD_SEAM,
     "<" => LT, ">" => GT, "<=" => LE, ">=" => GE, "==" => EQ_OP,
@@ -2259,7 +2875,8 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     "intersection-atom" => INTERSECTION_ATOM, "subtraction-atom" => SUBTRACTION_ATOM,
     "sort-atom" => SORT_ATOM, "sort-strings" => SORT_ATOM,
     "get-type" => GET_TYPE, "foldl-atom" => FOLDL_ATOM, "case" => CASE,
-    "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE, "nop" => NOP,
+    "new-state" => NEW_STATE, "get-state" => GET_STATE, "change-state!" => CHANGE_STATE,
+    "nop" => NOP,
     "println!" => PRINTLN_BANG, "trace!" => TRACE_BANG,
     "_collapse-add-next-atom-from-collapse-bind-result" => COLLAPSE_ADD_NEXT,
     "bind!" => BIND_TOKEN, "new-space" => NEW_SPACE, "fork-space" => FORK_SPACE,
@@ -2270,12 +2887,13 @@ const TOKEN_REGISTRY = Dict{String,Atom}(
     # required by the contract the op's stdlib semantics specify. So it aliases new-space here.
     "new-mork-space" => NEW_SPACE,
     "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
-    "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL, "tnot" => TNOT,
+    "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL,
+    "tnot" => TNOT,
     "get-residual" => GET_RESIDUAL)
 # add-atom/remove-atom take the atom UNEVALUATED (hyperon AddAtomOp type_ = (-> Space Atom (->))) — the
 # atom is stored as-is, not reduced. Atom-typed 2nd arg ⇒ the driver passes it unevaluated. Intrinsic
 # (kept out of the space). Defined here, after the ops exist.
-_GROUNDED_OP_TYPES[ADD_ATOM]    = "(-> %Undefined% Atom (->))"
+_GROUNDED_OP_TYPES[ADD_ATOM] = "(-> %Undefined% Atom (->))"
 _GROUNDED_OP_TYPES[REMOVE_ATOM] = "(-> %Undefined% Atom (->))"
 
 # 🔴 `get-residual` TAKES THE GOAL UNEVALUATED, AND THAT IS LOAD-BEARING, NOT STYLISTIC.
@@ -2302,21 +2920,27 @@ _GROUNDED_OP_TYPES[GET_RESIDUAL] = "(-> Atom Atom)"
 # `(-> Space Atom)` mis-fires as BadArgType). Verified: enumeration inert + basic get-atoms unchanged,
 # byte-matching hyperon/PeTTa/CeTTa. This was an original OMISSION at get-atoms' introduction (638bc7f);
 # every sibling stored-atom op (add-atom/remove-atom/== /state) had its intrinsic type — get-atoms alone did not.
-_GROUNDED_OP_TYPES[GET_ATOMS]   = "(-> %Undefined% Atom)"
-_GROUNDED_OP_TYPES[TRACE_BANG]  = "(-> %Undefined% Atom %Undefined%)"   # arg1 raw so (trace! msg (quote …)) works
+_GROUNDED_OP_TYPES[GET_ATOMS] = "(-> %Undefined% Atom)"
+_GROUNDED_OP_TYPES[TRACE_BANG] = "(-> %Undefined% Atom %Undefined%)"   # arg1 raw so (trace! msg (quote …)) works
 # == is polymorphic same-type (hyperon (-> $t $t Bool)) → the checker emits (BadArgType 2 …) on a
 # mismatch like (== 5 "S"). Now safe: the iterative driver doesn't overflow on the typed path (this
 # crashed the recursive driver). Intrinsic (out of the space, can't disturb match &self).
-_GROUNDED_OP_TYPES[EQ_OP]       = "(-> \$t \$t Bool)"
+_GROUNDED_OP_TYPES[EQ_OP] = "(-> \$t \$t Bool)"
 
 # Hex digit → value, or -1. Allocation-free: the first version of the `\x`/`\u{}` decoding called
 # `tryparse(UInt8, String(cs[j:j]); base=16)`, which allocates a 1-element Char slice AND a String PER
 # DIGIT inside the lexer's inner loop. Nothing measured it; it was simply the wrong tool for reading
 # one character.
 @inline _hexval(c::Char)::Int =
-    ('0' <= c <= '9') ? Int(c) - Int('0') :
-    ('a' <= c <= 'f') ? Int(c) - Int('a') + 10 :
-    ('A' <= c <= 'F') ? Int(c) - Int('A') + 10 : -1
+    if ('0' <= c <= '9')
+        Int(c) - Int('0')
+    elseif ('a' <= c <= 'f')
+        Int(c) - Int('a') + 10
+    elseif ('A' <= c <= 'F')
+        Int(c) - Int('A') + 10
+    else
+        -1
+    end
 
 # ⚠️ ESCAPE HANDLING vs UPSTREAM (hyperon-experimental `lib/src/metta/text.rs:534-600`).
 # Decoded here: `\n` `\r` `\t` `\"` `\\` `\'`, plus `\xNN` (exactly two hex digits) and `\u{X…}`
@@ -2329,38 +2953,68 @@ _GROUNDED_OP_TYPES[EQ_OP]       = "(-> \$t \$t Bool)"
 # character. Not changed here because rejecting input that Core currently accepts is a behavioural
 # change that needs its own corpus pass — recorded so it is a decision rather than an oversight.
 function tokenize(s::AbstractString)::Vector{String}
-    cs = collect(s); n = length(cs); toks = String[]; i = 1
+    cs = collect(s)
+    n = length(cs)
+    toks = String[]
+    i = 1
     while i <= n
         c = cs[i]
-        if isspace(c); i += 1
-        elseif c == ';'; while i <= n && cs[i] != '\n'; i += 1; end
-        elseif c == '(' || c == ')'; push!(toks, string(c)); i += 1
+        if isspace(c)
+            i += 1
+        elseif c == ';'
+            while i <= n && cs[i] != '\n'
+                i += 1
+            end
+        elseif c == '(' || c == ')'
+            push!(toks, string(c))
+            i += 1
         elseif c == '"'
-            i += 1; buf = Char[]
+            i += 1
+            buf = Char[]
             while i <= n && cs[i] != '"'
                 if cs[i] == '\\' && i < n                   # decode escapes (hyperon text.rs:550-573):
-                    i += 1; d = cs[i]                        #   \n \t \r → control char; \" \\ \' → literal
+                    i += 1
+                    d = cs[i]                        #   \n \t \r → control char; \" \\ \' → literal
                     if d == 'x' && i + 2 <= n                # \xNN — EXACTLY two hex digits, high<<4|low
-                        hi = _hexval(cs[i+1]); lo = _hexval(cs[i+2])
+                        hi = _hexval(cs[i + 1])
+                        lo = _hexval(cs[i + 2])
                         if hi >= 0 && lo >= 0
-                            push!(buf, Char((UInt32(hi) << 4) | UInt32(lo))); i += 2
+                            push!(buf, Char((UInt32(hi) << 4) | UInt32(lo)))
+                            i += 2
                         else
                             push!(buf, d)                    # malformed: literal, see the note below
                         end
-                    elseif d == 'u' && i + 1 <= n && cs[i+1] == '{'   # \u{X…} — BRACED, up to 8 hex digits
-                        j = i + 2; acc = UInt32(0); ndig = 0; ok = true
+                    elseif d == 'u' && i + 1 <= n && cs[i + 1] == '{'   # \u{X…} — BRACED, up to 8 hex digits
+                        j = i + 2
+                        acc = UInt32(0)
+                        ndig = 0
+                        ok = true
                         while j <= n && cs[j] != '}'
                             dv = _hexval(cs[j])
-                            (dv < 0 || ndig >= 8) && (ok = false; break)
-                            acc = (acc << 4) | UInt32(dv); ndig += 1; j += 1
+                            (dv < 0 || ndig >= 8) && (ok=false; break)
+                            acc = (acc << 4) | UInt32(dv)
+                            ndig += 1
+                            j += 1
                         end
                         if ok && j <= n && cs[j] == '}' && ndig > 0 && acc <= 0x10FFFF
-                            push!(buf, Char(acc)); i = j
+                            push!(buf, Char(acc))
+                            i = j
                         else
                             push!(buf, d)
                         end
                     else
-                        push!(buf, d == 'n' ? '\n' : d == 't' ? '\t' : d == 'r' ? '\r' : d)
+                        push!(
+                            buf,
+                            if d == 'n'
+                                '\n'
+                            elseif d == 't'
+                                '\t'
+                            elseif d == 'r'
+                                '\r'
+                            else
+                                d
+                            end
+                        )
                     end
                 else
                     push!(buf, cs[i])
@@ -2371,42 +3025,57 @@ function tokenize(s::AbstractString)::Vector{String}
             push!(toks, "\"" * String(buf))                # leading-quote marks a string token
         else
             j = i
-            while j <= n && !isspace(cs[j]) && cs[j] != '(' && cs[j] != ')' && cs[j] != ';'; j += 1; end
-            push!(toks, String(cs[i:j-1])); i = j
+            while j <= n && !isspace(cs[j]) && cs[j] != '(' && cs[j] != ')' && cs[j] != ';'
+                j += 1
+            end
+            push!(toks, String(cs[i:(j - 1)]))
+            i = j
         end
     end
     toks
 end
 
-function parse_atom(tok::String, tokens::Dict{String,Atom}=_NO_TOKENS)::Atom
+function parse_atom(tok::String, tokens::Dict{String, Atom}=_NO_TOKENS)::Atom
     startswith(tok, "\"") && return Grounded(tok[nextind(tok, 1):end])      # string
     startswith(tok, "\$") && return Var(tok[nextind(tok, 1):end])           # variable
     haskey(tokens, tok) && return tokens[tok]                              # bind! token (parse-time subst)
     haskey(TOKEN_REGISTRY, tok) && return TOKEN_REGISTRY[tok]               # grounded operator
-    let n = tryparse(Int, tok); n !== nothing && return Grounded(n); end     # integer
-    let f = tryparse(Float64, tok); f !== nothing && return Grounded(f); end # float
+    let n = tryparse(Int, tok)
+        n !== nothing && return Grounded(n)
+    end     # integer
+    let f = tryparse(Float64, tok)
+        f !== nothing && return Grounded(f)
+    end # float
     Sym(tok)
 end
-const _NO_TOKENS = Dict{String,Atom}()
+const _NO_TOKENS = Dict{String, Atom}()
 
-function parse_from(toks::Vector{String}, i::Base.RefValue{Int}, tokens::Dict{String,Atom}=_NO_TOKENS)::Atom
+function parse_from(
+    toks::Vector{String}, i::Base.RefValue{Int}, tokens::Dict{String, Atom}=_NO_TOKENS
+)::Atom
     tok = toks[i[]]
     if tok == "("
-        i[] += 1; ch = Atom[]
-        while i[] <= length(toks) && toks[i[]] != ")"; push!(ch, parse_from(toks, i, tokens)); end
+        i[] += 1
+        ch = Atom[]
+        while i[] <= length(toks) && toks[i[]] != ")"
+            push!(ch, parse_from(toks, i, tokens))
+        end
         i[] <= length(toks) && (i[] += 1)
         return Expression(ch)
     else
-        i[] += 1; return parse_atom(tok, tokens)
+        i[] += 1
+        return parse_atom(tok, tokens)
     end
 end
 
 "Parse a MeTTa program into (is_directive, atom) pairs (`!` at top level = directive)."
-function parse_program(text::AbstractString)::Vector{Tuple{Bool,Atom}}
-    toks = tokenize(text); i = Ref(1); out = Tuple{Bool,Atom}[]
+function parse_program(text::AbstractString)::Vector{Tuple{Bool, Atom}}
+    toks = tokenize(text)
+    i = Ref(1)
+    out = Tuple{Bool, Atom}[]
     while i[] <= length(toks)
         directive = false
-        toks[i[]] == "!" && (directive = true; i[] += 1)
+        toks[i[]] == "!" && (directive=true; i[] += 1)
         i[] > length(toks) && break
         push!(out, (directive, parse_from(toks, i)))
     end
@@ -2417,12 +3086,16 @@ end
 INCREMENTAL parse-eval (hyperon/CeTTa Tokenizer model): each atom is parsed THEN evaluated before the
 next is parsed, so a `bind!` directive registers its token in `space.tokens` in time for the parser to
 substitute that token in every following atom (parse-time substitution)."""
-function load_metta!(space::Space, text::AbstractString; as_library::Bool=false, auto_table::Bool=false)::Vector{Atom}
+function load_metta!(
+    space::Space, text::AbstractString; as_library::Bool=false, auto_table::Bool=false
+)::Vector{Atom}
     get!(space.tokens, "&self", Grounded(space))    # `&self` (parse-time) resolves to the current space
-    results = Atom[]; toks = tokenize(text); i = Ref(1)
+    results = Atom[]
+    toks = tokenize(text)
+    i = Ref(1)
     while i[] <= length(toks)
         directive = false
-        toks[i[]] == "!" && (directive = true; i[] += 1)
+        toks[i[]] == "!" && (directive=true; i[] += 1)
         i[] > length(toks) && break
         atom = parse_from(toks, i, space.tokens)        # substitute bound tokens at parse time
         directive ? append!(results, metta_run(atom, space)) : add_atom!(space, atom)
@@ -2439,7 +3112,9 @@ end
 # hyperon's stdlib). The 234/234 conformance matrix must stay green with CoreExtensions.metta loaded.
 function load_core_stdlib!(space::Space)
     load_metta!(space, read(joinpath(@__DIR__, "stdlib.metta"), String); as_library=true)
-    load_metta!(space, read(joinpath(@__DIR__, "CoreExtensions.metta"), String); as_library=true)
+    load_metta!(
+        space, read(joinpath(@__DIR__, "CoreExtensions.metta"), String); as_library=true
+    )
     space
 end
 
@@ -2456,10 +3131,15 @@ include("CoreMathOps.jl")      # hyperon math library (sqrt/pow/log/trig/…) as
 # never break the build, so the whole region is guarded.
 using PrecompileTools: @setup_workload, @compile_workload
 @setup_workload begin
-    stdlib = try read(joinpath(@__DIR__, "stdlib.metta"), String) catch; ""; end
+    stdlib = try
+        read(joinpath(@__DIR__, "stdlib.metta"), String)
+    catch
+        ""
+    end
     @compile_workload begin
         try
-            sp = Space(); isempty(stdlib) || load_metta!(sp, stdlib)
+            sp = Space()
+            isempty(stdlib) || load_metta!(sp, stdlib)
             # arithmetic / comparison / Bool — grounded dispatch
             load_metta!(sp, "!(+ 1 (* 2 3))")
             load_metta!(sp, "!(if (and (< 1 2) (not False)) yes no)")
@@ -2539,7 +3219,10 @@ using PrecompileTools: @setup_workload, @compile_workload
                 # what the header says and what caught this only when the added restraint/IDG lines
                 # were executed standalone (`[[feedback_parses_is_not_fires]]`).
                 load_core_stdlib!(ts)
-                load_metta!(ts, "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 2)))))")
+                load_metta!(
+                    ts,
+                    "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 2)))))"
+                )
                 table!(:fib)
                 load_metta!(ts, "!(fib 6)")                      # memo + completion + trie insert/read
                 load_metta!(ts, "(edge a b) (edge b c)")
@@ -2549,7 +3232,8 @@ using PrecompileTools: @setup_workload, @compile_workload
                 load_metta!(ts, "!(reach b a)")                  # consumer/suspension + resumption
                 load_metta!(ts, "(= (p) (tnot (q)))")
                 load_metta!(ts, "(= (q) (tnot (p)))")
-                table!(:p); table!(:q)
+                table!(:p)
+                table!(:q)
                 load_metta!(ts, "!(p)")                          # tnot + WFS + the delay/residual path
 
                 # ── ADDED 2026-08-19, for paths that did not exist when the block above was written ──
@@ -2583,7 +3267,8 @@ using PrecompileTools: @setup_workload, @compile_workload
                 load_metta!(ts, "!(rd)")                         # dyn_read! + node creation
                 load_metta!(ts, "!(add-atom &self (fact b))")    # dyn_changed! + propagation
                 _IDG_RECORD[] = false                            # ⚠️ restore; default is OFF
-                untable_all!(); abolish_all_tables!()
+                untable_all!()
+                abolish_all_tables!()
             end
         catch
         end

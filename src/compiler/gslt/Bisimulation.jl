@@ -50,7 +50,7 @@ using ..CompilerGSLTPresentation: GPresentation
 using ..CompilerGSLTRelation: reducts
 
 export is_bisimulation, bisimilar_bounded, GMorphism, morphism_preserves_bisim,
-       BisimWitness, bisim_counterexample
+    BisimWitness, bisim_counterexample
 
 """
     BisimWitness
@@ -75,13 +75,13 @@ weaker and is the classic way to claim bisimilarity and be wrong: simulation in 
 between two systems does NOT imply bisimilarity, because the two simulations may be different
 relations. Here one relation must satisfy both clauses.
 """
-function is_bisimulation(p::GPresentation, R::BisimWitness; depth::Int = 32)::Bool
+function is_bisimulation(p::GPresentation, R::BisimWitness; depth::Int=32)::Bool
     for (t, u) in R
-        for t2 in reducts(p, t; depth = depth)
-            any(u2 -> (t2, u2) in R, reducts(p, u; depth = depth)) || return false
+        for t2 in reducts(p, t; depth=depth)
+            any(u2 -> (t2, u2) in R, reducts(p, u; depth=depth)) || return false
         end
-        for u2 in reducts(p, u; depth = depth)
-            any(t2 -> (t2, u2) in R, reducts(p, t; depth = depth)) || return false
+        for u2 in reducts(p, u; depth=depth)
+            any(t2 -> (t2, u2) in R, reducts(p, t; depth=depth)) || return false
         end
     end
     true
@@ -94,13 +94,13 @@ The first pair that breaks `is_bisimulation`, as `(t, u, unmatched, :forward | :
 `nothing`. A bare `false` from a bisimulation check is nearly useless for debugging a presentation —
 this says WHICH step had no partner and in which direction.
 """
-function bisim_counterexample(p::GPresentation, R::BisimWitness; depth::Int = 32)
+function bisim_counterexample(p::GPresentation, R::BisimWitness; depth::Int=32)
     for (t, u) in R
-        us = reducts(p, u; depth = depth)
-        for t2 in reducts(p, t; depth = depth)
+        us = reducts(p, u; depth=depth)
+        for t2 in reducts(p, t; depth=depth)
             any(u2 -> (t2, u2) in R, us) || return (t, u, t2, :forward)
         end
-        ts = reducts(p, t; depth = depth)
+        ts = reducts(p, t; depth=depth)
         for u2 in us
             any(t2 -> (t2, u2) in R, ts) || return (t, u, u2, :backward)
         end
@@ -123,15 +123,17 @@ error as reading a green suite as an absence proof.
 That is not a bug, but it does mean a caller passing `0` learns nothing at all.
 """
 function bisimilar_bounded(p::GPresentation, t::Atom, u::Atom;
-                           steps::Int = 8, depth::Int = 32)::Bool
+    steps::Int=8, depth::Int=32)::Bool
     steps <= 0 && return true
-    ts = reducts(p, t; depth = depth)
-    us = reducts(p, u; depth = depth)
+    ts = reducts(p, t; depth=depth)
+    us = reducts(p, u; depth=depth)
     for t2 in ts
-        any(u2 -> bisimilar_bounded(p, t2, u2; steps = steps - 1, depth = depth), us) || return false
+        any(u2 -> bisimilar_bounded(p, t2, u2; steps=steps - 1, depth=depth), us) ||
+            return false
     end
     for u2 in us
-        any(t2 -> bisimilar_bounded(p, t2, u2; steps = steps - 1, depth = depth), ts) || return false
+        any(t2 -> bisimilar_bounded(p, t2, u2; steps=steps - 1, depth=depth), ts) ||
+            return false
     end
     true
 end
@@ -169,10 +171,10 @@ counterexample to preservation, while a `true` means "not refuted on this carrie
 never "is a morphism". The carrier is finite and supplied by the caller, so this is a REFUTATION
 instrument, which is the honest thing a computation can be here.
 """
-function morphism_preserves_bisim(m::GMorphism; steps::Int = 8, depth::Int = 32)::Bool
+function morphism_preserves_bisim(m::GMorphism; steps::Int=8, depth::Int=32)::Bool
     for t in m.carrier, u in m.carrier
-        if bisimilar_bounded(m.source, t, u; steps = steps, depth = depth)
-            bisimilar_bounded(m.target, m.toFun(t), m.toFun(u); steps = steps, depth = depth) ||
+        if bisimilar_bounded(m.source, t, u; steps=steps, depth=depth)
+            bisimilar_bounded(m.target, m.toFun(t), m.toFun(u); steps=steps, depth=depth) ||
                 return false
         end
     end

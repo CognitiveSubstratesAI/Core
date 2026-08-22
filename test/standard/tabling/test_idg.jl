@@ -68,7 +68,8 @@ _dg_k(name::Symbol) = Sym(name)
         # cycle would fail on exactly the programs the feature is for.
         _DG.clear_idg!()
         a, b = _dg_k(:a), _dg_k(:b)
-        _DG.idg_add_edge!(a, b); _DG.idg_add_edge!(b, a)   # mutual
+        _DG.idg_add_edge!(a, b)
+        _DG.idg_add_edge!(b, a)   # mutual
         hit = _DG.idg_propagate_change!(a)
         @test hit == Set([a, b])                    # a IS reached, via b — it is a genuine parent here
         # 🔴 THESE COUNTS WERE WRONG UNTIL 2026-08-17, and asserted OUR bug as the contract.
@@ -87,8 +88,10 @@ _dg_k(name::Symbol) = Sym(name)
         # invalidated from several children before it is re-evaluated.
         _DG.clear_idg!()
         a, b, c = _dg_k(:a), _dg_k(:b), _dg_k(:c)
-        _DG.idg_add_edge!(a, c); _DG.idg_add_edge!(b, c)   # c depends on BOTH a and b
-        _DG.idg_propagate_change!(a); _DG.idg_propagate_change!(b)
+        _DG.idg_add_edge!(a, c)
+        _DG.idg_add_edge!(b, c)   # c depends on BOTH a and b
+        _DG.idg_propagate_change!(a)
+        _DG.idg_propagate_change!(b)
         @test _DG.idg_node_for(c).falsecount == 2          # counted, not flagged
         @test _DG.idg_invalid_tables() == [c]
 
@@ -123,7 +126,7 @@ _dg_k(name::Symbol) = Sym(name)
         push!(_DG._TABLE_INPROG, a)
         try
             @test_throws ArgumentError _DG.idg_changed!(a)
-            @test isempty(_DG.idg_changed!(a; mono = true))   # …mono STOPS instead of erroring
+            @test isempty(_DG.idg_changed!(a; mono=true))   # …mono STOPS instead of erroring
             @test !_DG.idg_is_invalid(b)
         finally
             delete!(_DG._TABLE_INPROG, a)
@@ -136,7 +139,8 @@ _dg_k(name::Symbol) = Sym(name)
         # worse, keep a stale key alive as someone else's dependency.
         _DG.clear_idg!()
         a, b, c = _dg_k(:a), _dg_k(:b), _dg_k(:c)
-        _DG.idg_add_edge!(a, b); _DG.idg_add_edge!(b, c)
+        _DG.idg_add_edge!(a, b)
+        _DG.idg_add_edge!(b, c)
         _DG.drop_idg_node!(b)
         @test !_DG.has_idg_node(b)
         @test isempty(_DG.idg_node_for(a).affected)    # a no longer lists b as a dependant
@@ -146,14 +150,16 @@ _dg_k(name::Symbol) = Sym(name)
     end
 
     @testset "untable! drops the head's IDG node with its table" begin
-        _DG.untable_all!(); _DG.clear_idg!()
+        _DG.untable_all!()
+        _DG.clear_idg!()
         k = _DG._variant_rename(Expression(Atom[Sym(:p), Grounded(1)]))
         _DG.table!(:p)
         _DG.idg_add_edge!(_dg_k(:other), k)
         @test _DG.has_idg_node(k)
         _DG.untable!(:p)
         @test !_DG.has_idg_node(k)
-        _DG.untable_all!(); _DG.clear_idg!()
+        _DG.untable_all!()
+        _DG.clear_idg!()
     end
 
     @testset "a FRESH node's re-evaluation fields are the documented defaults" begin
@@ -178,21 +184,31 @@ end
     # (`pl-tabling.c:4549-4560`) — looked up OR CREATED, on every tabled call, before any answer
     # exists. A missed edge means a stale table is never invalidated: the one failure an IDG cannot
     # have. Measured on fib 8: the cache-hit version recorded 6 edges and missed fib(7)->fib(6).
-    _DG.untable_all!(); _DG.abolish_all_tables!(); _DG.clear_idg!()
+    _DG.untable_all!()
+    _DG.abolish_all_tables!()
+    _DG.clear_idg!()
     _DG._IDG_RECORD[] = true
     try
-        s = Space(); load_core_stdlib!(s)
-        load_metta!(s, raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n")
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(
+            s, raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n"
+        )
         _DG.table!(:fib)
-        @test String[string(x) for y in load_metta!(s, "!(fib 8)\n")
-                     for x in (y isa AbstractVector ? y : [y])] == ["21"]
+        @test String[
+            string(x) for y in load_metta!(s, "!(fib 8)\n")
+            for x in (y isa AbstractVector ? y : [y])
+        ] == ["21"]
 
         # ANTI-VACUITY: an empty graph would satisfy every "invalidates only N" claim below.
         @test length(_DG._IDG) > 5
-        @test sum(length(n.dependent) for (_, n) in _DG._IDG; init = 0) > 10
+        @test sum(length(n.dependent) for (_, n) in _DG._IDG; init=0) > 10
 
-        k(n) = _DG._variant_rename(_DG._reduced_goal(
-                   _DG.parse_from(_DG.tokenize("(fib $n)"), Ref(1), s.tokens), s, _DG.Bindings()))
+        k(n) = _DG._variant_rename(
+            _DG._reduced_goal(
+                _DG.parse_from(_DG.tokenize("(fib $n)"), Ref(1), s.tokens), s,
+                _DG.Bindings())
+        )
 
         # fib(7) = fib(6)+fib(5) and fib(8) = fib(7)+fib(6), so changing fib(6) must reach BOTH.
         # The cache-hit version reached only fib(8) — the assertion that catches that regression.
@@ -204,6 +220,8 @@ end
         @test length(hit) < length(_DG._ANSWER_TABLE)
     finally
         _DG.reset_execution_flags!()   # restore the ENV default, never a literal — defaults move
-        _DG.untable_all!(); _DG.abolish_all_tables!(); _DG.clear_idg!()
+        _DG.untable_all!()
+        _DG.abolish_all_tables!()
+        _DG.clear_idg!()
     end
 end

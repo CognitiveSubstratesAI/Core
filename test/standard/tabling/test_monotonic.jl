@@ -16,8 +16,12 @@ using Test
 const _MO = Eval
 
 function _mo_setup()
-    _MO.untable_all!(); _MO.abolish_all_tables!(); _MO.clear_idg!(); _MO.clear_mono!()
-    s = Space(); load_core_stdlib!(s)
+    _MO.untable_all!()
+    _MO.abolish_all_tables!()
+    _MO.clear_idg!()
+    _MO.clear_mono!()
+    s = Space()
+    load_core_stdlib!(s)
     load_metta!(s, raw"(= (wrap $x) (S $x))" * "\n")
     load_metta!(s, raw"(= (mark) M)" * "\n")
     s
@@ -38,7 +42,7 @@ different answers. Re-proving it here would duplicate that gate; what is NOT gat
 asserts. Using a simple continuation for them is correct scoping, not a weakened test.
 `[[feedback_scope_closure_claims_to_what_verified]]`"""
 _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
-                                       _MO.parse_from(_MO.tokenize("(wrap 1)"), Ref(1), s.tokens))
+    _MO.parse_from(_MO.tokenize("(wrap 1)"), Ref(1), s.tokens))
 
 @testset "SWI §7.8 — monotonic tabling" begin
 
@@ -56,7 +60,8 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         # ⚠️ NOT asserted here: that the continuation TRANSFORMED the answer. That is
         # `resume_continuation`'s contract and `test_delimited_control.jl` gates it. What §7.8 owns
         # is that the answer REACHES the target table at all, which the two lines above assert.
-        _MO.clear_mono!(); _MO.abolish_all_tables!()
+        _MO.clear_mono!()
+        _MO.abolish_all_tables!()
     end
 
     @testset "🔴 LAZY QUEUES THE ANSWER — the CONTINUATION DOES NOT RUN until drain" begin
@@ -71,7 +76,7 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         # queue HOLDS is now asserted, not just that the table is empty.
         s = _mo_setup()
         src, tgt = Sym(:src), Sym(:tgt)
-        _MO.mono_assert_dep!(src, _mo_cont(s), tgt; lazy = true)
+        _MO.mono_assert_dep!(src, _mo_cont(s), tgt; lazy=true)
         out = _MO.mono_propagate_assert!(src, Grounded(1), s)
 
         @test !haskey(out, tgt)                              # nothing was PRODUCED — it was deferred
@@ -86,7 +91,8 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         @test !isempty(_MO.trie_answers(_MO.answer_trie_for(tgt)))
         @test isempty(_MO.mono_queued(tgt))                  # queue consumed, not merely read
         @test isempty(_MO.mono_drain_queue!(tgt, s))         # draining twice adds nothing
-        _MO.clear_mono!(); _MO.abolish_all_tables!()
+        _MO.clear_mono!()
+        _MO.abolish_all_tables!()
     end
 
     @testset "🔴 PROPAGATION IS TRANSITIVE — A -> B -> C, not one hop" begin
@@ -100,7 +106,8 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         @test haskey(out, b)
         @test haskey(out, c)                                 # the hop that was missing
         @test !isempty(_MO.trie_answers(_MO.answer_trie_for(c)))
-        _MO.clear_mono!(); _MO.abolish_all_tables!()
+        _MO.clear_mono!()
+        _MO.abolish_all_tables!()
     end
 
     @testset "🔴 a CYCLE terminates — because a duplicate STOPS the recursion" begin
@@ -115,7 +122,8 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         _MO.mono_assert_dep!(b, _mo_cont(s), a)              # mutual
         out = _MO.mono_propagate_assert!(a, Grounded(1), s)  # must RETURN, not hang
         @test haskey(out, b)
-        _MO.clear_mono!(); _MO.abolish_all_tables!()
+        _MO.clear_mono!()
+        _MO.abolish_all_tables!()
     end
 
     @testset "rollback: asserta/assertz is a NO-OP, retract INVALIDATES" begin
@@ -132,7 +140,9 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         @test tgt in _MO.mono_propagate_rollback!(:retract, src)
         @test _MO.idg_is_invalid(tgt)
         @test_throws ArgumentError _MO.mono_propagate_rollback!(:bogus, src)
-        _MO.clear_mono!(); _MO.clear_idg!(); _MO.abolish_all_tables!()
+        _MO.clear_mono!()
+        _MO.clear_idg!()
+        _MO.abolish_all_tables!()
     end
 
     @testset "🔴 RETRACT does NOT propagate — it INVALIDATES, and that is the correctness argument" begin
@@ -164,7 +174,9 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         # …and NOT silently "propagated": the target's answers are still there, awaiting recompute.
         # That is the point — invalidation defers the correction; propagation could not express it.
         @test !isempty(_MO.trie_answers(_MO.answer_trie_for(tgt)))
-        _MO.clear_mono!(); _MO.clear_idg!(); _MO.abolish_all_tables!()
+        _MO.clear_mono!()
+        _MO.clear_idg!()
+        _MO.abolish_all_tables!()
     end
 
     @testset "the dependency is §1.0's, reused verbatim" begin
@@ -192,7 +204,9 @@ _mo_cont(s) = _MO.capture_continuation(_MO.Bindings(), nothing,
         _MO.drop_mono_deps!(b)                        # b is going away
         @test isempty(_MO.mono_affects(a))            # …so the deps pointing AT it go too
         @test isempty(_MO.mono_affects(c))
-        _MO.clear_mono!(); _MO.abolish_all_tables!(); _MO.untable_all!()
+        _MO.clear_mono!()
+        _MO.abolish_all_tables!()
+        _MO.untable_all!()
     end
 
     @testset "the `monotonic` OPTION is still refused — the seam is named, not pretended" begin
@@ -217,13 +231,17 @@ end
     #
     # This test exists so nobody ports it from the manual later: it asserts the CONDITION under which
     # the optimisation would be wrong, so it fails loudly if that condition ever stops holding.
-    _MO.untable_all!(); _MO.abolish_all_tables!()
+    _MO.untable_all!()
+    _MO.abolish_all_tables!()
     try
-        s = Space(); load_core_stdlib!(s)
+        s = Space()
+        load_core_stdlib!(s)
         load_metta!(s, raw"(= (p 1) a)" * "\n" * raw"(= (p 1) b)" * "\n")
         _MO.table!(:p)
-        answers = String[string(x) for y in load_metta!(s, "!(p 1)\n")
-                         for x in (y isa AbstractVector ? y : [y])]
+        answers = String[
+            string(x) for y in load_metta!(s, "!(p 1)\n")
+            for x in (y isa AbstractVector ? y : [y])
+        ]
 
         goal = _MO.parse_from(_MO.tokenize("(p 1)"), Ref(1), s.tokens)
         @test isempty(_MO.collect_vars(goal))          # the goal IS ground…
@@ -231,6 +249,7 @@ end
         @test sort(answers) == ["a", "b"]
         # ⇒ "complete after the first solution" would return one of them and drop the other.
     finally
-        _MO.untable_all!(); _MO.abolish_all_tables!()
+        _MO.untable_all!()
+        _MO.abolish_all_tables!()
     end
 end

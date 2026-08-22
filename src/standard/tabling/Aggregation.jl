@@ -110,7 +110,7 @@ end
 #     sum(S0,S1,S) :- S is S0+S1.
 # ⚠️ min/max are on the STANDARD ORDER (`@<`/`@>`), not numeric `<` — see StandardOrder.jl's header.
 agg_first(s0::Atom, ::Atom)::Atom = s0
-agg_last(::Atom, s1::Atom)::Atom  = s1
+agg_last(::Atom, s1::Atom)::Atom = s1
 agg_min(s0::Atom, s1::Atom)::Atom = standard_lt(s0, s1) ? s0 : s1
 agg_max(s0::Atom, s1::Atom)::Atom = standard_gt(s0, s1) ? s0 : s1
 
@@ -123,13 +123,13 @@ function agg_sum(s0::Atom, s1::Atom)::Atom
 end
 
 "`update_alias/2` — boot/tabling.pl:1503-1508. Note `-` is a synonym for `first`, not for `last`."
-const UPDATE_ALIAS = Dict{Symbol,TableMode}(
-    :first  => ModeLattice(:first, agg_first),
+const UPDATE_ALIAS = Dict{Symbol, TableMode}(
+    :first => ModeLattice(:first, agg_first),
     Symbol("-") => ModeLattice(:first, agg_first),
-    :last   => ModeLattice(:last,  agg_last),
-    :min    => ModeLattice(:min,   agg_min),
-    :max    => ModeLattice(:max,   agg_max),
-    :sum    => ModeLattice(:sum,   agg_sum),
+    :last => ModeLattice(:last, agg_last),
+    :min => ModeLattice(:min, agg_min),
+    :max => ModeLattice(:max, agg_max),
+    :sum => ModeLattice(:sum, agg_sum)
 )
 
 # 🔴 THESE REGISTRIES ARE OPEN, AND THAT IS THE PORT — CORRECTED 2026-08-17.
@@ -139,15 +139,16 @@ const UPDATE_ALIAS = Dict{Symbol,TableMode}(
 # **no built-in `po` predicates at all**; ours are a convenience, not a ceiling. Closing the set
 # rejected the entire user-defined half of §7.3, which is what mode-directed tabling is FOR.
 "Named lattice/3 operations. OPEN — `register_lattice!` adds one; the six below are the aliases."
-const LATTICE_OPS = Dict{Symbol,Function}(
-    :first => agg_first, :last => agg_last, :min => agg_min, :max => agg_max, :sum => agg_sum,
+const LATTICE_OPS = Dict{Symbol, Function}(
+    :first => agg_first, :last => agg_last, :min => agg_min, :max => agg_max,
+    :sum => agg_sum
 )
 "Named po/2 operations. OPEN — upstream ships NONE of these; they are ours, and users may add more."
-const PO_OPS = Dict{Symbol,Function}(
+const PO_OPS = Dict{Symbol, Function}(
     :leq => (s0, s1) -> compare_standard(s0, s1) <= 0,
-    :lt  => standard_lt,
+    :lt => standard_lt,
     :geq => (s0, s1) -> compare_standard(s0, s1) >= 0,
-    :gt  => standard_gt,
+    :gt => standard_gt
 )
 
 """
@@ -158,8 +159,8 @@ Upstream's `lattice(Name/3)` / `po(Name/2)` accept any predicate of the right ar
 Julia surface for that: register once, then `(lattice NAME)` resolves. The arity check is upstream's
 only precondition, and here it is the function signature.
 """
-register_lattice!(name::Symbol, f::Function) = (LATTICE_OPS[name] = f; nothing)
-register_po!(name::Symbol, f::Function) = (PO_OPS[name] = f; nothing)
+register_lattice!(name::Symbol, f::Function) = (LATTICE_OPS[name]=f; nothing)
+register_po!(name::Symbol, f::Function) = (PO_OPS[name]=f; nothing)
 
 """
     update_goal(spec) -> TableMode
@@ -178,22 +179,34 @@ function update_goal(spec::Atom)::TableMode
         # `:- table p(+, min)` was a domain_error for us. `:_` is our spelling of the var clause.
         (n === :index || n === :_ || n === Symbol("+")) && return ModeIndex()
         haskey(UPDATE_ALIAS, n) && return UPDATE_ALIAS[n]
-        throw(ArgumentError("domain_error(tabled_mode, $(n)) — known: index, " *
-                            join(sort(string.(collect(keys(UPDATE_ALIAS)))), ", ")))
+        throw(
+            ArgumentError(
+                "domain_error(tabled_mode, $(n)) — known: index, " *
+                join(sort(string.(collect(keys(UPDATE_ALIAS)))), ", ")
+            )
+        )
     elseif spec isa Expression
         ch = (spec::Expression).children
-        length(ch) == 2 && ch[1] isa Sym && ch[2] isa Sym || throw(ArgumentError(
-            "domain_error(tabled_mode, $(spec)) — expected (lattice NAME) or (po NAME)"))
+        length(ch) == 2 && ch[1] isa Sym && ch[2] isa Sym || throw(
+            ArgumentError(
+                "domain_error(tabled_mode, $(spec)) — expected (lattice NAME) or (po NAME)"
+            )
+        )
         kind, nm = (ch[1]::Sym).name, (ch[2]::Sym).name
         if kind === :lattice
-            haskey(LATTICE_OPS, nm) || throw(ArgumentError(
-                "unknown lattice/3: $(nm) — upstream accepts any Name/3; register it with " *
-                "`register_lattice!(:$(nm), f)` where `f(stored, new) -> Atom`"))
+            haskey(LATTICE_OPS, nm) || throw(
+                ArgumentError(
+                    "unknown lattice/3: $(nm) — upstream accepts any Name/3; register it with " *
+                    "`register_lattice!(:$(nm), f)` where `f(stored, new) -> Atom`")
+            )
             return ModeLattice(nm, LATTICE_OPS[nm])
         elseif kind === :po
-            haskey(PO_OPS, nm) || throw(ArgumentError(
-                "unknown po/2: $(nm) — upstream accepts any Name/2 (and ships none built in); " *
-                "register it with `register_po!(:$(nm), f)` where `f(stored, new) -> Bool`"))
+            haskey(PO_OPS, nm) || throw(
+                ArgumentError(
+                    "unknown po/2: $(nm) — upstream accepts any Name/2 (and ships none built in); " *
+                    "register it with `register_po!(:$(nm), f)` where `f(stored, new) -> Bool`"
+                )
+            )
             return ModePO(nm, PO_OPS[nm])
         end
         throw(ArgumentError("domain_error(tabled_mode, $(spec))"))
@@ -257,9 +270,10 @@ With no moded position this degrades to upstream's ordinary behaviour and to our
 first occurrence wins, `changed` true exactly when a genuinely new key arrived.
 """
 function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
-                       modes::Vector{<:TableMode})::Tuple{Vector{Atom},Bool}
+    modes::Vector{<:TableMode})::Tuple{Vector{Atom}, Bool}
     if !has_aggregation(modes)
-        out = copy(existing); changed = false
+        out = copy(existing)
+        changed = false
         for a in incoming
             # 🔴 VARIANT, NOT STRUCTURAL — FIXED 2026-08-17 (adversarial audit vs the C).
             # Was `any(x -> x == a, out)`. Upstream's duplicate test IS the answer trie:
@@ -286,13 +300,14 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
                 continue
             end
             any(x -> variant_eq(x, a), out) && continue
-            push!(out, a); changed = true
+            push!(out, a)
+            changed = true
         end
         return (out, changed)
     end
 
-    order  = Atom[]                       # keys in first-seen order — answer order must be stable
-    bykey  = Dict{Atom,Atom}()            # key ↦ the current (aggregated) answer
+    order = Atom[]                       # keys in first-seen order — answer order must be stable
+    bykey = Dict{Atom, Atom}()            # key ↦ the current (aggregated) answer
     for a in existing
         k = mode_key(a, modes)
         haskey(bykey, k) || push!(order, k)
@@ -315,20 +330,25 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
         if is_undefined(a)
             bi = findfirst(k -> is_undefined(bykey[k]), order)
             if bi === nothing
-                push!(order, a); bykey[a] = a; changed = true
+                push!(order, a)
+                bykey[a] = a
+                changed = true
             else
                 bk = order[bi]
                 prev = delays_of(bykey[bk])
                 merged = dnf_or(prev, delays_of(a))
                 if length(merged) != length(prev)          # a genuinely NEW derivation
-                    bykey[bk] = undefined_with(merged); changed = true
+                    bykey[bk] = undefined_with(merged)
+                    changed = true
                 end
             end
             continue
         end
         k = mode_key(a, modes)
         if !haskey(bykey, k)
-            push!(order, k); bykey[k] = a; changed = true
+            push!(order, k)
+            bykey[k] = a
+            changed = true
             continue
         end
         cur = bykey[k]
@@ -338,22 +358,29 @@ function merge_answers(existing::Vector{Atom}, incoming::Vector{Atom},
         merged = Atom[cc[1]]
         for i in 2:length(cc)
             mi = i - 1
-            push!(merged, (mi <= length(modes) && is_moded(modes[mi])) ?
-                          update_body(modes[mi], cc[i], ac[i]) : cc[i])
+            push!(
+                merged,
+                if (mi <= length(modes) && is_moded(modes[mi]))
+                    update_body(modes[mi], cc[i], ac[i])
+                else
+                    cc[i]
+                end
+            )
         end
         new = Expression(merged)
         # 🔴 VARIANT AGAIN (same audit). Upstream's `update/7` 0b11 clause succeeds only when
         # `Agg \\=@= Next` (`boot/tabling.pl:752-755`). `!=` reports "changed" on a pure RENAMING of a
         # non-ground aggregated value, so the moded fixpoint never converges either.
         if !variant_eq(new, cur)          # VALUE-based change detection, not cardinality
-            bykey[k] = new; changed = true
+            bykey[k] = new
+            changed = true
         end
     end
     (Atom[bykey[k] for k in order], changed)
 end
 
 # ── declaration surface: head ↦ per-argument modes ───────────────────────────────────────────────
-const _MODE_SPEC = Dict{Symbol,Vector{TableMode}}()
+const _MODE_SPEC = Dict{Symbol, Vector{TableMode}}()
 
 """
     table_mode!(head, specs)

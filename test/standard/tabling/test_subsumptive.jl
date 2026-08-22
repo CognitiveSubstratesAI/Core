@@ -19,10 +19,10 @@ const _SB_Z = Var("z", UInt64(3))
 @testset "SWI §7.5 subsumptive tabling — the lookup mode" begin
 
     @testset "subsumes/2 is ONE-WAY, and a var→var binding does NOT break it" begin
-        @test  _SB.subsumes(_sb_p(_SB_X), _sb_p(Sym(:a)))    # general ⊒ specific
+        @test _SB.subsumes(_sb_p(_SB_X), _sb_p(Sym(:a)))    # general ⊒ specific
         @test !_SB.subsumes(_sb_p(Sym(:a)), _sb_p(_SB_X))    # …and NOT the other way
         @test !_SB.subsumes(_sb_p(Sym(:a)), _sb_p(Sym(:b)))  # unrelated ground terms
-        @test  _SB.subsumes(_sb_p(Sym(:a)), _sb_p(Sym(:a)))  # reflexive
+        @test _SB.subsumes(_sb_p(Sym(:a)), _sb_p(Sym(:a)))  # reflexive
 
         # 🔴 THE CASE THE FIRST IMPLEMENTATION GOT WRONG. `p($x)` and `p($y)` are mutual variants,
         # so each subsumes the other. Testing "did any of the call's variables become BOUND" says
@@ -35,13 +35,15 @@ const _SB_Z = Var("z", UInt64(3))
         # most-general and the stored key is the MORE specific of the two.
         pp(u, v) = Expression(Atom[Sym(:pp), u, v])
         @test !_SB.subsumes(pp(_SB_X, _SB_X), pp(_SB_Y, _SB_Z))
-        @test  _SB.subsumes(pp(_SB_X, _SB_Y), pp(Sym(:a), Sym(:b)))
+        @test _SB.subsumes(pp(_SB_X, _SB_Y), pp(Sym(:a), Sym(:b)))
     end
 
     @testset "more_general_table picks a subsumer, never the exact variant" begin
         _SB.abolish_all_tables!()
         gt = _SB.answer_trie_for(_SB._variant_rename(_sb_p(_SB_X)))
-        for v in (Sym(:a), Sym(:b)); _SB.trie_insert!(gt, _sb_p(v)); end
+        for v in (Sym(:a), Sym(:b))
+            _SB.trie_insert!(gt, _sb_p(v))
+        end
         _SB.set_table_status!(gt, :complete)
 
         g = _SB.more_general_table(_sb_p(Sym(:a)))
@@ -62,11 +64,15 @@ const _SB_Z = Var("z", UInt64(3))
     @testset "subsumptive_answers filters the general table" begin
         _SB.abolish_all_tables!()
         gt = _SB.answer_trie_for(_SB._variant_rename(_sb_p(_SB_X)))
-        for v in (Sym(:a), Sym(:b), Sym(:c)); _SB.trie_insert!(gt, _sb_p(v)); end
+        for v in (Sym(:a), Sym(:b), Sym(:c))
+            _SB.trie_insert!(gt, _sb_p(v))
+        end
         _SB.set_table_status!(gt, :complete)
 
-        @test String[string(a) for a in _SB.subsumptive_answers(_sb_p(Sym(:a)))] == ["(p a)"]
-        @test String[string(a) for a in _SB.subsumptive_answers(_sb_p(Sym(:b)))] == ["(p b)"]
+        @test String[string(a) for a in _SB.subsumptive_answers(_sb_p(Sym(:a)))] ==
+            ["(p a)"]
+        @test String[string(a) for a in _SB.subsumptive_answers(_sb_p(Sym(:b)))] ==
+            ["(p b)"]
         # a call with NO subsuming table ⇒ `nothing` = FALL THROUGH to ordinary tabling, which is a
         # different answer from an empty vector (= general table exists and genuinely has no match).
         @test _SB.subsumptive_answers(Expression(Atom[Sym(:zz), Sym(:a)])) === nothing
@@ -80,12 +86,15 @@ const _SB_Z = Var("z", UInt64(3))
         # UNDER-ANSWER — the worst failure mode available here, because it looks like a valid answer.
         _SB.abolish_all_tables!()
         t = _SB.answer_trie_for(_SB._variant_rename(_sb_p(_SB_X)))
-        for v in (Sym(:a), Sym(:b)); _SB.trie_insert!(t, _sb_p(v)); end
+        for v in (Sym(:a), Sym(:b))
+            _SB.trie_insert!(t, _sb_p(v))
+        end
         @test _SB.table_status(t) == :fresh
         @test _SB.subsumptive_answers(_sb_p(Sym(:a))) === nothing      # fall through, do not use it
 
         _SB.set_table_status!(t, :complete)
-        @test String[string(a) for a in _SB.subsumptive_answers(_sb_p(Sym(:a)))] == ["(p a)"]
+        @test String[string(a) for a in _SB.subsumptive_answers(_sb_p(Sym(:a)))] ==
+            ["(p a)"]
         _SB.abolish_all_tables!()
     end
 
@@ -113,9 +122,11 @@ end
     #
     # CAUSE: it unified the ANSWER against the GOAL. Upstream can — a Prolog answer IS a substitution
     # over the goal skeleton — but `1` never unifies with `(f a)`. The THIRD ASSUMPTION, third time.
-    _SB.untable_all!(); _SB.abolish_all_tables!()
+    _SB.untable_all!()
+    _SB.abolish_all_tables!()
     try
-        s = Space(); load_core_stdlib!(s)
+        s = Space()
+        load_core_stdlib!(s)
         load_metta!(s, raw"(= (f a) 1)" * "\n" * raw"(= (f b) 2)" * "\n")
         _SB.table!(:f)
         load_metta!(s, raw"!(f $z)" * "\n")               # drive the GENERAL variant
@@ -136,7 +147,8 @@ end
         exact = _SB.subsumptive_answers(goal, s)
         @test exact == Atom[Grounded(1)]                   # EXACT, as upstream
     finally
-        _SB.untable_all!(); _SB.abolish_all_tables!()
+        _SB.untable_all!()
+        _SB.abolish_all_tables!()
     end
 end
 
@@ -144,7 +156,8 @@ end
     # The gate must refuse to filter where the instance is meaningless. `e` reduces into itself, so
     # a recorded instance is the goal AT THE POINT THE RULE MATCHED, not the call — the exact
     # reasoning that made the §7.11.1 filter drop answers before it was gated.
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     load_metta!(s, raw"(= (e (f a)) v)" * "\n" * raw"(= (e (f (g $x))) (e (f $x)))" * "\n")
     sr = _SB._self_reaching_heads(_SB.all_atoms(s))
     @test :e in sr                                         # detected as reducing ⇒ filter OFF

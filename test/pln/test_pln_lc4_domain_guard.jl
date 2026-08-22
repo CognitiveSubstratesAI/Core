@@ -25,29 +25,65 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN L-C4 — out-of-domain truth strengths rejected at origin (not clamped)" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_core_logic.metta"), String))
+    load_metta!(
+        sp,
+        read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_core_logic.metta"), String)
+    )
     res(expr) = strip(join(string.(load_metta!(sp, "!$expr")), " | "))
 
     # (0) the guard predicate itself
-    @test res("(valid-strength 0.5)")  == "True"
-    @test res("(valid-strength 3.7)")  == "False"
+    @test res("(valid-strength 0.5)") == "True"
+    @test res("(valid-strength 3.7)") == "False"
     @test res("(valid-strength -0.8)") == "False"    # catches s<0, which the asymmetric (min 1.0 …) clamp misses
 
     # (1) OUT-OF-DOMAIN — must now be REJECTED at origin (was (stv 10.0 …)/(stv 3.667 …)/(stv 6.5 …)/(stv -0.8 …))
-    @test res("(Truth_Abduction (stv 0.5 0.5) (stv 0.1 0.5) (stv 1.0 0.5) (stv 1.0 0.5) (stv 1.0 0.5))") == "(stv 1 0)"  # s=10 (term1 diverges as sB→0)
-    @test res("(Truth_equivalenceToImplication (stv 0.1 0.5) (stv 1.0 0.5) (stv 0.5 0.5))") == "(stv 1 0)"              # s=3.667 (sim2inh factor explodes for small As)
-    @test res("(Truth_Induction (stv 0.1 0.5) (stv 0.5 0.5) (stv 0.1 0.5) (stv 0.9 0.5) (stv 0.9 0.5))") == "(stv 1 0)" # s=6.5
-    @test res("(Truth_Induction (stv 0.9 0.5) (stv 0.5 0.5) (stv 0.0 0.5) (stv 0.1 0.5) (stv 0.9 0.5))") == "(stv 1 0)" # s<0
+    @test res(
+        "(Truth_Abduction (stv 0.5 0.5) (stv 0.1 0.5) (stv 1.0 0.5) (stv 1.0 0.5) (stv 1.0 0.5))"
+    ) == "(stv 1 0)"  # s=10 (term1 diverges as sB→0)
+    @test res(
+        "(Truth_equivalenceToImplication (stv 0.1 0.5) (stv 1.0 0.5) (stv 0.5 0.5))"
+    ) == "(stv 1 0)"              # s=3.667 (sim2inh factor explodes for small As)
+    @test res(
+        "(Truth_Induction (stv 0.1 0.5) (stv 0.5 0.5) (stv 0.1 0.5) (stv 0.9 0.5) (stv 0.9 0.5))"
+    ) == "(stv 1 0)" # s=6.5
+    @test res(
+        "(Truth_Induction (stv 0.9 0.5) (stv 0.5 0.5) (stv 0.0 0.5) (stv 0.1 0.5) (stv 0.9 0.5))"
+    ) == "(stv 1 0)" # s<0
 
     # (2) TransitiveSimilarityStrength — out-of-domain / div-by-zero → PRUNED (empty), no Inf/NaN leak
     @test res("(TransitiveSimilarityStrength 0.1 0.9 0.9 0.9 0.9)") == ""   # >1
     @test res("(TransitiveSimilarityStrength 0.0 0.9 0.9 0.9 0.9)") == ""   # div-by-zero (was Inf/NaN via bare `/`, now /safe-hardened)
-    @test res("(Truth_transitiveSimilarity (stv 0.1 0.5) (stv 0.9 0.5) (stv 0.9 0.5) (stv 0.9 0.5) (stv 0.9 0.5))") == ""
+    @test res(
+        "(Truth_transitiveSimilarity (stv 0.1 0.5) (stv 0.9 0.5) (stv 0.9 0.5) (stv 0.9 0.5) (stv 0.9 0.5))"
+    ) == ""
 
     # (3) VALID inputs PRESERVED — no over-rejection; /safe is a no-op on non-zero denominators
-    @test startswith(res("(Truth_Deduction (stv 0.8 0.9) (stv 0.7 0.85) (stv 0.6 0.8) (stv 0.7 0.9) (stv 0.6 0.85))"), "(stv 0.6")       # deduction untouched
-    @test startswith(res("(Truth_transitiveSimilarity (stv 0.6 0.7) (stv 0.5 0.8) (stv 0.7 0.9) (stv 0.8 0.85) (stv 0.6 0.8))"), "(stv 0.669")  # KEY: /safe no-op → doctest 0.6694 unchanged
-    @test startswith(res("(Truth_equivalenceToImplication (stv 0.8 0.9) (stv 0.6 0.9) (stv 0.5 0.9))"), "(stv 0.583")
-    @test startswith(res("(Truth_Induction (stv 0.8 0.5) (stv 0.5 0.5) (stv 0.6 0.5) (stv 0.5 0.5) (stv 0.5 0.5))"), "(stv 0.63")         # proper stv, NOT (stv 1 0)
-    @test startswith(res("(Truth_Abduction (stv 0.5 0.5) (stv 0.6 0.5) (stv 0.5 0.5) (stv 0.5 0.5) (stv 0.5 0.5))"), "(stv 0.52")        # proper stv, NOT (stv 1 0)
+    @test startswith(
+        res(
+            "(Truth_Deduction (stv 0.8 0.9) (stv 0.7 0.85) (stv 0.6 0.8) (stv 0.7 0.9) (stv 0.6 0.85))"
+        ),
+        "(stv 0.6"
+    )       # deduction untouched
+    @test startswith(
+        res(
+            "(Truth_transitiveSimilarity (stv 0.6 0.7) (stv 0.5 0.8) (stv 0.7 0.9) (stv 0.8 0.85) (stv 0.6 0.8))"
+        ),
+        "(stv 0.669"
+    )  # KEY: /safe no-op → doctest 0.6694 unchanged
+    @test startswith(
+        res("(Truth_equivalenceToImplication (stv 0.8 0.9) (stv 0.6 0.9) (stv 0.5 0.9))"),
+        "(stv 0.583"
+    )
+    @test startswith(
+        res(
+            "(Truth_Induction (stv 0.8 0.5) (stv 0.5 0.5) (stv 0.6 0.5) (stv 0.5 0.5) (stv 0.5 0.5))"
+        ),
+        "(stv 0.63"
+    )         # proper stv, NOT (stv 1 0)
+    @test startswith(
+        res(
+            "(Truth_Abduction (stv 0.5 0.5) (stv 0.6 0.5) (stv 0.5 0.5) (stv 0.5 0.5) (stv 0.5 0.5))"
+        ),
+        "(stv 0.52"
+    )        # proper stv, NOT (stv 1 0)
 end

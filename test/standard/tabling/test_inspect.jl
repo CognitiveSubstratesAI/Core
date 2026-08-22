@@ -18,13 +18,16 @@ _in_g(h::Symbol, a) = Expression(Atom[Sym(h), Grounded(a)])
 @testset "library(tables) — the portable inspection half (§7.12)" begin
 
     @testset "get_call / get_calls / status" begin
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
         k1 = _IN._variant_rename(_in_g(:p, 1))
         k2 = _IN._variant_rename(_in_g(:p, 2))
         k3 = _IN._variant_rename(_in_g(:q, 1))
         for (k, vals) in ((k1, (10, 20)), (k2, (30,)), (k3, (99,)))
             t = _IN.answer_trie_for(k)
-            for v in vals; _IN.trie_insert!(t, Grounded(v)); end
+            for v in vals
+                _IN.trie_insert!(t, Grounded(v))
+            end
         end
         _IN.set_table_status!(_IN.answer_trie_for(k1), :complete)
 
@@ -45,7 +48,9 @@ _in_g(h::Symbol, a) = Expression(Atom[Sym(h), Grounded(a)])
         _IN.abolish_all_tables!()
         k = _IN._variant_rename(_in_g(:p, 1))
         t = _IN.answer_trie_for(k)
-        for v in (10, 20, 30); _IN.trie_insert!(t, Grounded(v)); end
+        for v in (10, 20, 30)
+            _IN.trie_insert!(t, Grounded(v))
+        end
 
         @test String[string(a) for a in _IN.get_returns(t)] == ["10", "20", "30"]   # insertion order
         wn = _IN.get_returns_with_nodes(t)                                          # get_returns/3
@@ -55,7 +60,8 @@ _in_g(h::Symbol, a) = Expression(Atom[Sym(h), Grounded(a)])
         # the node IS the handle: upstream's NodeID exists so a caller can act on one answer.
         @test wn[2][2].answer == Grounded(20)
 
-        @test String[string(a) for a in _IN.get_returns_for_call(_in_g(:p, 1))] == ["10", "20", "30"]
+        @test String[string(a) for a in _IN.get_returns_for_call(_in_g(:p, 1))] ==
+            ["10", "20", "30"]
         @test isempty(_IN.get_returns_for_call(_in_g(:z, 1)))   # no table ⇒ empty, not an error
         _IN.abolish_all_tables!()
     end
@@ -76,7 +82,8 @@ _in_g(h::Symbol, a) = Expression(Atom[Sym(h), Grounded(a)])
         # subgoals and the next call RE-TABLES, while `untable/1` retracts `$tabled`/`$table_mode`
         # and clears the attributes so the predicate stops being tabled. Conflating them makes
         # "clear the cache" silently mean "stop memoising".
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
         _IN.table!(:p)
         k = _IN._variant_rename(_in_g(:p, 1))
         _IN.trie_insert!(_IN.answer_trie_for(k), Grounded(7))
@@ -90,14 +97,19 @@ _in_g(h::Symbol, a) = Expression(Atom[Sym(h), Grounded(a)])
 
         @test _IN.untable!(:p)                                  # …and this one drops the declaration
         @test !(:p in _IN._TABLED_HEADS)
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
     end
 
     @testset "abolish_all_tables! clears every table and keeps every declaration" begin
-        _IN.abolish_all_tables!(); _IN.untable_all!()
-        _IN.table!(:p); _IN.table!(:q)
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
+        _IN.table!(:p)
+        _IN.table!(:q)
         for h in (:p, :q)
-            _IN.trie_insert!(_IN.answer_trie_for(_IN._variant_rename(_in_g(h, 1))), Grounded(1))
+            _IN.trie_insert!(
+                _IN.answer_trie_for(_IN._variant_rename(_in_g(h, 1))), Grounded(1)
+            )
         end
         @test length(_IN._ANSWER_TRIES) == 2
         _IN.abolish_all_tables!()
@@ -115,13 +127,19 @@ end
     # ⚠️ MIRROR, NOT SWITCH. `_ANSWER_TABLE` is still the read path, so this changes no behaviour —
     # it makes the trie OBSERVABLE against the live engine first. Same disable-to-prove order as the
     # resumption flip: agreement before adoption.
-    _IN.untable_all!(); _IN.abolish_all_tables!()
+    _IN.untable_all!()
+    _IN.abolish_all_tables!()
     try
-        s = Space(); load_core_stdlib!(s)
-        load_metta!(s, raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n")
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(
+            s, raw"(= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))" * "\n"
+        )
         _IN.table!(:fib)
-        @test String[string(x) for y in load_metta!(s, "!(fib 8)\n")
-                     for x in (y isa AbstractVector ? y : [y])] == ["21"]
+        @test String[
+            string(x) for y in load_metta!(s, "!(fib 8)\n")
+            for x in (y isa AbstractVector ? y : [y])
+        ] == ["21"]
 
         # ANTI-VACUITY: a run that tabled nothing would make every assertion below trivially true.
         calls = _IN.get_calls(:fib)
@@ -132,17 +150,18 @@ end
         for (k, t, st) in calls
             @test st == :complete                    # completion marks status, which §7.5 requires
             @test sort(String[string(a) for a in get(_IN._ANSWER_TABLE, k, Atom[])]) ==
-                  sort(String[string(a) for a in _IN.get_returns(t)])
+                sort(String[string(a) for a in _IN.get_returns(t)])
         end
 
         # and the inspection API reaches a REAL table, not a hand-built one
         goal = _IN._reduced_goal(_IN.parse_from(_IN.tokenize("(fib 8)"), Ref(1), s.tokens),
-                                 s, _IN.Bindings())
+            s, _IN.Bindings())
         c = _IN.get_call(goal)
         @test c !== nothing && c[3] == :complete
         @test String[string(a) for a in _IN.get_returns(c[2])] == ["21"]
     finally
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
     end
 end
 
@@ -179,7 +198,8 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
         #
         # ⚠️ AND THE CASE IS REACHABLE, not hypothetical: `_wfs_bottom_for` yields an EMPTY DNF
         # whenever no optimistic answer carried a delay and no negative dependency was recorded.
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
         k = _IN._variant_rename(_in_h(:bare))
         t = _IN.answer_trie_for(k)
         @test _IN.trie_insert!(t, _IN.UNDEFINED)
@@ -192,9 +212,11 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
 
         # the trichotomy itself (`unify_delay_info`, pl-tabling.c:5342-5375)
         @test _IN.answer_condition(_IN.UNDEFINED) === _IN.COND_UNDEFINED
-        @test _IN.answer_condition(Grounded(42))   === _IN.COND_TRUE
-        @test _IN.answer_condition(_IN.undefined_with(
-                  _IN.DelayDNF([_IN.DelaySet([_IN.delay_negative(Sym(:q))])]))) isa _IN.DelayDNF
+        @test _IN.answer_condition(Grounded(42)) === _IN.COND_TRUE
+        @test _IN.answer_condition(
+            _IN.undefined_with(
+                _IN.DelayDNF([_IN.DelaySet([_IN.delay_negative(Sym(:q))])]))
+        ) isa _IN.DelayDNF
         @test _IN.answer_is_conditional(_IN.UNDEFINED)              # `u`, per :764-770
         @test !_IN.answer_is_conditional(Grounded(42))
 
@@ -211,7 +233,8 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
         @test length(rs) == 1
         @test rs[1][1] == _IN.UNDEFINED
         @test String[string(x) for x in rs[1][2]] == ["undefined"]
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
     end
 
     @testset "🔴🔴 A MIXED table from REAL evaluation — exactly one `t` and one `u`" begin
@@ -220,14 +243,23 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
         # UNCONDITIONAL clause (`1`) and a clause routed through the canonical paradox, so its ONE
         # table holds one answer of each truth value. An implementation that reports a single tv for
         # the whole table, or that classifies by the table rather than the answer, fails here.
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
         try
-            s = Space(); load_core_stdlib!(s)
-            load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
-                           raw"(= (r) 1)" * "\n" * raw"(= (r) (p))" * "\n")
-            for h in (:p, :q, :r); _IN.table!(h); end
-            vals = Atom[x for y in load_metta!(s, "!(r)\n")
-                        for x in (y isa AbstractVector ? y : [y])]
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(
+                s,
+                raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
+                raw"(= (r) 1)" * "\n" * raw"(= (r) (p))" * "\n"
+            )
+            for h in (:p, :q, :r)
+                _IN.table!(h)
+            end
+            vals = Atom[
+                x for y in load_metta!(s, "!(r)\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
             @test length(vals) == 2                              # ANTI-VACUITY: both clauses fired
             @test count(_IN.is_undefined, vals) == 1
 
@@ -254,7 +286,8 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
             @test isempty(rs[1][2]) && string(rs[1][1]) == "1"
             @test !isempty(rs[2][2])
         finally
-            _IN.abolish_all_tables!(); _IN.untable_all!()
+            _IN.abolish_all_tables!()
+            _IN.untable_all!()
         end
     end
 
@@ -265,10 +298,13 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
         # `condition_delay_lists/3` (:232-235) succeeds ONCE with a list of both. Upstream's own doc
         # on `get_returns_and_tvs/3` leans on the same fact — it "will succeed only once" for a
         # multi-delay-list answer, which is why it is cheaper than `get_residual/2`.
-        _IN.abolish_all_tables!(); _IN.untable_all!()
-        two = _IN.undefined_with(_IN.dnf_or(
-                  _IN.DelayDNF([_IN.DelaySet([_IN.delay_negative(Sym(:q))])]),
-                  _IN.DelayDNF([_IN.DelaySet([_IN.delay_negative(Sym(:v))])])))
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
+        two = _IN.undefined_with(
+            _IN.dnf_or(
+                _IN.DelayDNF([_IN.DelaySet([_IN.delay_negative(Sym(:q))])]),
+                _IN.DelayDNF([_IN.DelaySet([_IN.delay_negative(Sym(:v))])]))
+        )
         @test length(_IN.delays_of(two)) == 2          # ANTI-VACUITY: it really has two disjuncts
 
         k = _IN._variant_rename(_in_h(:disj))
@@ -292,11 +328,12 @@ _in_strs(dls) = [String[string(x) for x in conj] for conj in dls]
         # over it; ours is an unrelated VALUE. Nothing about `undefined` is recoverable from `(disj)`,
         # so dropping the first tuple slot would report WHICH conditions the table holds while losing
         # which answer each belongs to.
-        @test eltype(rs) == Tuple{Atom,Vector{Atom}}
+        @test eltype(rs) == Tuple{Atom, Vector{Atom}}
         @test !isempty(String[string(r[1]) for r in rs])
 
         @test isempty(_IN.get_residual(_in_h(:nosuchtable)))       # no table ⇒ no solutions
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
     end
 end
 
@@ -316,15 +353,22 @@ end
     # than being a test that cannot run (`[[feedback_verify_the_oracle_runs]]`).
     _had_tok = get(_IN.TOKEN_REGISTRY, "get-residual", nothing)
     _had_typ = get(_IN._GROUNDED_OP_TYPES, _IN.GET_RESIDUAL, nothing)
-    _IN.abolish_all_tables!(); _IN.untable_all!()
+    _IN.abolish_all_tables!()
+    _IN.untable_all!()
     try
         _IN.TOKEN_REGISTRY["get-residual"] = _IN.GET_RESIDUAL
         _IN._GROUNDED_OP_TYPES[_IN.GET_RESIDUAL] = "(-> Atom Atom)"
 
-        s = Space(); load_core_stdlib!(s)
-        load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
-                       raw"(= (r) 1)" * "\n" * raw"(= (r) (p))" * "\n")
-        for h in (:p, :q, :r); _IN.table!(h); end
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(
+            s,
+            raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
+            raw"(= (r) 1)" * "\n" * raw"(= (r) (p))" * "\n"
+        )
+        for h in (:p, :q, :r)
+            _IN.table!(h)
+        end
         _flat(o) = Atom[x for y in o for x in (y isa AbstractVector ? y : [y])]
 
         @test length(_flat(load_metta!(s, "!(r)\n"))) == 2        # ANTI-VACUITY: the table is real
@@ -336,15 +380,25 @@ end
 
         # 🔴 THE CONTROL, and it is the whole reason for the goal-taking shape: the SAME ⊥ passed as
         # an ARGUMENT never reaches the operation — `not` is entered for no value at all.
-        @test String[string(v) for v in _flat(load_metta!(s, "!(not (p))\n"))] == ["undefined"]
+        @test String[string(v) for v in _flat(load_metta!(s, "!(not (p))\n"))] ==
+            ["undefined"]
 
         # a goal with no table yields nothing — upstream's `trie_gen` fails; `Empty` is MeTTa's form
-        @test isempty(String[string(v) for v in _flat(load_metta!(s, "!(get-residual (nosuch))\n"))])
+        @test isempty(
+            String[string(v) for v in _flat(load_metta!(s, "!(get-residual (nosuch))\n"))]
+        )
     finally
-        _had_tok === nothing ? delete!(_IN.TOKEN_REGISTRY, "get-residual") :
-                               (_IN.TOKEN_REGISTRY["get-residual"] = _had_tok)
-        _had_typ === nothing ? delete!(_IN._GROUNDED_OP_TYPES, _IN.GET_RESIDUAL) :
-                               (_IN._GROUNDED_OP_TYPES[_IN.GET_RESIDUAL] = _had_typ)
-        _IN.abolish_all_tables!(); _IN.untable_all!()
+        if _had_tok === nothing
+            delete!(_IN.TOKEN_REGISTRY, "get-residual")
+        else
+            (_IN.TOKEN_REGISTRY["get-residual"] = _had_tok)
+        end
+        if _had_typ === nothing
+            delete!(_IN._GROUNDED_OP_TYPES, _IN.GET_RESIDUAL)
+        else
+            (_IN._GROUNDED_OP_TYPES[_IN.GET_RESIDUAL] = _had_typ)
+        end
+        _IN.abolish_all_tables!()
+        _IN.untable_all!()
     end
 end

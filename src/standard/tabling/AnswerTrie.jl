@@ -45,21 +45,29 @@ A closed set: symbols, grounded payloads, expressions (by arity) and variables (
 index). Variable keying by index, not name, is what makes two variants of an answer land on one
 node — upstream's `vars` argument to `trie_lookup` (`pl-trie.h:229`)."""
 abstract type TrieKey end
-struct SymKey    <: TrieKey; name::Symbol; end
-struct ExprKey   <: TrieKey; arity::Int;   end
-struct VarKey    <: TrieKey; idx::Int;     end
-struct GroundKey{T} <: TrieKey; v::T;      end
+struct SymKey <: TrieKey
+    name::Symbol
+end
+struct ExprKey <: TrieKey
+    arity::Int
+end
+struct VarKey <: TrieKey
+    idx::Int
+end
+struct GroundKey{T} <: TrieKey
+    v::T
+end
 
-Base.hash(k::SymKey,  h::UInt) = hash(k.name, hash(:sym, h))
+Base.hash(k::SymKey, h::UInt) = hash(k.name, hash(:sym, h))
 Base.hash(k::ExprKey, h::UInt) = hash(k.arity, hash(:expr, h))
-Base.hash(k::VarKey,  h::UInt) = hash(k.idx, hash(:var, h))
+Base.hash(k::VarKey, h::UInt) = hash(k.idx, hash(:var, h))
 # ⚠️ TYPE IS PART OF THE KEY. `1 == 1.0` in Julia, so a value-only comparison would conflate the
 # integer and float answers — and upstream keeps them DISTINCT (standard order sorts float before
 # int on equal value, pl-prims.c:1777). Hash and equality both carry the type.
 Base.hash(k::GroundKey{T}, h::UInt) where {T} = hash(k.v, hash(T, hash(:gnd, h)))
-Base.:(==)(a::SymKey,  b::SymKey)  = a.name  == b.name
+Base.:(==)(a::SymKey, b::SymKey) = a.name == b.name
 Base.:(==)(a::ExprKey, b::ExprKey) = a.arity == b.arity
-Base.:(==)(a::VarKey,  b::VarKey)  = a.idx   == b.idx
+Base.:(==)(a::VarKey, b::VarKey) = a.idx == b.idx
 Base.:(==)(a::GroundKey{T}, b::GroundKey{T}) where {T} = a.v == b.v
 Base.:(==)(::GroundKey, ::GroundKey) = false          # different payload TYPES are different keys
 Base.:(==)(::TrieKey, ::TrieKey) = false          # different key kinds never collide
@@ -70,8 +78,8 @@ Base.:(==)(::TrieKey, ::TrieKey) = false          # different key kinds never co
 marking a node with `ATOM_trienode` (`pl-tabling.c:3668`). An interior node on the path to a longer
 answer is NOT itself an answer, which is why the flag is a field and not "has no children"."""
 mutable struct TrieNode
-    children::Dict{TrieKey,TrieNode}
-    answer::Union{Atom,Nothing}
+    children::Dict{TrieKey, TrieNode}
+    answer::Union{Atom, Nothing}
     seq::Int                      # insertion order; 0 until this node terminates an answer
     # ── PER-ANSWER METADATA (roadmap 7.A, added 2026-08-17) ──────────────────────────────────────
     # 🔑 THE NODE IS THE ONLY PLACE THIS CAN LIVE, and that is upstream's design, not a convenience.
@@ -87,7 +95,7 @@ mutable struct TrieNode
     #   delays    -> WFS residuation and §7.11.2 `answer_abstract`
     instances::Vector{Atom}       # goal instances that PRODUCED this answer; empty = unrecorded
 end
-TrieNode() = TrieNode(Dict{TrieKey,TrieNode}(), nothing, 0, Atom[])
+TrieNode() = TrieNode(Dict{TrieKey, TrieNode}(), nothing, 0, Atom[])
 
 """The answer table for ONE tabled goal.
 
@@ -119,8 +127,11 @@ const TABLE_STATUSES = (:fresh, :active, :complete, :invalid, :dynamic)
 "`\$tbl_table_status` — the table's status atom."
 table_status(t::AnswerTrie)::Symbol = t.status
 function set_table_status!(t::AnswerTrie, s::Symbol)
-    s in TABLE_STATUSES || throw(ArgumentError(
-        "unknown table status $(s) — upstream's set is $(TABLE_STATUSES) (pl-tabling.c:3208-3239)"))
+    s in TABLE_STATUSES || throw(
+        ArgumentError(
+            "unknown table status $(s) — upstream's set is $(TABLE_STATUSES) (pl-tabling.c:3208-3239)"
+        )
+    )
     t.status = s
     t
 end
@@ -139,7 +150,7 @@ lets the trie decide duplicate-ness without a separate rename pass.
 """
 function trie_keys(a::Atom)::Vector{TrieKey}
     out = TrieKey[]
-    _trie_walk!(out, Dict{Var,Int}(), a)
+    _trie_walk!(out, Dict{Var, Int}(), a)
     out
 end
 
@@ -147,7 +158,7 @@ end
 # inside `trie_keys`, which JET reported as "captured variable `walk` detected" plus a runtime
 # dispatch: a SELF-RECURSIVE inner closure is boxed (`Core.Box`) because the name is assigned in the
 # same scope it is called from, so Julia cannot infer it. Hoisting it costs nothing and removes both.
-function _trie_walk!(out::Vector{TrieKey}, seen::Dict{Var,Int}, x::Atom)
+function _trie_walk!(out::Vector{TrieKey}, seen::Dict{Var, Int}, x::Atom)
     if x isa Var
         push!(out, VarKey(get!(seen, x, length(seen) + 1)))
     elseif x isa Sym
@@ -155,7 +166,9 @@ function _trie_walk!(out::Vector{TrieKey}, seen::Dict{Var,Int}, x::Atom)
     elseif x isa Expression
         ch = (x::Expression).children
         push!(out, ExprKey(length(ch)))
-        for c in ch; _trie_walk!(out, seen, c); end
+        for c in ch
+            _trie_walk!(out, seen, c)
+        end
     elseif x isa Grounded
         push!(out, GroundKey((x::Grounded).value))
     else
@@ -176,7 +189,7 @@ answer (`pl-tabling.c:3613 trie_delete`).
 """
 # ⚠️ `add` is POSITIONAL, not a keyword. As `; add::Bool=false` it compiled to a `Core.kwcall`, which
 # JET reported as a runtime dispatch at EVERY call site (trie_insert!, trie_contains, trie_delete!).
-function trie_lookup!(t::AnswerTrie, a::Atom, add::Bool=false)::Union{TrieNode,Nothing}
+function trie_lookup!(t::AnswerTrie, a::Atom, add::Bool=false)::Union{TrieNode, Nothing}
     node = t.root
     for k in trie_keys(a)
         nxt = get(node.children, k, nothing)
@@ -201,7 +214,8 @@ function trie_insert!(t::AnswerTrie, a::Atom)::Bool
     node = trie_lookup!(t, a, true)::TrieNode
     node.answer === nothing || return false          # already an answer ⇒ duplicate
     node.answer = a
-    t.inserts += 1; node.seq = t.inserts             # stamp AT INSERT — see `trie_answers`
+    t.inserts += 1
+    node.seq = t.inserts             # stamp AT INSERT — see `trie_answers`
     t.count += 1
     true
 end
@@ -243,7 +257,7 @@ end
 
 "Is `a` already stored? Structural, so variants of a stored answer count as present."
 trie_contains(t::AnswerTrie, a::Atom)::Bool =
-    (n = trie_lookup!(t, a, false); n !== nothing && n.answer !== nothing)
+    (n=trie_lookup!(t, a, false); n !== nothing && n.answer !== nothing)
 
 """
     trie_delete!(t, a) -> Bool
@@ -270,19 +284,21 @@ measured not to DEPEND on answer order, it is user-visible, so changing it must 
 than a side effect of the data structure.
 """
 function trie_answers(t::AnswerTrie)::Vector{Atom}
-    out = Tuple{Int,Atom}[]
+    out = Tuple{Int, Atom}[]
     stack = TrieNode[t.root]
     while !isempty(stack)
         n = pop!(stack)
         n.answer === nothing || push!(out, (n.seq, n.answer::Atom))
-        for (_, c) in n.children; push!(stack, c); end
+        for (_, c) in n.children
+            push!(stack, c)
+        end
     end
-    sort!(out; by = first)        # by the stamp taken AT INSERT, not by traversal position
+    sort!(out; by=first)        # by the stamp taken AT INSERT, not by traversal position
     Atom[a for (_, a) in out]
 end
 
 # ── the per-table registry ───────────────────────────────────────────────────────────────────────
-const _ANSWER_TRIES = Dict{Atom,AnswerTrie}()
+const _ANSWER_TRIES = Dict{Atom, AnswerTrie}()
 answer_trie_for(key::Atom)::AnswerTrie = get!(() -> AnswerTrie(), _ANSWER_TRIES, key)
 has_answer_trie(key::Atom)::Bool = haskey(_ANSWER_TRIES, key)
 "Drop one table's trie — called by `abolish_table_subgoals!` so it dies with its table."
@@ -356,12 +372,14 @@ behaves exactly as no declaration.
 """
 function trie_insert_moded!(t::AnswerTrie, a::Atom, modes::Vector{<:TableMode})
     has_aggregation(modes) || return (trie_insert!(t, a), :new)
-    key  = mode_key(a, modes)
+    key = mode_key(a, modes)
     node = trie_lookup!(t, key, true)::TrieNode
-    cur  = node.answer
+    cur = node.answer
     if cur === nothing                                  # first answer for this key
         node.answer = a
-        t.inserts += 1; node.seq = t.inserts; t.count += 1
+        t.inserts += 1
+        node.seq = t.inserts
+        t.count += 1
         return (true, :new)
     end
     (cur isa Expression && a isa Expression) || return (false, :unchanged)
@@ -370,8 +388,14 @@ function trie_insert_moded!(t::AnswerTrie, a::Atom, modes::Vector{<:TableMode})
     merged = Atom[cc[1]]
     for i in 2:length(cc)
         mi = i - 1
-        push!(merged, (mi <= length(modes) && is_moded(modes[mi])) ?
-                      update_body(modes[mi], cc[i], ac[i]) : cc[i])
+        push!(
+            merged,
+            if (mi <= length(modes) && is_moded(modes[mi]))
+                update_body(modes[mi], cc[i], ac[i])
+            else
+                cc[i]
+            end
+        )
     end
     new = Expression(merged)
     variant_eq(new, cur) && return (false, :unchanged)   # `Agg \=@= Next` failed ⇒ no change
@@ -417,12 +441,18 @@ function trie_insert_restrained!(t::AnswerTrie, head::Symbol, a::Atom)
     act = tripwire_answers_for_subgoal(head, t.count)
     if act === nothing
         node.answer = a
-        t.inserts += 1; node.seq = t.inserts; t.count += 1
+        t.inserts += 1
+        node.seq = t.inserts
+        t.count += 1
         return (true, nothing)
     elseif act == TW_WARNING                          # `goto add_anyway` (:3660)
-        @warn "tabling: max_answers exceeded for $(head) — answer added anyway" bound=max_answers(head)
+        @warn "tabling: max_answers exceeded for $(head) — answer added anyway" bound=max_answers(
+            head
+        )
         node.answer = a
-        t.inserts += 1; node.seq = t.inserts; t.count += 1
+        t.inserts += 1
+        node.seq = t.inserts
+        t.count += 1
         return (true, act)
     elseif act == TW_FAIL
         return (false, act)                           # `trie_delete` + false (:3662)
@@ -520,7 +550,7 @@ conditions would collide systematically. Recursion through `_delay_digest` termi
 `DelayDNF` names other tables' variants and answers, which are finite terms and never contain the
 bottom currently being digested.
 """
-function answer_digest(a::Atom, h::UInt = _ANSWER_DIGEST_SEED)::UInt
+function answer_digest(a::Atom, h::UInt=_ANSWER_DIGEST_SEED)::UInt
     for k in trie_keys(a)
         h = _key_digest(k, h)
     end
@@ -541,7 +571,9 @@ no `==` to fall through to when it collides."""
 function _dnf_digest(dnf::DelayDNF, h::UInt)::UInt
     ds = UInt[_delayset_digest(s) for s in dnf]
     sort!(ds)
-    for d in ds; h = hash(d, h); end
+    for d in ds
+        h = hash(d, h)
+    end
     hash(length(ds), h)
 end
 
@@ -550,7 +582,9 @@ function _delayset_digest(s::DelaySet)::UInt
     ds = UInt[_delay_digest(d) for d in s]
     sort!(ds)
     h = hash(:delayset, _ANSWER_DIGEST_SEED)
-    for d in ds; h = hash(d, h); end
+    for d in ds
+        h = hash(d, h)
+    end
     hash(length(ds), h)
 end
 
@@ -573,7 +607,9 @@ and its dependants must not be re-validated.
 """
 function table_digest(answers::Vector{Atom})::UInt
     h = hash(:answers_only, _ANSWER_DIGEST_SEED)
-    for a in answers; h = answer_digest(a, h); end
+    for a in answers
+        h = answer_digest(a, h)
+    end
     hash(length(answers), h)
 end
 
@@ -606,14 +642,16 @@ Separate from `trie_answers` rather than a refactor of it: that function is on t
 returns `Vector{Atom}`; this one is called once per re-evaluation and needs the metadata that lives
 on the node."""
 function _answer_nodes_ordered(t::AnswerTrie)::Vector{TrieNode}
-    out = Tuple{Int,TrieNode}[]
+    out = Tuple{Int, TrieNode}[]
     stack = TrieNode[t.root]
     while !isempty(stack)
         n = pop!(stack)
         n.answer === nothing || push!(out, (n.seq, n))
-        for (_, c) in n.children; push!(stack, c); end
+        for (_, c) in n.children
+            push!(stack, c)
+        end
     end
-    sort!(out; by = first)
+    sort!(out; by=first)
     TrieNode[n for (_, n) in out]
 end
 

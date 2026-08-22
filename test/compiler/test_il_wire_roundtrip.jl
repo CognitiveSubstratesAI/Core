@@ -37,10 +37,12 @@ const _WR_IL = MeTTaCore.CompilerEmitIL
 # minimal-MeTTa keywords (`chain`, `return`). A reader resolves a bare word through TOKEN_REGISTRY, so
 # if a plain symbol can be spelled the same way as an operator the wire form is ambiguous — and the
 # emitter does emit user symbols verbatim. Generating them is how that gets measured instead of assumed.
-const _WR_SYMS = String["foo", "Bar", "f", "a", "+", "if", "chain", "return", "Nil", "empty-thing"]
+const _WR_SYMS = String[
+    "foo", "Bar", "f", "a", "+", "if", "chain", "return", "Nil", "empty-thing"
+]
 const _WR_VARS = String["x", "y", "acc", "_ignored"]
 const _WR_STRS = String["", "abc", "with space", "has\"quote", "(parens)", "42",
-                        "back\\slash", "both\"\\mixed", "new\nline", "tab\there", "\U1F600"]
+    "back\\slash", "both\"\\mixed", "new\nline", "tab\there", "\U1F600"]
 
 "Generate a random atom drawn only from kinds the emitter can put on the wire."
 function _wr_gen(rng::Random.AbstractRNG, depth::Int)::_WR_SM.Atom
@@ -51,7 +53,7 @@ function _wr_gen(rng::Random.AbstractRNG, depth::Int)::_WR_SM.Atom
         k == 2 && return _WR_SM.Var(rand(rng, _WR_VARS))
         k == 3 && return _WR_SM.Grounded(rand(rng, -1000:1000))
         k == 4 && return _WR_SM.Grounded(rand(rng, _WR_STRS))
-        k == 5 && return _WR_SM.Grounded(round(rand(rng) * 200 - 100; digits = 3))
+        k == 5 && return _WR_SM.Grounded(round(rand(rng) * 200 - 100; digits=3))
         return _WR_SM.Grounded(rand(rng, Bool))
     end
     n = rand(rng, 0:3)
@@ -60,8 +62,10 @@ end
 
 "Read wire text back the way a consumer would: a fresh space, stdlib loaded, no `bind!` tokens."
 function _wr_parse(text::AbstractString)::Union{_WR_SM.Atom, Nothing}
-    sp = _WR_V.Space(); _WR_V.load_core_stdlib!(sp)
-    toks = _WR_V.tokenize(String(text)); i = Ref(1)
+    sp = _WR_V.Space()
+    _WR_V.load_core_stdlib!(sp)
+    toks = _WR_V.tokenize(String(text))
+    i = Ref(1)
     isempty(toks) && return nothing
     a = _WR_V.parse_from(toks, i, sp.tokens)
     i[] <= length(toks) && return nothing      # trailing tokens: the text did not denote ONE atom
@@ -92,7 +96,7 @@ const _WR_KNOWN = Dict{String, String}(
         "`Grounded{Operation}` on read, because `parse_atom` consults TOKEN_REGISTRY for every bare " *
         "word. INHERENT to an untagged text format — `dev-zone/jetta` avoids it structurally by " *
         "writing TAG_SYMBOL vs a grounded tag (`runtime/space/SAtomSerializer.kt`). Not fixable " *
-        "without tagging the wire form or escaping operator-shaped symbols.",
+        "without tagging the wire form or escaping operator-shaped symbols."
 )
 
 @testset "MeTTa-IL wire form — parse(il_text(a)) == a over generated atoms" begin
@@ -103,7 +107,11 @@ const _WR_KNOWN = Dict{String, String}(
         a = _wr_gen(rng, 3)
         total += 1
         txt = _WR_IL.il_text(a)
-        back = try _wr_parse(txt) catch e; nothing end
+        back = try
+            _wr_parse(txt)
+        catch e
+            nothing
+        end
         back == a && continue
         cls = if back === nothing
             "unparseable"
@@ -121,11 +129,12 @@ const _WR_KNOWN = Dict{String, String}(
     # An Expression fails whenever any LEAF inside it does, so it reports as its own class and tells
     # us nothing new. Attribute it away: an expression loss is only a finding if some leaf class is
     # not already known — otherwise it is the same defect seen through a container.
-    haskey(failures, "structure changed: Expression") && !isempty(intersect(keys(failures), keys(_WR_KNOWN))) &&
+    haskey(failures, "structure changed: Expression") &&
+        !isempty(intersect(keys(failures), keys(_WR_KNOWN))) &&
         delete!(failures, "structure changed: Expression")
 
     println("\n  ── wire round-trip over $total generated atoms ──")
-    for (cls, examples) in sort(collect(failures); by = first)
+    for (cls, examples) in sort(collect(failures); by=first)
         known = haskey(_WR_KNOWN, cls)
         println("     $(known ? "•" : "✗") $cls$(known ? "  [known]" : "  ← NEW")")
         for (txt, back) in examples
@@ -154,7 +163,8 @@ end
     # things it let through. ONE IS NOW CLOSED, and not by tightening the guard: strings containing `"`
     # or `\\` were lost on the WRITE side only, so escaping both producers fixed it and the guard's
     # permissive `v isa AbstractString` became correct rather than wrong. The other remains.
-    sp = _WR_V.Space(); _WR_V.load_core_stdlib!(sp)
+    sp = _WR_V.Space()
+    _WR_V.load_core_stdlib!(sp)
     # `CompileLane.jl` is `include`d straight into `MeTTaCore` (MeTTaCore.jl:164), not a submodule —
     # unlike `CompilerEmitIL`. Guessing the qualified name is what produced two false "DECLINED"
     # diagnoses earlier in this session, so it is resolved from the include site.
@@ -189,8 +199,8 @@ end
     # because the first probe written for it assumed the unbraced form and would have "verified" a
     # format upstream does not accept.
     for (src, want) in (("\"a\\\"b\"", "a\"b"), ("\"a\\\\b\"", "a\\b"),
-                        ("\"a\\nb\"", "a\nb"), ("\"a\\tb\"", "a\tb"), ("\"a\\rb\"", "a\rb"),
-                        ("\"\\x41\"", "A"), ("\"\\u{1F600}\"", "\U1F600"))
+        ("\"a\\nb\"", "a\nb"), ("\"a\\tb\"", "a\tb"), ("\"a\\rb\"", "a\rb"),
+        ("\"\\x41\"", "A"), ("\"\\u{1F600}\"", "\U1F600"))
         got = _wr_parse(src)
         @test got isa _WR_SM.Grounded && String((got::_WR_SM.Grounded).value) == want
     end

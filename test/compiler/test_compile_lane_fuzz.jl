@@ -63,16 +63,16 @@ programs rather than adding more hand-written cases:
 
 None of these was reachable from the 26-script corpus or from any hand-written differential."""
 const _FZ_KNOWN = Dict{Int, String}(
-    1  => "compiled answers where interpreter does not — attribution unresolved, interpreter may be wrong",
-    6  => "compiled lane exhausts budget on recursive+base multi-clause; interpreter terminates",
-    26 => "multiplicity: interpreter yields a duplicate answer, compiled lane deduplicates",
+    1 => "compiled answers where interpreter does not — attribution unresolved, interpreter may be wrong",
+    6 => "compiled lane exhausts budget on recursive+base multi-clause; interpreter terminates",
+    26 => "multiplicity: interpreter yields a duplicate answer, compiled lane deduplicates"
 )
 
 "Steps a generated program may spend per lane — same reasoning as the corpus differential's budget."
 const _FZ_MAX_STEPS = 4_000
 
 const _FZ_SYMS = ["a", "b", "c", "d"]
-const _FZ_FNS  = ["f", "g", "h"]
+const _FZ_FNS = ["f", "g", "h"]
 
 "A body expression, `depth` bounding nesting so programs stay small and fast."
 function _fz_body(rng::AbstractRNG, depth::Int, vars::Vector{String})
@@ -91,9 +91,10 @@ function _fz_body(rng::AbstractRNG, depth::Int, vars::Vector{String})
         v = "\$v$(depth)"
         return "(let $v $(_fz_body(rng, depth - 1, vars)) $(_fz_body(rng, depth - 1, [vars; v])))"
     elseif k == 6                                    # let with a DESTRUCTURING pattern
-        v1 = "\$p$(depth)"; v2 = "\$q$(depth)"
+        v1 = "\$p$(depth)"
+        v2 = "\$q$(depth)"
         return "(let ($v1 $v2) ($(rand(rng, _FZ_SYMS)) $(rand(rng, _FZ_SYMS))) " *
-               "$(_fz_body(rng, depth - 1, [vars; v1; v2]))"  * ")"
+               "$(_fz_body(rng, depth - 1, [vars; v1; v2]))" * ")"
     else                                             # superpose — nondeterminism
         return "(superpose ($(rand(rng, _FZ_SYMS)) $(rand(rng, _FZ_SYMS))))"
     end
@@ -133,13 +134,25 @@ function _fz_interp(program::AbstractString)
     prev = _FZ_V._INTERPRET_MAX[]
     _FZ_V.interpret_max_steps!(_FZ_MAX_STEPS)
     try
-        sp = _FZ_V.Space(); _FZ_V.load_core_stdlib!(sp)
+        sp = _FZ_V.Space()
+        _FZ_V.load_core_stdlib!(sp)
         out = Tuple{String, Vector{String}}[]
         for (bang, f) in MeTTaCore.mm2_split_forms(program)
-            rs = try _FZ_V.load_metta!(sp, bang ? "!" * f : f) catch; return nothing end
-            bang && push!(out, (String(strip(f)),
-                                sort(String[string(x) for y in rs
-                                            for x in (y isa AbstractVector ? y : [y])])))
+            rs = try
+                _FZ_V.load_metta!(sp, bang ? "!" * f : f)
+            catch
+                return nothing
+            end
+            bang && push!(
+                out,
+                (String(strip(f)),
+                    sort(
+                        String[
+                            string(x) for y in rs
+                            for x in (y isa AbstractVector ? y : [y])
+                        ]
+                    ))
+            )
         end
         return out
     finally
@@ -168,9 +181,11 @@ end
 
 @testset "compile lane — GENERATED programs (the corpus is only 26 scripts)" begin
     seeds = 1:_FZ_SEEDS
-    _FZ_SEEDS == 40 || @warn "fuzz range REDUCED — not a full-coverage run" seeds=_FZ_SEEDS default=40
+    _FZ_SEEDS == 40 ||
+        @warn "fuzz range REDUCED — not a full-coverage run" seeds=_FZ_SEEDS default=40
     diverged = Tuple{Int, String}[]
-    ran = 0; compiled_total = 0
+    ran = 0
+    compiled_total = 0
 
     for seed in seeds
         prog = _fz_program(seed)
@@ -180,7 +195,7 @@ end
         # and counted, so a generator that produces nothing runnable cannot look like success.
         want === nothing && continue
         got = try
-            r = MeTTaCore.compile_run(prog; max_steps = _FZ_MAX_STEPS)
+            r = MeTTaCore.compile_run(prog; max_steps=_FZ_MAX_STEPS)
             compiled_total += r.compiled
             [(q, sort(a)) for (q, a) in r.answers]
         catch e
@@ -194,7 +209,9 @@ end
     end
 
     for (seed, why) in first(diverged, 5)
-        @info "FUZZ DIVERGENCE — reproduce with `_fz_program($seed)`" seed why program=_fz_program(seed)
+        @info "FUZZ DIVERGENCE — reproduce with `_fz_program($seed)`" seed why program=_fz_program(
+            seed
+        )
     end
     @test isempty(diverged)
 

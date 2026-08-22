@@ -22,19 +22,27 @@ using MeTTaCore.StandardMeTTa
 @testset "PLN demand sweep — DAG max-join (§4.4): dedup + max-over-paths" begin
     sp = Space()
     load_core_stdlib!(sp)
-    load_metta!(sp, read(joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String))
+    load_metta!(
+        sp,
+        read(
+            joinpath(@__DIR__, "..", "..", "lib", "pln", "pln_factor_graph.metta"), String
+        )
+    )
 
-    load_metta!(sp, """
-    (message S (stv 0.9 0.5))
-    (message X (stv 0.8 0.9))
-    (message Y (stv 0.7 0.3))
-    (factor f1 hmp (premises S X) (conclusion P))
-    (factor f2 hmp (premises S Y) (conclusion Q))
-    (factor f0 hmp (premises P Q) (conclusion C))
-    (produces P f1)
-    (produces Q f2)
-    (produces C f0)
-    """)
+    load_metta!(
+        sp,
+        """
+(message S (stv 0.9 0.5))
+(message X (stv 0.8 0.9))
+(message Y (stv 0.7 0.3))
+(factor f1 hmp (premises S X) (conclusion P))
+(factor f2 hmp (premises S Y) (conclusion Q))
+(factor f0 hmp (premises P Q) (conclusion C))
+(produces P f1)
+(produces Q f2)
+(produces C f0)
+"""
+    )
     load_metta!(sp, "!(compute-demand-field! C)")
 
     asserts = """
@@ -48,7 +56,9 @@ using MeTTaCore.StandardMeTTa
                        (dp-1 (factor-demand-pair Q (match &self (dem Q \$g) \$g)))))
     """
     rs = load_metta!(sp, asserts)
-    errs = filter(r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs)
+    errs = filter(
+        r -> r isa Expression && !isempty(r.children) && r.children[1] == Sym("Error"), rs
+    )
     @test isempty(errs)
     @test length(rs) == 6
 end

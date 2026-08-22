@@ -38,16 +38,22 @@ mklist(n) = parse1("(" * join(("e$i" for i in 1:n), " ") * ")")
 
 function bench(f, reps)
     f()                                                   # warmup (exclude first-call JIT)
-    t = @elapsed for _ in 1:reps; f(); end
+    t = @elapsed for _ in 1:reps
+        f()
+    end
     t / reps
 end
 
 # ── setup ─────────────────────────────────────────────────────────────────────
-sp = SM.Space(); SM.load_core_stdlib!(sp); SM.load_metta!(sp, CONCATT_DEF)
+sp = SM.Space();
+SM.load_core_stdlib!(sp);
+SM.load_metta!(sp, CONCATT_DEF)
 
-println("n   native(µs)   interp(µs)    speedup    ok"); flush(stdout)
+println("n   native(µs)   interp(µs)    speedup    ok");
+flush(stdout)
 for n in (5, 10, 20)
-    a = mklist(n); b = mklist(n)
+    a = mklist(n)
+    b = mklist(n)
     call = Expression(Atom[Sym("concatT"), a, b])
 
     native_res = concatT_native(a, b)
@@ -55,8 +61,9 @@ for n in (5, 10, 20)
     ok = string(native_res) == string(interp_res)
 
     tn = bench(() -> concatT_native(a, b), 50_000) * 1e6   # native is fast → many reps
-    ti = bench(() -> SM.metta_run(call, sp), 30)    * 1e6  # interpreted is slow → few reps
+    ti = bench(() -> SM.metta_run(call, sp), 30) * 1e6  # interpreted is slow → few reps
 
-    println(rpad(n,4), rpad(round(tn; digits=3),13), rpad(round(ti; digits=1),14),
-            rpad(string(round(ti/tn; digits=0), "×"),11), ok ? "✓" : "✗ MISMATCH"); flush(stdout)
+    println(rpad(n, 4), rpad(round(tn; digits=3), 13), rpad(round(ti; digits=1), 14),
+        rpad(string(round(ti/tn; digits=0), "×"), 11), ok ? "✓" : "✗ MISMATCH")
+    flush(stdout)
 end

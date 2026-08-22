@@ -36,9 +36,9 @@ and returns the harness's result value; `iserr(result)::Bool` is the script's fa
 harness + detector DISCRIMINATE: a known mismatch is flagged, a known match is not — so the
 script's green assertions cannot be silently vacuous on this harness.
 """
-function assert_harness_discriminates(qm, iserr; label = "harness")
+function assert_harness_discriminates(qm, iserr; label="harness")
     @testset "$label discriminates (silent-test guard)" begin
         @test !iserr(qm("!(assertEqual 1 1)"))   # known MATCH    → must NOT be flagged
-        @test  iserr(qm("!(assertEqual 1 2)"))   # known MISMATCH → must be flagged (else vacuous)
+        @test iserr(qm("!(assertEqual 1 2)"))   # known MISMATCH → must be flagged (else vacuous)
     end
 end

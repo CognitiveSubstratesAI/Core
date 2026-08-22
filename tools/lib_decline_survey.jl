@@ -35,10 +35,12 @@ LIB = joinpath(dirname(pathof(MeTTaCore)), "..", "lib")
 
 # Mirror compile_definition's FRONT HALF (98-125) exactly, but keep the clauses instead of emitting.
 function clauses_for(sp, form::AbstractString)
-    toks = MC.Eval.tokenize(form); i = Ref(1)
+    toks = MC.Eval.tokenize(form)
+    i = Ref(1)
     out = MC.StandardMeTTa.Atom[]
     while i[] <= length(toks)
-        toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+        toks[i[]] == "!" && (i[] += 1)
+        i[] > length(toks) && break
         push!(out, MC.Eval.parse_from(toks, i, sp.tokens))
     end
     prog = CF.lower_program(out)
@@ -46,11 +48,15 @@ function clauses_for(sp, form::AbstractString)
     AN.translate_program(prog)
 end
 
-function survey(name; show_first_error = true)
+function survey(name; show_first_error=true)
     dir = joinpath(LIB, name)
     files = sort([f for f in readdir(dir) if endswith(f, ".metta")])
-    sp = MC.Eval.Space(); MC.Eval.load_core_stdlib!(sp)
-    allcl = AN.ANClause[]; ndefs = 0; nfail = 0; firsterr = ""
+    sp = MC.Eval.Space()
+    MC.Eval.load_core_stdlib!(sp)
+    allcl = AN.ANClause[]
+    ndefs = 0
+    nfail = 0
+    firsterr = ""
     for f in files, form in MC._cs_split_top_level(read(joinpath(dir, f), String))
         startswith(strip(form), "(=") || continue
         ndefs += 1
@@ -61,27 +67,31 @@ function survey(name; show_first_error = true)
             nfail += 1
             if show_first_error && isempty(firsterr)
                 firsterr = string(f, " :: ", first(strip(form), 90), "\n           -> ",
-                                  typeof(e), ": ", first(sprint(showerror, e), 160))
+                    typeof(e), ": ", first(sprint(showerror, e), 160))
             end
         end
     end
     println("── ", rpad(name, 6), " files=", length(files), "  defs=", ndefs,
-            "  clauses=", length(allcl), "  front-end failures=", nfail)
+        "  clauses=", length(allcl), "  front-end failures=", nfail)
     isempty(firsterr) || println("     first failure: ", firsterr)
-    isempty(allcl) && return
+    isempty(allcl) && return nothing
     h = CE.decline_histogram(allcl)
-    tot = sum(values(h.paths); init = 0)
+    tot = sum(values(h.paths); init=0)
     println("     declining paths=", tot, "  expanded=", h.expanded,
-            "  COMPILING clauses=", length(allcl) - sum(values(h.fully); init = 0))
+        "  COMPILING clauses=", length(allcl) - sum(values(h.fully); init=0))
     println("     ", rpad("reason", 20), rpad("paths", 8), "fully")
-    for k in sort(collect(keys(h.paths)), by = x -> -h.paths[x])
-        println("     ", rpad(string(k), 20), rpad(string(h.paths[k]), 8), get(h.fully, k, 0))
+    for k in sort(collect(keys(h.paths)); by=x -> -h.paths[x])
+        println(
+            "     ", rpad(string(k), 20), rpad(string(h.paths[k]), 8), get(h.fully, k, 0)
+        )
     end
 end
 
 println("=== DECLINE CLASSES ON REAL IN-TREE LIBRARIES ===")
 for n in ["ecan", "pln"]
-    try survey(n) catch e
+    try
+        survey(n)
+    catch e
         println("── ", n, " RAISED ", typeof(e), ": ", first(sprint(showerror, e), 200))
     end
 end

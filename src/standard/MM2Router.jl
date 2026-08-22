@@ -101,7 +101,11 @@ const _MM2_SPECIAL_FORMS = Set{String}(["let", "let*", "if", "quote"])
 function mm2_collect_heads!(heads::Vector{String}, form::AbstractString)
     t = strip(form)
     (startswith(t, "(") && endswith(t, ")")) || return heads     # leaf (var/sym/number) — no head
-    args = try mm2_expr_args(t) catch; return heads end
+    args = try
+        mm2_expr_args(t)
+    catch
+        return heads
+    end
     isempty(args) && return heads
     h = strip(args[1])
     if startswith(h, "(")                    # compound operator position ⇒ not a relation symbol
@@ -110,7 +114,9 @@ function mm2_collect_heads!(heads::Vector{String}, form::AbstractString)
     else
         push!(heads, String(h))
     end
-    for k in 2:length(args); mm2_collect_heads!(heads, args[k]); end
+    for k in 2:length(args)
+        mm2_collect_heads!(heads, args[k])
+    end
     heads
 end
 
@@ -146,10 +152,15 @@ tokenizer is the correct authority — not because the other table is empty, but
 different question.
 """
 function mm2_is_relational(rule::AbstractString)::Bool
-    a = try mm2_expr_args(rule) catch; return false end
+    a = try
+        mm2_expr_args(rule)
+    catch
+        return false
+    end
     (length(a) == 3 && a[1] == "=") || return false
     heads = String[]
-    mm2_collect_heads!(heads, a[2]); mm2_collect_heads!(heads, a[3])
+    mm2_collect_heads!(heads, a[2])
+    mm2_collect_heads!(heads, a[3])
     for h in heads
         h == "," && continue
         h == _MM2_COMPOUND_HEAD && return false      # compound in operator position — never a relation
@@ -174,24 +185,26 @@ lowering, interpreter-bisim-proven incl. nested + float promotion; `arith_exec=f
 restores the pre-wire routing). A rule that passes NEITHER gate (other grounded ops / special forms)
 stays in `data` and runs on the interpreter.
 """
-function mm2_partition(program::AbstractString; eq_mode::Symbol = :reduction, arith_exec::Bool = true)
+function mm2_partition(
+    program::AbstractString; eq_mode::Symbol=:reduction, arith_exec::Bool=true
+)
     forms = mm2_split_forms(program)
     bangs = String[f for (b, f) in forms if b]
-    exec  = String[]
-    data  = String[]
+    exec = String[]
+    data = String[]
     for (b, f) in forms
         b && continue                                            # `!` forms already collected in `bangs`
         if mm2_is_exec_rule(f)
             push!(exec, f)
         elseif mm2_head(f) == "=" && mm2_is_relational(f)
-            push!(exec, mm2_lower_equals(f; mode = eq_mode))     # grounded-free (= …) → auto-lower (relational|reduction)
+            push!(exec, mm2_lower_equals(f; mode=eq_mode))     # grounded-free (= …) → auto-lower (relational|reduction)
         elseif arith_exec && mm2_head(f) == "=" && mm2_is_arith_body(f)
             push!(exec, mm2_lower_equals_arith(f))               # arith body → pure-sink reduction (Phase-2)
         else
             push!(data, f)                                       # facts / non-lowerable (= …) → data (unchanged)
         end
     end
-    (bangs = bangs, exec = exec, data = data)
+    (bangs=bangs, exec=exec, data=data)
 end
 
 """
@@ -202,17 +215,19 @@ exec-calculus. Per CeTTa's pure-program-lane discipline, top-level `!` forms are
 to the interpreter lane) unless `allow_bang=true` (then they are partitioned out but not run here).
 """
 function mm2_run!(cs::CoreSpace, program::AbstractString;
-                  steps::Int = 1_000_000, allow_bang::Bool = false, eq_mode::Symbol = :reduction,
-                  arith_exec::Bool = true)
-    p = mm2_partition(program; eq_mode = eq_mode, arith_exec = arith_exec)
+    steps::Int=1_000_000, allow_bang::Bool=false, eq_mode::Symbol=:reduction,
+    arith_exec::Bool=true)
+    p = mm2_partition(program; eq_mode=eq_mode, arith_exec=arith_exec)
     if !allow_bang && !isempty(p.bangs)
-        error("mm2_run!: MM2-program lane does not accept top-level ! forms " *
-              "($(length(p.bangs)) found) — route those to the interpreter lane")
+        error(
+            "mm2_run!: MM2-program lane does not accept top-level ! forms " *
+            "($(length(p.bangs)) found) — route those to the interpreter lane"
+        )
     end
     isempty(p.data) || space_add_all_sexpr!(cs.inner, join(p.data, "\n"))
     isempty(p.exec) || space_add_all_sexpr!(cs.inner, join(p.exec, "\n"))
     isempty(p.exec) || space_metta_calculus!(cs.inner, steps)
-    (n_exec = length(p.exec), n_data = length(p.data), n_bang = length(p.bangs))
+    (n_exec=length(p.exec), n_data=length(p.data), n_bang=length(p.bangs))
 end
 
 # ── piece 2: the match→exec bridge (route a `!(match …)` into the MM2 lane) ──
@@ -269,7 +284,7 @@ indistinguishable; the mode is intent, not inference):
 Both are the `(=)→MM2` bridge for the RELATIONAL/grounded-free subset; grounded ops (arithmetic, control)
 still need the interpreter or KBSaturation lane and are gated out upstream by `mm2_is_relational`.
 """
-function mm2_lower_equals(rule::AbstractString; mode::Symbol = :relational)::String
+function mm2_lower_equals(rule::AbstractString; mode::Symbol=:relational)::String
     a = mm2_expr_args(rule)
     (length(a) == 3 && a[1] == "=") ||
         error("mm2_lower_equals: expected (= LHS RHS), got: $rule")
@@ -309,13 +324,22 @@ end
 #  `/` on two integers now maps to `div_i64` (MORK Pure.jl:736, Julia truncating `div`), matching
 #  NumericSeam.seam_div, which is the single owner both lanes consult.
 const _MM2_ARITH_ALLOPS = ("+", "-", "*", "/", "%")
-const _MM2_ARITH_I64 = Dict{String,String}("+" => "sum_i64", "-" => "sub_i64", "*" => "product_i64", "%" => "mod_i64", "/" => "div_i64")
-const _MM2_ARITH_F64 = Dict{String,String}("+" => "sum_f64", "-" => "sub_f64", "*" => "product_f64", "/" => "div_f64")
+const _MM2_ARITH_I64 = Dict{String, String}(
+    "+" => "sum_i64",
+    "-" => "sub_i64",
+    "*" => "product_i64",
+    "%" => "mod_i64",
+    "/" => "div_i64"
+)
+const _MM2_ARITH_F64 = Dict{String, String}(
+    "+" => "sum_f64", "-" => "sub_f64", "*" => "product_f64", "/" => "div_f64"
+)
 const _MM2_ARITH_NARY = Set{String}(["+", "*"])          # n-ary folds; the rest are strictly binary
 
 _mm2_is_var(t::AbstractString) = startswith(lstrip(t), "\$")
 _mm2_is_intlit(t::AbstractString) = tryparse(Int, strip(t)) !== nothing
-_mm2_is_floatlit(t::AbstractString) = tryparse(Float64, strip(t)) !== nothing && !_mm2_is_intlit(t)
+_mm2_is_floatlit(t::AbstractString) =
+    tryparse(Float64, strip(t)) !== nothing && !_mm2_is_intlit(t)
 
 """
     _mm2_arith_scan(node) -> (ok::Bool, isfloat::Bool)
@@ -323,12 +347,16 @@ _mm2_is_floatlit(t::AbstractString) = tryparse(Float64, strip(t)) !== nothing &&
 Recognize whether `node` is a pure arithmetic tree over `+ - * / %` (`ok`) and whether it must be
 evaluated in FLOAT mode (`isfloat` — true if any `/` op or float literal appears). Vars are type-agnostic.
 """
-function _mm2_arith_scan(node::AbstractString)::Tuple{Bool,Bool}
+function _mm2_arith_scan(node::AbstractString)::Tuple{Bool, Bool}
     t = strip(node)
     (_mm2_is_var(t) || _mm2_is_intlit(t)) && return (true, false)
     _mm2_is_floatlit(t) && return (true, true)            # float literal forces f64
     startswith(t, "(") || return (false, false)           # bare non-numeric symbol → not arithmetic
-    a = try mm2_expr_args(t) catch; return (false, false) end
+    a = try
+        mm2_expr_args(t)
+    catch
+        return (false, false)
+    end
     (a[1] in _MM2_ARITH_ALLOPS) || return (false, false)
     nargs = length(a) - 1
     (a[1] in _MM2_ARITH_NARY ? nargs >= 2 : nargs == 2) || return (false, false)
@@ -348,13 +376,17 @@ Recursively lower one MeTTa arithmetic node to a MORK `pure` call-tree in the ch
 Leaves → `(<t>_from_string LEAF)`; internal `(OP a b …)` → `(<pureop> …)`. Returns `nothing` if the
 node is not lowerable in that mode (unknown/out-of-mode head — e.g. `%` under float or `/` under int).
 """
-function _mm2_lower_arith_node(node::AbstractString, isfloat::Bool)::Union{String,Nothing}
+function _mm2_lower_arith_node(node::AbstractString, isfloat::Bool)::Union{String, Nothing}
     t = strip(node)
     if _mm2_is_var(t) || _mm2_is_intlit(t) || _mm2_is_floatlit(t)
         return isfloat ? "(f64_from_string $t)" : "(i64_from_string $t)"
     end
     startswith(t, "(") || return nothing
-    a = try mm2_expr_args(t) catch; return nothing end
+    a = try
+        mm2_expr_args(t)
+    catch
+        return nothing
+    end
     op = get(isfloat ? _MM2_ARITH_F64 : _MM2_ARITH_I64, a[1], nothing)
     op === nothing && return nothing
     nargs = length(a) - 1
@@ -377,11 +409,19 @@ RHS is the REDUCTION case (`mm2_lower_equals(; mode=:reduction)`), not arith; gr
 comparison/recursion) → false.
 """
 function mm2_is_arith_body(rule::AbstractString)::Bool
-    a = try mm2_expr_args(rule) catch; return false end
+    a = try
+        mm2_expr_args(rule)
+    catch
+        return false
+    end
     (length(a) == 3 && a[1] == "=") || return false
     rhs = strip(a[3])
     startswith(rhs, "(") || return false                  # bare RHS = reduction, not arith
-    ra = try mm2_expr_args(rhs) catch; return false end
+    ra = try
+        mm2_expr_args(rhs)
+    catch
+        return false
+    end
     (ra[1] in _MM2_ARITH_ALLOPS) || return false
     ok, isfloat = _mm2_arith_scan(rhs)
     ok && _mm2_lower_arith_node(rhs, isfloat) !== nothing && startswith(strip(a[2]), "(")
@@ -405,7 +445,9 @@ function mm2_lower_equals_arith(rule::AbstractString)::String
     ok || error("mm2_lower_equals_arith: RHS is not a pure arithmetic tree: $rhs")
     tree = _mm2_lower_arith_node(rhs, isfloat)
     tree === nothing &&
-        error("mm2_lower_equals_arith: RHS is not a pure arithmetic tree ($(isfloat ? "f64" : "i64") mode): $rhs")
+        error(
+            "mm2_lower_equals_arith: RHS is not a pure arithmetic tree ($(isfloat ? "f64" : "i64") mode): $rhs"
+        )
     cast = isfloat ? "f64_to_string" : "i64_to_string"
     # `,` not `I` — a plain pattern under `I` panics upstream (sources.rs:233); see mm2_lower_equals.
     src = startswith(lstrip(lhs), "(,") ? lhs : "(, $lhs)"
@@ -424,7 +466,11 @@ DIFFERENT, forward-closure semantics — keep-LHS — via `mm2_lower_equals(; mo
 `!(match &self LHS RHS)`, not reduction, so it is deliberately NOT the default here.)
 """
 mm2_lower_eq(rule::AbstractString)::String =
-    mm2_is_arith_body(rule) ? mm2_lower_equals_arith(rule) : mm2_lower_equals(rule; mode = :reduction)
+    if mm2_is_arith_body(rule)
+        mm2_lower_equals_arith(rule)
+    else
+        mm2_lower_equals(rule; mode=:reduction)
+    end
 
 """
     mm2_eq_bisim(rule, query) -> (; reduct, interp, ok)
@@ -442,12 +488,16 @@ function mm2_eq_bisim(rule::AbstractString, query::AbstractString)
     space_add_all_sexpr!(cs.inner, query)
     space_add_all_sexpr!(cs.inner, mm2_lower_eq(rule))
     space_metta_calculus!(cs.inner, 1_000_000)
-    dump = [strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))]
+    dump = [
+        strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n') if !isempty(strip(l))
+    ]
     reduct = sort(String[String(x) for x in dump if x != strip(query)])   # atoms added, redex removed
-    isp = Eval.Space(); Eval.load_core_stdlib!(isp); Eval.load_metta!(isp, rule)
+    isp = Eval.Space()
+    Eval.load_core_stdlib!(isp)
+    Eval.load_metta!(isp, rule)
     res = Eval.load_metta!(isp, "!" * query)
     interp = sort(String[string(x) for r in res for x in (r isa AbstractVector ? r : [r])])
-    (; reduct = reduct, interp = interp, ok = Set(reduct) == Set(interp))
+    (; reduct=reduct, interp=interp, ok=Set(reduct) == Set(interp))
 end
 
 # ── ZAM demand-injection readback (routing-gap arc #3) ───────────────────────────────────────
@@ -489,12 +539,12 @@ redex actually fired (redex-delete ⇒ a bang still present in the dump means no
 `remaining` = everything the caller must send to the interpreter fallback instead.
 """
 function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:AbstractString};
-                         steps::Int = 1_000_000)
+    steps::Int=1_000_000)
     served = Tuple{String, Vector{String}}[]
     remaining = String[String(b) for b in bangs]
     isempty(bangs) && return (; served, remaining)
     forms = mm2_split_forms(program)
-    p = mm2_partition(program; eq_mode = :reduction)
+    p = mm2_partition(program; eq_mode=:reduction)
     # gate (1): every (=) lowered; no user-authored raw execs
     any(f -> mm2_head(f) == "=", p.data) && return (; served, remaining)
     any(t -> !t[1] && mm2_head(t[2]) == "exec", forms) && return (; served, remaining)
@@ -508,8 +558,10 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
     # and == the interpreter for many (bisimulation-tested). Priority sequencing (prio-0 batch fires
     # before prio-1 delete) is honored by our `space_metta_calculus!` (verified by execution).
     # `heads`/`rules` still drive gates (3)/(4) + the per-bang head check.
-    heads = Set{String}(); rules = Tuple{String, String, String}[]     # (head, lhs, rhs)
-    co_exec = String[]; seen_lhs = Set{String}()
+    heads = Set{String}()
+    rules = Tuple{String, String, String}[]     # (head, lhs, rhs)
+    co_exec = String[]
+    seen_lhs = Set{String}()
     for (bang, f) in forms
         (bang || mm2_head(f) != "=") && continue
         a = mm2_expr_args(f)
@@ -517,7 +569,8 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
         lhs, rhs = a[2], a[3]
         startswith(strip(lhs), "(") || return (; served, remaining)
         h = mm2_head(lhs)
-        push!(heads, h); push!(rules, (h, lhs, rhs))
+        push!(heads, h)
+        push!(rules, (h, lhs, rhs))
         if mm2_is_relational(f)
             # `,` not `I` — a plain pattern under `I` panics upstream (sources.rs:233). MEASURED:
             #   (exec 0 (, (f $x)) (O (+ (g $x))))  → (f a) (g a)   [keeps LHS, adds RHS] ✓
@@ -610,16 +663,26 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
     for b0 in bangs
         b = String(strip(b0))
         if !startswith(b, "(") || occursin("\$", b) || !(mm2_head(b) in heads) ||
-           _mm2_head_below_top(b, heads)
-            push!(remaining, String(b0)); continue
+            _mm2_head_below_top(b, heads)
+            push!(remaining, String(b0))
+            continue
         end
         scr = new_core_space()
         space_add_all_sexpr!(scr.inner, b)
-        for e in co_exec; space_add_all_sexpr!(scr.inner, e); end
+        for e in co_exec
+            space_add_all_sexpr!(scr.inner, e)
+        end
         space_metta_calculus!(scr.inner, steps)
-        dump = [strip(l) for l in split(space_dump_all_sexpr(scr.inner), '\n') if !isempty(strip(l))]
-        reduct = sort(String[String(x) for x in dump
-                             if !(startswith(x, "(") && mm2_head(x) == "exec")])
+        dump = [
+            strip(l) for
+            l in split(space_dump_all_sexpr(scr.inner), '\n') if !isempty(strip(l))
+        ]
+        reduct = sort(
+            String[
+                String(x) for x in dump
+                              if !(startswith(x, "(") && mm2_head(x) == "exec")
+            ]
+        )
         if b in reduct || isempty(reduct)
             push!(remaining, String(b0))           # redex persists (no rule fired) / empty → interp
         else
@@ -631,8 +694,9 @@ end
 
 
 # is `a` a `(= LHS RHS)` rewrite-rule Atom? (vs a fact / other atom)
-_mm2_is_eq_rule(a) = a isa _MM2_ATOM.Expression && length(a.children) == 3 &&
-                     a.children[1] isa _MM2_ATOM.Sym && a.children[1].name == Symbol("=")
+_mm2_is_eq_rule(a) =
+    a isa _MM2_ATOM.Expression && length(a.children) == 3 &&
+    a.children[1] isa _MM2_ATOM.Sym && a.children[1].name == Symbol("=")
 
 # MORK byte-Expr HARD LIMITS (upstream wiki Data-in-MORK): an Expression has ≤63 children (arity tag is
 # 6-bit) and an expression has ≤64 distinct vars (De Bruijn level is 6-bit). A rule exceeding either cannot
@@ -640,14 +704,16 @@ _mm2_is_eq_rule(a) = a isa _MM2_ATOM.Expression && length(a.children) == 3 &&
 function _mm2_collect_limits!(a, vars)::Bool
     if a isa _MM2_ATOM.Expression
         length(a.children) > 63 && return false
-        for c in a.children; _mm2_collect_limits!(c, vars) || return false; end
+        for c in a.children
+            _mm2_collect_limits!(c, vars) || return false
+        end
     elseif a isa _MM2_ATOM.Var
         push!(vars, a)
     end
     true
 end
 _mm2_within_mork_limits(a)::Bool =
-    (vars = Set{_MM2_ATOM.Var}(); _mm2_collect_limits!(a, vars) && length(vars) <= 64)
+    (vars=Set{_MM2_ATOM.Var}(); _mm2_collect_limits!(a, vars) && length(vars) <= 64)
 
 "Typed-Atom overload of the grounded-op guard — serialize then classify; also rejects rules exceeding MORK's
 byte-Expr limits (arity 63 / 64 vars), which can't encode and must stay in the interpreter."
@@ -666,7 +732,8 @@ defers to MORK + delete) is a later bisimulation-gated step.
 """
 # classify typed atoms → (data sexprs, lowered exec-rule sexprs) for the MORK lane
 function _mm2_classify_atoms(atoms)
-    data = String[]; execs = String[]
+    data = String[]
+    execs = String[]
     for a in atoms
         s = typed_atom_to_expr(a)
         if mm2_is_relational(a)
@@ -681,7 +748,7 @@ end
 function mm2_lane_from_atoms(atoms)::CoreSpace
     cs = new_core_space()
     data, execs = _mm2_classify_atoms(atoms)
-    isempty(data)  || space_add_all_sexpr!(cs.inner, join(data, "\n"))
+    isempty(data) || space_add_all_sexpr!(cs.inner, join(data, "\n"))
     isempty(execs) || space_add_all_sexpr!(cs.inner, join(execs, "\n"))
     cs
 end
@@ -719,12 +786,13 @@ MORK, see test) is the NATIVE main-loop idiom — `DEF` rules + a self-re-adding
 runs the fixpoint INSIDE one `space_metta_calculus!`; this host re-add loop is a pragmatic shortcut for the
 additive-closure case (per the MM2_Structuring_Code tutorial: Going-Wide main loop, Control_09 halting).
 """
-function mm2_lane_saturate!(atoms; max_rounds::Int = 64)::CoreSpace
+function mm2_lane_saturate!(atoms; max_rounds::Int=64)::CoreSpace
     cs = new_core_space()
     data, execs = _mm2_classify_atoms(atoms)
     isempty(data) || space_add_all_sexpr!(cs.inner, join(data, "\n"))
     isempty(execs) && return cs
-    joined = join(execs, "\n"); prev = -1
+    joined = join(execs, "\n")
+    prev = -1
     for _ in 1:max_rounds
         n = space_val_count(cs.inner)
         n == prev && break                                       # fixpoint reached
@@ -748,9 +816,19 @@ _mm2_dtag(sexpr::AbstractString)::String = "(d $(strip(sexpr)))"
 function _mm2_derived_relations(execs)::Set{String}
     derived = Set{String}()
     for e in execs
-        a = try mm2_expr_args(e) catch; continue end
+        a = try
+            mm2_expr_args(e)
+        catch
+            continue
+        end
         length(a) >= 4 || continue
-        for t in (try mm2_expr_args(a[4]) catch; String[] end)   # template list (, T1 T2 …)
+        for t in (
+            try
+                mm2_expr_args(a[4])
+            catch
+                String[]
+            end
+        )   # template list (, T1 T2 …)
             t == "," && continue
             push!(derived, mm2_head(t))
         end
@@ -762,15 +840,24 @@ end
 # variant with that premise delta-tagged (the others left full). A rule with no derived premise is
 # non-recursive (returns empty) — it fires only in the naive seed round.
 function _mm2_seminaive_variants(exec::AbstractString, derived::Set{String})::Vector{String}
-    a = try mm2_expr_args(exec) catch; return String[] end
+    a = try
+        mm2_expr_args(exec)
+    catch
+        return String[]
+    end
     length(a) >= 4 || return String[]
     loc, src, tmpl = a[2], a[3], a[4]
-    body = try mm2_expr_args(src) catch; return String[] end
+    body = try
+        mm2_expr_args(src)
+    catch
+        return String[]
+    end
     prems = [p for p in body if p != ","]
     out = String[]
     for i in eachindex(prems)
         mm2_head(prems[i]) in derived || continue
-        nb = copy(prems); nb[i] = _mm2_dtag(prems[i])
+        nb = copy(prems)
+        nb[i] = _mm2_dtag(prems[i])
         push!(out, "(exec $loc (, $(join(nb, " "))) $tmpl)")
     end
     out
@@ -789,18 +876,22 @@ linear transitive closure (N≤192); for doubling-closure shapes (large deltas) 
 already optimal and the two converge. Opt-in — the naive `mm2_lane_saturate!` stays the default; the MORK
 kernel calculus is untouched (this is pure lane-level orchestration).
 """
-function mm2_lane_saturate_seminaive!(atoms; max_rounds::Int = 256)::CoreSpace
+function mm2_lane_saturate_seminaive!(atoms; max_rounds::Int=256)::CoreSpace
     cs = new_core_space()
     data, execs = _mm2_classify_atoms(atoms)
     isempty(data) || space_add_all_sexpr!(cs.inner, join(data, "\n"))
     isempty(execs) && return cs
     derived = _mm2_derived_relations(execs)
     variants = String[]
-    for e in execs; append!(variants, _mm2_seminaive_variants(e, derived)); end
-    isempty(variants) && return mm2_lane_saturate!(atoms; max_rounds = max_rounds)  # no recursion → naive
+    for e in execs
+        append!(variants, _mm2_seminaive_variants(e, derived))
+    end
+    isempty(variants) && return mm2_lane_saturate!(atoms; max_rounds=max_rounds)  # no recursion → naive
     # fact set of the space, excluding exec-rule artifacts and `(d …)` delta tags
-    factset(s) = Set(x for x in (strip(l) for l in split(space_dump_all_sexpr(s), '\n'))
-                     if !isempty(x) && (h = mm2_head(x); h != "exec" && h != "d"))
+    factset(s) = Set(
+        x for x in (strip(l) for l in split(space_dump_all_sexpr(s), '\n'))
+        if !isempty(x) && (h=mm2_head(x); h != "exec" && h != "d")
+    )
     before = factset(cs.inner)
     space_add_all_sexpr!(cs.inner, join(execs, "\n"))                 # round 0: naive seed pass
     space_metta_calculus!(cs.inner, 1_000_000)
@@ -832,16 +923,18 @@ forward-closure (metagraph-rewriting) semantics for the relational subset; the
 interpreter's `(=)` reduction semantics for everything else are untouched. So a MeTTa program can compute a
 transitive closure on the substrate, then query it with the interpreter (`!(match &self …)`).
 """
-function mc_closure!(isp::Eval.Space; rounds::Int = 64)::Int
+function mc_closure!(isp::Eval.Space; rounds::Int=64)::Int
     own = collect(Eval.own_atoms(isp))
-    cs = mm2_lane_saturate!(own; max_rounds = rounds)
+    cs = mm2_lane_saturate!(own; max_rounds=rounds)
     added = 0
     for line in split(space_dump_all_sexpr(cs.inner), '\n')
-        s = strip(line); isempty(s) && continue
+        s = strip(line)
+        isempty(s) && continue
         mm2_head(s) == "exec" && continue                        # skip MM2 exec-rule artifacts
         atom = Eval.parse_program(s)[1][2]
         if !Eval.contains_atom(isp, atom)
-            Eval.add_atom!(isp, atom); added += 1
+            Eval.add_atom!(isp, atom)
+            added += 1
         end
     end
     added
@@ -858,12 +951,18 @@ Run a `(match SPACE PAT TMPL)` via the MM2 lane: lower to exec, step the calculu
 trie (data must already be loaded), and collect the derived TMPL atoms. Equivalent to the interpreter's
 `!(match …)` (bisimulation-gated) but on the MORK engine.
 """
-function mm2_match!(cs::CoreSpace, query::AbstractString; steps::Int = 1_000_000)
+function mm2_match!(cs::CoreSpace, query::AbstractString; steps::Int=1_000_000)
     space_add_all_sexpr!(cs.inner, mm2_lower_match(query))
     space_metta_calculus!(cs.inner, steps)
     tmpl_head = mm2_head(mm2_expr_args(query)[4])
-    sort(unique(String[strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
-                        if mm2_head(strip(l)) == tmpl_head]))
+    sort(
+        unique(
+            String[
+                strip(l) for l in split(space_dump_all_sexpr(cs.inner), '\n')
+                if mm2_head(strip(l)) == tmpl_head
+            ]
+        )
+    )
 end
 
 """
@@ -874,9 +973,10 @@ bridge (`mm2_match!`, results in `matched`); other `!` forms → `deferred` (the
 served by `mc_run`'s fastlane-first ZAM readback + interpreter fallback; at THIS level `deferred` is
 the honest routing record only).
 """
-function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_000, eq_mode::Symbol = :reduction,
-                    arith_exec::Bool = true)
-    p = mm2_partition(program; eq_mode = eq_mode, arith_exec = arith_exec)
+function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int=1_000_000,
+    eq_mode::Symbol=:reduction,
+    arith_exec::Bool=true)
+    p = mm2_partition(program; eq_mode=eq_mode, arith_exec=arith_exec)
     isempty(p.data) || space_add_all_sexpr!(cs.inner, join(p.data, "\n"))
     isempty(p.exec) || space_add_all_sexpr!(cs.inner, join(p.exec, "\n"))
     isempty(p.exec) || space_metta_calculus!(cs.inner, steps)
@@ -889,5 +989,5 @@ function mm2_route!(cs::CoreSpace, program::AbstractString; steps::Int = 1_000_0
             push!(deferred, b)
         end
     end
-    (n_exec = length(p.exec), n_data = length(p.data), matched = matched, deferred = deferred)
+    (n_exec=length(p.exec), n_data=length(p.data), matched=matched, deferred=deferred)
 end

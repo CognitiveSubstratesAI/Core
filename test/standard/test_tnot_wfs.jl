@@ -29,7 +29,8 @@ _wfs_canonical(xs::Vector{Atom})::Vector{Atom} =
 
 function _wfs(prog::AbstractString, query::AbstractString)::Vector{Atom}
     Eval.untable_all!()
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     load_metta!(s, prog)
     _wfs_canonical(load_metta!(s, query))
 end
@@ -84,7 +85,9 @@ end
     """
     @test isempty(_wfs(prG, "!(g1)"))                       # g1 FALSE (was Atom[U] before Stage B inc-2)
     Eval.untable_all!()
-    sG = Space(); load_core_stdlib!(sG); load_metta!(sG, prG)
+    sG = Space()
+    load_core_stdlib!(sG)
+    load_metta!(sG, prG)
     @test isempty(load_metta!(sG, "!(g1)"))                 # FALSE
     @test load_metta!(sG, "!(g2)") == Atom[Sym("True")]     # TRUE (cached member of the completed SCC)
     @test isempty(load_metta!(sG, "!(g3)"))                 # FALSE (no rule)
@@ -147,21 +150,32 @@ end
     #
     # 🔑 THE ASSERTION IS ORDER-INDEPENDENCE, NOT A LITERAL. A test that only checked one order would
     # have passed on the broken engine, since one order was already right.
-    prog = raw"(= (q) (r))" * "\n" * raw"(= (q) 1)" * "\n" *
-           raw"(= (r) (p))" * "\n" * raw"(= (p) (tnot (q)))" * "\n"
-    runs = Dict{String,Vector{String}}[]
+    prog =
+        raw"(= (q) (r))" * "\n" * raw"(= (q) 1)" * "\n" *
+        raw"(= (r) (p))" * "\n" * raw"(= (p) (tnot (q)))" * "\n"
+    runs = Dict{String, Vector{String}}[]
     for order in (["!(q)", "!(p)", "!(r)"], ["!(p)", "!(q)", "!(r)"])
-        Eval.untable_all!(); Eval.abolish_all_tables!()
-        s = Space(); load_core_stdlib!(s); load_metta!(s, prog)
-        for h in (:p, :q, :r); Eval.table!(h); end
-        d = Dict{String,Vector{String}}()
+        Eval.untable_all!()
+        Eval.abolish_all_tables!()
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(s, prog)
+        for h in (:p, :q, :r)
+            Eval.table!(h)
+        end
+        d = Dict{String, Vector{String}}()
         for qq in order
-            d[qq] = sort(String[string(x) for y in load_metta!(s, qq * "\n")
-                                for x in (y isa AbstractVector ? y : [y])])
+            d[qq] = sort(
+                String[
+                    string(x) for y in load_metta!(s, qq * "\n")
+                    for x in (y isa AbstractVector ? y : [y])
+                ]
+            )
         end
         push!(runs, d)
     end
-    Eval.untable_all!(); Eval.abolish_all_tables!()
+    Eval.untable_all!()
+    Eval.abolish_all_tables!()
 
     @test runs[1] == runs[2]                     # ORDER-INDEPENDENT — the property WFS guarantees
     @test runs[1]["!(q)"] == ["1"]               # …and the unique model, not merely agreement

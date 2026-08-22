@@ -45,7 +45,7 @@ _dl_key(n::Symbol) = Sym(n)
         r, s2 = _dl_key(:r), _dl_key(:s)
         ab = _DL.dnf_or(dp, dq)
         cd = _DL.dnf_or(_DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(r)])]),
-                        _DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(s2)])]))
+            _DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(s2)])]))
         @test length(_DL.dnf_and(ab, cd)) == 4
     end
 
@@ -63,8 +63,8 @@ _dl_key(n::Symbol) = Sym(n)
         @test _DL.delay_positive(v, a).answer == a
         @test _DL.delay_negative_answer(v, a).kind == _DL.DELAY_NEGATIVE_ANSWER
 
-        @test string(_DL.delay_negative(v))            == "(not v)"
-        @test string(_DL.delay_negative_answer(v, a))  == "(not (== v 3))"
+        @test string(_DL.delay_negative(v)) == "(not v)"
+        @test string(_DL.delay_negative_answer(v, a)) == "(not (== v 3))"
     end
 
     @testset "the residual RENDERS, and the unit cases collapse" begin
@@ -74,8 +74,15 @@ _dl_key(n::Symbol) = Sym(n)
         @test string(_DL.dnf_residual(one)) == "(not p)"          # no needless (and …)
         two = _DL.dnf_and(one, _DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(q)])]))
         @test string(_DL.dnf_residual(two)) == "(and (not p) (not q))"
-        @test occursin("or", string(_DL.dnf_residual(_DL.dnf_or(one,
-                       _DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(q)])])))))
+        @test occursin(
+            "or",
+            string(
+                _DL.dnf_residual(
+                    _DL.dnf_or(one,
+                        _DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(q)])]))
+                )
+            )
+        )
     end
 
     @testset "🔴 is_undefined IS A TYPE TEST — `== UNDEFINED` is now WRONG" begin
@@ -83,7 +90,9 @@ _dl_key(n::Symbol) = Sym(n)
         # only while the bottom was a singleton. A residuated bottom is NOT `==` to the bare constant,
         # so every one of those sites would have quietly answered FALSE and treated it as an ordinary
         # value — a silent soundness bug in the strict-op layer. This asserts the new contract.
-        r = _DL.undefined_with(_DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(_dl_key(:p))])]))
+        r = _DL.undefined_with(
+            _DL.DelayDNF([_DL.DelaySet([_DL.delay_negative(_dl_key(:p))])])
+        )
         @test _DL.is_undefined(r)
         @test _DL.is_undefined(_DL.UNDEFINED)
         @test r != _DL.UNDEFINED                       # …and THIS is why the predicate had to land
@@ -111,11 +120,14 @@ _dl_key(n::Symbol) = Sym(n)
         # residual is always `True`, because `True` IS the correct answer for an unconditional value.
         # So this drives the canonical WFS paradox and asserts the residual is NOT True, and NAMES the
         # goal it is stuck on. `[[feedback_parses_is_not_fires]]`
-        _DL.untable_all!(); _DL.abolish_all_tables!()
+        _DL.untable_all!()
+        _DL.abolish_all_tables!()
         try
-            s = Space(); load_core_stdlib!(s)
+            s = Space()
+            load_core_stdlib!(s)
             load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n")
-            _DL.table!(:p); _DL.table!(:q)
+            _DL.table!(:p)
+            _DL.table!(:q)
             out = load_metta!(s, "!(p)\n")
             vals = Atom[x for y in out for x in (y isa AbstractVector ? y : [y])]
 
@@ -130,7 +142,8 @@ _dl_key(n::Symbol) = Sym(n)
             @test occursin("not", string(res))              # …a NEGATIVE delay…
             @test occursin("q", string(res))                # …naming the goal it is stuck on
         finally
-            _DL.untable_all!(); _DL.abolish_all_tables!()
+            _DL.untable_all!()
+            _DL.abolish_all_tables!()
         end
     end
 
@@ -145,15 +158,24 @@ _dl_key(n::Symbol) = Sym(n)
         # NODE (pl-tabling.h:179-184), so one answer term has ONE record holding a DISJUNCTION of
         # `delay_set`s. Several derivations contribute alternative conjunctions to the same answer —
         # they do not become several answers. `⊥{A}` and `⊥{B}` are one answer conditional on `A ∨ B`.
-        _DL.untable_all!(); _DL.abolish_all_tables!()
+        _DL.untable_all!()
+        _DL.abolish_all_tables!()
         try
-            s = Space(); load_core_stdlib!(s)
-            load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
-                           raw"(= (u) (tnot (v)))" * "\n" * raw"(= (v) (tnot (u)))" * "\n" *
-                           raw"(= (r) (p))" * "\n" * raw"(= (r) (u))" * "\n")
-            for h in (:p, :q, :u, :v, :r); _DL.table!(h); end
-            vals = Atom[x for y in load_metta!(s, "!(r)\n")
-                        for x in (y isa AbstractVector ? y : [y])]
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(
+                s,
+                raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
+                raw"(= (u) (tnot (v)))" * "\n" * raw"(= (v) (tnot (u)))" * "\n" *
+                raw"(= (r) (p))" * "\n" * raw"(= (r) (u))" * "\n"
+            )
+            for h in (:p, :q, :u, :v, :r)
+                _DL.table!(h)
+            end
+            vals = Atom[
+                x for y in load_metta!(s, "!(r)\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
 
             @test length(vals) == 1                     # ONE answer, not two
             @test _DL.is_undefined(vals[1])
@@ -163,7 +185,8 @@ _dl_key(n::Symbol) = Sym(n)
             @test occursin("or", res)                   # ANTI-VACUITY: it really is a disjunction
             @test occursin("q", res) && occursin("v", res)   # …naming both paradoxes
         finally
-            _DL.untable_all!(); _DL.abolish_all_tables!()
+            _DL.untable_all!()
+            _DL.abolish_all_tables!()
         end
     end
 
@@ -179,14 +202,23 @@ _dl_key(n::Symbol) = Sym(n)
         # there waiting to be un-delayed; it was NEVER COMPUTED, and the producer must RE-RUN.
         #
         # ⇒ 7.D is a genuine divergence, not an unported detail, and this is the fact it rests on.
-        _DL.untable_all!(); _DL.abolish_all_tables!()
+        _DL.untable_all!()
+        _DL.abolish_all_tables!()
         try
-            s = Space(); load_core_stdlib!(s)
-            load_metta!(s, raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
-                           raw"(= (g) (+ 1 (p)))" * "\n")
-            for h in (:p, :q, :g); _DL.table!(h); end
-            vals = Atom[x for y in load_metta!(s, "!(g)\n")
-                        for x in (y isa AbstractVector ? y : [y])]
+            s = Space()
+            load_core_stdlib!(s)
+            load_metta!(
+                s,
+                raw"(= (p) (tnot (q)))" * "\n" * raw"(= (q) (tnot (p)))" * "\n" *
+                raw"(= (g) (+ 1 (p)))" * "\n"
+            )
+            for h in (:p, :q, :g)
+                _DL.table!(h)
+            end
+            vals = Atom[
+                x for y in load_metta!(s, "!(g)\n")
+                for x in (y isa AbstractVector ? y : [y])
+            ]
 
             @test length(vals) == 1
             @test _DL.is_undefined(vals[1])             # ⊥, NOT "4 conditional on p"
@@ -196,7 +228,8 @@ _dl_key(n::Symbol) = Sym(n)
             @test _DL.answer_residual(vals[1]) != Sym("True")
             @test occursin("q", string(_DL.answer_residual(vals[1])))
         finally
-            _DL.untable_all!(); _DL.abolish_all_tables!()
+            _DL.untable_all!()
+            _DL.abolish_all_tables!()
         end
     end
 

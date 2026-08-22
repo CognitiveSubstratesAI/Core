@@ -28,22 +28,22 @@ module MeTTaCore
 
 using MORK
 using MORK: Space, new_space,
-            space_add_all_sexpr!, space_dump_all_sexpr,
-            space_val_count, space_metta_calculus!, space_metta_calculus_at!,
-            sexpr_to_expr, expr_serialize, read_zipper,
-            space_query_multi, space_query_multi_at, ExecError,
-            # containment lattice for the region registry (kernel/Prefix.jl, server branch —
-            # ⚠️ the port-inventory ratchet is extracted from main and cannot see it)
-            prefix_compare, PREFIX_EQUALS, PREFIX_OF, PREFIX_PREFIXED_BY,
-            PREFIX_SHARING, PREFIX_DISJOINT,
-            register_grounded!, is_grounded, GROUNDED_REGISTRY,
-            # .act + multi-source machinery (Stage 1 CoreSpaceActIO)
-            asource_new, source_factor, ACT_PATH
+    space_add_all_sexpr!, space_dump_all_sexpr,
+    space_val_count, space_metta_calculus!, space_metta_calculus_at!,
+    sexpr_to_expr, expr_serialize, read_zipper,
+    space_query_multi, space_query_multi_at, ExecError,
+    # containment lattice for the region registry (kernel/Prefix.jl, server branch —
+    # ⚠️ the port-inventory ratchet is extracted from main and cannot see it)
+    prefix_compare, PREFIX_EQUALS, PREFIX_OF, PREFIX_PREFIXED_BY,
+    PREFIX_SHARING, PREFIX_DISJOINT,
+    register_grounded!, is_grounded, GROUNDED_REGISTRY,
+    # .act + multi-source machinery (Stage 1 CoreSpaceActIO)
+    asource_new, source_factor, ACT_PATH
 using MorkSupercompiler: plan!, execute!, SCOptions, SC_DEFAULTS, SCResult
 using PathMap: PathMap, UnitVal, UNIT_VAL,
-               read_zipper_at_path, zipper_to_next_val!, zipper_path,
-               set_val_at!, remove_val_at!,
-               act_from_zipper, act_save, ArenaCompactTree
+    read_zipper_at_path, zipper_to_next_val!, zipper_path,
+    set_val_at!, remove_val_at!,
+    act_from_zipper, act_save, ArenaCompactTree
 
 # WILLIAM / AdaptiveCompression REMOVED 2026-08-05. Its `__init__` registered three grounded ops —
 # `WILLIAM.mine-patterns`, `WILLIAM.prefix-of?`, `WILLIAM.continuation-of-prefix` — and ALL THREE had
@@ -154,16 +154,16 @@ include("compiler/gslt/Reduce.jl")       # the presentation ENGINE — makes a p
 include("compiler/gslt/Context.jl")      # reduction CLOSED UNDER CONTEXT + the fuel-bounded normalizer
 include("compiler/gslt/Relation.jl")     # PREMISED rewrites fire — an ADDITION above upstream, own oracle
 include("compiler/gslt/Bisimulation.jl")   # Def 2.2: bisimilarity over the UNLABELLED one-step
-                                          #   relation + the bisimilarity-preserving term map. NOT
-                                          #   Def 5.1 — see Multicategory.jl for why that stays declined.
+#   relation + the bisimilarity-preserving term map. NOT
+#   Def 5.1 — see Multicategory.jl for why that stays declined.
 include("compiler/gslt/Multicategory.jl")  # Def 5.1 objects+multimorphisms: interfaces, contexts, plugging
 
 # Dual-lane program routing (CeTTa-adopted, PRIMUS-native). In MAIN scope (uses CoreSpace + the
 # MORK-backed engine), NOT inside the self-contained `Eval` submodule above.
 include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK trie (needs Eval's
-                                     # _MODULE_PATH, so it must follow standard/Eval.jl)
+# _MODULE_PATH, so it must follow standard/Eval.jl)
 include("space/Spaces.jl")           # Space constructor REGISTRY + capability ledger. Needs BOTH store
-                                     # families in scope (Eval.Space and CoreSpace), so it follows both.
+# families in scope (Eval.Space and CoreSpace), so it follows both.
 include("standard/AtomExprBridge.jl")  # typed Atom ⇄ MORK.Expr — lane-neutral, live in CoreSpace/Primitives
 include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST precede every consumer
 # COMPILER-PRIMARY lane: MeTTa → MeTTa-IL → evaluate the IL. The live consumer of compiler/EmitIL.jl,
@@ -177,10 +177,10 @@ include("standard/MeTTaIL.jl")       # MeTTa-IL lane (F1R3FLY layered track): Me
 include("standard/GSLT.jl")          # GSLT theory front-end: theory algebra (extends/union/replace) → MeTTa-IL
 include("standard/DualTrack.jl")     # RESTORED 2026-08-14 — mc_run + the ZAM readback
 include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS straight off the trie
-                                     # ⚠️ NOT "via the compiler lane" — that was this line until
-                                     # 2026-08-19 and LibPolicy contains ZERO compiler calls. Its
-                                     # own docstring says so: "one call to `core_rules`, the
-                                     # space's own rule scanner. There is no executor in the path."
+# ⚠️ NOT "via the compiler lane" — that was this line until
+# 2026-08-19 and LibPolicy contains ZERO compiler calls. Its
+# own docstring says so: "one call to `core_rules`, the
+# space's own rule scanner. There is no executor in the path."
 # ── RESTORED 2026-08-14 (`4b54e71` deleted these; the deletion was RIGHT about the ARROW and WRONG
 # about the MECHANISM) ─────────────────────────────────────────────────────────────────────────────
 # `mm2_route!` lowers MeTTa -> MM2 DIRECTLY, an edge Figure 2 does not have; do NOT build on it and do
@@ -189,7 +189,8 @@ include("standard/LibPolicy.jl")     # read lib/*.metta POLICY CONSTANTS straigh
 # scratch space per bang, `space_add_all_sexpr!` ingestion, exec-atoms filtered out of the dump, and
 # the `redex-persisted => fall back to the interpreter` guard. Every one of those was re-derived by
 # hand on 2026-08-14, two of them badly, before the file was read back.
-export mm2_route!, mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args, mm2_is_relational
+export mm2_route!,
+    mm2_match!, mm2_lower_match, mm2_lower_equals, mm2_expr_args, mm2_is_relational
 export mm2_lower_equals_arith, mm2_is_arith_body, mm2_lower_eq, mm2_eq_bisim
 export mm2_zam_answers, mm2_partition
 export mc_run
@@ -254,8 +255,10 @@ Operates directly on `space.inner` (bypasses Core's prefix scoping) — pass a *
 only tier-1 `plan!` was reachable (and only via the legacy eval path). Stage opt-ins live on
 `SCOptions` (`supercompile`, `saturate`, `use_approx_pipeline`, `use_mm2_compiler`, …).
 """
-sc_execute!(space::CoreSpace, program::AbstractString; opts::SCOptions = SC_DEFAULTS)::SCResult =
-    execute!(space.inner, program; opts = opts)
+sc_execute!(
+    space::CoreSpace, program::AbstractString; opts::SCOptions=SC_DEFAULTS
+)::SCResult =
+    execute!(space.inner, program; opts=opts)
 
 export sc_execute!, SCOptions, SC_DEFAULTS, SCResult
 export CoreSpace, new_core_space, enable_sc!
@@ -282,10 +285,12 @@ export typed_atom_to_expr, expr_to_atom, mc_closure!
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest
 # MeTTa-IL lane (F1R3FLY layered track)
-export metta_il_lower, metta_il_lower_rewrite, metta_il_lower_saturation, metta_il_run!, metta_il_normalize
+export metta_il_lower,
+    metta_il_lower_rewrite, metta_il_lower_saturation, metta_il_run!, metta_il_normalize
 export metta_il_lower_def, metta_il_lower_pipeline, metta_il_run_pipeline!   # def/match/emit pipeline surface
 # GSLT theory front-end (theory algebra: extends / union / replacement → flatten → MeTTa-IL)
-export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!, theory_instantiate
+export Theory, parse_theory, load_theories, theory_flatten, theory_rewrites, theory_run!,
+    theory_instantiate
 export theory_orient_equations
 # ── DIRECT-LOWERING ARROW: DO NOT BUILD ON IT — but the FILES ARE BACK (restored 2026-08-14) ─────
 # `MM2Router.jl` and `DualTrack.jl` were deleted in `4b54e71` and RESTORED the same day. The deletion
@@ -373,8 +378,8 @@ using PrecompileTools: @compile_workload
 @compile_workload begin
     try
         for src in ("(= (f \$x) (g \$x))\n(= (g \$x) \$x)\n!(f 7)\n",
-                    "(= (inc \$x) (+ \$x 1))\n!(inc 41)\n",
-                    "(= (h \$x) (let \$y \$x (pair \$y \$y)))\n!(h 3)\n")
+            "(= (inc \$x) (+ \$x 1))\n!(inc 41)\n",
+            "(= (h \$x) (let \$y \$x (pair \$y \$y)))\n!(h 3)\n")
             compile_run(src)
         end
     catch

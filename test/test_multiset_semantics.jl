@@ -43,7 +43,7 @@ using MeTTaCore
 const _SM = MeTTaCore.Eval
 
 "Fresh interpreter space with the core stdlib — the shape MettaJam's stateless endpoint uses."
-_fresh_interp() = (s = _SM.Space(); _SM.load_core_stdlib!(s); s)
+_fresh_interp() = (s=_SM.Space(); _SM.load_core_stdlib!(s); s)
 
 "Run MeTTa source in a fresh space, return the LAST result rendered as a string."
 _last(src::String) = string(_SM.load_metta!(_fresh_interp(), src)[end])
@@ -52,14 +52,18 @@ _last(src::String) = string(_SM.load_metta!(_fresh_interp(), src)[end])
 
     @testset "MeTTa surface keeps duplicates (agrees with all reference engines)" begin
         # 4/4 agreement, verified via workflows/metta_xcheck.sh on 2026-08-01.
-        @test _last("!(add-atom &self (foo a))\n" *
-                    "!(add-atom &self (foo a))\n" *
-                    "!(collapse (match &self (foo \$x) \$x))") == "(a a)"
+        @test _last(
+            "!(add-atom &self (foo a))\n" *
+            "!(add-atom &self (foo a))\n" *
+            "!(collapse (match &self (foo \$x) \$x))"
+        ) == "(a a)"
 
         # 3/3 (CeTTa dumps its stdlib for get-atoms — a CeTTa harness artifact, not a disagreement).
-        got = _last("!(add-atom &self (baz c))\n" *
-                    "!(add-atom &self (baz c))\n" *
-                    "!(collapse (get-atoms &self))")
+        got = _last(
+            "!(add-atom &self (baz c))\n" *
+            "!(add-atom &self (baz c))\n" *
+            "!(collapse (get-atoms &self))"
+        )
         @test occursin("(baz c) (baz c)", got)
     end
 
@@ -73,10 +77,12 @@ _last(src::String) = string(_SM.load_metta!(_fresh_interp(), src)[end])
         # hyperon + CeTTa remove ONE copy -> "(b)".  PeTTa + Core remove ALL -> "()".
         # Pinned as current behaviour so a change is deliberate and visible, NOT as a claim that
         # removing all copies is right.
-        @test _last("!(add-atom &self (bar b))\n" *
-                    "!(add-atom &self (bar b))\n" *
-                    "!(remove-atom &self (bar b))\n" *
-                    "!(collapse (match &self (bar \$x) \$x))") == "()"
+        @test _last(
+            "!(add-atom &self (bar b))\n" *
+            "!(add-atom &self (bar b))\n" *
+            "!(remove-atom &self (bar b))\n" *
+            "!(collapse (match &self (bar \$x) \$x))"
+        ) == "()"
     end
 
     @testset "the MORK-trie store dedupes — the two stores really do disagree" begin
