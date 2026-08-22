@@ -389,7 +389,13 @@ Main.@suite("test_langdef_welding.jl")
     @test mork_rule_rewrite("(= (dup \$x) (\$x \$x))", "(dup k)") == "(k k)"          # template duplication
     @test mork_rule_rewrite("(= (p \$x \$y) (q \$y \$x))", "(z a b)") === nothing     # head mismatch
     @test mork_rule_rewrite("(foo bar)", "(foo bar)") === nothing                     # not a (= ..) rule
-    @test mork_unify("(f \$x)", "(f bar)") isa Dict                                   # match → bindings
+    # 🔴 AbstractDict, NOT Dict — and this test was the LAST carrier of a defect the SOURCE
+    # already fixed on 2026-08-20. `expr_unify` returns MORK's `Bindings`, a direct-indexed slab
+    # that is `<: AbstractDict` but NOT `<: Dict`. MorkBridge.jl stopped testing the success
+    # representation then ("the failure type is the stable half of the contract"); this assertion
+    # kept testing it, and went red the moment the source became right.
+    _b = mork_unify("(f \$x)", "(f bar)")                                             # match → bindings
+    @test _b isa AbstractDict && !isempty(_b)
     @test mork_unify("(f \$x)", "(h bar)") === nothing                                # no match
 end
 

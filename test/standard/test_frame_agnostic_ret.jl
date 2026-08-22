@@ -109,20 +109,34 @@ end
     # adding a site fails here and forces the author to confirm its closure is frame-agnostic.
     @testset "Frame( construction sites are pinned at 8 (+1 inner constructor)" begin
         src = read(joinpath(@__DIR__, "..", "..", "src", "standard", "Eval.jl"), String)
+        # 🔴 PARSE, DO NOT LINE-SCAN. This test read Eval.jl as TEXT and classified each `Frame(`
+        # by whether "a::Atom" appeared ON THE SAME LINE — making it a test of LINE LAYOUT, not of
+        # construction sites. Reformatting wrapped the inner constructor's signature across lines,
+        # `a::Atom` left the `Frame(` line, and the site silently reclassified ctor->built: both
+        # assertions failed (0==1, 9!=8) while the real invariant — NINE sites — held perfectly.
+        # A pure reformat must not be able to fail a semantic test; when it can, the test asserts
+        # the representation rather than the contract. The AST also subsumes the character-offset
+        # exclusions this replaced (`::Frame`, `Tuple{Frame,`) for free: an annotation is not a call.
+        parsed = Meta.parseall(src)
         sites = Tuple{Int,String}[]
-        for (i, line) in enumerate(split(src, '\n'))
-            startswith(strip(line), "#") && continue
-            code = split(line, '#')[1]
-            for m in eachmatch(r"\bFrame\(", code)
-                j = m.offset
-                j >= 3 && code[max(1, j-2):j-1] == "::" && continue
-                j >= 2 && code[j-1] in ('{', ',') && continue
-                push!(sites, (i, strip(line)))
+        _isframe(f) = f === :Frame || (Meta.isexpr(f, :curly) && f.args[1] === :Frame)
+        function _walk(x, line)
+            x isa LineNumberNode && return x.line
+            x isa Expr || return line
+            if Meta.isexpr(x, :call) && _isframe(x.args[1])
+                sig = any(a -> Meta.isexpr(a, :(::)) && length(a.args) == 2 && a.args[2] === :Atom,
+                          x.args[2:end])
+                push!(sites, (line, sig ? "a::Atom" : "construction"))
             end
+            for a in x.args
+                line = _walk(a, line)
+            end
+            return line
         end
-        # 9 matches = 8 real constructions + the inner constructor's own definition (`Frame(a::Atom,…)`)
-        ctor  = [s for s in sites if occursin("a::Atom", s[2])]
-        built = [s for s in sites if !occursin("a::Atom", s[2])]
+        _walk(parsed, 0)
+        # 9 = 8 real constructions + the inner constructor's own definition (`Frame(a::Atom,…)`)
+        ctor  = [s for s in sites if s[2] == "a::Atom"]
+        built = [s for s in sites if s[2] != "a::Atom"]
         @test length(ctor) == 1
         @test length(built) == 8 ||
               (@info "Frame( construction count MOVED — confirm each new closure is frame-agnostic, then update this pin" built; false)

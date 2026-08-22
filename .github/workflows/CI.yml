@@ -52,3 +52,30 @@ jobs:
   # JET currently FAILS TO PRECOMPILE on Julia 1.12 (MethodError: add_active_gotos! — JET tracks
   # compiler internals and lags new Julia releases). Re-add a `jet` job when JET supports 1.12.
   # This is also why JET was dropped from [deps]: unused AND a latent precompile-breakage risk.
+
+  format:
+    name: Format (Blue)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+      - name: Check formatting
+        run: |
+          # 🔴 CORE HAD NO FORMAT GATE AT ALL until 2026-08-21 — the only package of twelve without
+          # one, and consequently the most drifted: adding this required a 189-file reformat
+          # (+11 069/-5 835), larger than MORK's 105. A config without a gate is a preference, not a
+          # standard; .JuliaFormatter.toml has been here the whole time and nothing enforced it.
+          # KEEP 2.12.6 IN LOCKSTEP with the global @v1.12 env: workflows/agent_check.jl parses this
+          # line and REFUSES to run the formatter on a mismatch, because a mismatched formatter
+          # MANUFACTURES diffs instead of catching drift (measured: 105 files of pure churn).
+          julia -e 'using Pkg; Pkg.add(PackageSpec(name="JuliaFormatter", version="2.12.6"))'
+          julia -e 'using JuliaFormatter; println("JuliaFormatter ", pkgversion(JuliaFormatter))'
+          julia -e 'using JuliaFormatter; format(".")'
+          if ! git diff --quiet; then
+            echo "::error::Formatting check failed — files below are not Blue-formatted:"
+            git --no-pager diff --stat
+            exit 1
+          fi
+          echo "All files Blue-formatted."
