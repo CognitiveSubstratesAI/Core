@@ -342,7 +342,7 @@ const _CAPS_MORK = SpaceCaps(
     # ⇒ Exposing conjunction is a CORE-SIDE SIGNATURE CHANGE — accept a
     # Vector of patterns and wrap `(, p1 p2 …)`, which `space_query_multi_at`
     # already consumes. It is NOT blocked on upstream, and it is NOT a new
-    # join to build over PathMap. The primitive is ported and under test.
+    # join to build over PathMaps. The primitive is ported and under test.
     #
     # ⚠️ AND THE CORROBORATION I CITED FLATTERED THE WRONG ANSWER. PeTTa's
     # `dev-zone/mork_ffi` really does expose seven string commands with no

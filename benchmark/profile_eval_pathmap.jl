@@ -1,7 +1,7 @@
 # Profile the MORK-backed eval lane (the ONLY path that uses PathMap) to answer:
 # "is PathMap the bottleneck for MeTTa eval?". Run via the WARM REPL (preloads MeTTaCore), NOT cold:
 #   printf 'include("benchmark/profile_eval_pathmap.jl"); exit()\n' | julia --project=. -i tools/repl.jl
-# saturate=true routes mc_run → sc_execute! (MorkSupercompiler) → space_metta_calculus! (MORK) → PathMap.
+# saturate=true routes mc_run → sc_execute! (MorkSupercompiler) → space_metta_calculus! (MORK) → PathMaps.
 using MeTTaCore, Profile
 const MC = MeTTaCore
 try
