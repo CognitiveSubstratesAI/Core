@@ -3,7 +3,7 @@
 ; Source papers (specs, read-once) + reference impl:
 ;   docs/specs/Subrep/SubRep_spec.md §2.3   — PDS cover form (componentwise + budgets)
 ;   docs/research/papers/Subrep/SubRep-Minecraft-AIRIS_v2_2.pdf §3.2 Def 2  — PDS-ε
-;   ~/PRIMUS/dev-zone/subrep/certification/pds_test.py  — the iCog PDSGate (PDS-ε,
+;   ~/dev-zone/subrep/certification/pds_test.py  — the iCog PDSGate (PDS-ε,
 ;       AdmissionGate.admit/get_admission_margin/get_gate_type; weight_set vertices)
 ;
 ; PDS is the WEAKER, more permissive admission rule. Where CDS demands uniform

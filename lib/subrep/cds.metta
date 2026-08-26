@@ -10,7 +10,7 @@
 ;   docs/research/papers/Subrep/SubRep-Minecraft-AIRIS_v2_2.pdf §3.2
 ;       simplex W = {w≥0, ‖w‖₁=1}, h_W(u)=max_i u_i ⟹  CDS:  Δr ≥ max_i(−Δn_i)
 ;       i.e.  m_o = Δr + min_i(Δn_i)
-; Reference impl (Python, paper-faithful): ~/PRIMUS/dev-zone/subrep/certification/cds_test.py
+; Reference impl (Python, paper-faithful): ~/dev-zone/subrep/certification/cds_test.py
 ;
 ; The CDS gate certifies a candidate option `o` against the admitted baseline `B`:
 ; admit `o` only if it beats the baseline for EVERY motive weight in the slice W

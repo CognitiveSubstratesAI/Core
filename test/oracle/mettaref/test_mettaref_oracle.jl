@@ -1,7 +1,7 @@
 # ============================================================================================
 # MeTTapedia `metta-ref` differential — a THIRD corpus, chosen for what our other two do not cover.
 #
-# Source: MeTTapedia (github.com/…/MeTTapedia, MIT, vendored from `~/JuliaAGI/dev-zone/MeTTapedia`
+# Source: MeTTapedia (github.com/…/MeTTapedia, MIT, vendored from `~/dev-zone/MeTTapedia`
 # @ 23bede4e), subtree `cakeml/metta-ref` — a HOL4 specification of MeTTa "M1" with an SML reference
 # interpreter (`sml/metta_m1.sml`) and a curated test set.
 #

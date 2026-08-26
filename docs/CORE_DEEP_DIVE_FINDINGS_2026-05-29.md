@@ -82,7 +82,7 @@ makes the MeTTa versions unreachable. This is noted in-source as intentional.
 
 The [2026-04-09 conformance report](../../../docs/research/PRIMUS_MeTTa_Conformance_Report_2026-04-09.md)
 recorded 26/30 probe pass and 4 documented divergences against
-[hyperon-experimental](../../../../JuliaAGI/dev-zone/hyperon-experimental). Where
+[hyperon-experimental](../../../../dev-zone/hyperon-experimental). Where
 those D-tags map onto current Core:
 
 - **D1 (noeval returns unevaluated)** — [Eval.jl L69](../src/eval/Eval.jl#L69):

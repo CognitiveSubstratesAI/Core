@@ -6,7 +6,7 @@
 # `# REFUSED` line with its reason. Silently emitting 57 rows for a 72-program corpus and calling it
 # "the corpus" is how coverage gets overstated — the count you can quote must be the count that ran.
 set -uo pipefail
-UP="${SWIPL_DEVEL:-$HOME/JuliaAGI/dev-zone/swipl-devel}"
+UP="${SWIPL_DEVEL:-$HOME/dev-zone/swipl-devel}"
 SRC="$UP/tests/xsb/wfs_tests"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/wfs_programs.tsv"

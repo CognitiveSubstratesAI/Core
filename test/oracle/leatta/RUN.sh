@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-LEATTA_DIR="${LEATTA_DIR:-$HOME/JuliaAGI/dev-zone/LeaTTa}"
+LEATTA_DIR="${LEATTA_DIR:-$HOME/dev-zone/LeaTTa}"
 LEATTA_BIN="$LEATTA_DIR/.lake/build/bin/LeaTTa"
 SRC="$LEATTA_DIR/tests/corpus"
 

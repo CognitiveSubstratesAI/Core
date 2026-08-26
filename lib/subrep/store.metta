@@ -5,7 +5,7 @@
 ;   as Atomspace patches); SubRep_spec.md §5.4 (certificate); iCog Quarter Plan
 ;   Obj 3 / Phase 4 (store certificates as native Atoms; retrieval queries select
 ;   certified skills by CURRENT motive weights; zero-shot reuse through motive
-;   shifts WITHOUT retraining); ref ~/PRIMUS/dev-zone/subrep/certification/metta_storage.py.
+;   shifts WITHOUT retraining); ref ~/dev-zone/subrep/certification/metta_storage.py.
 ;
 ; The certificate-driven, auditable library is the SubRep backbone: certified
 ; skills live IN the space as atoms (not in an external store), so a motive shift

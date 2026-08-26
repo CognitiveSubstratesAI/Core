@@ -1,6 +1,6 @@
 ;;;; MOSES.metta — MOSES library entry point (port of the iCog metta-moses MeTTaLog
 ;;;; reimplementation of asmoses / Looks' "Competent Program Evolution").
-;;;; Upstream 1:1 reference: ~/JuliaAGI/dev-zone/metta-moses. Research-layer reference
+;;;; Upstream 1:1 reference: ~/dev-zone/metta-moses. Research-layer reference
 ;;;; (scalable MORK-native design): docs/research/papers/Mork/MOSES MORK.pdf.
 ;;;;
 ;;;; CORE-DIALECT ADAPTATIONS (vs upstream metta-moses):

@@ -24,7 +24,7 @@
 #
 #   test/standard/tabling/upstream/extract_corpus.sh        # regenerate wfs_corpus.tsv
 set -uo pipefail
-UP="${SWIPL_DEVEL:-$HOME/JuliaAGI/dev-zone/swipl-devel}"
+UP="${SWIPL_DEVEL:-$HOME/dev-zone/swipl-devel}"
 SRC="$UP/tests/xsb/wfs_tests"
 OUT="$(cd "$(dirname "$0")" && pwd)/wfs_corpus.tsv"
 

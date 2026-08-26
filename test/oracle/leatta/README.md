@@ -1,7 +1,7 @@
 # LeaTTa proved-oracle — Core vs machine-checked MeTTa semantics
 
 Ground-truth for `test/oracle/leatta/test_leatta_oracle.jl`. **LeaTTa** (1.0.6, hosted under
-godelclaw, `~/JuliaAGI/dev-zone/LeaTTa`) is a **Lean-4 machine-checked** MeTTa/Hyperon interpreter: its
+godelclaw, `~/dev-zone/LeaTTa`) is a **Lean-4 machine-checked** MeTTa/Hyperon interpreter: its
 minimal interpreter + standard library run **Hyperon's own unmodified oracle corpus — 270 passing
 assertions across 22 files** — and its metatheory (`MettaHyperonFull/Proofs/`) carries kernel-checked
 proofs (determinism, confluence, first-argument-indexing soundness/completeness, gradual-type totality,

@@ -1,7 +1,7 @@
 # ============================================================================================
 # LeaTTa PROVED-ORACLE differential — the strongest conformance oracle in the fleet by provenance.
 #
-# LeaTTa (~/JuliaAGI/dev-zone/LeaTTa) is a Lean-4 MACHINE-PROVED MeTTa/Hyperon interpreter (the spec
+# LeaTTa (~/dev-zone/LeaTTa) is a Lean-4 MACHINE-PROVED MeTTa/Hyperon interpreter (the spec
 # MeTTa-TS ports from): its `interpretAtom`/`mettaEval` come with machine-checked TypeSoundness /
 # Preservation / Confluence / MatcherCorrect proofs. So "Core ≠ LeaTTa ⇒ Core erred" — a deviation is
 # OUR bug, not a difference of opinion.

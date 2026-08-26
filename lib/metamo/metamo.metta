@@ -2,7 +2,7 @@
 ;;;;
 ;;;; MetaMo: A Robust Motivational Framework for Open-Ended AGI (Lian & Goertzel
 ;;;; 2025, AGI-2025 Ch 34/35). Adopted from the icoglabs MetaMo MeTTa reference
-;;;; (~/JuliaAGI/dev-zone/MetaMo), dialect-adapted to Core's MeTTa. See
+;;;; (~/dev-zone/MetaMo), dialect-adapted to Core's MeTTa. See
 ;;;; docs/specs/metamo_spec.md + metamo_embodiment_spec.md (eqs #1–#11).
 ;;;;
 ;;;; Build status (incremental adoption):

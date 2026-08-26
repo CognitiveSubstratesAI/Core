@@ -41,7 +41,7 @@ const _E1_E = MeTTaCore.CompilerEmitIL
 const _E1_V = MeTTaCore.Eval
 const _E1_S = MeTTaCore.StandardMeTTa
 
-const _E1_CETTA = "/home/shivaji1012/JuliaAGI/dev-zone/CeTTa"
+const _E1_CETTA = "/home/shivaji1012/dev-zone/CeTTa"
 const _E1_OURS = normpath(joinpath(dirname(pathof(MeTTaCore)), ".."))
 
 "Heads whose ARGUMENTS are patterns/templates/spaces — never things to reduce first."

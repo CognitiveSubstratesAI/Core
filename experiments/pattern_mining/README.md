@@ -23,7 +23,7 @@ cd ~/code/CognitiveSubstratesAI/Core && \
 
 Grounded in three Goertzel docs (`../../docs/research/papers/Mork/`): **Pattern-Miner-Tutorial-MeTTa4**
 (the Hyperon Pattern Miner algorithm), **MORK-Miner** (PathMap-native, prefix-locality), **metta-magic_v2**
-(framework context). Canonical references cloned to `~/PRIMUS/dev-zone/{hyperon-miner,weighted-atom-sweep}`.
+(framework context). Canonical references cloned to `~/dev-zone/{hyperon-miner,weighted-atom-sweep}`.
 
 1. **§9 "three dialects" comparison.** The Scalable-MeTTa-Infrastructure §9 implements the *same* miner in
    multiple dialects to **compare the language variants** — it's a benchmark, not competing miners. We

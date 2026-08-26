@@ -1,7 +1,7 @@
 # `metta-ref` differential — MeTTapedia's HOL4-specified M1 reference
 
 Ground truth and extra coverage for `test_mettaref_oracle.jl`. Vendored from **MeTTapedia**
-(`~/JuliaAGI/dev-zone/MeTTapedia` @ `23bede4e`, MIT), subtree `cakeml/metta-ref`: a HOL4
+(`~/dev-zone/MeTTapedia` @ `23bede4e`, MIT), subtree `cakeml/metta-ref`: a HOL4
 specification of MeTTa "M1" with an SML reference interpreter (`sml/metta_m1.sml`) and a curated
 test set.
 

@@ -15,7 +15,7 @@ Three Goertzel documents (under `docs/research/papers/Mork/`) ground this work:
 | **MORK-Miner** | A *PathMap-native* miner: prefix-locality, seed/grow by prefix, **in-place support counters** |
 | **metta-magic_v2** | Framework context (`metta_magic`/PyMeTTa); the miner is one algorithm in a broader vision |
 
-The canonical reference implementations are cloned to `~/PRIMUS/dev-zone/`:
+The canonical reference implementations are cloned to `~/dev-zone/`:
 [`hyperon-miner`](https://github.com/trueagi-io/hyperon-miner) (the authoritative MeTTa miner) and
 [`weighted-atom-sweep`](https://github.com/iCog-Labs-Dev/weighted-atom-sweep) (the Weighted Atom Sweeps
 cognitive scheduler).

@@ -6,7 +6,7 @@ load-bearing path yet — each experiment must demonstrate its claim (and keep t
 suite green) before any of it is promoted into `src/`/`stdlib/`.
 
 **Design doc**: [docs/PRIMITIVE_SURFACE_AND_ECOSYSTEM_TOOLING_2026-06-10.md](../../docs/PRIMITIVE_SURFACE_AND_ECOSYSTEM_TOOLING_2026-06-10.md)
-**References** (read, not vendored as core deps): `~/JuliaAGI/dev-zone/{TermInterface,Metatheory,SymbolicUtils,SymbolicIntegration,SymbolicSMT}.jl`
+**References** (read, not vendored as core deps): `~/dev-zone/{TermInterface,Metatheory,SymbolicUtils,SymbolicIntegration,SymbolicSMT}.jl`
 
 ## The two adapter points (the whole plan in one line)
 1. **L0** — implement the zero-dep `TermInterface` protocol for Core's atom → Metatheory works for free.

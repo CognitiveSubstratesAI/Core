@@ -11,7 +11,7 @@
 #   test/standard/tabling/upstream/verify_corpus.sh          # all 72
 #   test/standard/tabling/upstream/verify_corpus.sh p13      # one
 set -uo pipefail
-UP="${SWIPL_DEVEL:-$HOME/JuliaAGI/dev-zone/swipl-devel}"
+UP="${SWIPL_DEVEL:-$HOME/dev-zone/swipl-devel}"
 SRC="$UP/tests/xsb/wfs_tests"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 command -v swipl >/dev/null || { echo "swipl not on PATH"; exit 2; }

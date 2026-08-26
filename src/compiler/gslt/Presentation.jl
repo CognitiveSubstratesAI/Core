@@ -4,7 +4,7 @@
 # INPUT that "MeTTa-IL is derived from a GSLT description" presupposes, upstream of the one arrow.
 #
 # ─── THIS IS A PORT, NOT A DESIGN ────────────────────────────────────────────────────────────────
-# Ported from `~/JuliaAGI/dev-zone/LeaTTa/MeTTaIL/Syntax.lean` (198 lines), which is MACHINE-CHECKED:
+# Ported from `~/dev-zone/LeaTTa/MeTTaIL/Syntax.lean` (198 lines), which is MACHINE-CHECKED:
 # `lake build MeTTaIL` at LeaTTa HEAD `3885010` completes 660 jobs, 444 modules, with ZERO errors,
 # ZERO warnings and ZERO `sorry` (run 2026-08-09, Lean 4.31.0). That file mirrors the NORMATIVE BNFC
 # grammar `MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf` ("MeTTa IL: Language Syntax Definition"), so

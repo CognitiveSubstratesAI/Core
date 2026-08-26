@@ -7,7 +7,7 @@
 # Source: docs/specs/Subrep/SubRep_spec.md §2.2 (CDS), §3.2 (simplex form),
 #   §11.11 (box no-LP support fn), §2.2.5 (robust margin), §11.17 (MVP-0);
 #   docs/research/papers/Subrep/SubRep-Minecraft-AIRIS_v2_2.pdf §3.2 + §5.2 options;
-#   reference impl ~/PRIMUS/dev-zone/subrep/certification/cds_test.py.
+#   reference impl ~/dev-zone/subrep/certification/cds_test.py.
 #
 # Runs on the Eval (same evaluator as quantale/PLN/ECAN). Tests are
 # DISCRIMINATING — each flips a real admit↔reject decision, not just non-empty
