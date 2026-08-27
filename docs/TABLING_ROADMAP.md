@@ -39,6 +39,60 @@ base and getting 2.0 for free.
 
 ---
 
+## 0m. 🔴 EARLY COMPLETION IS NOT PORTED — and it is why 3 XSB programs cannot run (2026-08-27)
+
+**Upstream has it; we have nothing keyed on groundness at all.** Grep across `Tabling.jl` +
+`tabling/*.jl`: `is_complete`, `_wfs_complete!`, `set_table_status!` — and ZERO early-completion
+concept.
+
+### The upstream mechanism, traced end to end
+
+```c
+pl-tabling.c:1148   if ( wl->ground )            /* early completion */
+                      return UDL_COMPLETE;
+pl-tabling.c:3681   case UDL_COMPLETE: PL_unify_atom(A4, ATOM_cut)
+```
+```prolog
+boot/tabling.pl:617   '$tbl_wkl_add_answer'(WorkList, Skeleton, Delays, Complete),
+                      Complete == !,
+                      !                          % cut the producer's remaining clauses
+```
+
+`wl->ground` is set when the answer trie has no variables (`:2577` sets the `WL_GROUND` sentinel,
+`:2920` carries it into the worklist). So: **a GROUND tabled subgoal that derives an UNCONDITIONAL
+answer completes immediately and CUTS its remaining clauses.**
+
+🔑 The driver is `delim/4` — the DELIMITED-CONTROL loop (`reset/3`). We already have `shift!`/`reset!`,
+so the hook point exists; this is not a new machine.
+
+### The measured consequence — XSB p29 (also p60, p80)
+
+```prolog
+e(s(A),0) :- e(A,0).          % generative + recursive
+w(A) :- tnot(u(A)).           % clause 1 — yields the answer
+w(A) :- e(B,A), tnot(w(B)).   % clause 2 — reaches the divergent call
+```
+
+| | swipl 10.1.12 | ours |
+|---|---|---|
+| `findall(B, e(B,0), L)` | **timeout** | diverges (ErrorException @ 5.9s) |
+| `findall(x, w(0), L)` | **`[x]`** | diverges |
+
+`e(B,0)` diverges in BOTH — that is not our bug. swipl still answers `w(0)` because `w(0)` is ground,
+clause 1 gives an unconditional answer, and early completion cuts clause 2 before it reaches `e`.
+
+⇒ `wfs_programs.tsv` refuses p29/p60/p80 with exactly this reason. They are **engine** gaps, not
+translator gaps — the translation is correct.
+
+### ⚠️ AND THE FIRST DIAGNOSIS WAS WRONG, which is why this entry exists
+
+It was committed as *"a CALL binds a variable used later; our form discards call results"*, read off
+`binder_of/3` and never executed. Executed, it is false — the binding propagates:
+`!(let $c (e $b 1) (tnot (w $b)))` → `(tnot (w a))`, `$b` bound. Do not re-derive the binding theory;
+it has been tested and refuted.
+
+---
+
 ## 0. BLOCKERS — these gate other work, and two are live defects
 
 | # | item | why it blocks | verify |

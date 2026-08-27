@@ -112,7 +112,7 @@ clause_metta(Clause, Out) :-
     % while `a.` survived, and the program was then graded as conformance evidence with a fact
     % missing. A silent drop is strictly worse than a refusal in this directory.
     ;  term_var_nums(H2, HVs0), generative_call_clause(B2, HVs0)
-    -> Out = refused('a CALL binds a variable used later; our form discards call results')
+    -> Out = refused('needs SLG EARLY COMPLETION (pl-tabling.c:1148) — unported; the generative call diverges')
     ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars), term_metta(H2, HS)
     -> format(atom(Out), "(= ~w ~w)", [HS, BS])
     ;  Out = refused('clause shape not handled') ).
@@ -200,17 +200,31 @@ lits_metta([L|Ls], N, Seen, S) :-
 
 % tnot: a call, binds nothing (our `tnot` requires a ground goal anyway)
 lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(tnot ~w)", [GS]).
-% 🔴 A CALL THAT WOULD **BIND** A NEW VARIABLE IS REFUSED — added 2026-08-27, and this is a
-% CORRECTNESS refusal, not a coverage gap.
+% 🔴 A GENERATIVE CALL IS REFUSED — because we have not ported SLG EARLY COMPLETION.
 %
-% `binder_of/3` below hands a CALL the throwaway binder `$cN`, i.e. the call's RESULT IS DISCARDED.
-% That is exactly right when every argument is already bound (the literal is a TEST). It is WRONG
-% when the call is GENERATIVE. p29:
-%     w(A) :- e(B,A), tnot(w(B)).        % e/2 untabled, has rules ⇒ treated as a call
-% In Prolog `e(B,A)` BINDS B and `tnot(w(B))` consumes it. We emitted
-%     (= (w $v0) (let $c1 (e $v1 $v0) (tnot (w $v1))))
-% where `$v1` is never bound by anything — a free variable inside `tnot`. MEASURED: p29 then does
-% not terminate (it was still running after 420s; every other program finishes in under 8s).
+% ⚠️ AN EARLIER VERSION OF THIS COMMENT GAVE THE WRONG CAUSE, and the wrong cause was committed.
+% It claimed `binder_of/3` hands a CALL a throwaway binder so the call's result is DISCARDED, leaving
+% `$v1` free inside `tnot`. TESTED, AND FALSE: the binding propagates fine —
+%     !(let $c (e $b 1) (tnot (w $b)))   ->   (tnot (w a))        ← $b IS bound
+% That diagnosis was read off `binder_of/3` and never executed. This one was executed.
+%
+% THE ACTUAL CAUSE. p29:
+%     e(s(A),0) :- e(A,0).               % generative and recursive
+%     w(A) :- tnot(u(A)).                % clause 1 — yields the answer
+%     w(A) :- e(B,A), tnot(w(B)).        % clause 2 — reaches the divergent call
+% MEASURED, both engines: `e(B,0)` DIVERGES IN SWI-PROLOG TOO (`findall(B, e(B,0), L)` times out).
+% But `findall(x, w(0), L)` returns `[x]` in swipl and DIVERGES for us. The difference is that
+% `w/1` is TABLED and `w(0)` is GROUND, so SLG completes it early:
+%     pl-tabling.c:1148   if ( wl->ground ) return UDL_COMPLETE;   /* early completion */
+%     pl-tabling.c:3681   case UDL_COMPLETE: PL_unify_atom(A4, ATOM_cut)
+%     boot/tabling.pl:617 '$tbl_wkl_add_answer'(WL, Skel, Delays, Complete), Complete == !, !
+% i.e. a ground worklist receiving an UNCONDITIONAL answer CUTS the producer's remaining clauses —
+% clause 2 is never run. `wl->ground` is set when the answer trie has no variables (:2577, :2920).
+%
+% OUR SLG HAS NO EARLY-COMPLETION CONCEPT AT ALL (grep: zero hits across Tabling.jl + tabling/*.jl,
+% which have is_complete / _wfs_complete! / set_table_status! but nothing keyed on groundness).
+% The hook point exists — upstream drives this from `delim/4`, the delimited-control driver, and we
+% have `shift!`/`reset!`. This is a real, scoped port gap, NOT a translator limitation.
 %
 % ⚠️ THIS SHAPE WAS PREVIOUSLY HIDDEN BY A DIFFERENT BUG. p29 and p36 were reported as "clause shape
 % not handled" because `term_metta/2` had no NUMBER clause. Fixing that (same day) let p29 through
