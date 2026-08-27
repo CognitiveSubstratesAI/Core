@@ -319,7 +319,20 @@ const _CAPS_MORK = SpaceCaps(
     # Dict{Symbol,SExprConvertible} per match. `core_match` still FILTERS —
     # both exist; the KIND can now bind, which is what this column declares.
     #= evaluate =# false,
-    #= conjunction =# false,   # ⚠️ THE FLAG IS CORRECT; the REASON committed in 5a9b97a was WRONG and
+    #= conjunction =# true,    # 🟢 FLIPPED false → true 2026-08-27, WITH its test, by
+    # `core_match_bind_multi` (CoreSpace.jl) — accepts N patterns, wraps
+    # `(, p1 p2 … pn)`, SPLITS the effect's `combined` with `expr_span` and
+    # binds each factor into ONE dict, so a shared variable must agree ACROSS
+    # factors. Oracle `test/test_corespace_bind_multi.jl` 10/10, incl. unequal
+    # arity (an off-by-one span binds plausible garbage rather than erroring)
+    # and a lane-independence check with `_TRIE_JOIN_ENABLED` on and off.
+    # ⚠️ RESULT SET, NOT SEQUENCE — P5's cardinality reorder makes callback
+    # ORDER lane-dependent; only the LAYOUT of `combined` is lane-independent.
+    # ⚠️ Deliberately NOT a `core_match_bind` method: a single pattern IS a
+    # Vector, so dispatch could not tell one pattern from a list of them.
+    # ── the reasoning below is PRESERVED: it was right about the cost when
+    #    `CoreSpace.jl`'s own comment was not (see Core 4b52db1). ──
+    # ⚠️ THE FLAG WAS CORRECT UNTIL NOW; the REASON committed in 5a9b97a was WRONG and
     # is replaced here. That comment said "MORK offers no join to expose …
     # there is nothing public to call … the join is not offered to anyone."
     # Every clause of that is false, and the error is the one the VISIBILITY

@@ -266,6 +266,9 @@ export core_add!, core_remove!, core_match, core_rules, core_atoms
 # core_match_bind — the BINDING seam (space design §2). core_match FILTERS; this one CAPTURES,
 # routing to space_query_multi_at's indexed descent. Unblocks Λ over a MORK-backed S_rule.
 export core_match_bind
+# ...and its N-factor sibling. NOT a method of the above: a single pattern IS a Vector, so dispatch
+# could not tell one pattern from a list of them. Results are a SET — callback order is lane-dependent.
+export core_match_bind_multi
 export core_calculus!, core_calculus_at!
 # Dual-lane MM2 program routing (CeTTa-adopted)
 # ── OBSOLETE PUBLIC SURFACE, un-exported 2026-08-07 ──────────────────────────────────────────────

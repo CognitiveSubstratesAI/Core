@@ -84,6 +84,9 @@ end
 # gaps closed under a stale baseline with no attributable commit. First, so the suite says so early.
 Main.@suite("test_suite_reachability.jl")
 Main.@suite("test_corespace.jl")
+# N-factor conjunctive query WITH bindings. Its own oracle, not the upstream differential — upstream
+# has no core_match_bind to diff against; see the file header.
+Main.@suite("test_corespace_bind_multi.jl")
 Main.@suite("test_corespace_load.jl")   # load_metta!(::CoreSpace) — libs into the shared MORK trie
 # Space constructor REGISTRY + capability ledger. Every declared capability is exercised, so the ledger
 # fails when it drifts from the code — including the DECLINES (:mork evaluate=false IS compile-arrow 6).

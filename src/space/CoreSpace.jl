@@ -1070,3 +1070,79 @@ core_calculus_at!(s::CoreSpace, loc::AbstractString, steps::Int=typemax(Int)) =
             "core_calculus_at! on prefixed CoreSpace requires upstream MORK Stage 2 primitives"
         )
     end
+
+"""
+    core_match_bind_multi(s, patterns) → Vector{Dict{Symbol, SExprConvertible}}
+
+Multi-factor conjunctive query with BINDINGS: match `patterns` jointly against the trie and return
+one dict per solution, with variables shared ACROSS factors.
+
+⚠️ WHY NOT A `core_match_bind` METHOD. A single pattern IS a `Vector` (`(belief \$k \$v)` is
+`[:belief, :\$k, :\$v]`), so dispatching on `Vector` cannot distinguish one pattern from a list of
+them — it would silently read one pattern's elements as three factors and return nothing. A separate
+name fails loudly instead of quietly.
+
+HOW IT WORKS, and every step of this was verified against the kernel rather than assumed:
+`space_query_multi_at` hands the effect `combined = pzg_origin_path(loc)`
+(`MORK/src/kernel/Space.jl:840`), which for an N-factor product is the CONCATENATION of all N matched
+atoms — not one location. So the bindings need no `ExprEnv` cursor arithmetic: split `combined` with
+`expr_span` (the encoding is prefix-free, so each call yields exactly one factor) and run the same
+`_bind_walk!` the single-factor path uses, accumulating into ONE dict. Cross-factor consistency then
+falls out of `_bind_walk!`'s repeat-must-agree check (:845-847) — a variable bound by factor 1 must
+agree when factor 2 binds it, or the whole solution is rejected.
+
+⚠️ RESULT SET, NOT SEQUENCE. Callback ORDER is lane-dependent: with the trie-join fast paths on, P5's
+cardinality-greedy reorder (`_CARD_REORDER_ENABLED`) visits factors smallest-first, so solutions
+arrive in a different order than under the plain ProductZipper. MEASURED on
+`(, (edge \$x \$y) (edge \$y \$z))` over `(edge a b) (edge b c) (edge c d)`: identical multisets,
+different sequence. Callers and tests must compare SETS. Pinning an order passes with the fast paths
+off and fails with them on.
+
+Layout, by contrast, is lane-INDEPENDENT — verified by comparing the `combined` bytes the effect
+receives with `_TRIE_JOIN_ENABLED` on and off, not the answers it emits. That distinction matters:
+"byte-identical result set" is a claim about what is EMITTED, and the split depends on what is
+RECEIVED.
+"""
+function core_match_bind_multi(
+    s::CoreSpace, patterns::AbstractVector
+)::Vector{Dict{Symbol, SExprConvertible}}
+    out = Dict{Symbol, SExprConvertible}[]
+    isempty(patterns) && return out
+    all(p -> p isa Vector && !isempty(p), patterns) || return out
+    n = length(patterns)
+    pat = try
+        sexpr_to_expr("(, " * join((to_sexpr_query(p) for p in patterns), " ") * ")")
+    catch err
+        @warn "core_match_bind_multi: unencodable patterns" patterns exception=err maxlog=5
+        return out
+    end
+    with_read_permit(s) do
+        space_query_multi_at(
+            s.inner.btm,
+            s.prefix,
+            pat,
+            UInt8(0),
+            function (_bindings, loc)
+                e = loc isa MORK.Expr ? loc : MORK.Expr(Vector{UInt8}(loc))
+                b = Dict{Symbol, SExprConvertible}()
+                i = 1
+                for k in 1:n
+                    i <= length(e.buf) || return true       # combined shorter than n factors — skip
+                    sp = expr_span(e, i)
+                    atom = try
+                        from_sexpr(strip(expr_serialize(collect(sp))))
+                    catch err
+                        @warn "core_match_bind_multi: unparseable factor" k exception=err maxlog=5
+                        return true
+                    end
+                    # ONE dict across all factors ⇒ a shared variable must agree, or reject.
+                    _bind_walk!(b, patterns[k], atom) || return true
+                    i += length(sp)
+                end
+                push!(out, b)
+                true
+            end
+        )
+    end
+    out
+end
