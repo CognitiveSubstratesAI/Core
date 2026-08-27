@@ -62,8 +62,41 @@ boot/tabling.pl:617   '$tbl_wkl_add_answer'(WorkList, Skeleton, Delays, Complete
 `:2920` carries it into the worklist). So: **a GROUND tabled subgoal that derives an UNCONDITIONAL
 answer completes immediately and CUTS its remaining clauses.**
 
-🔑 The driver is `delim/4` — the DELIMITED-CONTROL loop (`reset/3`). We already have `shift!`/`reset!`,
-so the hook point exists; this is not a new machine.
+🔑 The driver is `delim/4` — the DELIMITED-CONTROL loop (`reset/3`). Our analogue is
+`_leader_pass` (`Tabling.jl:1032`), whose `for qb in query(space, (= key X))` loop IS the clause
+iteration a cut would abandon. So the hook point exists.
+
+### 🔴🔴 BUT IT IS **NOT** DIRECTLY PORTABLE — the soundness precondition is a PROLOG fact
+
+Upstream's cut is sound because `wl->ground` bounds the answer set: **a ground Prolog subgoal has AT
+MOST ONE answer** (yes/no — the answer skeleton has no variables, `:2577` `isEmptyBuffer(&vars)`).
+Once you have it, no remaining clause can contribute anything new, so cutting is free.
+
+**MeTTa violates that precondition BY DESIGN.** `(=)` is multi-result (`metta_language_spec.md`
+Invariant 6), so a GROUND goal can reduce to many different VALUES. MEASURED 2026-08-27:
+
+    (= (g) 1)  (= (g) 2)      !(g)  untabled -> [2, 1]      TWO answers
+                              !(g)  TABLED   -> [1, 2]      TWO answers
+
+⇒ **A naive port would SILENTLY DROP ANSWERS** — `[1]` instead of `[1,2]`, no error. That is the
+worst failure shape available here, and it is exactly what "port the semantics, not the mechanism"
+is meant to catch. `wl->ground` is not the condition we need; the condition we need is "no remaining
+rule can contribute a NEW answer", which is not decidable from groundness in MeTTa.
+
+### So it needs a DECISION, not just an implementation
+
+Two candidate routes, neither free, and the choice is a semantics call:
+
+* **(a) An opt-in table mode** — the caller declares the predicate is Prolog-shaped (success is one
+  bit, not a value set), and early completion applies only there. Honest, and it mirrors how upstream
+  scopes `as incremental`. Cost: a new declaration surface, and `Options.jl` currently REFUSES the
+  modes it does not implement rather than accepting dead ones.
+* **(b) A derived condition** — cut only when every remaining rule for the key provably cannot yield
+  a new value. Sound in general but needs an analysis we do not have, and is the more expensive path.
+
+⚠️ DO NOT implement `if ground(key) → cut`. It is the obvious reading of the C and it is WRONG here.
+The Prolog-translated corpora (wfs/delay) happen to be one-bit-success programs, so it would look
+correct on every test we currently run while being wrong for ordinary MeTTa.
 
 ### The measured consequence — XSB p29 (also p60, p80)
 
