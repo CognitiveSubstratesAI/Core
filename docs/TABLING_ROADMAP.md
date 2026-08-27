@@ -93,6 +93,26 @@ Two candidate routes, neither free, and the choice is a semantics call:
   modes it does not implement rather than accepting dead ones.
 * **(b) A derived condition** — cut only when every remaining rule for the key provably cannot yield
   a new value. Sound in general but needs an analysis we do not have, and is the more expensive path.
+* **(c) 🟢 SCOPE IT TO ONE-BIT QUESTIONS — the likeliest right answer, from the manual's own framing.**
+  SWI-Prolog 10.1.9 §7.4 (`docs/specs/prolog/SWI-Prolog-10.1.9.pdf`, and the `_ch7_tabling_spec.md`
+  extraction :273): *"Ground goals … are considered completed after the first solution."* Its
+  illustration is `p(42)` against a 10 000-answer table — and `p(42)` is a **MEMBERSHIP** question:
+  *does this hold?* One solution settles it.
+
+  ⇒ **PROLOG ASKS "DOES IT HOLD"; METTA ASKS "WHAT DOES IT REDUCE TO".** Early completion answers a
+  question `(=)`-reduction does not ask, which is precisely why the ground precondition does not
+  transfer. But several of OUR questions ARE one-bit, and there the cut is sound by construction:
+    * `tnot(G)` needs only whether `G` has an answer, never which ones;
+    * the corpus harness classifies on `isempty(answers)` (`_xw_run` / `_xd_run`);
+    * `findall`/`collapse` ground-goal short-circuit — already named as the §7.4 target in this very
+      extraction's own mapping table (":1070").
+  So the sound port is **an existence query that short-circuits**, NOT a cut inside general `(=)`
+  reduction. The question type carries the soundness, so nothing needs to be declared or inferred.
+
+  ⚠️ NOT VERIFIED: whether an existence-mode would actually rescue p29. `!(w 0)` at top level is a
+  VALUE question, so it would still run clause 2 and diverge; only a caller asking one-bit
+  (`tnot`, or the harness) would benefit. Establish that before building — it may mean the corpus
+  harness should ask existence rather than the engine changing at all.
 
 ⚠️ DO NOT implement `if ground(key) → cut`. It is the obvious reading of the C and it is WRONG here.
 The Prolog-translated corpora (wfs/delay) happen to be one-bit-success programs, so it would look
