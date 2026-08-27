@@ -680,6 +680,32 @@ const LT = _num_cmp("<", <)
 # NOTHING about dispatch or allocation — the field move and the backend-swap are separate steps, and
 # only the first is landing here. Making it `Space{S<:AbstractStore}` is then a one-line change with
 # its own allocation gate, per `docs/specs/space_api_upstream_survey_2026-08-13.md` §9.3.
+# ── DISCRIMINATION-TRIE TYPES — HOISTED HERE ON PURPOSE ──────────────────────────────────────────
+# These are declared BEFORE `VectorStore` only so that `bucket_trie` can name its value type. They
+# were originally beside their functions (~250 lines below); the field was then typed `Any`, which is
+# the ONE `Any` this package had in `src/` and a standing-rule violation with no upside — the value
+# stored is always `(_TNode, IdDict{Atom,Int})`, a concrete type that simply was not nameable yet.
+# The functions stay where they were; only the declarations moved.
+# Concrete, isbits token — NO `Any` (dense `Vector{_Tok}` + isbits `Dict` keys ⇒ zero boxing / no dynamic dispatch;
+# what the JIT wants). A Var is a wildcard (`_KVAR`); a Sym/Grounded is keyed by the 64-bit hash of its name/value
+# (a hash collision only WIDENS the candidate set — match_atoms stays authoritative — so a match is never dropped);
+# an Expression by its arity. `kind` disambiguates hash spaces (a Sym and a Grounded with equal hashes stay separate).
+const _KVAR = 0x00
+const _KSYM = 0x01
+const _KEXPR = 0x02
+const _KGND = 0x03
+struct _Tok
+    kind::UInt8
+    pay::UInt64
+end
+
+mutable struct _TNode
+    atoms::Vector{Atom}                    # every stored atom routed through this node (⇒ query-var collect)
+    concrete::Dict{_Tok, _TNode}
+    star::Union{_TNode, Nothing}
+    _TNode() = new(Atom[], Dict{_Tok, _TNode}(), nothing)
+end
+
 abstract type AbstractStore end
 
 mutable struct VectorStore <: AbstractStore
@@ -707,9 +733,10 @@ mutable struct VectorStore <: AbstractStore
     # invalidated (deleted) on any add/remove to the bucket. Built only for buckets over `_TRIE_MIN_BUCKET`
     # (small buckets keep the zero-overhead linear scan). Field is LAST + inner-ctor-defaulted ⇒ existing
     # 6/7-arg positional Space(...) calls keep working.
-    bucket_trie::Dict{Tuple{Symbol, Symbol}, Any}
+    bucket_trie::Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}
     VectorStore(atoms, lib_count, index, wildcard) =
-        new(atoms, lib_count, index, wildcard, Dict{Tuple{Symbol, Symbol}, Any}())
+        new(atoms, lib_count, index, wildcard,
+            Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}())
 end
 VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol, Symbol}, Vector{Atom}}(), Atom[])
 
@@ -900,18 +927,6 @@ end
 # succeeds ⇒ at every position one side is a Var or both are equal ground tokens ⇒ the atom is on a followed
 # path ⇒ collected. So the filter never drops a match.
 const _TRIE_MIN_BUCKET = 16                # build/use the trie only for buckets larger than this (CeTTa promotes at 16)
-# Concrete, isbits token — NO `Any` (dense `Vector{_Tok}` + isbits `Dict` keys ⇒ zero boxing / no dynamic dispatch;
-# what the JIT wants). A Var is a wildcard (`_KVAR`); a Sym/Grounded is keyed by the 64-bit hash of its name/value
-# (a hash collision only WIDENS the candidate set — match_atoms stays authoritative — so a match is never dropped);
-# an Expression by its arity. `kind` disambiguates hash spaces (a Sym and a Grounded with equal hashes stay separate).
-const _KVAR = 0x00
-const _KSYM = 0x01
-const _KEXPR = 0x02
-const _KGND = 0x03
-struct _Tok
-    kind::UInt8
-    pay::UInt64
-end
 @inline _tok(a::Atom)::_Tok =
     if a isa Sym
         _Tok(_KSYM, hash(a.name))
@@ -951,12 +966,6 @@ function _skip_term(toks::Vector{_Tok}, i::Int)::Int         # advance past one 
     i + 1
 end
 
-mutable struct _TNode
-    atoms::Vector{Atom}                    # every stored atom routed through this node (⇒ query-var collect)
-    concrete::Dict{_Tok, _TNode}
-    star::Union{_TNode, Nothing}
-    _TNode() = new(Atom[], Dict{_Tok, _TNode}(), nothing)
-end
 
 function _trie_insert!(root::_TNode, a::Atom)
     node = root
@@ -1003,7 +1012,7 @@ function _bucket_candidates(
         entry = _trie_build(b)
         space.store.bucket_trie[k] = entry
     end
-    root, pos = entry::Tuple{_TNode, IdDict{Atom, Int}}
+    root, pos = entry            # no `::` assert needed — `bucket_trie` is concretely typed now
     acc = Atom[]
     _trie_collect!(acc, root, _flat_tokens(pattern), 1)
     sort!(acc; by=a -> get(pos, a, typemax(Int)))          # preserve linear-scan order (⇒ identical results)

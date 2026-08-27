@@ -516,3 +516,70 @@ shipped beside the `.class`. Their partial-evaluation bet applied to indexing. W
 on every run, and our compile lane already knows the query patterns. Recorded as an observation; it
 is a large change and nothing has been measured for it.
 
+
+---
+
+## 2026-08-27 (b) — global-env tool sweep, and a REFUTED closed-sum theory
+
+Tools from `~/.julia/environments/v1.12` (JET · AllocCheck · BenchmarkTools · Aqua · Cthulhu ·
+JuliaFormatter), run against `query` with a 400-rule bucket so the discrimination trie is active.
+
+### Fixed: the last `Any` in `src/`
+
+`bucket_trie::Dict{Tuple{Symbol,Symbol}, Any}` was the ONLY genuine `Any` in `Core/src` — every
+other grep hit is prose (docstrings quoting JET output, or comments asserting "never `Vector{Any}`").
+The stored value is always `(_TNode, IdDict{Atom,Int})`, concrete; it was `Any` purely because
+`_TNode` was declared ~250 lines BELOW `VectorStore` and so was not nameable. The **type
+declarations** (`_Tok`, `_TNode`, the `_K*` consts) are now hoisted above `AbstractStore`; the
+functions stayed where they were. `_bucket_candidates`' `entry::Tuple{…}` assert is gone — the field
+carries the type.
+
+MEASURED: `_bucket_candidates` lowered statements mentioning `Any` **2 of 61 → 0 of 59**.
+Allocations **unchanged at 513**, which is the honest signal: this is type precision, not speed.
+⚠️ The wall-clock numbers (115 µs before, 32 µs after) are from **DIFFERENT PROCESSES** and are
+therefore NOT a claim — same-process is the only comparison that counts here, and there isn't one.
+
+### 🛑 REFUTED, DO NOT REDO: "make `Atom` a closed `Union` to kill the dynamic dispatch"
+
+JET reports ~40 runtime dispatches under `query`, all on `Atom`-typed values —
+`hashindex(::Atom,…)`, `(::Atom == ::Atom)`, `match_atoms(pattern, ::Atom)` ×4, `rename_fresh(::Atom)`.
+The grammar (`docs/specs/metta grammar/metta_language_spec.md` §1.1) says
+
+    ATOM ::= SYMBOL | VARIABLE | GROUNDED | EXPRESSION ;
+
+a CLOSED four-case sum — and `Atoms.jl:23`'s own comment already calls it "a typed sum-type (Julia's
+faithful equivalent of hyperon's `enum Atom`)" while implementing it as an OPEN `abstract type`. The
+obvious inference is that a small `Union` would let the compiler union-split and dispatch statically.
+
+**Tested in a faithful model (multi-method, both shapes, same process): IT DOES NOT.**
+
+| | JET errors | min time |
+|---|---|---|
+| `abstract type` + 4 methods | 2 | 3020 ns |
+| closed `Union` + same 4 methods | **2 — identical** | 2522 ns |
+
+**1.2×, and the dispatches remain.** Union splitting is bounded (4 cases by default); `match_atoms`
+takes TWO atom-typed arguments, so a split would need 4×4 = 16 combinations and is abandoned. A
+first, simpler model (single method) showed NO dispatch at all in either shape — that model was wrong
+because with one method there is nothing to dispatch on, and its result should not be cited.
+
+⇒ The abstract/`Union` distinction is NOT the lever. This does not overturn the standing guardrail
+above; it strengthens it. The documented lever remains a memoised hash field on `Expression`, still
+not attempted. `Grounded{T}`'s parametricity is a further obstacle to any Union rewrite (a bare
+`Grounded` arm is a `UnionAll`) and was not even reached before the theory failed on simpler grounds.
+
+### Idiom survey (multiple dispatch / broadcasting / piping / comprehensions / display)
+
+Already idiomatic: **comprehensions 137 uses**, `@view` 13, destructuring throughout, and **10
+`Base.show` methods** (`Sym`/`Var`/`Expression`/`Grounded`/`Space`/`Delay`/`WFSBottom`/`Operation`/
+`StateCell`) — which is why `println` debugging is readable at all.
+
+Deliberately absent, and correctly so:
+* **piping `|>` (0) / composition `∘` (1)** — every closure construction allocates in Julia
+  (recorded at 8.4× from the leapfrog port; `::F` does not fix it). `query` already allocates 513×
+  per call; routing it through pipes would add to that. Absence here is a choice, not a gap.
+* **broadcasting (0)** — atoms are heterogeneous trees, not numeric arrays. Not applicable.
+* **multiple dispatch** — `_idx_head`/`_tok`/`_flat_tokens!` use `isa`-chains where dispatch is the
+  idiom. With an abstract `Atom` the call is dynamic either way, and a predictable `isa` branch may
+  beat dynamic dispatch. Converting would be more idiomatic and possibly SLOWER; it needs a
+  measurement first, and the Union experiment above suggests the payoff is small.
