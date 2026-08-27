@@ -824,9 +824,41 @@ end
 # arithmetic over the tail. `loc` already carries the exact matched atom `(belief a 9)`, so walking the
 # pattern against it is correct by construction and needs no span logic.
 #
-# ⚠️ SCOPE: single-pattern queries. A genuine multi-factor conjunction binds ACROSS factors, where `loc`
-# is one location and the `ExprEnv` dict is the real answer — that path needs the span arithmetic above
-# and is deliberately not attempted here. `conjunction` stays `false` in the ledger until it is.
+# ⚠️ SCOPE: single-pattern queries. Multi-factor conjunction is NOT exposed here, and `conjunction`
+# stays `false` in the ledger until it is.
+#
+# 🔴 BUT THE REASON GIVEN HERE WAS WRONG, AND IT COST AN OVERESTIMATE. This comment used to read: "a
+# genuine multi-factor conjunction binds ACROSS factors, where `loc` is one location and the
+# `ExprEnv` dict is the real answer — that path needs the span arithmetic above". That is a plausible
+# mental model and it is not what the code does. CORRECTED 2026-08-27 by reading the kernel:
+#
+#     MORK/src/kernel/Space.jl:840   combined = collect(pzg_origin_path(loc))
+#     MORK/src/kernel/Space.jl:877   return effect(trie_bindings, combined)
+#
+# `pzg_origin_path` is the ProductZipperG's ORIGIN PATH, which for an N-factor product is the
+# CONCATENATION of all N matched factor paths. So the effect callback ALREADY RECEIVES EVERY MATCHED
+# ATOM — the `ExprEnv` dict is not needed, and neither is the cursor-tail span arithmetic this
+# comment warned about (that warning is still correct ABOUT THE DICT; it is simply not on this path).
+# CODEMAP:169 corroborates for the fast lanes: `_trie_join_emit!` "reconstructs combined path, SAME
+# value-gate / `_expr_unify_inplace!` / effect contract".
+#
+# ⇒ WHAT A MULTI-PATTERN `core_match_bind` ACTUALLY NEEDS: accept a Vector, wrap `(, p1 p2 … pn)`,
+# SPLIT `combined` into n successive expressions (prefix-free encoding ⇒ span-walking, the same
+# `expr_span` split `_binary_join_emit!` already does), and run `_bind_walk!` per factor into ONE
+# dict — cross-factor consistency then falls out of the repeat-must-agree check at :845-847.
+#
+# ⚠️ STILL UNVERIFIED, AND IT IS THE PART THAT COULD SINK IT: whether the trie-join FAST PATHS hand
+# the effect a `combined` with the SAME LAYOUT as ProductZipper's. "Byte-identical RESULT SET" (which
+# is what CODEMAP claims) is NOT that claim — the result set is what the effect EMITS; `combined` is
+# what it RECEIVES. A fast path could order or merge factors differently and still emit identically.
+# If the layouts differ, the split must be lane-aware, which is materially more work. Check by
+# comparing the `combined` BYTES with the fast paths on and off, not the answers.
+#
+# ⇒ WHY THIS DISAGREED WITH THE LEDGER. `space/Spaces.jl`'s `_CAPS_MORK` calls exposing conjunction "a
+# CORE-SIDE SIGNATURE CHANGE ... NOT blocked on upstream". The ledger was reasoning about the kernel
+# primitive; this comment was reasoning about the dict. Both were describing real things and neither
+# was describing the same mechanism, which is how one document read "afternoon" and the other read
+# "not attempted". The kernel is the arbiter.
 
 # Bind `pattern`'s variables against a concrete `atom`, structurally. Returns false on shape mismatch or
 # on an INCONSISTENT repeat (`(link $x $x)` must not match `(link a b)`) — the non-linear case a
