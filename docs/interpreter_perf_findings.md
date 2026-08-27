@@ -583,3 +583,31 @@ Deliberately absent, and correctly so:
   idiom. With an abstract `Atom` the call is dynamic either way, and a predictable `isa` branch may
   beat dynamic dispatch. Converting would be more idiomatic and possibly SLOWER; it needs a
   measurement first, and the Union experiment above suggests the payoff is small.
+
+### 🛑 SETTLED, DO NOT "OPTIMIZE": `isa`-chain vs separate methods is PERFORMANCE-NEUTRAL
+
+The Julia manual (docs.julialang.org/en/v1/manual/methods) discourages runtime type tests inside a
+method ("Orthogonalize your design") and notes that specialization lets Julia "do all the method
+lookup ahead of time … since it does not have to bother with method lookup while it is running".
+That reads as a performance argument for converting `_idx_head`/`_tok`/`_flat_tokens!` from
+`isa`-chains to separate methods. **It is not one here.** Measured on Core's real types, same
+process, min-of-300:
+
+| | `isa`-chain | separate methods | ratio |
+|---|---|---|---|
+| **abstract `Vector{Atom}`** — Core's actual case | 26005 ns | 25845 ns | **1.006** |
+| concrete `Vector{Sym}` — the manual's happy case | 3698 ns | 3703 ns | **0.999** |
+
+Indistinguishable in BOTH regimes: a 4-case `isa` chain and a 3-method dispatch compile to
+equivalent branch sequences. Neither "dispatch is faster" nor its converse ("a predictable branch
+beats dynamic dispatch" — an earlier hedge of mine) survives measurement.
+
+🔑 **THE 7× IS IN THE CONTAINER, NOT THE DISPATCH**: 26005 ns abstract vs 3698 ns concrete, same
+function, same work. The cost is `Vector{Atom}`'s abstract element type. That independently confirms
+the Union experiment above from a different angle — and note the Union rewrite does NOT collect this
+7×, because splitting is capped at 4 and `match_atoms` needs 4×4.
+
+⇒ Converting the `isa`-chains is a READABILITY/extensibility change with a real argument behind it
+(the manual's), and NO performance argument. It touches the guarded eval core, so under "no
+eval-core change without measured need" it does not qualify — the measured need is absent, not
+merely unproven. Do it for design reasons if at all, and do not cite speed.
