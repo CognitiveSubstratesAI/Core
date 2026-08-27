@@ -58,7 +58,22 @@ on a different chapter, re-run the diff for THAT chapter rather than citing this
 
 ---
 
-## 0m. 🔴 EARLY COMPLETION IS NOT PORTED — and it is why 3 XSB programs cannot run (2026-08-27)
+## 0m. EARLY COMPLETION — ALREADY SETTLED AS "UNSOUND, PINNED, NOT PORTED"; this row adds the p29 LINK (2026-08-27)
+
+> ⚠️ **I RE-DERIVED A SETTLED RESULT. Read these two FIRST — they predate this row:**
+> * `workflows/CODEMAP.md` row 166: *"PARTIAL BY MEASUREMENT: 7.4 — early completion is UNSOUND for
+>   MeTTa (a ground call has many answers because an answer is a VALUE)."*
+> * `Core/test/standard/tabling/test_monotonic.jl:222` —
+>   `@testset "§7.4 early completion is UNSOUND for MeTTa — pinned, not ported"`, whose comment says
+>   *"This test exists so nobody ports it from the manual later."* It exists because of exactly this
+>   failure mode, and it did not stop me, because I went to `pl-tabling.c` and the manual instead of
+>   searching our own tree first. **It is NOT unported — it is DELIBERATELY not ported, with a gate.**
+>
+> What is genuinely new below, and only this: (1) the link to XSB **p29/p60/p80**, which are refused
+> for this reason; (2) the sharper condition — first **DEFINITE** answer, not first answer; (3) the
+> implementation site is **`interpret`**, not `metta_run`; (4) the ch7 version-stability diff (§0n).
+
+
 
 **Upstream has it; we have nothing keyed on groundness at all.** Grep across `Tabling.jl` +
 `tabling/*.jl`: `is_complete`, `_wfs_complete!`, `set_table_status!` — and ZERO early-completion
