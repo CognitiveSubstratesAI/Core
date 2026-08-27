@@ -28,6 +28,11 @@
 
 :- dynamic tabled/2.
 :- dynamic has_rule/2.
+% Variables of the CLAUSE CURRENTLY BEING TRANSLATED that occur more than once. Reset per clause.
+% Only these matter for the generative-call refusal: a SINGLETON bound by a call is discarded
+% harmlessly (p46's `r :- p(_A).` is an existence test), while a variable used again carries the
+% binding (p80's `m :- q(A), p(A).`) and dropping it changes the meaning.
+:- dynamic multi_var/1.
 
 main([File]) :-
     retractall(tabled(_,_)), retractall(has_rule(_,_)),
@@ -93,13 +98,42 @@ clause_metta(Clause, Out) :-
     ( Clause = (H :- B) -> true ; H = Clause, B = true ),
     copy_term(H-B, H2-B2),
     numbervars(H2-B2, 0, _),
+    set_multi_vars(H2-B2),
     (  contains_fail(B2)
     -> Out = skip                                   % `p :- fail.` contributes nothing
+    ;  contains_io(B2)
+    -> Out = skip                                   % an I/O clause is HARNESS, not logic — see below
     ;  is_data_pred(H2), B2 == true
     -> term_metta(H2, Out)                          % a DATA fact: emit the atom itself, not a rule
-    ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars)
-    -> term_metta(H2, HS), format(atom(Out), "(= ~w ~w)", [HS, BS])
+    % 🔴 `term_metta(H2,HS)` IS IN THE CONDITION, NOT THE ACTION — moved 2026-08-27, and the move
+    % IS the fix. In `( C -> A ; Else )` a failure inside A does NOT fall through to Else: the whole
+    % call fails and `findall/3` simply does not collect it. So an untranslatable HEAD produced no
+    % row, no REFUSED line, and no error — it VANISHED. Measured: `a(0).` in nonstrat2 disappeared
+    % while `a.` survived, and the program was then graded as conformance evidence with a fact
+    % missing. A silent drop is strictly worse than a refusal in this directory.
+    ;  term_var_nums(H2, HVs0), generative_call_clause(B2, HVs0)
+    -> Out = refused('a CALL binds a variable used later; our form discards call results')
+    ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars), term_metta(H2, HS)
+    -> format(atom(Out), "(= ~w ~w)", [HS, BS])
     ;  Out = refused('clause shape not handled') ).
+
+% True when some body literal is a CALL introducing a variable that is used elsewhere in the clause.
+% Mirrors the guard in lit_metta/5 so the REASON is precise instead of the generic fallback — the
+% refusal reasons in this TSV are read as a coverage map, and "clause shape not handled" would hide
+% that these three are ONE shape (p29, p60, p80) with a known fix, not three separate mysteries.
+% ⚠️ `Seen` MUST START AS THE HEAD VARIABLES, exactly as `body_metta/3` starts `lits_metta/4` with
+% them. Starting from `[]` counts every head variable as newly bound by the first call and refuses
+% 13 programs instead of 3 — caught by diffing this scan against the `lit_metta/5` guard it mirrors.
+generative_call_clause(B, HeadVars) :-
+    conj_list(B, Ls),
+    gen_call_scan(Ls, HeadVars).
+gen_call_scan([L|_], Seen) :-
+    L \= tnot(_), functor(L, N, A), (tabled(N,A) ; has_rule(N,A)),
+    new_vars(L, Seen, New), member(V, New), multi_var(V), !.
+gen_call_scan([L|Ls], Seen) :-
+    ( L = tnot(_) -> Seen1 = Seen
+    ; new_vars(L, Seen, New), append(Seen, New, Seen1) ),
+    gen_call_scan(Ls, Seen1).
 
 % DATA = NOT tabled AND has no rule anywhere in the program.
 % ⚠️ BOTH CONDITIONS. A first cut tested only "has no rule" and broke p06: `q.` is a TABLED fact, so
@@ -107,8 +141,34 @@ clause_metta(Clause, Out) :-
 % then had nothing to reduce. A tabled predicate is ALWAYS a call — that is what `:- table` declares.
 is_data_pred(H) :- callable(H), functor(H, N, A), \+ tabled(N, A), \+ has_rule(N, A).
 
+% Record which '$VAR'(N) numbers occur MORE THAN ONCE in this clause. `sub_var_num/2` enumerates
+% every occurrence (not the set), so a number appearing twice is a non-singleton.
+set_multi_vars(T) :-
+    retractall(multi_var(_)),
+    findall(N, sub_var_num(T, N), Ns),
+    msort(Ns, Sorted),
+    forall(( append(_, [X,X|_], Sorted) ), ( multi_var(X) -> true ; assertz(multi_var(X)) )).
+
 contains_fail((A,B)) :- !, ( contains_fail(A) ; contains_fail(B) ).
 contains_fail(fail).
+
+% 🔴 DROP I/O CLAUSES — added 2026-08-27 for delay_tests, and it is a CORRECTNESS fix, not a filter.
+% wfs_tests programs are pure logic, so this never arose. Every delay_tests program ships a DRIVER:
+%     test_p :- ( p -> writeln('p. p is true') ; writeln('p. p is false (OK)') ), ...
+% Without this the driver was TRANSLATED, and Prolog's if-then-else became MeTTa nonsense —
+%     (= (test_p) (let $c1 (match &self (; (-> p (writeln p. p is true)) ...) True) ...)
+% an unquoted atom with spaces and a `;`/`->` that mean nothing here. That output LOOKS like a
+% translated program, which is the worst failure available in this directory: it would have been
+% graded as conformance evidence. The driver is HARNESS — what it prints is exactly what the `_old`
+% gold already records — so the logic program is complete without it.
+% Scoped deliberately to I/O predicates: anything that WRITES is not part of the model.
+contains_io((A,B)) :- !, ( contains_io(A) ; contains_io(B) ).
+contains_io((A;B)) :- !, ( contains_io(A) ; contains_io(B) ).
+contains_io((A->B)) :- !, ( contains_io(A) ; contains_io(B) ).
+contains_io(T) :- compound(T), functor(T, F, _), io_pred(F), !.
+contains_io(T) :- atom(T), io_pred(T).
+io_pred(writeln). io_pred(write). io_pred(nl). io_pred(print).
+io_pred(format). io_pred(write_canonical). io_pred(writeq).
 
 head_metta(H, S) :- functor(H, N, A), tabled(N, A), term_metta(H, S).
 
@@ -140,6 +200,32 @@ lits_metta([L|Ls], N, Seen, S) :-
 
 % tnot: a call, binds nothing (our `tnot` requires a ground goal anyway)
 lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(tnot ~w)", [GS]).
+% 🔴 A CALL THAT WOULD **BIND** A NEW VARIABLE IS REFUSED — added 2026-08-27, and this is a
+% CORRECTNESS refusal, not a coverage gap.
+%
+% `binder_of/3` below hands a CALL the throwaway binder `$cN`, i.e. the call's RESULT IS DISCARDED.
+% That is exactly right when every argument is already bound (the literal is a TEST). It is WRONG
+% when the call is GENERATIVE. p29:
+%     w(A) :- e(B,A), tnot(w(B)).        % e/2 untabled, has rules ⇒ treated as a call
+% In Prolog `e(B,A)` BINDS B and `tnot(w(B))` consumes it. We emitted
+%     (= (w $v0) (let $c1 (e $v1 $v0) (tnot (w $v1))))
+% where `$v1` is never bound by anything — a free variable inside `tnot`. MEASURED: p29 then does
+% not terminate (it was still running after 420s; every other program finishes in under 8s).
+%
+% ⚠️ THIS SHAPE WAS PREVIOUSLY HIDDEN BY A DIFFERENT BUG. p29 and p36 were reported as "clause shape
+% not handled" because `term_metta/2` had no NUMBER clause. Fixing that (same day) let p29 through
+% and turned an honest REFUSAL into a WRONG TRANSLATION — the worst artifact this directory can
+% produce, because it still looks like conformance evidence. p60 was worse still: it carried this
+% defect all along AND had an empty gold set, so it passed vacuously and nothing complained.
+%
+% We refuse rather than guess. Binding through a CALL needs the call's answers threaded into the
+% continuation — that is a real translation mode (the DATA literal already has one, via `match`),
+% not a tweak, and inventing it under time pressure is how a translator starts lying.
+lit_metta(L, _, Seen, _, _) :-
+    functor(L, N, A), (tabled(N,A) ; has_rule(N,A)),
+    new_vars(L, Seen, New),
+    member(V, New), multi_var(V), !,          % ← used ELSEWHERE, so the binding is load-bearing
+    fail.
 % anything with a RULE is a CALL — tabled or not (p31's `p(_A) :- r.`)
 lit_metta(L, _, Seen, Seen, S) :- functor(L, N, A), (tabled(N,A) ; has_rule(N,A)), !, term_metta(L, S).
 % DATA: a binding `match`. New variables become the binder AND the match template.
@@ -172,6 +258,10 @@ new_vars(L, Seen, New) :- term_var_nums(L, Ns), subtract(Ns, Seen, New).
 
 % a term becomes a MeTTa expression; '$VAR'(N) becomes a MeTTa variable
 term_metta('$VAR'(N), S) :- !, format(atom(S), "$v~w", [N]).
+% 🔴 NUMBERS — added 2026-08-27. `atom/1` is FALSE for integers in Prolog, and so is `compound/1`,
+% so every clause below missed and `term_metta(0, _)` simply FAILED. `a(0).` then vanished (see the
+% note in clause_metta). A number renders bare — `(a 0)`, never `(a (0))`.
+term_metta(T, S) :- number(T), !, format(atom(S), "~w", [T]).
 term_metta(T, S) :- atom(T), !, format(atom(S), "(~w)", [T]).
 term_metta(T, S) :-
     compound(T), T =.. [F|Args],
@@ -181,5 +271,6 @@ term_metta(T, S) :-
 
 % arguments are NOT wrapped in parens — `win(a)` is `(win a)`, not `(win (a))`
 term_metta_arg('$VAR'(N), S) :- !, format(atom(S), "$v~w", [N]).
+term_metta_arg(T, S) :- number(T), !, S = T.
 term_metta_arg(T, S) :- atom(T), !, S = T.
 term_metta_arg(T, S) :- term_metta(T, S).

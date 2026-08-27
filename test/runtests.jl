@@ -233,10 +233,19 @@ Main.@suite("standard/tabling/test_reeval.jl")
 Main.@suite("standard/tabling/upstream/test_upstream_reeval.jl")
 # XSB's own WFS conformance corpus — 72 programs each shipping a machine-readable gold row
 # (TRUE set / UNDEFINED set; absent ⇒ false), validated 72-agree-0-differ against live swipl by
-# `test/standard/tabling/upstream/verify_corpus.sh`. 7 translated so far, spanning all three
-# verdicts. This is the defect class `test_delays.jl` CANNOT see: that file tests the delay
-# ALGEBRA, and a perfect algebra over a broken fixpoint passes every assertion in it.
+# `test/standard/tabling/upstream/verify_corpus.sh`. 69 translated / 3 refused as of 2026-08-27
+# (the count in this comment said "7" for weeks — see the file header for what the other numbers
+# turned out to mean). This is the defect class `test_delays.jl` CANNOT see: that file tests the
+# delay ALGEBRA, and a perfect algebra over a broken fixpoint passes every assertion in it.
 Main.@suite("standard/tabling/upstream/test_xsb_wfs_corpus.jl")
+# …and XSB's delay_tests, the programs written specifically to exercise DELAY rather than WFS
+# generally: dynamically-stratified programs that are not stratified left-to-right, where (per
+# dynstrat2.P's own header) "delay is necessary ... the negation suspension transformation is not
+# enough". 49 translated / 43 refused; the gold is upstream's recorded STDOUT, so it states TRUE,
+# FALSE **and** UNDEFINED explicitly — a stronger assertion than the wfs rows, which imply FALSE by
+# omission. All 49 pass, including the 9 upstream labels as needing the §7.6.1 simplification we
+# never built.
+Main.@suite("standard/tabling/upstream/test_xsb_delay_corpus.jl")
 # The GROUNDED enumeration: which `Grounded{T}` payloads the PARSER can produce (three) versus
 # which the engine constructs (five more), and that `Grounded{Bindings}` never reaches an answer.
 # A gate rather than prose in `docs/src/language/grammar.md`, because enumerations in prose go

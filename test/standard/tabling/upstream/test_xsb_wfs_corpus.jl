@@ -25,6 +25,30 @@
 # a wrong translator produces confident wrong conformance, the worst artifact available here. The
 # refusals are recorded as `# REFUSED` lines in the TSV, so the count that ran is the count we quote.
 #
+# 🔴 2026-08-27 — 69 TRANSLATED / 3 REFUSED, AND BOTH NUMBERS MOVED FOR REASONS WORTH READING.
+# FIRST, the two old "refusals" were a BUG, NOT A
+# SHAPE IT COULD NOT HANDLE. `term_metta/2` had no clause for NUMBERS (`atom/1` and `compound/1` are
+# both false for an integer), so `term_metta(a(0), _)` FAILED. Worse, that failure sat in the ACTION
+# of an if-then-else, where a failure does not fall through to the `refused` branch — the clause was
+# dropped from `findall/3` with no row, no REFUSED line and no error. Consequences, all measured:
+#   * p29, p36 reported as "clause shape not handled" — they translate fine.
+#   * p37 lost all four of its data facts, and p60 likewise.
+#   * BOTH had EMPTY gold sets (`goals_metta` calls the same `term_metta`), so they compared empty
+#     against empty and PASSED VACUOUSLY. Two rows of this corpus were asserting nothing at all.
+# Found while building the delay_tests corpus, from `nonstrat2`'s missing `a(0).`.
+#
+# SECOND — and this is why the count went DOWN, not up to 72. Un-refusing p29 exposed a defect that
+# had been in the corpus all along: `binder_of/3` gives a CALL the throwaway binder `$cN`, i.e. it
+# DISCARDS the call's result. Correct for a ground test; WRONG for a generative call:
+#     p29:  w(A) :- e(B,A), tnot(w(B)).      % e(B,A) BINDS B; we emitted `$v1` free inside tnot
+# p29 then did not terminate (>420s; every other program finishes under 8s). p60 and p80 carried the
+# same defect while TRANSLATED — and p60 also had the empty gold above, so it passed vacuously.
+# All three are now REFUSED with a precise reason. p46 is deliberately NOT refused: its call-bound
+# variable is a SINGLETON (`r :- p(_A).` is an existence test), so discarding it is harmless.
+# ⇒ 69 sound rows is worth more than 72 rows of which three are wrong. Threading a call's answers
+# into the continuation is a real translation mode (the DATA literal already has one, via `match`) —
+# it is the next increment here, not a tweak.
+#
 # 🔑 THE THREE `win/1` GRAPHS ARE NOW A TRANSLATOR CROSS-CHECK, NOT A GAP-FILLER. They were
 # hand-translated on 2026-08-18 because the translator refused them; on 2026-08-19 it learned the
 # binding-`match` form and generates them itself — producing, for p13, EXACTLY the hand-written form:
@@ -177,8 +201,13 @@ const _XW_HAND = XsbCase[
 
     # ANTI-VACUITY. A regenerated TSV that came out empty — missing swipl, a renamed upstream path —
     # would otherwise make every claim below hold over nothing at all.
-    @test length(generated) == 70
-    @test length(cases) == 73
+    # 72/0 since 2026-08-27: the two "refusals" were never a clause-shape limit — `term_metta/2`
+    # had no clause for NUMBERS, so `a(0)` failed and the clause vanished. Fixing that also filled
+    # in p37's and p60's gold sets, which had been EMPTY — i.e. those two were passing VACUOUSLY.
+    @test length(generated) == 69
+    @test length(cases) == 72
+    # …and no row may carry an empty gold on BOTH sides again. That is what hid p37/p60.
+    @test all(!(isempty(c.true_set) && isempty(c.undef_set)) for c in generated)
     @test any(!isempty(c.undef_set) for c in cases)      # …and UNDEFINED is genuinely exercised
 
     for c in cases
