@@ -229,3 +229,272 @@ Fixed; `policy_space` now infers `CoreSpace`. Remaining grep hits in `src/` are 
 JET output. `test/` still has four (`test_frame_agnostic_ret.jl` ×3, `test_tripwires.jl` ×1) — at
 least one looks deliberate (it stores a deliberately-hidden `Any` to prove the frame-agnostic return
 path handles it), so they want reading, not a sweep.
+
+---
+
+## 2026-08-27 — `match` has no index at all; `query`'s index has a gate
+
+⚠️ **THIS SECTION WAS WRONG ON FIRST WRITING AND IS CORRECTED IN PLACE.** The first draft attributed a
+measured 8.9× to `_index_key` failing on a fact-query pattern. `match` never calls `_index_key`. The
+measurement is real; the cause was not. Both are recorded below, because the wrong version is the one
+a reader will independently re-derive.
+
+### THE TWO QUERY PATHS ARE DIFFERENT CODE, AND ONLY ONE IS INDEXED
+
+| primitive | entry | uses `index`/`wildcard`/`bucket_trie`? | records IDG dep? |
+|---|---|---|---|
+| `match` (MeTTa's query primitive) | `_match_pat` (`Eval.jl:2485`) | **NO — never** | **no** |
+| `(=)` rule lookup / `(:)` type lookup | `query` (`Eval.jl:1016`) | yes, when the key is concrete | `dyn_read!(k)` |
+
+```julia
+function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
+    out = Bindings[]
+    for atom in all_atoms(space), mb in match_atoms(subst(pat, b0), rename_fresh(atom))
+        append!(out, merge_bindings(b0, mb))
+    end
+    out
+end
+```
+
+**Unconditional full scan of `all_atoms`, for every pattern, ground or not.** No key, no bucket, no
+trie, no early return — there is nothing to gate. `Eval.jl:805` already lists `_match_pat` among the
+~9 sites that reach `.atoms` directly. `all_atoms(s) = s.store.atoms` is a bare field read.
+
+⇒ **The three acceleration structures serve `(=)`/`(:)` lookup only. MeTTa's actual query primitive
+is not accelerated by any of them.** That is the finding; "the trie is behind a gate" was the
+first draft's framing and it is wrong for `match`.
+
+### What the 8.9× actually measured
+
+`:7702`, min-of-20, single process, `!(match &self (belief …) …)`:
+
+| n | `(belief $k $s $c)` var arg 1 | `(belief k1 $s $c)` ground arg 1 |
+|---|---|---|
+| 200 | 16.84 µs/atom | 5.73 |
+| 1000 | 12.98 | 3.21 |
+| 4000 | **15.49** | **1.74** |
+
+Both go through `_match_pat`, so **both are O(N) scans of the same atoms**. The gap is not
+indexed-vs-unindexed — it is **early-reject vs full-bind per atom**: a ground argument lets
+`match_atoms` reject a non-matching atom at position 2, while the variable form must bind, merge and
+discard. The falling µs/atom in the right column is cheaper per-atom work, not fewer atoms.
+
+⇒ **Do not cite 8.9× as an indexing result.** It is a per-atom constant-factor result on an
+unindexed scan. The indexing opportunity for `match` is that it has *no* index — a different and
+larger claim, unmeasured.
+
+### `query`'s gate — real, but it is the SUBJECT that must be discriminable
+
+All five `query` call sites build `(= subj $X)` or `(: subj $T)`:
+
+    Tabling.jl:1038  Eval.jl:1092  Eval.jl:1585  Eval.jl:1767  Eval.jl:2120
+
+so `children[1]` is always `=` or `:`, and `_index_key` turns on `_idx_head(subj)`. It returns
+`nothing` — full scan + `dyn_read!(nothing)` — for exactly three subject kinds:
+
+1. a `Var`
+2. a **`Grounded`** (verified by execution: `_idx_head(Grounded(42)) → nothing`)
+3. an `Expression` with a non-`Sym` head (compound head)
+
+The comment at `:1023` calls this case *"(var head) … (rare)"*. The pattern's head is never a
+variable — it is always `=` or `:`. The phrase is wrong and it propagated into CODEMAP row 241 and
+into the `_DYN_ALL` docstring.
+
+### §7.7 over-invalidation — measured, and one thing left OPEN
+
+`dyn_read!` has exactly **two** call sites (`Eval.jl:1024`, `Tabling.jl:1294`). `_match_pat` is not
+one of them, so a `match` records no dependency at all.
+
+Measured with `CORE_TABLING_IDG=1`, two tables differing only in whether argument 1 is ground, then a
+mutation with an unrelated head:
+
+| table | body pattern | recorded in | after `!(add-atom &self (other x y))` |
+|---|---|---|---|
+| `rd_var` | `(fact $z $w)` | **`_DYN_ALL`** | **invalid = true** — discarded |
+| `rd_gnd` | `(fact a $w)` | `_DYN_DEPS` only | invalid = false — kept |
+
+Real over-invalidation: a table discarded by a mutation that cannot affect it.
+
+🟢 **NO SOUNDNESS BUG.** Adding `(fact a 3)` invalidated the table and re-derivation returned
+`[3, 1]`, identical to untabled ground truth. `_DYN_ALL` over-invalidates rather than under-
+invalidating, exactly as it commits to.
+
+🔴 **OPEN — do not guess this.** A second probe whose `rd_gnd` differed *only* in its result template
+(`$w` instead of `True`) DID land in `_DYN_ALL`. Hypothesis: the grounded result issues `(= 1 $X)`,
+whose subject is a `Grounded` ⇒ `nothing`. **The controlled test REFUTED it** — both `(= (g) 42)` and
+`(= (g) foo)` left `_DYN_ALL` empty. So what routes `dyn_read!(nothing)` there is still unknown, and
+**how much over-invalidation an indexing change would remove has no number.**
+
+### ⚠️ SCOPE — THIS IS NOT AN INTERPRETER-ONLY FINDING
+
+**The compiled lane runs on the same store.** `Emit.jl:283`: *"Compiled IL does NOT bypass SLG —
+`compile_run` builds `Eval.Space()` (`CompileLane.jl:43,395,459`), so arrow-5 output inherits
+tabling."* `Frontend.jl` agrees: `table!`/`auto_table!`/`untable_all!` are *"the single control
+surface for **both lanes**."*
+
+| lane | store | `_index_key` gate | SLG |
+|---|---|---|---|
+| interpreter | `Eval.Space()` | yes | yes |
+| **compiled IL (arrow 5)** | **`Eval.Space()` — the same object** | **yes, identical** | yes, inherited |
+| MM2 / MORK (arrow 6) | MORK trie | **its OWN gate — see below** | **no tabling** |
+
+⇒ Everything below applies to **compiled output too**. Do not propose "just use the compiler" as a
+fix; it lands on the identical gate.
+
+🔴 **AND MORK IS NOT THE ESCAPE — ITS TRIE HAS THE SAME DEFECT, ALREADY MEASURED.** `190fe73`
+(`bench(store): Phase 2 — MORK-trie matching vs interpreter Julia-Dict index`, benchmark/store_match_scaling.jl),
+min-of-7, N ∈ {200, 2000, 20000}:
+
+| | shape | scaling | @ N=20k |
+|---|---|---|---|
+| (A) interp `query` | Dict discriminant | **O(1)** | ~4 µs ← the live path |
+| (D) `core_match` | **nested** `(= (f a) $b)` — OUR layout | **O(N)** | **181 ms** |
+| (E) `core_match` | **flat** `(rule f a $b)` — Ben's layout | **O(1)** | ~8 µs |
+
+> *"Our nested `(= (f a) body)` shape defeats the trie's prefix-narrowing (`_pattern_prefix_bytes`
+> pins only flat top-level constants, so a nested head gives pinned=1 < 2 → full scan) and is O(N):
+> 181 ms/lookup at N=20k vs 4 µs, ~46,000× slower. **Store rules head-first and the trie is O(1) at
+> the interpreter's order.**"*
+
+⇒ 🔴 **THE TWO ENGINES FAIL ON OPPOSITE SHAPES — so the two fixes are COMPLEMENTARY, not
+alternatives.** Work the key derivation through by hand:
+
+| query shape | interpreter `_index_key` | MORK prefix-pin |
+|---|---|---|
+| **rule lookup** `(= (f a) $b)` — NESTED | `(:(=), :f)` — concrete ⇒ **O(1), ~4 µs** | pins 1 < 2 ⇒ **O(N), 181 ms** |
+| **non-discriminable subject** `(= <Var/Grounded/compound-head> $X)` | `_idx_head` ⇒ `nothing` ⇒ **O(N)** | n/a |
+| **`match`** `(belief $k $s $c)` | ⚠️ **never reaches `query`** — `_match_pat` full-scans regardless | flat + ground head ⇒ fine |
+
+The interpreter is *good* at the nested rule lookup MORK chokes on, Its own weak spots are a non-discriminable
+**subject** in `(=)`/`(:)` lookup, and `match`, which is unindexed outright. Neither fix subsumes the other:
+
+* **head-first layout** (MORK's recorded fix, re-deriving OmegaClaw MORK_DATA_MODEL.md §4 "most
+  selective stable field first") addresses the NESTED rule lookup. It does **nothing** for `match`,
+  which consults no index at all.
+* **`pl-index.c` adaptive indexing** addresses a non-discriminable SUBJECT in `query`, by
+  selecting a different argument to index on. It does nothing for MORK's prefix pinning, and
+  nothing for `match` until `match` consults an index at all.
+
+⇒ Pick by which query shape actually dominates your workload, and do not let one be argued as
+covering the other. `190fe73`'s 46,000× is the rule-lookup shape in the other
+engine; the 8.9× above is neither — it is a constant factor inside an unindexed `match` scan.
+
+**Not "we lack a discrimination trie".** We have three acceleration structures (`Eval.jl:662` —
+"THE STORE IS NOT JUST `atoms`"): `index` (2-symbol Dict), `wildcard` (scanned every query), and
+`bucket_trie` — a lazy per-bucket discrimination trie, promoted at `_TRIE_MIN_BUCKET = 16`. The trie
+exists and is correct.
+
+### ⚠️ The trie's KEYS ARE MORK'S `Expr` ENCODING — not CeTTa's, not bespoke
+
+The comment at `:902` cites CeTTa for the **promotion threshold** (16) and for the per-bucket
+substitution-tree *idea*. That is not where the KEY comes from, and conflating the two misdirects the
+fix. `_Tok` (`:903-916`) + `_flat_tokens!` (`:925`) are MORK's tag encoding:
+
+| MORK (`MORK/src/expr/ExprAlg.jl`) | ours (`Eval.jl`) | |
+|---|---|---|
+| `ExprArity` | `_KEXPR(arity)` | both **arity-prefixed, pre-order** |
+| `ExprSymbol` | `_KSYM(hash(name))` | |
+| `ExprNewVar` + `ExprVarRef` | `_KVAR` | **collapsed** — De Bruijn back-reference dropped |
+| — | `_KGND(hash(value))` | ours only; upstream MORK has zero grounding |
+
+Collapsing `NewVar`/`VarRef` is exactly why the trie cannot enforce cross-position variable
+consistency and must return a superset — that is a consequence of the key choice, not an oversight.
+
+It is **unreachable whenever `_index_key` yields `nothing`** — and it is not on `match`'s path at all.
+`Eval.jl:1023`:
+
+```julia
+k = _index_key(pattern)
+if k === nothing      # comment: "non-discriminable pattern (var head) → full scan (rare)"
+    for stored in all_atoms(space) ... end
+    return out        # ← early return: index bucket AND bucket_trie both skipped
+end
+```
+
+`_index_key` (:759) needs a **concrete pair** `(outer-head, 2nd-child-head)`. It returns `nothing`
+in three cases; the comment names one of them and calls it rare. The third is `children[2]`'s head
+not being concrete — i.e. `(belief $k $s $c)`: **head `belief` fully concrete, variable in argument
+1**. Not a var head, and not rare — but this governs `(=)`/`(:)` lookup, NOT `match`.
+
+⚠️ **The comment misdescribes its own condition**, and the phrase "var head" propagated from it into
+CODEMAP row 241 and from there into a session's analysis twice before the source was opened.
+
+### The implied fix
+
+**The store uses TWO different key derivations, and the coarse one is the anomaly:**
+
+| | key | behaviour when a position is non-concrete |
+|---|---|---|
+| `bucket_trie` | `_flat_tokens` — a **prefix-structured MORK token stream** | degrades: wildcard that position, keep walking |
+| `index` | `_idx_head` → `Tuple{Symbol,Symbol}` — a **conjunctive pair** | fails atomically ⇒ `nothing` ⇒ full scan |
+
+⇒ **Do NOT add a head-only fallback key** — that reinvents a prefix as a special case.
+
+📜 **HISTORY, CHECKED 2026-08-27 — `pl-index.c` was NEVER adopted, and nothing index-related was
+ever removed.** Across Core/MORK/PathMap: zero commits mention `pl-index`; `MAX_MULTI_INDEX`,
+`MAXINDEXDEPTH`, `jiti`, `find_multi_argument_hash`, `hashDefinition` have never existed in any tree;
+`--diff-filter=D` finds no deleted index file. `_index_key`/`_idx_head` appear only in `b980b69`
+(2026-06-17, *"first-argument index for Space.query (the Control half)"*) and `53b6fcb`;
+`bucket_trie`/`_TRIE_MIN_BUCKET` only in `2435f42` (2026-07-01, *"per-bucket discrimination trie …
+CeTTa borrows"*) and `d9f6116`. ⇒ We adopted Prolog's **basic first-argument indexing** and it is
+still live. We never adopted the **adaptive/JIT** level. This is not a do-not-redo.
+
+🎯 **THE ADOPTION TARGET IS `pl-index.c`, FROM THE TREE WE ALREADY TOOK SLG FROM.** We ported
+SWI-Prolog's `pl-tabling.c` and left its clause indexing behind. SWI does **JIT argument-selection
+indexing**:
+
+    #define MAX_MULTI_INDEX  4    /* hash up to 4 arguments TOGETHER */
+    #define MAXINDEXDEPTH    7    /* index NESTED positions, 7 deep */
+
+plus `find_multi_argument_hash`, `hashDefinition`, `jiti_tried`, `MSG_JIT_DELINDEX` — indexes built
+**on demand** from observed call patterns and **deleted** when they stop paying. When an argument is
+uninstantiated (`:587`, `:1796` — exactly our `(belief $k $s $c)`) it **selects a different
+argument** rather than giving up. Ours is fixed `(head, arg1-head)`, one argument, one level, no JIT,
+and **fails atomically**. We already run a green differential oracle against this codebase (18 files
+/ 165 tests, `workflows/swipl_tabling_oracle.sh`).
+
+⚠️ **ONLY HALF OF SWI'S PAYOFF TRANSFERS — scope it before building.** In a WAM, indexing buys (a)
+fewer candidate clauses to unify, and (b) the `deterministic` VM register (`pl-wam.c:2449`, *"Last
+clause has been found deterministically"*, set via `firstClause`/`nextClause`) so **no choice point
+is created**. Our SLG is the ZAM-compatible one — delimited control, **zero choice points** — so (b)
+has nothing to buy. **We would get the candidate narrowing; we do not get the determinism win.**
+(Do not price it at the 8.9× above — that is a per-atom constant factor inside an unindexed
+`match`, not a candidate-count result. The narrowing is UNMEASURED.) Whether an SLG analogue of (b) exists (knowing a call has a single answer source, so it need
+not suspend) is OPEN and unmeasured.
+
+📌 `pl-zip.c` is **NOT** a zipper — it is ZIP-archive support (`zip_open_archive`, `SopenZIP`,
+minizip `zipFile`/`unzFile`, `HAVE_MMAP`) for saved states and `.qlf` resources. A false friend with
+PathMap's trie cursor; checked 2026-08-27 so nobody re-checks.
+
+Touches `_index_key`, `add_atom!`, `remove_atom!` and the `wildcard` invariant (atoms in `wildcard`
+are checked on *every* query precisely because they can match any discriminant; prefix keying changes
+which atoms need to live there, and that must be re-derived, not assumed).
+
+This satisfies the guardrail above: the need is now **measured**. The change is not made.
+
+### Cross-check: JeTTa (`~/dev-zone/jetta`, source-read)
+
+`runtime/…/space/DiscriminationTrie.kt` (162 lines), wired at `SpaceImpl.kt:27`, 4 tests. **One
+global trie**, incremental, walked per query — its own docstring: *"a single structural index
+maintained incrementally over the whole space, walked per query — the inverse of building a
+per-pattern index by scanning."* A query variable costs **one `skipOneSubterm`** and the walk
+continues; wildcards work both directions (stored var = `varChild`, query var = skip one subterm).
+So the pair-key failure mode cannot arise there — there is no pair.
+
+🟢 **Independent convergence worth trusting:** both implementations retrieve a **superset** and keep
+exact matching downstream (ours: "match_atoms stays authoritative"; theirs: "no false negatives",
+exact check in `IndexerImpl.matchAndCapture`). Both cite Vampire/CeTTa lineage. Two codebases
+arriving at the same contract separately is good evidence the contract is right.
+
+🔴 **Retracted: the "0.27 → 0.007 µs/atom" JeTTa figure is unfounded.** It appears in CODEMAP row 241
+and **nowhere in JeTTa's tree** (grepped `.kt`/`.md`/`.txt`). Do not quote it. The only defensible
+number available is our internal 8.9× — which measures per-atom cost inside an
+unindexed scan, not retrieval, so it is not comparable to a trie-probe figure either. **There is no
+sound ours-vs-JeTTa number yet.**
+
+📌 **Not done, and genuinely different:** JeTTa serializes indices **at compile time** —
+`<Name>.indices/index-NNNN.jtsi`, packed indices for statically-known patterns, ~15–20× compressed,
+shipped beside the `.class`. Their partial-evaluation bet applied to indexing. We rebuild at add-time
+on every run, and our compile lane already knows the query patterns. Recorded as an observation; it
+is a large change and nothing has been measured for it.
+
