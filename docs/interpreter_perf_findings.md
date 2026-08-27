@@ -436,8 +436,26 @@ ever removed.** Across Core/MORK/PathMap: zero commits mention `pl-index`; `MAX_
 `--diff-filter=D` finds no deleted index file. `_index_key`/`_idx_head` appear only in `b980b69`
 (2026-06-17, *"first-argument index for Space.query (the Control half)"*) and `53b6fcb`;
 `bucket_trie`/`_TRIE_MIN_BUCKET` only in `2435f42` (2026-07-01, *"per-bucket discrimination trie …
-CeTTa borrows"*) and `d9f6116`. ⇒ We adopted Prolog's **basic first-argument indexing** and it is
-still live. We never adopted the **adaptive/JIT** level. This is not a do-not-redo.
+CeTTa borrows"*) and `d9f6116`.
+
+🔴 **AND THE INDEX IS OURS, NOT A PROLOG PORT — do not let the NAME imply provenance.** `b980b69`
+names its models: *"hyperon's real GroundingSpace, CeTTa, and the legacy CoreSpace ALL index (**trie
+/ eq_idx / rule_cache**)"*. It cites SWI-Prolog **nowhere**. The only Prolog trace in the index code
+is `:691`'s *"the 'Control' half of Algorithm=Logic+Control"* — Kowalski's slogan, a framing, not a
+source. Every SWI reference in `Eval.jl` is in the TABLING block (`:1272` — *"tabling/ mirrors
+swipl-devel's own section boundaries (boot/tabling.pl + src/pl-tabling.c)"*).
+
+| | provenance | oracle |
+|---|---|---|
+| tabling | genuine port, mirrors swipl's own file boundaries | swipl differential, 18 files / 165 tests, green |
+| **indexing** | **ours**, modelled on hyperon/CeTTa/CoreSpace | **NONE** |
+
+⚠️ **CONSEQUENCE: the SWI differential does NOT cover the index.** It is an addition above upstream,
+so a `pl-index.c` adoption — or any `_index_key` change — **cannot be validated by the existing
+oracle and needs its own** (cf. the standing rule that additions above upstream need their own
+oracle). Budget that; it is not free.
+
+⇒ We never adopted ANY level of Prolog indexing. This is not a do-not-redo.
 
 🎯 **THE ADOPTION TARGET IS `pl-index.c`, FROM THE TREE WE ALREADY TOOK SLG FROM.** We ported
 SWI-Prolog's `pl-tabling.c` and left its clause indexing behind. SWI does **JIT argument-selection
