@@ -128,10 +128,31 @@ Two candidate routes, neither free, and the choice is a semantics call:
   So the sound port is **an existence query that short-circuits**, NOT a cut inside general `(=)`
   reduction. The question type carries the soundness, so nothing needs to be declared or inferred.
 
-  ⚠️ NOT VERIFIED: whether an existence-mode would actually rescue p29. `!(w 0)` at top level is a
-  VALUE question, so it would still run clause 2 and diverge; only a caller asking one-bit
-  (`tnot`, or the harness) would benefit. Establish that before building — it may mean the corpus
-  harness should ask existence rather than the engine changing at all.
+  ✅ **NOW VERIFIED FOR p29, AND THE CONDITION IS SHARPER THAN "EXISTENCE"** (measured 2026-08-27):
+
+      rule 1 ONLY               (w 0) -> [True]        0.0s     <- DEFINITE answer
+      rule 1 + rule 2 (full)    (w 0) -> diverges (killed at 250s; never wrote its line)
+
+  Rule 1 yields a **definite** answer instantly, so stopping at the FIRST DEFINITE (non-undefined)
+  answer never reaches rule 2 and p29 terminates with `True` — the gold value.
+  🔑 The condition is **first DEFINITE answer**, NOT first answer: the harness still needs full
+  enumeration to separate UNDEFINED (answers, all ⊥) from FALSE (no answers). Only the TRUE case
+  short-circuits — which is exactly p29/p60/p80's case.
+
+  🔴 **BUT THE IMPLEMENTATION SITE IS `interpret`, NOT A WRAPPER — and that is the real cost.**
+
+      metta_run(...)      for (at,bnd) in metta_results(atom, space, b)   # ALREADY fully computed
+      metta_results(...)  = interpret(_metta(atom, UNDEF), space, b)      # the stack machine
+
+  `interpret` returns a FULLY-COMPUTED `Vector`, so by the time `metta_run` loops, the divergence has
+  already happened. An early exit in `metta_run` saves nothing. The stop-condition has to be threaded
+  through the iterative stack machine itself — the deepest eval-core code, under the standing "no
+  eval-core change without measured need" guardrail.
+
+  ⇒ **DECISION POINT, not a task.** The measured need now exists (3 corpus programs, plus `tnot`
+  doing redundant full enumeration on a question its own comment calls one-bit: *"asks whether the
+  table is empty"*). But the change is invasive and touches the machine every other test depends on.
+  Weigh that against the status quo — 3 of 72 refused, honestly, with the reason recorded.
 
 ⚠️ DO NOT implement `if ground(key) → cut`. It is the obvious reading of the C and it is WRONG here.
 The Prolog-translated corpora (wfs/delay) happen to be one-bit-success programs, so it would look
