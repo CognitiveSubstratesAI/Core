@@ -121,6 +121,9 @@ end
 module StandardMeTTaTests
 using MeTTaCore, Test
 Main.@suite("standard/test_atoms.jl")
+# typed Atom ⇄ MORK.Expr BYTES. `atom_to_expr` is the half Core never had — see the file's header for
+# why byte-equality alone would NOT have proved the gap closed.
+Main.@suite("standard/test_atom_expr_bridge.jl")
 Main.@suite("standard/test_minimal.jl")
 # No instruction, at any arity, may crash the interpreter — the whole dispatch surface.
 Main.@suite("standard/test_instr_arity.jl")

@@ -100,3 +100,148 @@ identical — which the lossy `\$`/`_N` sexpr text dump cannot do. Variable name
 introduction order); MeTTa variable identity is positional, not by name.
 """
 expr_to_atom(e::MORK.Expr)::_MM2_ATOM.Atom = _expr_to_atom!(e, Ref(1), _MM2_ATOM.Var[])
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# atom_to_expr — typed Atom → MORK `Expr` BYTES, with no text hop. The missing half of this pair.
+#
+# ⚠️ NAME COLLISION, READ THIS FIRST. `typed_atom_to_expr` (above) returns a **String** despite its
+# name — it renders sexpr TEXT and lets `space_add_all_sexpr!` do the byte encoding. THIS function
+# returns bytes. The pair that is actually symmetric is `atom_to_expr` ⇄ `expr_to_atom`.
+#
+# WHY IT IS NEEDED. `MorkBridge.jl`'s BLOCKER 2: Core stores `$x` as the ground symbol `__var_x`
+# because MORK's de Bruijn encoding drops variable NAMES on serialisation, so `expr_unify` sees a
+# CONSTANT and every stored lib rule is inert to the native rewriter. Going Atom → bytes directly
+# emits `NewVar`/`VarRef` tags at encode time, so the variable survives storage.
+#
+# 🔴 WHAT THIS DOES *NOT* CLAIM. Core's `Atom` model still has no MORK-variable type. A `Var` is
+# translated into tags HERE, at encode time. "We can now store variables" is true; "Core represents
+# MORK variables" is not.
+#
+# ─── THE ENCODING CONTRACT (spec, not code — it exists nowhere else) ──────────────────────────────
+# `MORK.wiki/Data-in-MORK.md` §"Constraints on MORK data types" gives the whole tag space:
+#     0b_00_......  Arity      (remaining bits = arity, 0..=63)
+#     0b_01_......  reserved for future use
+#     0b_10_......  VarRef     (remaining bits = a De Bruijn LEVEL, 0..=63)
+#     0b_11_......  Symbol (non-zero length 1..=63) or, at 0b_11_00_00_00 exactly, NewVar
+# Four live classes; there is NO grounded tag — MORK grounding is dispatch BY NAME over ordinary
+# symbols (`MORK/src/kernel/Sources.jl`: "MORK kernel itself has no grounding"). So a `Grounded`
+# encodes as a Symbol, exactly as `Sym` does.
+#
+# 🔑 LEVELS, NOT INDICES — and the wiki is explicit that these are easy to confuse:
+#     "variable references are relative to the total number of introduced bindings TO THE LEFT …
+#      De Bruijn LEVELS (not to be confused with De Bruijn INDICES, which are relative to the most
+#      recent bindings to the left) … `[2] &0 $` would be a syntax error, the reference precedes
+#      the binding."
+# VERIFIED by execution against `sexpr_to_expr`, both orders:
+#     (f $x $y $x $y) -> [5] <f> $ $ &0 &1        (g $a $b $b $a) -> [5] <g> $ $ &1 &0
+# The ordinal tracks the VARIABLE, not the distance; indices would swap both.
+#
+# ⚠️ CONSEQUENCE: THIS CANNOT BE COMPOSITIONAL. A level is absolute, so a subterm's `VarRef(k)`
+# depends on how many bindings appeared to its left in the WHOLE expression. Encoding children
+# independently and concatenating is WRONG. Hence one pre-order pass threading `nvars`.
+#
+# 🔴 VARIABLE IDENTITY IS name+id, NOT name. `typed_atom_to_expr` above emits `$name#id` and says
+# why: "DISTINCT Vars with the same base name (post rename_fresh) must NOT collapse into one on
+# MORK's name-based de Bruijn". Keying levels on `name` alone is VARIABLE CAPTURE — valid-looking
+# bytes that decode to the wrong term, and byte-equality against the text path would NOT catch it
+# (that path carries the `#id`).
+#
+# ─── DECLINES, never throws and never wraps ──────────────────────────────────────────────────────
+# Returns a REASON, the `_unroundtrippable` idiom (`Union{Nothing,String}`), because a bare count is
+# not actionable. The 64-variable ceiling is a WHOLE-EXPRESSION property that `item_byte` cannot
+# catch — it asserts `VarRef.idx < 64` per tag, not the COUNT of distinct bindings. The spec:
+# "There is no way to store a singular expression with more than 64 free variables … the limit is on
+# a STORABLE EXPRESSION, but not necessarily for a computation, a transaction, or the space of all
+# expressions." Masking instead of declining wraps ACROSS a tag boundary (64 & 0x3f == 0 ⇒ NewVar) —
+# the CID incident, `Expr.jl:57-63`.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+
+"Result of encoding an `Atom` to MORK bytes. Exactly one of `expr`/`declined` is non-`nothing`."
+struct AtomEncoding
+    expr::Union{MORK.Expr, Nothing}
+    declined::Union{Nothing, String}      # a REASON, never a bare flag
+end
+
+# Variable identity key — name AND id. See the name+id note above; `id == 0` is a source var.
+#
+# ⚠️ COST, STATED SO NOBODY OPTIMIZES IT BEFORE MEASURING: this builds a `String` per VAR OCCURRENCE
+# (and `get`/`setindex!` hash it), so a rule with many variable mentions allocates once per mention.
+# That is the obvious inefficiency and it is deliberately left alone — the correct key is a
+# `(name, id)` tuple, which allocates nothing and hashes directly, but switching it is a change to
+# the identity relation and belongs with a measurement, not with the first version. No caller is on
+# a hot path today: `atom_to_expr` runs at INGEST, not per rewrite step.
+_var_key(v)::String = v.id == 0 ? v.name : string(v.name, "#", v.id)
+
+# The single pre-order pass. `nvars` is threaded because levels are ABSOLUTE (see above).
+# Returns `nothing` on success or the decline reason.
+function _atom_bytes!(
+    out::Vector{UInt8}, a, seen::Dict{String, UInt8}, nvars::Base.RefValue{UInt8}
+)::Union{Nothing, String}
+    if a isa _MM2_ATOM.Expression
+        ch = (a::_MM2_ATOM.Expression).children
+        length(ch) < 64 ||
+            return "arity $(length(ch)) exceeds the Rule of 64 (max 63) — nest instead"
+        push!(out, MORK.item_byte(MORK.ExprArity(UInt8(length(ch)))))
+        for c in ch
+            r = _atom_bytes!(out, c, seen, nvars)
+            r === nothing || return r
+        end
+        return nothing
+    elseif a isa _MM2_ATOM.Var
+        k = get(seen, _var_key(a), nothing)
+        if k === nothing
+            nvars[] < 64 || return "more than 64 distinct variables — not a STORABLE expression " *
+                                   "(Data-in-MORK: the limit is on storage, not on computation)"
+            seen[_var_key(a)] = nvars[]
+            push!(out, MORK.item_byte(MORK.ExprNewVar()))
+            nvars[] += UInt8(1)
+        else
+            push!(out, MORK.item_byte(MORK.ExprVarRef(k)))
+        end
+        return nothing
+    elseif a isa _MM2_ATOM.Sym
+        return _word_bytes!(out, String((a::_MM2_ATOM.Sym).name))
+    elseif a isa _MM2_ATOM.Grounded
+        # No grounded TAG exists; a grounded atom encodes as its WORD, exactly as `typed_atom_to_expr`
+        # prints it (`print(io, a.value)`) so the two paths agree byte for byte.
+        return _word_bytes!(out, string((a::_MM2_ATOM.Grounded).value))
+    end
+    "unsupported atom kind $(typeof(a))"
+end
+
+# A SYMBOL, per grammar §1.1 `SYMBOL ::= WORD` / `GROUNDED ::= STRING | WORD`. A value whose textual
+# form is not a single token (a StateCell prints `(State …)`, an EXPRESSION) has no symbol encoding —
+# decline rather than emit bytes that decode to something else.
+function _word_bytes!(out::Vector{UInt8}, w::AbstractString)::Union{Nothing, String}
+    tb = Vector{UInt8}(String(w))
+    isempty(tb) && return "empty symbol — SymbolSize is 1..63, length 0 is unrepresentable"
+    length(tb) < 64 ||
+        return "symbol of $(length(tb)) bytes exceeds the Rule of 64 (max 63) — a long opaque " *
+               "string is not a symbol; store digests/paths as VALUES"
+    (occursin(' ', w) || occursin('(', w) || occursin(')', w)) &&
+        return "textual form `$w` is not a single WORD (grammar §1.1) — no symbol encoding"
+    push!(out, MORK.item_byte(MORK.ExprSymbol(UInt8(length(tb)))))
+    append!(out, tb)
+    nothing
+end
+
+"""
+    atom_to_expr(atom) -> AtomEncoding
+
+Encode a typed `StandardMeTTa` `Atom` to MORK `Expr` bytes **without the sexpr text hop** — the
+byte-level inverse of [`expr_to_atom`](@ref), and the half of this pair Core never had.
+
+Variables become native `NewVar`/`VarRef` tags at encode time, so a rule stored through this path is
+unifiable by `expr_unify` rather than inert (`MorkBridge.jl` BLOCKER 2). Levels are De Bruijn LEVELS
+and identity is name+id — see the block comment above; both are load-bearing.
+
+Declines with a reason (never throws, never wraps) on: arity ≥ 64, a symbol of 0 or ≥ 64 bytes, a
+65th distinct variable, or a value with no single-WORD textual form.
+
+⚠️ Not to be confused with `typed_atom_to_expr`, which returns a **String**.
+"""
+function atom_to_expr(a)::AtomEncoding
+    out = UInt8[]
+    r = _atom_bytes!(out, a, Dict{String, UInt8}(), Ref(UInt8(0)))
+    r === nothing ? AtomEncoding(MORK.Expr(out), nothing) : AtomEncoding(nothing, r)
+end

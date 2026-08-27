@@ -281,6 +281,9 @@ export mm2_run!, mm2_is_exec_rule, mm2_split_forms
 # of MeTTa Invariant 1, not of any lane, and it must outlive the MM2 direct-lowering arrow.
 export ProgramRegion, split_program_regions, region_program
 export typed_atom_to_expr, expr_to_atom, mc_closure!
+# ⚠️ `typed_atom_to_expr` returns a STRING; `atom_to_expr` returns BYTES. The symmetric pair is
+# `atom_to_expr` ⇄ `expr_to_atom`. See the block comment in standard/AtomExprBridge.jl.
+export atom_to_expr, AtomEncoding
 # Reflectable HE small-step rule-table (CeTTa-adopted)
 export LangDefPack, LangDefRule, LangDefRuleId, HE_SMALL_STEP_RULES
 export he_small_step_pack, langdef_rule_enabled, langdef_step_rules_atom, langdef_digest
