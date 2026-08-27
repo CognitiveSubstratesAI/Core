@@ -245,3 +245,53 @@ function atom_to_expr(a)::AtomEncoding
     r = _atom_bytes!(out, a, Dict{String, UInt8}(), Ref(UInt8(0)))
     r === nothing ? AtomEncoding(MORK.Expr(out), nothing) : AtomEncoding(nothing, r)
 end
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# WHY `atom_to_expr` HAS NO CALLER YET — the blocker is the READ side, and it is a FORMAT property
+#
+# The obvious consumer is `core_add!` (space/CoreSpace.jl:532). Its PREFIXED branch already goes
+# byte-level (`sexpr_to_expr(to_sexpr(a))` then `set_val_at!`), so swapping in `atom_to_expr` looks
+# like removing a serialize-parse hop. It is not, and the reason is worth reading before trying.
+#
+# WHAT WOULD CHANGE. Today `to_sexpr` maps `$x -> __var_x`, a NAMED GROUND SYMBOL, deliberately —
+# `space/CoreSpaceLoad.jl:198-206` explains it and MEASURES the stakes: "on lib/quantale, 25 of 31
+# atoms carry a variable". `atom_to_expr` would instead store native `NewVar`/`VarRef` tags. That
+# FIXES `MorkBridge.jl` BLOCKER 2 (a `__var_x` is a CONSTANT to `expr_unify`, so every stored lib
+# rule is inert to the native rewriter) — and BREAKS every TEXT reader of that space.
+#
+# 🔴 THE TEXT FORM IS NOT A BIJECTION, AND THAT IS THE FORMAT, NOT A BUG IN EITHER IMPLEMENTATION.
+# The byte encoding strips variable NAMES by design (MORK.wiki Data-in-MORK: "note how variables are
+# stripped of their names"). The default renderer therefore cannot put them back, and BOTH defaults
+# agree on what it prints instead:
+#     upstream  expr/src/lib.rs:1387-1388   NewVar => "$"   VarRef(r) => format!("_{}", r + 1)
+#     ours      expr/src/Expr.jl:542-543    NewVar => "$"   VarRef   => "_$(idx + 1)"
+# identical, `r + 1` included. Ours is a FAITHFUL PORT. And by the MeTTa grammar
+# (`docs/specs/metta grammar/metta_language_spec.md` §1.1, `VARIABLE ::= '$', (CHAR|'"'), {...}`) the
+# output is not re-parseable as variables at all: bare `$` is ungrammatical and `_1` matches
+# `WORD -> SYMBOL`. So `_is_var_symbol` accepting only `$…`/`__var_…` is CORRECT, and a dumped rule
+# silently stops being a rule. `__var_x` is the workaround for the FORMAT.
+#
+# THE CONSUMERS THAT WOULD BREAK: `space_dump_all_sexpr` (and `core_atoms`, which uses it for a root
+# space and `expr_serialize`s even on its prefix branch), and anything gated by `_is_var_symbol`.
+# `core_rule_exprs` (MorkBridge.jl) is already safe — it reads RAW BYTE PATHS and never serialises,
+# which is exactly why it was written that way, and why `MORK/docs/src/guide/zipper_queries.md`
+# recommends byte reads for this class of work.
+#
+# 🟢 THE PLUGGABLE ESCAPE HATCH NOBODY HAS USED. Upstream's `Expr::serialize2`
+# (`expr/src/lib.rs:964`) takes `map_variable: G` — variable rendering is a PARAMETER. Supplying a
+# name-generating mapper would make dumps re-parseable and dissolve this blocker without touching
+# storage. Evidence it is the intended path: our own `test/conformance/**.expected` files, produced
+# by the upstream BINARY, render `$a`/`$b` with co-reference preserved (`(cell 2 $a $a)`), so
+# upstream's tooling already judges `$` / `_N` insufficient for round-tripping.
+# ⚠️ COST, STATED PRECISELY: this is a FIXTURE MIGRATION, not a semantic divergence. The conformance
+# gate compares ATOM SETS; the differential corpus compares DUMPS. Changing the rendering changes the
+# dumps, so dump-comparison fixtures must be regenerated. It is a formatting choice upstream itself
+# made pluggable — not a correctness risk, and not "diverging from upstream".
+#
+# ⚠️ A RETRACTION, KEPT BECAUSE THE SHAPE RECURS. On 2026-08-27 this was briefly written up as "our
+# serializer is defective, upstream renders `$a`" — inferred from the `.expected` fixtures BEFORE
+# opening upstream's serializer, which turned out to be character-identical to ours. Third instance
+# this week of partial evidence pointing somewhere while the file that settles it stayed unopened
+# (cf. the ZAM name-grep, and the dropped §2.3 mass clause). All three were caught by opening the
+# file; none was caught by a test.
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
