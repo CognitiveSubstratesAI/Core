@@ -39,6 +39,25 @@ base and getting 2.0 for free.
 
 ---
 
+## 0n. ✅ THE TABLING CHAPTER IS VERSION-STABLE 10.1.9 → 10.1.13 (checked 2026-08-27)
+
+**Do not re-read a newer SWI manual for tabling; this diff has been run.** Chapter 7 ("Tabled
+execution (SLG resolution)", §7.1–§7.13) is **content-identical** between
+`docs/specs/prolog/SWI-Prolog-10.1.9.pdf` and `docs/research/papers/prolog/SWI-Prolog-10.1.13.pdf`.
+
+    chapter 7 diff : 46 changed lines — ALL running headers with shifted page numbers
+                     ("7.2. EXAMPLE 2 … 361" -> "… 365"). Zero content changes.
+    whole manual   : 33 201 changed lines
+
+So the manual DID move substantially — just not here. §7.4's early-completion wording is byte-for-byte
+the same in both, which is what §0m below rests on. Our differential oracle runs **10.1.12**, between
+the two, so it is covered by that stability.
+
+⚠️ SCOPE: this says nothing about the other chapters, where those 33k lines live. If work ever leans
+on a different chapter, re-run the diff for THAT chapter rather than citing this row.
+
+---
+
 ## 0m. 🔴 EARLY COMPLETION IS NOT PORTED — and it is why 3 XSB programs cannot run (2026-08-27)
 
 **Upstream has it; we have nothing keyed on groundness at all.** Grep across `Tabling.jl` +
