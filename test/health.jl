@@ -14,6 +14,7 @@ const _HROOT = @__DIR__
 const _HFULL = ("full" in ARGS) || (get(ENV, "CORE_HEALTH_FULL", "") == "1")
 
 # (name, test file) — each is a self-contained @testset that throws on failure.
+# NOT immutable: `full` appends to this below. `const` binds the NAME, so `push!` is legal.
 const _HCHECKS = Tuple{String, String}[
     (
         "hyperon conformance (234 directives)",
@@ -33,6 +34,21 @@ const _HCHECKS = Tuple{String, String}[
     ),
     ("type system", joinpath(_HROOT, "test_types.jl"))
 ]
+
+# 🔴 `full` PARSED ITS FLAG AND THEN GATED NOTHING — fixed 2026-08-28.
+# `_HFULL` was read at :14 and used at exactly ONE site: the banner, which appended "  (full)".
+# So `./bin/health full` printed `6/6 PASS (full)` while running the IDENTICAL six checks. The
+# 2026-07-28 whitepaper audit called it exactly right — "it prints that it ran more than it ran" —
+# and it survived because the flag DID something visible, so the output looked like evidence.
+#
+# ⚠️ AND THE SUITE IT NAMES RAN NOWHERE AT ALL: `test/pln/test_pln_ecan.jl` (156 lines, §4.9 PLN↔ECAN
+# acceptance, T1-T4) is not in `runtests.jl` either. It was reachable only through a flag that did
+# not work — a test orphaned twice over. Verified passing before wiring: 13/13 (+2/2 silent-test
+# guard) via `tools/run_tests.sh`.
+_HFULL && push!(
+    _HCHECKS,
+    ("§4.9 PLN↔ECAN acceptance (full only)", joinpath(_HROOT, "pln", "test_pln_ecan.jl"))
+)
 
 _hresults = Tuple{String, Bool}[]
 for (name, path) in _HCHECKS
