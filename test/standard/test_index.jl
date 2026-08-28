@@ -102,3 +102,37 @@ end
         @test _IX._better_index(5.0, 4.0)          # +25% does
     end
 end
+
+# ── THE LIVE PATH: indexed `match` must return EXACTLY the unindexed answers ─────────────────────
+# 🔴 THE ONLY FAILURE THAT MATTERS HERE IS A SILENT ONE. A wrongly-narrowing index does not error, it
+# returns FEWER answers — so this compares the indexed result against the same query run with the
+# index disabled, rather than against a hand-written expectation.
+@testset "JIT argument index does not change answers" begin
+    s = Space(); load_core_stdlib!(s)
+    for k in 1:60
+        load_metta!(s, "(belief k$(k) s$(k) c$(k))\n")
+    end
+    load_metta!(s, "(belief k7 OTHER c99)\n")        # a SECOND atom under the same key
+    load_metta!(s, raw"(belief $openvar s1 c1)" * "\n")  # var at the indexed position: matches ANY key
+
+    ground = sort(string.(load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")))
+    @test !isempty(s.store.arg_index)                 # an index WAS built
+    # the var-at-position atom must appear under every key — the `#var * #distinct` term made real
+    @test length(ground) == 3                          # k7's two atoms + the open-var atom
+
+    # …and the same query with the index dropped must agree exactly.
+    empty!(s.store.arg_index); empty!(s.store.arg_tried)
+    unindexed = sort(string.(load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")))
+    @test ground == unindexed
+
+    # a key with no atoms yields nothing, not everything
+    @test isempty(load_metta!(s, raw"!(match &self (belief nosuch $s $c) $s)" * "\n"))
+
+    # MUTATION MUST INVALIDATE — a stale index is a wrong answer, not a slow one.
+    load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")   # rebuild
+    @test !isempty(s.store.arg_index)
+    load_metta!(s, "!(add-atom &self (belief k7 FRESH c0))\n")
+    @test isempty(s.store.arg_index)                  # dropped on add
+    after = load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")
+    @test length(after) == 4                          # the new atom IS visible
+end

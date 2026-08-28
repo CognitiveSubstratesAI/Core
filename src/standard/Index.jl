@@ -299,3 +299,85 @@ function instantiated_positions(pattern::Atom)::Vector{Int}
     end
     out
 end
+
+# ── THE LIVE PATH: JIT indexes for `match` ───────────────────────────────────────────────────────
+#
+# 🔑 WHY `match` AND NOT `query`. `query()` only ever sees `(= subj $X)` / `(: subj $T)` — THREE
+# children, one of which is the output variable — so there is exactly ONE indexable position and the
+# fixed `_index_key` already uses it. Adaptive selection adds nothing there. `match` is where
+# multi-argument patterns live (`(belief $k $s $c)`), and it is the path that scans `all_atoms`
+# unconditionally: MEASURED 2026-08-27, ~62 ms over 4000 atoms against `query`'s ~4 µs.
+#
+# ⚠️ CORRECTNESS BEFORE SPEED: AN INDEX THAT OUTLIVES A MUTATION IS A WRONG ANSWER. Upstream tracks
+# generations; we take the same route as `bucket_trie` and DROP every adaptive index on any
+# add/remove. Rebuilding is O(bucket) and only happens on the next query that wants one — a stale
+# index would be silent and unbounded, which is not a trade worth making.
+
+"A JIT index: `discriminant => atoms`, plus the assessment that justified building it."
+struct ArgIndex
+    argpos::Int
+    speedup::Float64
+    buckets::Dict{Symbol, Vector{Atom}}
+end
+
+"Build the index `best` describes, over `atoms`. Var-at-position atoms go in EVERY bucket — they can match anything."
+function _build_arg_index(atoms::Vector{Atom}, best::ArgAssessment)::ArgIndex
+    buckets = Dict{Symbol, Vector{Atom}}()
+    wild = Atom[]
+    for a in atoms
+        h = (a isa Expression && length(a.children) >= best.argpos) ?
+            _idx_head(a.children[best.argpos]) : nothing
+        h === nothing ? push!(wild, a) : push!(get!(() -> Atom[], buckets, h), a)
+    end
+    # A var at this position matches ANY key, so it must appear under every one — this is exactly the
+    # `#var * #distinct` term in the speedup denominator, made real.
+    isempty(wild) || for (_, v) in buckets
+        append!(v, wild)
+    end
+    ArgIndex(best.argpos, best.speedup, buckets)
+end
+
+"""
+    index_candidates(store_atoms, arg_index, jiti_tried, pattern) -> Vector{Atom}
+
+Candidate atoms for `pattern`, narrowed by a JIT argument index when one pays for itself. Returns
+`store_atoms` unchanged when no index applies — the caller's behaviour is then bit-identical to the
+unindexed scan, which is what makes this safe to put on `match`'s path.
+
+Upstream's `jiti_tried` is mirrored by the `tried` set: an assessment that declined must NOT be
+re-run on every query, or the assessment costs more than the scan it was meant to save.
+"""
+function index_candidates(
+    store_atoms::Vector{Atom},
+    arg_index::Dict{Tuple{Symbol, Int}, ArgIndex},
+    tried::Set{Symbol},
+    pattern::Atom
+)::Vector{Atom}
+    pattern isa Expression || return store_atoms
+    head = _idx_head(pattern)
+    head === nothing && return store_atoms          # var-headed pattern: nothing to key on
+    inst = instantiated_positions(pattern)
+    isempty(inst) && return store_atoms             # pl-index.c:3068 — no instantiated argument
+
+    for pos in inst                                 # an index we already built and can use
+        ix = get(arg_index, (head, pos), nothing)
+        ix === nothing && continue
+        key = _idx_head(pattern.children[pos])
+        key === nothing && continue
+        return get(ix.buckets, key, Atom[])         # absent key ⇒ genuinely no candidates
+    end
+
+    head in tried && return store_atoms             # assessed before and declined; do not re-assess
+    push!(tried, head)
+
+    same_head = Atom[a for a in store_atoms
+                     if a isa Expression && !isempty(a.children) && _idx_head(a) === head]
+    length(same_head) <= _TRIE_MIN_BUCKET && return store_atoms   # too small to be worth an index
+    best = best_index_argument(same_head, inst)
+    best === nothing && return store_atoms
+
+    ix = _build_arg_index(same_head, best)
+    arg_index[(head, best.argpos)] = ix
+    key = _idx_head(pattern.children[best.argpos])
+    key === nothing ? store_atoms : get(ix.buckets, key, Atom[])
+end

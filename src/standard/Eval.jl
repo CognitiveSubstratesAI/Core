@@ -710,9 +710,17 @@ mutable struct VectorStore <: AbstractStore
     # (small buckets keep the zero-overhead linear scan). Field is LAST + inner-ctor-defaulted ⇒ existing
     # 6/7-arg positional Space(...) calls keep working.
     bucket_trie::Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}
+    # Control accel #3 (pl-index.c `bestHash`): JIT ARGUMENT indexes for `match`, which consults
+    # neither `index` nor `bucket_trie`. Keyed (head, chosen-argument-position). `arg_tried` mirrors
+    # upstream's `jiti_tried`: a head whose assessment DECLINED must not be re-assessed per query.
+    # 🔴 BOTH ARE DROPPED WHOLESALE ON ANY add/remove — an index that outlives a mutation is a silent
+    # wrong answer, and rebuilding is O(bucket) on the next query that wants one.
+    arg_index::Dict{Tuple{Symbol, Int}, ArgIndex}
+    arg_tried::Set{Symbol}
     VectorStore(atoms, lib_count, index, wildcard) =
         new(atoms, lib_count, index, wildcard,
-            Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}())
+            Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}(),
+            Dict{Tuple{Symbol, Int}, ArgIndex}(), Set{Symbol}())
 end
 VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol, Symbol}, Vector{Atom}}(), Atom[])
 
@@ -763,6 +771,8 @@ function add_atom!(s::Space, a::Atom)
     else
         push!(get!(() -> Atom[], s.store.index, k), a)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
+        isempty(s.store.arg_index) || empty!(s.store.arg_index)           # …and every JIT argument index
+        isempty(s.store.arg_tried) || empty!(s.store.arg_tried)
     end
     dyn_changed!(k; head = head_name(a), atom = a)         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
@@ -778,6 +788,8 @@ function remove_atom!(s::Space, a::Atom)
         b = get(s.store.index, k, nothing)
         b !== nothing && filter!(x -> x != a, b)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
+        isempty(s.store.arg_index) || empty!(s.store.arg_index)           # …and every JIT argument index
+        isempty(s.store.arg_tried) || empty!(s.store.arg_tried)
     end
     dyn_changed!(k; head = head_name(a), atom = a)         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)
@@ -2352,7 +2364,12 @@ function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     # were invisible to the IDG and `_DYN_ALL` could only invalidate blindly. No-op when the IDG is off.
     dyn_read_pattern!(subst(pat, b0))
     out = Bindings[]
-    for atom in all_atoms(space), mb in match_atoms(subst(pat, b0), rename_fresh(atom))
+    p = subst(pat, b0)
+    # 🔑 THE JIT ARGUMENT INDEX (pl-index.c bestHash) — `match` used to scan `all_atoms`
+    # UNCONDITIONALLY. `index_candidates` returns the full store whenever no index applies, so the
+    # unindexed behaviour is bit-identical and this is safe on the hot path.
+    cands = index_candidates(all_atoms(space), space.store.arg_index, space.store.arg_tried, p)
+    for atom in cands, mb in match_atoms(p, rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))
     end
     out
