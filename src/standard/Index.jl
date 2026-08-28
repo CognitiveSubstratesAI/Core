@@ -350,7 +350,7 @@ re-run on every query, or the assessment costs more than the scan it was meant t
 function index_candidates(
     store_atoms::Vector{Atom},
     arg_index::Dict{Tuple{Symbol, Int}, ArgIndex},
-    tried::Set{Symbol},
+    tried::Set{Tuple{Symbol, Int}},
     pattern::Atom
 )::Vector{Atom}
     pattern isa Expression || return store_atoms
@@ -367,8 +367,17 @@ function index_candidates(
         return get(ix.buckets, key, Atom[])         # absent key ⇒ genuinely no candidates
     end
 
-    head in tried && return store_atoms             # assessed before and declined; do not re-assess
-    push!(tried, head)
+    # 🔴 `tried` IS KEYED (head, position), NOT head — FIXED 2026-08-28, found by comparing against
+    # JeTTa's global trie. Keyed by head alone, the FIRST query's choice locked out every other
+    # position forever: an index built at position 2 marked `belief` tried, so a later
+    # `(belief $k s7 $c)` — instantiating position 3, the very case this exists for — short-circuited
+    # to the full store and never assessed. MEASURED: 2123 of 2123 candidates, i.e. no narrowing at
+    # all. Upstream has no such bug; `bestHash` is called with the CURRENT argument vector each time
+    # and several indexes coexist per predicate (`args[MAX_MULTI_INDEX]`).
+    all(pos -> (head, pos) in tried, inst) && return store_atoms
+    for pos in inst
+        push!(tried, (head, pos))
+    end
 
     same_head = Atom[a for a in store_atoms
                      if a isa Expression && !isempty(a.children) && _idx_head(a) === head]

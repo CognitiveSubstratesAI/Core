@@ -136,3 +136,29 @@ end
     after = load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")
     @test length(after) == 4                          # the new atom IS visible
 end
+
+# 🔴 REGRESSION — `arg_tried` MUST be keyed (head, position), not head.
+# Keyed by head alone, the FIRST query's choice locked out every other position permanently: an index
+# built at position 2 marked the head tried, so a later query instantiating position 3 — the very
+# case this mechanism exists for, since the fixed `_index_key` cannot use it — short-circuited to the
+# full store and never assessed. MEASURED before the fix: 2123 of 2123 candidates, no narrowing.
+# Found by comparing against JeTTa's global discrimination trie, which has no such failure mode
+# because it never chooses a position at all.
+@testset "a second query on a DIFFERENT argument still gets an index" begin
+    s = Space(); load_core_stdlib!(s)
+    for k in 1:80
+        load_metta!(s, "(belief k$(k) s$(k) c$(k))\n")
+    end
+    # query 1 instantiates position 2 → builds an index there
+    a1 = load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")
+    @test length(a1) == 1
+    @test !isempty(s.store.arg_index)
+
+    # query 2 instantiates position 3 ONLY — the fixed key cannot help here at all
+    pat2 = Expression(Atom[Sym("belief"), Var("k"), Sym("s7"), Var("c")])
+    @test Eval._index_key(pat2) === nothing            # …confirming the fixed index is out
+    cands = Eval.index_candidates(Eval.all_atoms(s), s.store.arg_index, s.store.arg_tried, pat2)
+    @test length(cands) < length(Eval.all_atoms(s))    # 🔑 it MUST narrow, not fall back
+    a2 = load_metta!(s, raw"!(match &self (belief $k s7 $c) $k)" * "\n")
+    @test length(a2) == 1                              # …and still answer correctly
+end

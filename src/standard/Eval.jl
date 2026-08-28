@@ -716,11 +716,11 @@ mutable struct VectorStore <: AbstractStore
     # 🔴 BOTH ARE DROPPED WHOLESALE ON ANY add/remove — an index that outlives a mutation is a silent
     # wrong answer, and rebuilding is O(bucket) on the next query that wants one.
     arg_index::Dict{Tuple{Symbol, Int}, ArgIndex}
-    arg_tried::Set{Symbol}
+    arg_tried::Set{Tuple{Symbol, Int}}
     VectorStore(atoms, lib_count, index, wildcard) =
         new(atoms, lib_count, index, wildcard,
             Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}(),
-            Dict{Tuple{Symbol, Int}, ArgIndex}(), Set{Symbol}())
+            Dict{Tuple{Symbol, Int}, ArgIndex}(), Set{Tuple{Symbol, Int}}())
 end
 VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol, Symbol}, Vector{Atom}}(), Atom[])
 
