@@ -112,7 +112,7 @@ clause_metta(Clause, Out) :-
     % while `a.` survived, and the program was then graded as conformance evidence with a fact
     % missing. A silent drop is strictly worse than a refusal in this directory.
     ;  term_var_nums(H2, HVs0), generative_call_clause(B2, HVs0)
-    -> Out = refused('needs SLG EARLY COMPLETION (pl-tabling.c:1148) — unported; the generative call diverges')
+    -> Out = refused('a generative CALL loses its binding — silently OVER-DERIVES (see roadmap 0r)')
     ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars), term_metta(H2, HS)
     -> format(atom(Out), "(= ~w ~w)", [HS, BS])
     ;  Out = refused('clause shape not handled') ).
@@ -200,7 +200,24 @@ lits_metta([L|Ls], N, Seen, S) :-
 
 % tnot: a call, binds nothing (our `tnot` requires a ground goal anyway)
 lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(tnot ~w)", [GS]).
-% 🔴 A GENERATIVE CALL IS REFUSED — because we have not ported SLG EARLY COMPLETION.
+% 🔴 A GENERATIVE CALL IS REFUSED — because IT LOSES THE BINDING AND SILENTLY OVER-DERIVES.
+%
+% ⚠️ AN EARLIER VERSION BLAMED EARLY COMPLETION. That is true of p29 ONLY. MEASURED 2026-08-28 by
+% lifting the refusal and running the real harness against the real gold:
+%
+%   p80  13/13 — PASSES. Its structure never exposes the defect.
+%   p60  FAILS: got {q2,q3,q4,s2}, gold {p2,p3,p4,q3,q4,s2} — FOUR mismatches from ONE cause.
+%   p29  diverges (early completion; `findall(B,e(B,0),L)` times out in SWI too).
+%
+% THE CAUSE. A generative call returns its RHS VALUE and does NOT report the binding:
+%       (= (p a) True) (= (p b) True)      !(p $x)  ->  [True, True]      $x is LOST
+% So in `q(A) :- q(B), t(A,B)` the call `(q $b)` succeeds with `$b` STILL UNBOUND, and the following
+% `(match &self (t 2 $b) True)` then matches ANY `t` fact — deriving `q(2)` out of nothing. Every one
+% of p60's four mismatches cascades from that single over-derivation.
+%
+% ⇒ THIS IS NOT "NOT YET IMPLEMENTED". It is a SILENT WRONG ANSWER, which is worse than a refusal —
+% and p80 passing is exactly the false positive that makes it look safe. One passing program is not
+% evidence about a SHAPE.
 %
 % ⚠️ AN EARLIER VERSION OF THIS COMMENT GAVE THE WRONG CAUSE, and the wrong cause was committed.
 % It claimed `binder_of/3` hands a CALL a throwaway binder so the call's result is DISCARDED, leaving

@@ -95,6 +95,47 @@ over-invalidation is sound, under-invalidation is the one failure an IDG must no
 
 ---
 
+## 0r. 🔴 THE GENERATIVE CALL LOSES ITS BINDING AND SILENTLY OVER-DERIVES (measured 2026-08-28)
+
+**This is a WRONG ANSWER, not a missing feature — and it is why the refusal must stay.**
+
+Lifted the generative-call refusal, regenerated the corpus (71 translated / 1 refused), and ran the
+REAL harness against the REAL gold rather than a hand translation:
+
+| | result |
+|---|---|
+| **p80** | **13/13 — PASSES.** Its structure never exposes the defect. |
+| **p60** | **FAILS.** got `{q2,q3,q4,s2}` · gold `{p2,p3,p4,q3,q4,s2}` |
+| p29 | diverges (early completion; `findall(B,e(B,0),L)` times out in SWI too) |
+
+### The cause — one defect, four cascading mismatches
+
+A generative call returns its RHS **value** and does not report the binding:
+
+    (= (p a) True)  (= (p b) True)        !(p $x)   ->   [True, True]      ← $x is LOST
+
+So in `q(A) :- q(B), t(A,B)` the call `(q $b)` succeeds with `$b` **still unbound**, and the next
+literal `(match &self (t 2 $b) True)` then matches ANY `t` fact — deriving `q(2)` from nothing.
+`q(2)` wrongly TRUE makes `tnot(q(2))` fail, which loses `p(2)`, `p(3)`, `p(4)`. All four p60
+mismatches are that single over-derivation.
+
+### 🔑 TWO THINGS TO CARRY FORWARD
+
+1. **p80 PASSING IS A FALSE POSITIVE.** I lifted the refusal on the strength of it and would have
+   shipped a translator that silently over-derives. One passing program is not evidence about a
+   SHAPE — grade the whole corpus before believing a lifted refusal.
+2. **`collapse-bind` IS NOT BROKEN.** Wrapped as `EmitIL` emits it —
+   `(collapse-bind (metta (p $x) %Undefined% &self))` — it returns `(Atom Bindings)` pairs carrying
+   `Binding($x, b)` and `Binding($x, a)`, exactly its contract. An earlier probe of mine passed a
+   BARE goal, captured nothing, and I mis-read that as a defect. The capture mechanism works; what is
+   missing is a LOWERING that uses it so the binding reaches the continuation.
+
+⇒ So the fix is translator work over a working engine primitive: emit the collapse-bind/superpose-bind
+form for a generative call instead of a bare call. Until then the refusal stands, and its reason in
+`translate_corpus.pl` now names over-derivation rather than early completion (true of p29 only).
+
+---
+
 ## 0q. XSB `incremental_tests` — BLOCKED BY GENERATIVE CALLS, not by the declaration (2026-08-28)
 
 ⚠️ **I claimed earlier today that honouring `as incremental` would unblock this corpus. It does not.**
