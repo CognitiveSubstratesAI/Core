@@ -55,10 +55,15 @@ TableOptions() = TableOptions(:variant, false, false, false, false, false, nothi
 Declarable and REFUSED, never silently accepted. Each names the item that would make it honourable,
 so a reader learns what is missing rather than that something is."""
 const _REFUSED_OPTIONS = Dict{Symbol, Tuple{String, String}}(
-    :incremental =>
-        ("§7.7", "needs the IDG (idg_add_edge / falsecount) — no dependency graph yet"),
-    :opaque => ("§7.7", "the paired inverse of `incremental`; meaningless without it"),
-    :monotonic => ("§7.8", "needs the same dependency graph, monotone-update variant"),
+    # ✅ `:incremental` / `:opaque` ARE NO LONGER HERE — honoured since 2026-08-28. Their old reason
+    #    ("needs the IDG — no dependency graph yet") had been FALSE since 2026-08-18: `tabling/IDG.jl`
+    #    has `idg_add_edge!`, `idg_changed!` and a real `falsecount` count. The reason outlived the gap.
+    # ⚠️ `:monotonic` REMAINS REFUSED, and its old reason was wrong too — `tabling/Monotonic.jl` (228
+    #    lines, 8 functions incl. `mono_assert_dep!` / `mono_propagate_assert!` / `mono_drain_queue!`)
+    #    exists. What is actually missing is the WRAPPER SIDE: upstream's `'$set_table_wrappers'`
+    #    (boot/tabling.pl:1544) installs `wrap_monotonic` on the DYNAMIC predicate, and we have no
+    #    monotonic equivalent of `_INCREMENTAL_HEADS` nor a `mon_assert_dep` call path from add-atom.
+    :monotonic => ("§7.8", "Monotonic.jl exists; the `wrap_monotonic` DYNAMIC-side hook does not"),
     :lazy => ("§7.8", "the eager/lazy propagation split of monotonic tabling"),
     :dynamic =>
         ("§7.4", "tabling for impure/dynamic predicates — interaction rules unbuilt"),
@@ -121,6 +126,19 @@ function table_options!(o::TableOptions, spec)::TableOptions
             o.mode = :subsumptive
         elseif spec === :variant
             o.mode = :variant
+        # 🔴 BOTH FIELDS, ONE ASSIGNMENT — upstream writes the pair for EITHER option:
+        #   table_options(incremental, …) :- put_dict(#{incremental:true,  opaque:false}, …)  :1304
+        #   table_options(opaque,      …) :- put_dict(#{incremental:false, opaque:true },  …)  :1312
+        # Setting only the named field would leave a predicate both incremental and opaque, a state
+        # upstream cannot represent — and `'$set_table_wrappers'` (:1544) tests them SEPARATELY
+        # (`incremental,1` AND `\+ opaque,1`), so a stale `opaque` would silently suppress wrapping.
+        # This is the TODO written into this file's own docstring on 2026-08-17.
+        elseif spec === :incremental
+            o.incremental = true
+            o.opaque = false
+        elseif spec === :opaque
+            o.incremental = false
+            o.opaque = true
         elseif haskey(_REFUSED_OPTIONS, spec)
             _refuse(spec)
         else
@@ -199,6 +217,15 @@ function table_as!(head::Symbol, specs...)
     _TABLE_OPTIONS[head] = o
     table!(head)
     o.mode === :subsumptive ? table_subsumptive!(head) : untable_subsumptive!(head)
+    # ── '$set_table_wrappers' (boot/tabling.pl:1544) ────────────────────────────────────────────
+    # Upstream wraps a predicate iff it is incremental AND NOT opaque — the two attributes are read
+    # SEPARATELY, which is why the paired assignment above matters. `opaque` is the OFF switch.
+    if o.incremental && !o.opaque
+        push!(_INCREMENTAL_HEADS, head)
+        _IDG_RECORD[] = true        # the bookkeeping must actually run, or the declaration is inert
+    else
+        delete!(_INCREMENTAL_HEADS, head)
+    end
     restraint!(head, :max_answers, o.max_answers)
     subgoal_abstract!(head, o.subgoal_abstract)    # §7.11.1
     answer_abstract!(head, o.answer_abstract)      # §7.11.2

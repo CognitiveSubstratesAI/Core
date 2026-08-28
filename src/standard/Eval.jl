@@ -804,7 +804,7 @@ function add_atom!(s::Space, a::Atom)
         push!(get!(() -> Atom[], s.store.index, k), a)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
-    dyn_changed!(k)                              # §7.7: invalidate the tables that READ this bucket
+    dyn_changed!(k; head = head_name(a))         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
@@ -819,7 +819,7 @@ function remove_atom!(s::Space, a::Atom)
         b !== nothing && filter!(x -> x != a, b)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
-    dyn_changed!(k)                              # §7.7: invalidate the tables that READ this bucket
+    dyn_changed!(k; head = head_name(a))         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)
     s
 end

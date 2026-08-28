@@ -43,7 +43,9 @@ const _OP = Eval
         # 🔴 THE DISTINCTION THIS FILE EXISTS FOR. A no-op that looks like it works is the failure
         # mode this port has paid for most: `subgoal_abstract(3)` appearing to apply while doing
         # nothing is worse than its absence, because absence gets noticed.
-        for opt in (:incremental, :opaque, :monotonic, :lazy, :dynamic, :shared, :private)
+        # ✅ `:incremental` / `:opaque` LEFT THIS LIST 2026-08-28 — §7.7's IDG is built, and
+        # `_INCREMENTAL_HEADS` now gives the PER-PREDICATE scoping the declaration means.
+        for opt in (:monotonic, :lazy, :dynamic, :shared, :private)
             @test_throws ArgumentError _OP.table_as!(:q, opt)
         end
         # ✅ BOTH ABSTRACTION OPTIONS HAVE NOW MOVED OUT OF THIS LIST — §7.11.1 on 2026-08-17 and
@@ -84,7 +86,7 @@ const _OP = Eval
         # would believe the declaration was rejected and the engine would disagree.
         _OP.untable_all!()
         _OP.clear_all_table_options!()
-        @test_throws ArgumentError _OP.table_as!(:r, :subsumptive, :incremental)
+        @test_throws ArgumentError _OP.table_as!(:r, :subsumptive, :monotonic)
         @test !(:r in _OP._TABLED_HEADS)
         @test !_OP.is_subsumptive(:r)
         @test _OP.max_answers(:r) == _OP.NO_RESTRAINT
@@ -93,16 +95,22 @@ const _OP = Eval
     @testset "incremental and opaque are PAIRED — declaring one clears the other" begin
         # Upstream writes BOTH keys for either option: put_dict(#{incremental:true,opaque:false}).
         # Setting only the named field would leave a predicate both incremental AND opaque, which
-        # upstream cannot represent. Both are currently REFUSED, so this asserts the record-level
-        # semantics directly — the pairing is what must survive until §7.7 makes them honourable.
+        # upstream cannot represent. HONOURED since 2026-08-28, so this now asserts the pairing
+        # THROUGH THE DECLARATION rather than only at the record level — which is where a port drops
+        # it: `'$set_table_wrappers'` (boot/tabling.pl:1544) reads `incremental` and `opaque` as two
+        # SEPARATE attributes, so a stale `opaque` would silently suppress wrapping.
         o = _OP.TableOptions()
         @test !o.incremental && !o.opaque
-        o.incremental = true
-        o.opaque = false
-        @test o.incremental && !o.opaque
-        # …and the refusal covers both halves, so neither can be set through the declaration yet.
-        @test haskey(_OP._REFUSED_OPTIONS, :incremental)
-        @test haskey(_OP._REFUSED_OPTIONS, :opaque)
+        _OP.untable_all!()
+        _OP.clear_all_table_options!()
+        _OP.table_as!(:pair, :incremental)
+        @test _OP._TABLE_OPTIONS[:pair].incremental && !_OP._TABLE_OPTIONS[:pair].opaque
+        @test _OP.is_incremental_head(:pair)                 # wrapped
+        _OP.table_as!(:pair, :opaque)                        # the paired inverse CLEARS it
+        @test !_OP._TABLE_OPTIONS[:pair].incremental && _OP._TABLE_OPTIONS[:pair].opaque
+        @test !_OP.is_incremental_head(:pair)                # unwrapped
+        _OP.untable_all!()
+        @test isempty(_OP._INCREMENTAL_HEADS)                # untable_all! clears the wrapper set
     end
 
     @testset "untable! clears the options record with the declaration" begin

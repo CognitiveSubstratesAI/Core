@@ -99,6 +99,29 @@
 # ⇒ Per-space + arity-keyed is the RIGHT shape (the reference says so). Whether it is URGENT is
 # unproven; a test that exhibits a wrong ANSWER — not merely a leaked mark — is the prerequisite.
 const _TABLED_HEADS = Set{Symbol}()
+
+# ── §7.7 INCREMENTAL: THE WRAPPED-DYNAMIC-PREDICATE SET ──────────────────────────────────────────
+# Upstream does NOT have a global incremental switch. `'$set_table_wrappers'` (boot/tabling.pl:1544)
+# installs a listener PER PREDICATE:
+#     ( '$get_predicate_attribute'(Pred, incremental, 1),
+#       \+ '$get_predicate_attribute'(Pred, opaque, 1)  -> wrap_incremental(Pred) ; unwrap_… )
+# and `wrap_incremental` does `prolog_listen(PI, dyn_update)` so assert/retract on THAT predicate
+# notifies the IDG. So the declaration scopes WHICH mutations invalidate — which is exactly what our
+# process-wide `_IDG_RECORD` cannot express, and why `:incremental` was refused rather than accepted
+# with the wrong semantics.
+#
+# ⚠️ ADDITIVE ON PURPOSE. With this set EMPTY, `dyn_changed!` behaves exactly as before (the global
+# `_IDG_RECORD` switch decides), so the existing IDG test and the precompile workload are unchanged.
+# Only once a head is DECLARED incremental does per-head scoping take effect.
+#
+# 🔴 NOT YET FAITHFUL, and stated rather than implied: upstream finds affected tables by VARIANT
+# UNIFICATION — `dyn_affected(Term, ATrie) :- trie_gen(VTable, Term, ATrie)` — while `_DYN_DEPS` is
+# keyed by a 2-symbol discriminant with a `_DYN_ALL` catch-all. So we invalidate a SUPERSET of what
+# upstream would. Sound, less precise; MEASURED 2026-08-27 as real over-invalidation.
+const _INCREMENTAL_HEADS = Set{Symbol}()
+
+"Is this head a wrapped (declared-incremental, non-opaque) predicate? See set_table_wrappers/1."
+is_incremental_head(head::Symbol)::Bool = head in _INCREMENTAL_HEADS
 const _ANSWER_TABLE = Dict{Atom, Vector{Atom}}()
 const _ANSWER_STAMP = Dict{Atom, Tuple{UInt, Int}}()   # key → (objectid(space), revision) at completion; auto-evict on mismatch
 const _TABLE_INPROG = Set{Atom}()
@@ -310,7 +333,7 @@ end
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
-untable_all!() = (empty!(_TABLED_HEADS); _table_reset!(); nothing)
+untable_all!() = (empty!(_TABLED_HEADS); empty!(_INCREMENTAL_HEADS); _table_reset!(); nothing)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROADMAP 0.3 — PER-HEAD `untable!`, so tabling state is SCOPED instead of process-global.
@@ -1336,8 +1359,16 @@ upstream (`change_incomplete_error`), but an `add-atom` executed inside a tabled
 legitimate MeTTa idiom and our purity gating is head-level — so a mutation arriving mid-completion
 STOPS propagating rather than aborting the run.
 """
-function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing})::Int
+function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing};
+    head::Union{Symbol, Nothing}=nothing)::Int
     _IDG_RECORD[] || return 0            # see `dyn_read!` — same switch, same reason
+    # 🔴 PER-PREDICATE SCOPING — `'$set_table_wrappers'` wraps only declared-incremental, non-opaque
+    # predicates, so only THEIR mutations notify the IDG. Filters ONLY once something has been
+    # declared: with `_INCREMENTAL_HEADS` empty this is a no-op and the global switch decides, which
+    # keeps the existing IDG test and the precompile workload behaving exactly as before.
+    if !isempty(_INCREMENTAL_HEADS) && head !== nothing && !(head in _INCREMENTAL_HEADS)
+        return 0
+    end
     n = 0
     for tbl in (k === nothing ? Atom[] : collect(get(_DYN_DEPS, k, Set{Atom}())))
         n += length(idg_changed!(tbl; mono=true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
