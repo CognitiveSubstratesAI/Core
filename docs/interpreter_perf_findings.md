@@ -234,6 +234,12 @@ path handles it), so they want reading, not a sweep.
 
 ## 2026-08-27 — `match` has no index at all; `query`'s index has a gate
 
+> ✅ **RESOLVED 2026-08-28 — `match` NOW CONSULTS AN INDEX.** `pl-index.c`'s adaptive argument
+> selection is ported (`src/standard/Index.jl`) and wired into `_match_pat`. A ground argument is now
+> O(1): 313 µs at n=1000, 336 µs at n=4000, one process. See the 2026-08-28 section at the end.
+> The analysis below is kept because it is what identified the gap, and its `query`-side findings
+> still hold.
+
 ⚠️ **THIS SECTION WAS WRONG ON FIRST WRITING AND IS CORRECTED IN PLACE.** The first draft attributed a
 measured 8.9× to `_index_key` failing on a fact-query pattern. `match` never calls `_index_key`. The
 measurement is real; the cause was not. Both are recorded below, because the wrong version is the one
@@ -370,7 +376,7 @@ The interpreter is *good* at the nested rule lookup MORK chokes on, Its own weak
 
 * **head-first layout** (MORK's recorded fix, re-deriving OmegaClaw MORK_DATA_MODEL.md §4 "most
   selective stable field first") addresses the NESTED rule lookup. It does **nothing** for `match`,
-  which consults no index at all.
+  which consults no index at all. ✅ RESOLVED 2026-08-28 — see the last section.
 * **`pl-index.c` adaptive indexing** addresses a non-discriminable SUBJECT in `query`, by
   selecting a different argument to index on. It does nothing for MORK's prefix pinning, and
   nothing for `match` until `match` consults an index at all.
@@ -611,3 +617,62 @@ the Union experiment above from a different angle — and note the Union rewrite
 (the manual's), and NO performance argument. It touches the guarded eval core, so under "no
 eval-core change without measured need" it does not qualify — the measured need is absent, not
 merely unproven. Do it for design reasons if at all, and do not cite speed.
+
+
+---
+
+## 2026-08-28 — `pl-index.c` adopted: adaptive argument selection, and `match` is indexed
+
+`match` scanned `all_atoms` unconditionally; it is the primitive MeTTa programs actually use and it
+reached none of the three acceleration structures. It now consults a JIT argument index.
+
+### The port
+
+`src/standard/Index.jl` — extracted from `Eval.jl`, where it had accreted across three disjoint
+blocks. Mirrors upstream's own split: `pl-index.c` (4128 lines) is a separate compilation unit from
+`pl-wam.c` (3801); `pl-wam.c:68` consumes it through `pl-index.h`, and EIGHT files include that
+header (`pl-comp`, `pl-proc`, `pl-supervisor`, `pl-thread`, `pl-tabling`, …) — a shared subsystem,
+not a wing of the emulator.
+
+The score is `pl-index.c:3004-3020`, verbatim:
+
+                    #clauses * #distinct
+      speedup = ----------------------------------
+                #clauses - #var + #var * #distinct
+
+plus `better_index`'s 1.2 margin (:3026), `bestHash` declining when nothing is instantiated (:3068),
+and `jiti_tried` to stop re-assessment per query.
+
+### Measured, one process
+
+| | n=1000 | n=4000 | |
+|---|---|---|---|
+| ground-arg `(belief k7 $s $c)` | 313 µs | **336 µs** | **flat ⇒ O(1)** |
+| var-arg `(belief $k $s $c)` | 10 100 µs | 47 204 µs | 4.7× ⇒ O(N), correctly declined |
+
+### 🔑 WHY `match` AND NOT `query` — the decision that shaped the port
+
+`query()` only ever sees `(= subj $X)` / `(: subj $T)`: three children, one being the output
+variable, so there is exactly ONE indexable position and the fixed `_index_key` already uses it.
+Adaptive selection is dead code there. I began wiring it into `query` and stopped for this reason.
+
+### ⚠️ WHAT THE FORMULA BUYS OVER A DISTINCT-COUNT HEURISTIC
+
+Two positions with 4 distinct values each TIE on a naive count. The formula separates them 4.0 vs
+1.23, because one is a variable in 3 of 4 clauses and those land in EVERY bucket — the
+`#var * #distinct` denominator term. `test_index.jl` pins exactly that case.
+
+### Correctness properties, each with a test
+
+* indexed answers compared against the SAME query with the index dropped — a wrongly-narrowing index
+  does not error, it returns FEWER answers;
+* a var at the indexed position goes in EVERY bucket, or it vanishes from keyed lookups;
+* **every index is dropped on any add/remove** — a stale index is a wrong answer, not a slow one;
+* an absent key yields nothing, not everything;
+* `index_candidates` returns the full store when no index applies, so the unindexed path stays
+  bit-identical — which is what makes it safe on the hot path.
+
+⚠️ NO UPSTREAM ORACLE. `swipl_tabling_oracle.sh` grades TABLING (a port); the index is ours, and
+`pl-index.c` cannot be run against us — its unit is a CLAUSE with argument positions, ours an ATOM in
+a store. The FORMULA ports exactly; the plumbing does not. Hence `test_index.jl` asserts hand-computed
+values from the formula rather than from our own output.
