@@ -232,6 +232,36 @@ function table_as!(head::Symbol, specs...)
     o
 end
 
+"""
+    incremental!(head)   /   opaque!(head)
+
+Declare a head INCREMENTAL (or its inverse, opaque) **without tabling it** — upstream's
+`:- dynamic p/1 as incremental`.
+
+🔑 TABLING AND INCREMENTALITY ARE ORTHOGONAL ATTRIBUTES UPSTREAM, and `table_as!` conflates them
+because it was written when only a tabled head could be declared. `boot/init.pl:234` makes the
+independence explicit — `as incremental` is a GENERIC attribute option, expanded identically for
+`:- dynamic` and `:- table`:
+
+    '\$attr_option'(incremental, [incremental(true),  opaque(false)]).
+    '\$attr_option'(opaque,      [incremental(false), opaque(true) ]).
+
+`'\$set_table_wrappers'` then wraps any predicate with `incremental=1` and NOT `opaque=1`, whether or
+not it is tabled. XSB's incremental corpus needs exactly this split: `:- dynamic p/1 as incremental`
+for the DATA that changes, `:- table t/1 as incremental` for the TABLE that must be invalidated.
+
+⚠️ Same paired assignment as `table_options!` — `opaque` is read as a SEPARATE attribute, so setting
+only one field would leave a head both incremental and opaque, a state upstream cannot represent.
+"""
+function incremental!(head::Symbol)
+    push!(_INCREMENTAL_HEADS, head)
+    _IDG_RECORD[] = true            # the bookkeeping must run, or the declaration is inert
+    nothing
+end
+
+"The paired inverse of `incremental!` — `'\$attr_option'(opaque, …)`. Unwraps the head."
+opaque!(head::Symbol) = (delete!(_INCREMENTAL_HEADS, head); nothing)
+
 "Drop a head's options along with its declaration — called by `untable!`."
 clear_table_options!(head::Symbol) = (delete!(_TABLE_OPTIONS, head); nothing)
 clear_all_table_options!() = (empty!(_TABLE_OPTIONS); nothing)

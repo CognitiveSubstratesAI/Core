@@ -95,6 +95,51 @@ over-invalidation is sound, under-invalidation is the one failure an IDG must no
 
 ---
 
+## 0q. XSB `incremental_tests` — BLOCKED BY GENERATIVE CALLS, not by the declaration (2026-08-28)
+
+⚠️ **I claimed earlier today that honouring `as incremental` would unblock this corpus. It does not.**
+That was asserted from the declaration throwing, without reading the programs. `as incremental` was
+**a** blocker; it was not **the** blocker.
+
+**Read the 15 active programs** (`xsb_test_incremental.pl` enumerates them; SWI itself comments out
+~6 more). Every one with a tabled rule has the shape `translate_corpus.pl` already refuses:
+
+    incremental_rule       t(X)   :- p(X).                      <- X bound BY the call
+    test_incr_depends      baz(X) :- foo(X).
+    test_wfs_update        pd_caller(X) :- pd(X).
+    test_incr_depends_2    cyc(X,Y) :- cyc(X,Z), …, p(Z,Y).
+
+Same shape as wfs p29/p60/p80. And FIVE of the fifteen route everything through
+`incr_writeln(Term) :- write(incr(Term)), writeln('.')` — I/O, which the translator drops as harness,
+so their gold is a stdout TRANSCRIPT with no truth-value content to grade against.
+
+⇒ Realistic oracle value is ~10 programs, not 16, and ALL of them wait on one capability.
+
+### What completing it would actually need, in order
+
+1. **generative calls** — thread a call's answers into the continuation. **THE prerequisite.**
+2. a STAGED-MUTATION harness — (query, mutate, query, mutate, query). Neither existing corpus has
+   this shape: wfs is one truth table, delay is one stdout.
+3. `incr_assert` / `incr_retract` of **RULES**, not facts — `incr_assert((p(X) :- f(1,X)))`, 55+40 uses.
+4. `abolish_table_call` — 11 uses; we have only `abolish_all_tables!`.
+5. stdout-transcript comparison for the five I/O-driven programs.
+   ✅ `get_residual` (55 uses) we already have.
+
+### 🔑 SO DO THE GENERATIVE CALL FIRST — it is now confirmed from TWO corpora
+
+It unblocks p29/p60/p80 in the **wfs** corpus, which already has a working harness and validated
+gold, so it is verifiable the day it lands. `incremental_tests` needs it anyway. One capability,
+two upstream corpora — and §0m reached the same conclusion from the early-completion direction.
+
+✅ **WHAT DID LAND, and the corpus confirmed it was genuinely needed:** `incremental!` / `opaque!`
+(`tabling/Options.jl`) declare a head incremental WITHOUT tabling it — upstream's
+`:- dynamic p/1 as incremental`. The corpus needs exactly that split (`:- dynamic p/1 as incremental`
+for the DATA, `:- table t/1 as incremental` for the TABLE), and `table_as!` cannot express it because
+it tables unconditionally. `boot/init.pl:234` shows why they are orthogonal: `as incremental` is a
+GENERIC attribute option, expanded identically for `dynamic` and `table`.
+
+---
+
 ## 0m. EARLY COMPLETION — ALREADY SETTLED AS "UNSOUND, PINNED, NOT PORTED"; this row adds the p29 LINK (2026-08-27)
 
 > ⚠️ **I RE-DERIVED A SETTLED RESULT. Read these two FIRST — they predate this row:**
