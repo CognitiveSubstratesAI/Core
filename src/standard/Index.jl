@@ -182,3 +182,120 @@ end
 # query (= pattern $X) → the matching binding sets (interpreter.rs query:604). Each stored atom's variables are
 # freshened before matching (make_variables_unique). Same-discriminant atoms are scanned linearly for a small
 # bucket, or pruned via the per-bucket discrimination trie for a wide one (identical results either way).
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+#  ADAPTIVE (JIT) ARGUMENT INDEXING — ported from SWI-Prolog `src/pl-index.c`, 2026-08-28
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+#
+# WHAT THE FIXED INDEX ABOVE CANNOT DO. `_index_key` is a FIRST-ARGUMENT discriminant: always
+# `(head, arg1-head)`. When argument 1 is a variable in the QUERY, the pair cannot be formed and the
+# whole index is skipped — even if argument 3 is ground and perfectly selective. Upstream does not
+# have that failure mode: `bestHash` picks WHICH argument to index from the arguments the CALL
+# actually instantiated, so an uninstantiated arg 1 costs one candidate, not the index.
+#
+# ── THE SCORE, verbatim from pl-index.c:3004-3020 ───────────────────────────────────────────────
+# For each indexable argument it establishes:
+#   * the total number of clauses,
+#   * the count of DISTINCT values at that argument,
+#   * the count of NON-INDEXABLE clauses (a variable at that argument).
+# and the expected speedup is
+#
+#                    #clauses * #distinct
+#     speedup = ----------------------------------
+#               #clauses - #var + #var * #distinct
+#
+# The denominator is the expected bucket population: non-var clauses spread over `#distinct` keys,
+# while every var-at-this-argument clause lands in EVERY bucket. So an argument that is var in many
+# clauses scores near 1.0 (no gain) however many distinct values the rest have — which is exactly why
+# a plain distinct-count heuristic picks the wrong argument.
+#
+# ⚠️ WHY THIS IS AN ADDITION ABOVE UPSTREAM'S ORACLE AND NEEDS ITS OWN TEST: the swipl differential
+# covers TABLING. Nothing upstream grades our index, and `pl-index.c` cannot be run against us — its
+# unit of indexing is a CLAUSE with argument positions, ours is an ATOM in a store. The FORMULA ports
+# exactly; the plumbing around it does not.
+
+"Assessment of one candidate argument position — upstream's `arg_info` / `hash_assessment`."
+struct ArgAssessment
+    argpos::Int          # 1-based child position that was assessed
+    distinct::Int        # count of DISTINCT discriminants at this position
+    nvar::Int            # clauses with a VARIABLE (non-indexable) here
+    speedup::Float64     # pl-index.c:3016's formula
+end
+
+"""
+    _assess_argument(atoms, pos) -> ArgAssessment
+
+Score child position `pos` over `atoms`, by `pl-index.c`'s formula. A position that is a variable in
+every atom scores 1.0 (no gain); a ground, all-distinct position scores `#clauses`.
+"""
+function _assess_argument(atoms::Vector{Atom}, pos::Int)::ArgAssessment
+    n = length(atoms)
+    n == 0 && return ArgAssessment(pos, 0, 0, 1.0)
+    seen = Set{Symbol}()
+    nvar = 0
+    for a in atoms
+        if a isa Expression && length(a.children) >= pos
+            h = _idx_head(a.children[pos])
+            h === nothing ? (nvar += 1) : push!(seen, h)
+        else
+            nvar += 1                     # too short to index here — behaves like a var
+        end
+    end
+    d = length(seen)
+    d == 0 && return ArgAssessment(pos, 0, nvar, 1.0)
+    # speedup = (#clauses * #distinct) / (#clauses - #var + #var * #distinct)
+    denom = n - nvar + nvar * d
+    ArgAssessment(pos, d, nvar, denom <= 0 ? 1.0 : (n * d) / denom)
+end
+
+"Upstream's `better_index` (pl-index.c:3026): supersede only by a MARGIN, never on a tie."
+_better_index(cand::Float64, incumbent::Float64; min_speedup::Float64=_INDEX_MIN_SPEEDUP) =
+    incumbent <= 0.0 ? true : cand > incumbent * min_speedup
+
+"Upstream requires a margin before replacing a live index; 1.0 would thrash on noise."
+const _INDEX_MIN_SPEEDUP = 1.2
+
+"How many child positions to consider — upstream's MAXINDEXARG. Beyond this the assessment costs more than it saves."
+const _MAX_INDEX_ARG = 4
+
+"""
+    best_index_argument(atoms, instantiated) -> Union{ArgAssessment, Nothing}
+
+`bestHash` (pl-index.c:3052). Assess only the positions the CALL instantiated — indexing on an
+argument the caller left open buys nothing — and return the best, or `nothing` when no position is
+instantiated or none beats a flat scan.
+
+🔑 THE `instantiated` FILTER IS THE WHOLE POINT, and it is what our fixed key lacks: upstream returns
+false when `ninstantiated == 0` (`:3068`) rather than failing over to a full scan on a technicality.
+"""
+function best_index_argument(
+    atoms::Vector{Atom}, instantiated::Vector{Int}
+)::Union{ArgAssessment, Nothing}
+    isempty(instantiated) && return nothing          # pl-index.c:3068
+    best = nothing
+    for pos in instantiated
+        pos > _MAX_INDEX_ARG + 1 && continue         # child 1 is the head; args start at 2
+        a = _assess_argument(atoms, pos)
+        a.speedup <= 1.0 && continue                 # no gain over a flat scan
+        if best === nothing || _better_index(a.speedup, (best::ArgAssessment).speedup)
+            best = a
+        end
+    end
+    best
+end
+
+"""
+    instantiated_positions(pattern) -> Vector{Int}
+
+Which child positions of a QUERY pattern are concrete enough to index on — upstream's `canIndex`
+over the argument vector. Position 1 (the head) is excluded: it is already the first half of
+`_index_key`, so it is not a candidate for the ADAPTIVE choice.
+"""
+function instantiated_positions(pattern::Atom)::Vector{Int}
+    out = Int[]
+    pattern isa Expression || return out
+    for i in 2:min(length(pattern.children), _MAX_INDEX_ARG + 1)
+        _idx_head(pattern.children[i]) === nothing || push!(out, i)
+    end
+    out
+end

@@ -250,6 +250,11 @@ Main.@suite("standard/tabling/upstream/test_xsb_delay_corpus.jl")
 # which the engine constructs (five more), and that `Grounded{Bindings}` never reaches an answer.
 # A gate rather than prose in `docs/src/language/grammar.md`, because enumerations in prose go
 # stale on the first addition.
+# The ADAPTIVE (JIT) argument-index assessment — `src/standard/Index.jl`. Ported from
+# `pl-index.c`'s speedup formula, and gated HERE because nothing upstream can grade it: the swipl
+# differential covers TABLING (a port), while the index is ours and pl-index.c's unit is a CLAUSE
+# with argument positions, not an ATOM in a store. The formula ports exactly; the plumbing does not.
+Main.@suite("standard/test_index.jl")
 Main.@suite("standard/test_grounded_payloads.jl")
 # How a WFS bottom travels through the INTERPRETER: constructors and control forms must not
 # absorb one (a rule that ignores its argument must still fire), while strict ops must, and
