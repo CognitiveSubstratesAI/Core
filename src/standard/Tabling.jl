@@ -1313,6 +1313,36 @@ MeTTa idiom, so we degrade instead — these tables are invalidated by ANY mutat
 under-invalidation is the one failure an IDG must not have."""
 const _DYN_ALL = Set{Atom}()
 
+# ── WHAT A TABLE'S BODY ACTUALLY READ FROM THE DATA ─────────────────────────────────────────────
+# `_DYN_ALL` records that a table full-scanned; it does NOT record what for. That is not imprecision
+# on top of a known read set — there IS no read set, because `dyn_read!` is only ever reached from
+# `query()` (rule/type lookup, `(= subj $X)` / `(: subj $T)`) and `_match_pat` records nothing at all.
+# §0p failed on exactly this: unifying the mutated atom against a RULE-LOOKUP pattern matches nothing,
+# so every table stayed valid — under-invalidation, the one failure an IDG must not have.
+#
+# ⚠️ THIS IS AN ADDITION ABOVE UPSTREAM AND NEEDS ITS OWN ORACLE. SWI has no analogue: `dyn_affected/2`
+# unifies the changed term against tabled subgoal VARIANTS, whereas a MeTTa table's body reads a DATA
+# pattern via `match`. Do not cite boot/tabling.pl as authority for this shape.
+const _DYN_READ_PATTERNS = Vector{Tuple{Atom, Atom}}()   # (data pattern read, owning table)
+
+"""
+    dyn_read_pattern!(pat)
+
+Record that the table currently being derived scanned the data for `pat`. Sibling of `dyn_read!`,
+which covers the rule-lookup half; this covers the `match` half that had no record at all.
+
+🔴 GATED BY `_IDG_RECORD[]` FOR THE SAME MEASURED REASON as `dyn_read!` — this sits inside
+`_match_pat`, the hottest path in the evaluator, so it must cost nothing when the IDG is off.
+"""
+function dyn_read_pattern!(pat::Atom)
+    _IDG_RECORD[] || return nothing
+    owner = _CURRENT_TARGET[]
+    owner === nothing && (owner = isempty(_GEN_STACK) ? nothing : _GEN_STACK[end])
+    owner === nothing && return nothing            # not inside a tabled derivation
+    push!(_DYN_READ_PATTERNS, (pat, owner::Atom))
+    nothing
+end
+
 """
     dyn_read!(k)
 
@@ -1360,7 +1390,7 @@ legitimate MeTTa idiom and our purity gating is head-level — so a mutation arr
 STOPS propagating rather than aborting the run.
 """
 function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing};
-    head::Union{Symbol, Nothing}=nothing)::Int
+    head::Union{Symbol, Nothing}=nothing, atom::Union{Atom, Nothing}=nothing)::Int
     _IDG_RECORD[] || return 0            # see `dyn_read!` — same switch, same reason
     # 🔴 PER-PREDICATE SCOPING — `'$set_table_wrappers'` wraps only declared-incremental, non-opaque
     # predicates, so only THEIR mutations notify the IDG. Filters ONLY once something has been
@@ -1374,6 +1404,17 @@ function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing};
         n += length(idg_changed!(tbl; mono=true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
     end
     for tbl in collect(_DYN_ALL)
+        # 🔑 PRECISION, from `_DYN_READ_PATTERNS` — the DATA patterns `_match_pat` recorded, not the
+        # rule-lookup patterns `dyn_read!` sees. §0p failed by using the latter: it unified a
+        # `(= subj $X)` against a data atom, matched nothing, and invalidated nothing.
+        # FAIL-SAFE: a table with NO recorded data pattern keeps the blanket. Over-invalidation is
+        # sound; missing one is not, which is the direction §0p got wrong.
+        if atom !== nothing
+            pats = Atom[pat for (pat, own) in _DYN_READ_PATTERNS if own == tbl]
+            if !isempty(pats) && !any(pat -> !isempty(match_atoms(rename_fresh(pat), atom)), pats)
+                continue
+            end
+        end
         n += length(idg_changed!(tbl; mono=true)) > 0 || idg_is_invalid(tbl) ? 1 : 0
     end
     n
@@ -1385,9 +1426,10 @@ function drop_dyn_deps!(key::Atom)
         delete!(tbls, key)
     end
     delete!(_DYN_ALL, key)
+    filter!(t -> t[2] != key, _DYN_READ_PATTERNS)
     nothing
 end
-clear_dyn_deps!() = (empty!(_DYN_DEPS); empty!(_DYN_ALL); nothing)
+clear_dyn_deps!() = (empty!(_DYN_DEPS); empty!(_DYN_ALL); empty!(_DYN_READ_PATTERNS); nothing)
 
 const _TRIE_READ = Ref(true)     # 🟢 DEFAULT ON — see the block above
 

@@ -804,7 +804,7 @@ function add_atom!(s::Space, a::Atom)
         push!(get!(() -> Atom[], s.store.index, k), a)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
-    dyn_changed!(k; head = head_name(a))         # §7.7: invalidate the tables that READ this bucket
+    dyn_changed!(k; head = head_name(a), atom = a)         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
@@ -819,7 +819,7 @@ function remove_atom!(s::Space, a::Atom)
         b !== nothing && filter!(x -> x != a, b)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
     end
-    dyn_changed!(k; head = head_name(a))         # §7.7: invalidate the tables that READ this bucket
+    dyn_changed!(k; head = head_name(a), atom = a)         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)
     s
 end
@@ -2492,6 +2492,10 @@ const CONTEXT_SPACE = Grounded(
 )
 # all binding sets under which `pat` matches some atom of `space`, extending `b0`
 function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
+    # §7.7: record WHAT this scan looked for. `dyn_read!` covers only the rule-lookup half (it is
+    # reached from `query`, which only ever sees `(= subj $X)`), so without this a table's DATA reads
+    # were invisible to the IDG and `_DYN_ALL` could only invalidate blindly. No-op when the IDG is off.
+    dyn_read_pattern!(subst(pat, b0))
     out = Bindings[]
     for atom in all_atoms(space), mb in match_atoms(subst(pat, b0), rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))

@@ -8,10 +8,14 @@
 # the call point behind `_IDG_RECORD` / `CORE_TABLING_IDG=1`, and the end-to-end testset below drives
 # a real `fib 8`. §7.7's RE-EVALUATION half now EXISTS (`prepare_reeval!` / `reeval_complete!` /
 # `reset_reevaluation!` and the decrement walk) — see `test_reeval.jl`, which owns those assertions.
-# 🔴 WHAT IS STILL MISSING IS THE INVALIDATION *ENTRY*: nothing calls `idg_changed!` on a space
-# mutation, so no table can ever BE invalid and the re-evaluation lifecycle is unreachable in
-# ordinary use. That is the dynamic-predicate edge (upstream's `dyn_changed_pattern/1`,
-# boot/tabling.pl:1807-1813). Until it lands, invalidation still comes from the revision stamp.
+# ✅ THE INVALIDATION *ENTRY* LANDED 2026-08-18 — this paragraph used to say it was missing.
+# `add_atom!` / `remove_atom!` call `dyn_changed!`, which reaches `idg_changed!`, so tables can be
+# invalid and the re-evaluation lifecycle is reachable in ordinary use. That is upstream's
+# dynamic-predicate edge (`dyn_changed_pattern/1`, boot/tabling.pl:1807-1813).
+# ✅ AND SINCE 2026-08-28 IT IS PRECISE: `_match_pat` records the data pattern it scanned for, so an
+# unrelated mutation no longer invalidates a full-scan table — the last testset in this file pins
+# BOTH directions, because the first attempt at that precision (roadmap §0p) passed the unrelated
+# case while silently invalidating nothing at all.
 # So a green file means the GRAPH is correct, NOT that tabling uses it.
 using MeTTaCore.Eval
 using MeTTaCore.StandardMeTTa
@@ -223,5 +227,43 @@ end
         _DG.untable_all!()
         _DG.abolish_all_tables!()
         _DG.clear_idg!()
+    end
+end
+
+# ── §7.7 PRECISION: a data mutation invalidates only the tables that could SEE it ────────────────
+# `_DYN_ALL` used to invalidate EVERY full-scan table on EVERY mutation, because it recorded THAT a
+# table scanned but not WHAT for. `_match_pat` now records the data pattern (`dyn_read_pattern!`), so
+# `dyn_changed!` can unify — upstream's `dyn_affected/2` question, asked over our own read set.
+#
+# 🔴 BOTH DIRECTIONS IN ONE TESTSET, DELIBERATELY. The first attempt at this (roadmap §0p, reverted)
+# unified against the RULE-LOOKUP pattern from `query` instead of the data pattern, which matched
+# nothing and invalidated nothing. Its probe asserted only the unrelated-mutation case, which PASSED —
+# under-invalidation looks exactly like precision if you never test the relevant case.
+# Over-invalidation is sound. Under-invalidation is the one failure an IDG must not have.
+@testset "§7.7 precision — unrelated mutations do NOT invalidate, relevant ones DO" begin
+    _DG.clear_dyn_deps!(); _DG.untable_all!(); _DG.abolish_all_tables!()
+    saved = _DG._IDG_RECORD[]
+    _DG._IDG_RECORD[] = true
+    try
+        s = Space()
+        load_core_stdlib!(s)
+        load_metta!(s, "(fact a 1) (fact b 2)")
+        load_metta!(s, raw"(= (rd_var) (match &self (fact $z $w) True))" * "\n")
+        _DG.table!(:rd_var)
+        load_metta!(s, "!(rd_var)\n")
+
+        owners = collect(_DG._DYN_ALL)
+        @test !isempty(owners)                              # the table DID full-scan
+        @test !isempty(_DG._DYN_READ_PATTERNS)             # …and recorded what it scanned for
+        @test all(o -> !_DG.idg_is_invalid(o), owners)     # valid before any mutation
+
+        load_metta!(s, "!(add-atom &self (other x y))\n")   # cannot match (fact $z $w)
+        @test all(o -> !_DG.idg_is_invalid(o), owners)     # ⇒ MUST stay valid
+
+        load_metta!(s, "!(add-atom &self (fact c 3))\n")    # matches (fact $z $w)
+        @test any(o -> _DG.idg_is_invalid(o), owners)      # ⇒ MUST invalidate
+    finally
+        _DG._IDG_RECORD[] = saved
+        _DG.clear_dyn_deps!(); _DG.untable_all!(); _DG.abolish_all_tables!()
     end
 end
