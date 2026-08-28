@@ -58,6 +58,43 @@ on a different chapter, re-run the diff for THAT chapter rather than citing this
 
 ---
 
+## 0p. 🛑 TRIED AND REVERTED — "record the read pattern, unify instead of blanket-invalidating"
+
+**ATTEMPTED 2026-08-28, UNSOUND, reverted the same hour. Do not re-attempt this shape.**
+
+The goal was right and still is: `_DYN_ALL` invalidates EVERY full-scan table on EVERY mutation, where
+upstream's `dyn_affected/2` (boot/tabling.pl:1811) is a UNIFICATION —
+`trie_gen(VTable, Term, ATrie)`. Measured over-invalidation: a table reading `(fact $z $w)` is
+invalidated by adding `(other x y)`.
+
+**The attempt:** have `dyn_read!` record the PATTERN alongside the owner, and have `dyn_changed!`
+invalidate a full-scan table only when some recorded pattern unifies with the mutated atom.
+
+**The result — UNDER-invalidation, which is strictly worse:**
+
+    after (other x y)  [unrelated, must stay valid]   invalid=false   ✓ looked like success
+    after (fact c 3)   [RELEVANT, must invalidate]    invalid=false   ✗ nothing invalidates at all
+
+**WHY, and this is the part worth keeping.** `dyn_read!` is called from `query()`
+(`Eval.jl:1033`), and `query` is only ever called with `(= subj $X)` or `(: subj $T)` — five call
+sites, all rule/type lookups. So the pattern in scope there is a **RULE-LOOKUP** pattern, which can
+never unify with a data atom like `(fact c 3)`. And `match`/`_match_pat` (`Eval.jl:2485`) does not
+call `dyn_read!` **at all** — it full-scans `all_atoms` and records nothing.
+
+⇒ **`_DYN_ALL` MEMBERSHIP DOES NOT MEAN "THIS TABLE READ ALL THE DATA".** It means "this table did a
+rule lookup whose subject was non-discriminable (a Var, a Grounded, or a compound head)". The blanket
+invalidation is not imprecision on top of a known read set — there IS no recorded data-read set.
+
+⇒ So the precision fix REQUIRES `_match_pat` to record what it scanned for, which is a change to
+MeTTa's primary query primitive, not to the IDG. That is the prerequisite, and it is the same
+`_match_pat`-records-nothing fact that §0m rests on.
+
+⚠️ The first probe result looked like a clean fix because the unrelated-mutation case passed. It only
+failed under the RELEVANT-mutation case. Any retry must assert BOTH directions in the same run —
+over-invalidation is sound, under-invalidation is the one failure an IDG must not have.
+
+---
+
 ## 0m. EARLY COMPLETION — ALREADY SETTLED AS "UNSOUND, PINNED, NOT PORTED"; this row adds the p29 LINK (2026-08-27)
 
 > ⚠️ **I RE-DERIVED A SETTLED RESULT. Read these two FIRST — they predate this row:**
