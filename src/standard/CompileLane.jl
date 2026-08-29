@@ -262,7 +262,7 @@ compiled path alone produced an answer, since a fallback that silently rescues t
 compiler comes to look complete.
 """
 function compile_run(program::AbstractString; fallback::Bool=true,
-    max_steps::Int=512_000, backend::Symbol=:eval)
+    max_steps::Int=512_000, backend::Symbol=:eval, auto_table::Bool=false)
     # ── METER IT (the cost account) ──────────────────────────────────────────────────────────────
     # `gslt_mettail_summary_spec.md` §8, the C monad: "Every interaction is gated on consuming a
     # token… the token stack drains in step with the reductions actually performed." A GSLT gives
@@ -284,7 +284,7 @@ function compile_run(program::AbstractString; fallback::Bool=true,
     prev_max = Eval._INTERPRET_MAX[]
     Eval.interpret_max_steps!(max_steps)
     try
-        _compile_run_inner(program, fallback, backend)
+        _compile_run_inner(program, fallback, backend, auto_table)
     finally
         Eval._INTERPRET_MAX[] = prev_max
     end
@@ -602,7 +602,8 @@ function _compile_run_mork(program::AbstractString, steps::Int)
         introspects=false, space=nothing, declined, unreduced, steps_run=total)
 end
 
-function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Symbol)
+function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Symbol,
+    auto_table::Bool=false)
     backend === :mork && return _compile_run_mork(program, 1_000_000)
     backend === :eval ||
         error("compile_run: unknown backend `:$backend` — expected :eval or :mork")
@@ -614,6 +615,38 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
     exhausted = String[]
     ncompiled = 0
     nfallback = 0
+    # ── MEMOISE PURE HEADS FOR THIS RUN — OPT-IN, AND THE DEFAULT IS `false` FOR A MEASURED REASON ─
+    # 🔴 DEFAULT-ON WAS TRIED 2026-08-29 AND REVERTED THE SAME HOUR. The suite caught it: 10 corpus
+    # files regressed. The cause is NOT the purity/multivalued gate — it is a SEMANTIC GAP between
+    # SLG and MeTTa that no head-level gate can close:
+    #
+    #     !(assertEqualToResult (eq Green Blue) ((eq Green Blue)))
+    #        auto_table=false -> ["()"]           the assertion PASSES
+    #        auto_table=true  -> AssertionFailed
+    #
+    # `(eq Green Blue)` matches no rule. MeTTa says an unmatched call returns ITSELF — `NotReducible`,
+    # `metta_language_spec.md` §2.5. SLG says a goal with no derivation has NO ANSWERS — Prolog's
+    # failure. Tabling caches the empty answer set and the NotReducible fallback never fires. This is
+    # the gap named in `7736610` ("the gap is NotReducible vs failure"), reached here from the other
+    # direction. ⇒ **Tabling cannot be default-on until a table can represent "unreducible" as an
+    # ANSWER rather than as absence.** Refusing more heads does not help: any head can be CALLED with
+    # arguments that make it unreducible, which is a property of the call, not of the head.
+    # MEASURED through this very lane: `!(fib 16)` over the one-clause MeTTa form takes 17.33 s
+    # untabled and 0.02 s tabled, same answer 987. Until now NOTHING reached `auto_table!` on a live
+    # path — its only caller was `DualTrack.mc_run`, which has no production call sites — so the whole
+    # SLG engine sat behind a flag nothing turned on.
+    #
+    # SAFE BY THE GATE, NOT BY HOPE. `auto_table!` tables only heads that are PURE and NOT
+    # multivalued, and the multivalued refusal is load-bearing: tabling is set-semantics while MeTTa
+    # `(=)` is multiset, so a tabled multivalued head DROPS answers (measured: two `(= (dup) a)`
+    # clauses give [a, a] untabled and [a] tabled). `reach`/`path`-shaped rules therefore stay
+    # untabled; only single-firing pure heads are memoised.
+    #
+    # `_TABLED_HEADS` IS PROCESS-GLOBAL, so it is snapshot/restored exactly as `DualTrack.jl:80-98`
+    # does: a head tabled for THIS program must not leak into another Space where the same NAME may
+    # be impure. Memoising an impure function is unsound and the leak would be silent.
+    prev_tabled = auto_table ? copy(Eval._TABLED_HEADS) : nothing
+    try
     for r in split_program_regions(program, purity_may_mutate(program))
         for d in r.defs
             il = introspects ? nothing : compile_definition(sp, d)
@@ -633,6 +666,9 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
                 ncompiled += 1
             end
         end
+        # Per REGION, not once: `prog_r` is cumulative in definitions, so a later region sees
+        # heads the earlier ones defined and must have them tabled too.
+        auto_table && Eval.auto_table!(sp)
         for q in r.queries
             res = try
                 Eval.load_metta!(sp, "!" * q)
@@ -654,6 +690,13 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
                         string(x) for y in res for x in (y isa AbstractVector ? y : [y])
                     ])
             )
+        end
+    end
+    finally
+        if prev_tabled !== nothing
+            empty!(Eval._TABLED_HEADS)
+            union!(Eval._TABLED_HEADS, prev_tabled)
+            Eval._table_reset!()
         end
     end
     (; answers, compiled=ncompiled, fell_back=nfallback, exhausted, introspects, space=sp)
