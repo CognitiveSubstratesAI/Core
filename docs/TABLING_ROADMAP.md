@@ -95,6 +95,55 @@ over-invalidation is sound, under-invalidation is the one failure an IDG must no
 
 ---
 
+## 0s. 🔴 §0r's DIAGNOSIS WAS WRONG — the binding is NOT lost; the gap is `NotReducible` vs FAILURE
+
+**MEASURED 2026-08-29, and it replaces the cause given in §0r below.**
+
+    (= (p a) True) (= (p b) True) (= (r a) True)     `m :- p(X), r(X)`
+    !(let $c (p $x) (r $x))   ->   [(r b), True]
+
+**BOTH alternatives were tried** — `(r a)` reduced to `True`, `(r b)` came back unreduced. So `$x`
+WAS bound to `a` and to `b`. §0r's "the call succeeds with `$b` STILL UNBOUND" is false.
+
+### The actual divergence
+
+Prolog: an unmatched goal **FAILS** and contributes nothing.
+MeTTa: an unmatched call returns **ITSELF** — `NotReducible`, `metta_language_spec.md` §2.5,
+*"returns the unchanged function call"*. The corpus harness counts any answer as a derivation, so an
+UNSATISFIABLE literal reads as a successful one. That is p60's over-derivation, and it is a
+translation-semantics gap, not a binding bug.
+
+### 🛑 AND THE OBVIOUS FIX IS WRONG — TRIED, MEASURED, REVERTED
+
+Force each CALL literal to succeed by binding it to `True` instead of a throwaway `$cN`:
+
+    (let True (p $x) (let True (r $x) True))   ->   [True]      ← correct on the toy!
+    both satisfiable -> [True, True] · no `p` at all -> []      ← and no regression there
+
+**It broke NINE assertions across the corpus** (139/148). The pattern:
+
+    got_true  String[]                     want ["(s)"]          ← was TRUE, now nothing
+    got_undef ["(p)","(q)","(r)","(s)"]    want String[]         ← now UNDEFINED
+
+⇒ **`True` IS A TWO-VALUED PATTERN IN A THREE-VALUED LOGIC.** A literal evaluates to `True`, to
+`Empty` (failure), **or to a WFS BOTTOM**. `(let True ⊥ …)` matches ⊥ against the symbol `True` and
+⊥-propagation turns the whole derivation undefined — so definite answers become undefined in exactly
+the programs this corpus exists to test.
+
+⇒ **A correct fix must be THREE-WAY**: accept `True`, accept a bottom (propagating it), and reject
+only an UNREDUCED term. That is not expressible as a `let` pattern and needs a guard that can tell
+"did not reduce" from "reduced to undefined".
+
+### Also settled, so nobody re-derives it
+
+* `superpose-bind` does NOT evaluate its argument (`superpose_bind_op` only `subst`s it), so
+  `(superpose-bind (collapse-bind X))` yields EMPTY. It must be sequenced —
+  `(chain (collapse-bind X) $c (superpose-bind $c))` — which is exactly how `EmitIL` emits it.
+* And that round trip gives the SAME answer as the bare call (`[True, (r b)]`), so **collapse-bind is
+  not the missing piece for this problem at all**. §0r's closing recommendation was wrong too.
+
+---
+
 ## 0r. 🔴 THE GENERATIVE CALL LOSES ITS BINDING AND SILENTLY OVER-DERIVES (measured 2026-08-28)
 
 **This is a WRONG ANSWER, not a missing feature — and it is why the refusal must stay.**
