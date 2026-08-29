@@ -93,10 +93,28 @@ _ur_names(ts::Vector{Atom})::Vector{String} = String[string(t) for t in ts]
             @test pn in _UR._IDG[qn].affected        # q's change reaches p …
             @test qn in _UR._IDG[pn].dependent       # … and p knows it consulted q
 
-            # and it FIRES: touching the bucket `q` read invalidates BOTH tables.
-            newly = _ur_names(
+            # 🔴 THE STIMULUS WAS WRONG UNTIL 2026-08-29 — it added `(fact b)`, which `q` never read,
+            # and asserted BOTH tables invalidate. VERIFIED AGAINST swipl 10.1.13 by running this
+            # scenario with a `format/2` probe in each clause: SWI invalidates NEITHER on a
+            # non-matching change, and re-evaluates `q` only when the pattern it actually read
+            # changes. Invalidation is keyed on the READ PATTERN, not on the predicate's bucket, so
+            # `(fact b)` is a no-op by design. The testset's INTENT — that `tnot` propagates
+            # invalidation through the negation edge — is right and is preserved; only the stimulus
+            # changed to one that can actually fire.
+            #
+            # PRECISION FIRST: a change `q` provably never read must reach NOTHING.
+            quiet = _ur_names(
                 _ur_newly_invalid() do
                     load_metta!(s, "!(add-atom &self (fact b))\n")
+                end
+            )
+            @test isempty(quiet)                     # SWI: neither re-evaluates
+
+            # and NOW it FIRES: touching the pattern `q` DID read invalidates it, and the `tnot`
+            # edge carries that to `p` — which is what dynamic_tabled3 is about.
+            newly = _ur_names(
+                _ur_newly_invalid() do
+                    load_metta!(s, "!(add-atom &self (fact a))\n")
                 end
             )
             @test "(q)" in newly

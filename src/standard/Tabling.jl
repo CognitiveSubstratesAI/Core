@@ -1378,6 +1378,49 @@ function dyn_read!(k::Union{Tuple{Symbol, Symbol}, Nothing})
     nothing
 end
 
+"""Patterns `tbl` read, DIRECTLY or through the tables it consulted (IDG `dependent` edges).
+
+🔴 WHY THE TRANSITIVE WALK, AND NOT JUST `tbl`'s OWN PATTERNS. Upstream flows invalidation through the
+IDG *from the changed table outward* — `dyn_changed_pattern/1` unifies the changed term against the
+VARIANT TABLE (`boot/tabling.pl:1807-1813`), marks the tables it hits, and `'\$idg_changed'` propagates
+UP the `affected` edges. A table that reads no data itself is therefore reached only via a dependency
+that did. We record patterns PER TABLE instead, so that same reachability has to be walked here, or a
+pattern-less table falls to the blanket below and is invalidated by changes that provably cannot
+affect it.
+
+MEASURED 2026-08-29 against swipl 10.1.13 running the same scenario with a `format/2` probe in each
+clause — `q` reads `fact(a)`, `p :- tnot(q)`:
+
+    assert(fact(b))   SWI: NEITHER re-evaluates      ours (before this fix): `p` invalidated
+    assert(fact(a))   SWI: q re-evaluates (+p)       ours: both — already correct
+
+So the `q` half was right and precise; `p` was over-invalidated purely for lack of a pattern of its
+own. Over-invalidation is SOUND, which is why this was a silent imprecision and not a wrong answer.
+
+Returns `nothing` — meaning "fall back to the blanket" — when any table in the cone has neither a
+recorded pattern nor a dependency. That is the fail-safe KEPT DELIBERATELY: an unrecorded read is
+indistinguishable from no read at all, and missing an invalidation is the one direction that is
+unsound (§0p got exactly this wrong in the other direction)."""
+function _dyn_patterns_transitive(tbl::Atom)::Union{Vector{Atom}, Nothing}
+    out = Atom[]
+    seen = Set{Atom}()
+    stack = Atom[tbl]
+    while !isempty(stack)
+        t = pop!(stack)
+        t in seen && continue
+        push!(seen, t)
+        own = Atom[pat for (pat, o) in _DYN_READ_PATTERNS if o == t]
+        deps = haskey(_IDG, t) ? _IDG[t].dependent : Set{Atom}()
+        # Neither a read of its own nor anything it consulted ⇒ nothing is known about this table.
+        (isempty(own) && isempty(deps)) && return nothing
+        append!(out, own)
+        for d in deps
+            push!(stack, d)
+        end
+    end
+    out
+end
+
 """
     dyn_changed!(k) -> Int
 
@@ -1410,8 +1453,11 @@ function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing};
         # FAIL-SAFE: a table with NO recorded data pattern keeps the blanket. Over-invalidation is
         # sound; missing one is not, which is the direction §0p got wrong.
         if atom !== nothing
-            pats = Atom[pat for (pat, own) in _DYN_READ_PATTERNS if own == tbl]
-            if !isempty(pats) && !any(pat -> !isempty(match_atoms(rename_fresh(pat), atom)), pats)
+            # TRANSITIVE, not just `tbl`'s own — see `_dyn_patterns_transitive`. `nothing` keeps the
+            # blanket; a non-empty set with no match means the change provably cannot reach this table.
+            pats = _dyn_patterns_transitive(tbl)
+            if pats !== nothing && !isempty(pats) &&
+               !any(pat -> !isempty(match_atoms(rename_fresh(pat), atom)), pats)
                 continue
             end
         end
