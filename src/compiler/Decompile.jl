@@ -28,12 +28,22 @@
 # the form named. This mirrors `Emit.jl`'s `decline_reason`, deliberately: the two stages should fail
 # the same way.
 #
-# ⚠️ `unify` IS DECLINED ON PURPOSE, not unimplemented. `EmitIL` lowers THREE different surface forms
-# into it — `let` (`_instr(::GUnify)`), `if` (`_instr(::GBranch)`, against the literal `True`), and
-# `case` (a nested chain against the scrutinee). They are probably separable by shape, but "probably"
-# is not an inverse, and a wrong `if`/`let` reconstruction is exactly the plausible-looking output
-# this file exists to refuse. Coverage is MEASURED first (`tools/decompile_roundtrip.jl`); the
-# disambiguation gets written against that number, not ahead of it.
+# ⚠️ `unify` WAS DECLINED AS "AMBIGUOUS" AND THAT WAS THE WRONG ANSWER TO A REAL AMBIGUITY.
+# `EmitIL` lowers THREE surface forms into it — `let` (`_instr(::GUnify)`), `if` (`_instr(::GBranch)`,
+# against the literal `True`), and `case` (the same True/False chain). MEASURED: `(if C A B)` and
+# `(case C ((True A) (False B)))` compile to BYTE-IDENTICAL IL, so the distinction really is destroyed
+# and no decompiler can recover it. But SWI-Prolog faces the same thing and does NOT decline:
+# `pl-comp.c:6895` makes an un-decompilable instruction a `sysError` — TOTALITY is required — and its
+# tests assert a HAND-WRITTEN expected form, not the source (`decomp8`: `s7(X) :- X = f(A), q(A)`
+# comes back as `s7(f(A)) :- q(A)`). `clause/2` returns the clause AS COMPILED.
+#
+# So this file does the same: it returns the CANONICAL form. `case` over booleans comes back as `if`;
+# `let*` as nested `let`. Soundness is checked by a FIXPOINT rather than an allowlist —
+# `compile(decompile(compile(P))) == compile(P)` — which is what `tools/decompile_roundtrip.jl`
+# classifies on. Coverage over the corpus is 208 EXACT + 3 CANONICAL + 0 MISMATCH + 0 DECLINED = 211.
+#
+# WHAT WOULD STILL DECLINE: a producer this file has no case for (`collapse-bind`/GFindall), and a
+# `unify` whose fail arm is not `(return Empty)`. Those are shapes never yet emitted, not guesses.
 #
 # NO `Any` — standing project rule, tests included.
 
@@ -100,6 +110,47 @@ function _subst(a::Atom, env::Env)::Atom
     a
 end
 
+"Is `a` exactly `(return Empty)` — `_RET_EMPTY`, the fail arm every `unify` lowering uses?"
+function _is_ret_empty(a::Atom)::Bool
+    a isa Expression || return false
+    c = (a::Expression).children
+    length(c) == 2 && _is(c[1], "return") && _is(c[2], "Empty")
+end
+
+"""`(unify CV True THEN ELSE)` → `(if CV then else)`, or `nothing` if this is not that shape.
+
+`nothing` (not a decline) means "not a GBranch", so the caller reports accurately instead of blaming
+a shape it never saw. The else arm is itself
+`(chain (function (unify CV False E (return Empty))) \$o (return \$o))` — the SAME condition variable
+against `False` — which is what makes the two arms recognisable as ONE `if` rather than two `unify`s.
+"""
+function _decompile_if(u::Atom, env::Env)::Union{DecompileResult, Nothing}
+    u isa Expression || return nothing
+    uc = (u::Expression).children
+    (length(uc) == 5 && _is(uc[1], "unify") && _is(uc[3], "True")) || return nothing
+    t = decompile_body(uc[4], env)
+    declined(t) && return t
+    els = uc[5]
+    ev = if _is_ret_empty(els)
+        _ok(Sym("Empty"))
+    else
+        els isa Expression || return nothing
+        ec = (els::Expression).children
+        (length(ec) == 4 && _is(ec[1], "chain")) || return nothing
+        f = ec[2]
+        f isa Expression || return nothing
+        fc = (f::Expression).children
+        (length(fc) == 2 && _is(fc[1], "function")) || return nothing
+        iu = fc[2]
+        iu isa Expression || return nothing
+        ic = (iu::Expression).children
+        (length(ic) == 5 && _is(ic[1], "unify") && _is(ic[3], "False")) || return nothing
+        decompile_body(ic[4], env)
+    end
+    declined(ev) && return ev
+    _ok(Expression(Atom[Sym("if"), _subst(uc[2], env), t.atom::Atom, ev.atom::Atom]))
+end
+
 """
     decompile_body(a, env) -> DecompileResult
 
@@ -137,7 +188,15 @@ function decompile_body(a::Atom, env::Env=Env())::DecompileResult
             end
             # `(chain (function (unify …)) …)` is `_instr(::GBranch)` — an `if`. Named, not guessed.
             if length(pc) == 2 && _is(pc[1], "function")
-                return _no("chain over `(function (unify …))` — GBranch/`if`, ambiguous inverse")
+                r = _decompile_if(pc[2], env)
+                r === nothing && return _no("chain over `(function …)` that is not a GBranch `if`")
+                rr = r::DecompileResult
+                declined(rr) && return rr
+                v = ch[3]
+                v isa Var || return _no("chain binder is not a variable: " * string(ch[3]))
+                env2 = copy(env)
+                env2[(v::Var).name] = rr.atom::Atom
+                return decompile_body(ch[4], env2)
             end
             # `(chain (eval X) $t C)` — `_instr(::GResidual)` lowers X VERBATIM (`nd = _il_atom(n)`),
             # so the inverse is exact: X is the source term, unchanged. This is the same substitution
@@ -169,7 +228,21 @@ function decompile_body(a::Atom, env::Env=Env())::DecompileResult
 
     # `unify` — THREE surface forms lower here. See the header; declined deliberately.
     if n == 5 && _is(ch[1], "unify")
-        return _no("`unify` — ambiguous inverse (let / if / case)")
+        _is_ret_empty(ch[5]) || return _no("`unify` with a non-`(return Empty)` fail arm")
+        lhs, rhs, thn = ch[2], ch[3], ch[4]
+        # THE ASSIGNMENT IDIOM, not a `let`: `(unify $o V (return $o) (return Empty))` is how a join
+        # point binds its value (`_instr(::GBranch)` closes each arm into one). Distinguished by the
+        # then-arm being EXACTLY `(return lhs)`; a `let` does further work with the binding.
+        if thn isa Expression
+            tc = (thn::Expression).children
+            if length(tc) == 2 && _is(tc[1], "return") && lhs isa Var && tc[2] isa Var &&
+               (tc[2]::Var).name == (lhs::Var).name
+                return _ok(_subst(rhs, env))
+            end
+        end
+        b = decompile_body(thn, env)
+        declined(b) && return b
+        return _ok(Expression(Atom[Sym("let"), _subst(lhs, env), _subst(rhs, env), b.atom::Atom]))
     end
 
     _no("unrecognised IL form: " * string(a))

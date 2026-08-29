@@ -9,7 +9,8 @@
 #   EXACT       decompile(compile(P)) == P           string-identical, incl. variable NAMES
 #   VARIANT     decompile(compile(P)) =@= P          same up to variable renaming — UPSTREAM'S CONTRACT
 #   DECLINED    the inverse is not implemented       a COVERAGE number, not a failure
-#   MISMATCH    it inverted, and got something else  🔴 structurally different
+#   CANONICAL   differs from source, but RE-COMPILES to identical IL — the compiled shape
+#   MISMATCH    it inverted, and got something else  🔴 structurally different AND not a fixpoint
 #
 # ⚠️ THE COMPARISON IS `=@=`, NOT `==`, AND THAT IS UPSTREAM'S CHOICE, NOT A WEAKENING. Every one of
 # SWI-Prolog's own decompiler tests compares with `=@=` (`tests/core/test_moved_ubody.pl`, testset
@@ -22,6 +23,21 @@
 # records three such defects in its own comments — the `eval`/`metta` confusion "survived a coverage
 # ratchet, a corpus differential AND a fuzz differential" because "the shape is right, the values are
 # wrong only in composition". This compares SHAPE, so it sees that class directly.
+#
+# ── HOW CANONICAL IS TOLD FROM WRONG, WITHOUT AN ALLOWLIST ──────────────────────────────────────
+# The lowering is NOT injective — MEASURED: `(if C A B)` and `(case C ((True A) (False B)))` compile
+# to BYTE-IDENTICAL IL, and `let*` compiles to what nested `let` compiles to. So a faithful decompiler
+# MUST sometimes return a different surface form than the source, and comparing to source alone cannot
+# distinguish that from a bug.
+#
+# SWI solves this by hand-writing the expected form per test. That does not scale to a corpus sweep,
+# so the check here is a FIXPOINT instead:
+#
+#     compile(decompile(compile(P))) == compile(P)   ⇒  CANONICAL (semantically equivalent)
+#     otherwise                                      ⇒  MISMATCH  (genuinely wrong)
+#
+# This needs no allowlist, cannot go stale, and states exactly the property that matters: the
+# decompiled form means the same thing to the compiler as what was compiled.
 #
 # 🔴 AND WHAT A MISMATCH MEANS IS NARROWER THAN "A DEFECT" — SWI PROVES IT. Its `decomp8` asserts
 #     s7(X) :- X = f(A), q(A).      decompiles to      s7(f(A)) :- q(A).
@@ -64,8 +80,9 @@ function main(args::Vector{String})
     end
 
     sp = M.Eval.Space()
-    n_def = n_compiled = n_exact = n_variant = n_multi = 0
+    n_def = n_compiled = n_exact = n_variant = n_multi = n_canon = 0
     mismatches = Tuple{String, String, String}[]     # (file, source, got)
+    canonical  = Tuple{String, String, String}[]
     declines = Dict{String, Int}()
 
     for f in files
@@ -91,7 +108,17 @@ function main(args::Vector{String})
                 # `=@=` — correct by upstream's contract, differing only in variable naming.
                 n_variant += 1
             else
-                push!(mismatches, (f, src, string(d.atom)))
+                # FIXPOINT: re-compile what we decompiled. Identical IL ⇒ the difference is a
+                # canonical-form choice the lowering erased, not an error.
+                got = string(d.atom)
+                r2 = try M.compile_definition(sp, got) catch; nothing end
+                if r2 !== nothing && length(r2.atoms) == 1 &&
+                   string(r2.atoms[1]) == string(r.atoms[1])
+                    n_canon += 1
+                    push!(canonical, (f, src, got))
+                else
+                    push!(mismatches, (f, src, got))
+                end
             end
         end
     end
@@ -109,12 +136,19 @@ function main(args::Vector{String})
     println("  ✅ ROUND-TRIPPED (=@=)     : ", good, "  (", pct, "% of candidates)")
     println("       of which EXACT (==)   : ", n_exact)
     println("       of which VARIANT only : ", n_variant, "  (upstream's contract; SWI compares =@=)")
+    println("  ≈  CANONICAL (fixpoint)    : ", n_canon, "  (differs from source, re-compiles identical)")
     println("  🔴 MISMATCH                : ", length(mismatches))
 
     if !isempty(declines)
         println("\n  DECLINED — where the next inverse work is, ranked by frequency:")
         for (why, k) in sort(collect(declines); by=last, rev=true)
             println("    ", lpad(k, 5), "  ", why)
+        end
+    end
+    if !isempty(canonical)
+        println("\n  ≈ CANONICAL — the lowering erased a distinction; NOT defects:")
+        for (f, sr, g) in canonical
+            println("    ", f); println("      src ", sr); println("      got ", g)
         end
     end
     if !isempty(mismatches)

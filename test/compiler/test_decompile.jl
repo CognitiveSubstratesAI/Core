@@ -81,19 +81,46 @@ end
     @test occursin("foldl-atom", _DC.decompile_body(fold).reason)
 end
 
-@testset "decompile: declines name the form, never guess" begin
+@testset "decompile: if / let / case invert to the CANONICAL form" begin
+    # UPSTREAM'S CONTRACT, adopted 2026-08-29 after reading SWI's own decompiler tests. `clause/2`
+    # returns the clause AS COMPILED, not as written — `decomp8` asserts `s7(X) :- X = f(A), q(A)`
+    # comes back as `s7(f(A)) :- q(A)`. And SWI makes an un-decompilable instruction a `sysError`
+    # (`pl-comp.c:6895`), i.e. TOTALITY is required and partiality is a bug. These three previously
+    # declined as "ambiguous"; declining was the wrong answer to a real ambiguity.
     sp = MeTTaCore.Eval.Space()
-    for (src, want) in [
-            "(= (dc3 \$x) (let \$y (h \$x) (k \$y)))"          => "unify",
-            "(= (dc4 \$x) (if (> \$x 0) pos neg))"             => "unify",
-        ]
-        c = _dc_compile1(sp, src)
-        c === nothing && continue                  # lane declined first; nothing to invert
-        d = _DC.decompile_clause(c)
-        @test _DC.declined(d)
-        @test !isempty(d.reason)
-        @test occursin(want, d.reason)
-    end
+
+    c = _dc_compile1(sp, "(= (dc8 \$x) (if (< \$x 1) A B))")
+    @test c !== nothing
+    d = _DC.decompile_clause(c)
+    @test !_DC.declined(d)
+    @test string(d.atom) == "(= (dc8 \$x) (if (< \$x 1) A B))"
+
+    c = _dc_compile1(sp, "(= (dc9 \$x) (let \$y (h \$x) (k \$y)))")
+    @test c !== nothing
+    d = _DC.decompile_clause(c)
+    @test !_DC.declined(d)
+    @test string(d.atom) == "(= (dc9 \$x) (let \$y (h \$x) (k \$y)))"
+end
+
+@testset "decompile: the lowering is NOT injective — case ⟶ if, and that is CORRECT" begin
+    # MEASURED: `(if C A B)` and `(case C ((True A) (False B)))` compile to BYTE-IDENTICAL IL, so the
+    # information distinguishing them is destroyed at emission and NO decompiler can recover it.
+    # Pinned here because the temptation is to read the resulting difference as a decompiler bug.
+    sp = MeTTaCore.Eval.Space()
+    a = _dc_compile1(sp, "(= (dcA \$x) (if (< \$x 1) A B))")
+    b = _dc_compile1(sp, "(= (dcA \$x) (case (< \$x 1) ((True A) (False B))))")
+    @test a !== nothing && b !== nothing
+    @test string(a) == string(b)                       # ← the erasure itself
+
+    # So a `case` source decompiles to `if`. The FIXPOINT is what proves that is sound: re-compiling
+    # the decompiled form yields identical IL. This is the check the corpus oracle uses instead of an
+    # allowlist, because an allowlist of canonical rewrites goes stale and this cannot.
+    d = _DC.decompile_clause(b::MeTTaCore.StandardMeTTa.Atom)
+    @test !_DC.declined(d)
+    @test occursin("(if ", string(d.atom))
+    again = _dc_compile1(sp, string(d.atom))
+    @test again !== nothing
+    @test string(again) == string(b)                   # compile(decompile(compile(P))) == compile(P)
 end
 
 @testset "decompile: a SOURCE clause is declined, not echoed" begin
@@ -161,7 +188,14 @@ end
             if string(d.atom) == src || MeTTaCore.Eval.variant_eq(d.atom::MeTTaCore.StandardMeTTa.Atom, a)
                 rt += 1
             else
-                push!(mism, src * "  ⟶  " * string(d.atom))
+                # FIXPOINT — canonical, not wrong, iff re-compiling yields identical IL.
+                got = string(d.atom)
+                r2 = try MeTTaCore.compile_definition(sp, got) catch; nothing end
+                if r2 !== nothing && length(r2.atoms) == 1 && string(r2.atoms[1]) == string(c)
+                    rt += 1
+                else
+                    push!(mism, src * "  ⟶  " * got)
+                end
             end
         end
     end
