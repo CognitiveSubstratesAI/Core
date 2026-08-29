@@ -284,6 +284,7 @@ Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, d
 Main.@suite("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
 Main.@suite("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus
 Main.@suite("compiler/test_il_roundtrip.jl")    # IL goes out as TEXT: which values survive parse(show(v))
+Main.@suite("compiler/test_decompile.jl")     # IL → surface: the INVERSE, and decompile∘compile ≡ id
 Main.@suite("compiler/test_il_wire_roundtrip.jl")  # randomized parse(il_text(a))==a over the
 Main.@suite("compiler/test_type_declarations.jl")  # `(: name type)` visible to the compiler —
 Main.@suite("compiler/test_lib_differential.jl")   # Core/lib compiled-vs-interpreted answers —

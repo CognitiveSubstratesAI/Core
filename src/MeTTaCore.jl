@@ -140,6 +140,12 @@ include("compiler/Emit.jl")
 # Design + diagrams: docs/architecture/COMPILER_IL_STAGE.md
 include("compiler/EmitIL.jl")
 
+# MeTTa-IL → surface MeTTa: the INVERSE of EmitIL.jl, and the oracle for it. `decompile ∘ compile ≡ id`
+# observes a defect class no answer-comparison can — a lowering that changes a clause's MEANING while
+# still answering correctly on the corpus (EmitIL's own `eval`/`metta` bug survived a coverage ratchet,
+# a corpus differential AND a fuzz differential). Declines rather than guesses; see its header.
+include("compiler/Decompile.jl")
+
 # GSLT presentations — G = (Σ, E, R), Definition 2.1. Its own subdirectory because this is a
 # component (data model, and later parsing / the hypercube construction), not another linear stage in
 # the IR→A-normal→emit pipeline the flat files above form.
