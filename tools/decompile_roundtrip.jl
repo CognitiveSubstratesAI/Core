@@ -6,15 +6,30 @@
 # For every `(= head body)` in the corpus: compile it with the live lane, decompile the emitted
 # MeTTa-IL back to surface, and compare. Three outcomes, and only one of them is a defect:
 #
-#   ROUND-TRIP  decompile(compile(P)) == P            the lowering is structurally faithful
-#   DECLINED    the inverse is not implemented        a COVERAGE number, not a failure
-#   MISMATCH    it inverted, and got something else   🔴 A DEFECT IN ONE OF THE TWO STAGES
+#   EXACT       decompile(compile(P)) == P           string-identical, incl. variable NAMES
+#   VARIANT     decompile(compile(P)) =@= P          same up to variable renaming — UPSTREAM'S CONTRACT
+#   DECLINED    the inverse is not implemented       a COVERAGE number, not a failure
+#   MISMATCH    it inverted, and got something else  🔴 structurally different
+#
+# ⚠️ THE COMPARISON IS `=@=`, NOT `==`, AND THAT IS UPSTREAM'S CHOICE, NOT A WEAKENING. Every one of
+# SWI-Prolog's own decompiler tests compares with `=@=` (`tests/core/test_moved_ubody.pl`, testset
+# `moved_decompile`, 10 tests) because a decompiler recovers STRUCTURE, never variable names. We
+# happen to be exact today — the A-normal inverse substitutes producers back, so source names
+# survive — so both numbers are reported and the stronger one is watched for regression.
 #
 # WHY THIS EXISTS: the corpus differential compares ANSWERS, so it is blind to a lowering that
 # changes a clause's meaning while still answering correctly on the corpus's inputs. `EmitIL.jl`
 # records three such defects in its own comments — the `eval`/`metta` confusion "survived a coverage
 # ratchet, a corpus differential AND a fuzz differential" because "the shape is right, the values are
 # wrong only in composition". This compares SHAPE, so it sees that class directly.
+#
+# 🔴 AND WHAT A MISMATCH MEANS IS NARROWER THAN "A DEFECT" — SWI PROVES IT. Its `decomp8` asserts
+#     s7(X) :- X = f(A), q(A).      decompiles to      s7(f(A)) :- q(A).
+# The compiler MOVED the unification into the head, so `clause/2` legitimately returns a clause that
+# is not the source. `decompile ∘ compile ≡ id` therefore holds only for a STRUCTURE-PRESERVING
+# lowering. Ours is one TODAY (EmitIL performs no such hoisting), which is why the gate asserts zero
+# mismatches. If an optimization that moves work is ever added, a mismatch becomes EXPECTED and this
+# oracle must be re-read as "the lowering is no longer structure-preserving" — not as a bug.
 #
 # EXIT CODE is the point (a piped `julia -i` always exits 0 — see tools/run_tests.sh): non-zero iff
 # a MISMATCH exists. Declines never fail the run; they are printed as a histogram so the next piece
@@ -49,7 +64,7 @@ function main(args::Vector{String})
     end
 
     sp = M.Eval.Space()
-    n_def = n_compiled = n_rt = n_multi = 0
+    n_def = n_compiled = n_exact = n_variant = n_multi = 0
     mismatches = Tuple{String, String, String}[]     # (file, source, got)
     declines = Dict{String, Int}()
 
@@ -71,7 +86,10 @@ function main(args::Vector{String})
             if D.declined(d)
                 declines[d.reason] = get(declines, d.reason, 0) + 1
             elseif string(d.atom) == src
-                n_rt += 1
+                n_exact += 1
+            elseif M.Eval.variant_eq(d.atom::M.StandardMeTTa.Atom, a)
+                # `=@=` — correct by upstream's contract, differing only in variable naming.
+                n_variant += 1
             else
                 push!(mismatches, (f, src, string(d.atom)))
             end
@@ -86,8 +104,11 @@ function main(args::Vector{String})
     println("  multi-clause (not 1:1)     : ", n_multi)
     inv = n_compiled - n_multi
     println("  invertible candidates      : ", inv)
-    pct = inv == 0 ? 0.0 : round(100 * n_rt / inv; digits=1)
-    println("  ✅ ROUND-TRIPPED           : ", n_rt, "  (", pct, "% of candidates)")
+    good = n_exact + n_variant
+    pct = inv == 0 ? 0.0 : round(100 * good / inv; digits=1)
+    println("  ✅ ROUND-TRIPPED (=@=)     : ", good, "  (", pct, "% of candidates)")
+    println("       of which EXACT (==)   : ", n_exact)
+    println("       of which VARIANT only : ", n_variant, "  (upstream's contract; SWI compares =@=)")
     println("  🔴 MISMATCH                : ", length(mismatches))
 
     if !isempty(declines)

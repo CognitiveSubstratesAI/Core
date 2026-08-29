@@ -122,10 +122,23 @@ end
 end
 
 @testset "decompile: corpus round-trip has ZERO mismatches" begin
-    # THE LOAD-BEARING ASSERTION. Coverage may move; a MISMATCH is a defect in EmitIL or Decompile and
-    # must never be tolerated. Measured 2026-08-29: 219 definitions, 211 compiled, 179 round-tripped
-    # (84.8%), 0 mismatches. The count is NOT asserted — that would fail on every corpus edit — but the
-    # mismatch count is, and a floor is kept so silent coverage COLLAPSE is caught.
+    # THE LOAD-BEARING ASSERTION. Coverage may move; a structural MISMATCH must never be tolerated.
+    # Measured 2026-08-29: 219 definitions, 211 compiled, 194 round-tripped (91.9%), 0 mismatches —
+    # and all 194 EXACT, 0 variant-only. The count is NOT asserted (that would fail on every corpus
+    # edit); the mismatch count is, with a floor so silent coverage COLLAPSE is caught.
+    #
+    # ⚠️ COMPARED WITH `=@=` (`Eval.variant_eq`), NOT `==`, BECAUSE THAT IS UPSTREAM'S CONTRACT.
+    # SWI-Prolog's own decompiler tests (`tests/core/test_moved_ubody.pl`, testset `moved_decompile`)
+    # compare every case with `=@=`: a decompiler recovers STRUCTURE, never variable names. Ours is
+    # exact today — the A-normal inverse substitutes producers back, so source names survive — but
+    # asserting exactness would make a legitimate renaming look like a defect.
+    #
+    # 🔴 AND A MISMATCH IS NARROWER THAN "A DEFECT", WHICH THIS COMMENT PREVIOUSLY OVERCLAIMED. SWI's
+    # `decomp8` asserts `s7(X) :- X = f(A), q(A).` decompiles to `s7(f(A)) :- q(A).` — the compiler
+    # MOVED the unification into the head, so `clause/2` legitimately returns a non-source clause.
+    # `decompile ∘ compile ≡ id` holds only for a STRUCTURE-PRESERVING lowering. EmitIL is one today,
+    # which is what makes this assertion valid; an optimization that moves work would make a mismatch
+    # EXPECTED, and this gate would then need re-reading, not silencing.
     sp = MeTTaCore.Eval.Space()
     roots = filter(isdir, ["test/oracle/leatta/corpus", "test/standard/conformance"])
     rt = 0; cand = 0; mism = String[]
@@ -145,7 +158,11 @@ end
             cand += 1
             d = _DC.decompile_clause(c)
             _DC.declined(d) && continue
-            string(d.atom) == src ? (rt += 1) : push!(mism, src * "  ⟶  " * string(d.atom))
+            if string(d.atom) == src || MeTTaCore.Eval.variant_eq(d.atom::MeTTaCore.StandardMeTTa.Atom, a)
+                rt += 1
+            else
+                push!(mism, src * "  ⟶  " * string(d.atom))
+            end
         end
     end
     @test isempty(mism)
