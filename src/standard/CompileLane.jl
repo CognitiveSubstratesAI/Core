@@ -646,6 +646,7 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
     # does: a head tabled for THIS program must not leak into another Space where the same NAME may
     # be impure. Memoising an impure function is unsound and the leak would be silent.
     prev_tabled = auto_table ? copy(Eval._TABLED_HEADS) : nothing
+    prev_noreduce = auto_table ? copy(Eval._NOREDUCE_HEADS) : nothing
     try
     for r in split_program_regions(program, purity_may_mutate(program))
         for d in r.defs
@@ -696,6 +697,8 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
         if prev_tabled !== nothing
             empty!(Eval._TABLED_HEADS)
             union!(Eval._TABLED_HEADS, prev_tabled)
+            empty!(Eval._NOREDUCE_HEADS)
+            union!(Eval._NOREDUCE_HEADS, prev_noreduce)
             Eval._table_reset!()
         end
     end

@@ -300,7 +300,7 @@ answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 # with `get_residual` in `tabling/Inspect.jl`, not here.
 
 _table_reset!() =
-    (empty!(_ANSWER_TABLE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
+    (empty!(_ANSWER_TABLE); empty!(_NO_RULE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
         empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
         _NEG_DEPTH[]=0; _NEG_TAINT[]=false; empty!(_SCC_NEG); empty!(_NEG_DELAYS);
         empty!(_DEPS);
@@ -333,7 +333,7 @@ end
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
-untable_all!() = (empty!(_TABLED_HEADS); empty!(_INCREMENTAL_HEADS); _table_reset!(); nothing)
+untable_all!() = (empty!(_TABLED_HEADS); empty!(_NOREDUCE_HEADS); empty!(_INCREMENTAL_HEADS); _table_reset!(); nothing)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROADMAP 0.3 — PER-HEAD `untable!`, so tabling state is SCOPED instead of process-global.
@@ -372,6 +372,7 @@ function untable!(head::Symbol)::Bool
             "completion would delete answers the running fixpoint still refers to")
     )
     delete!(_TABLED_HEADS, head)
+    delete!(_NOREDUCE_HEADS, head)
     abolish_table_subgoals!(head)
     untable_modes!(head)        # '$table_mode' — tabling/Aggregation.jl
     restraint!(head, :max_answers, -1)   # the attribute-shaped state — tabling/Tripwires.jl
@@ -402,7 +403,7 @@ function abolish_table_subgoals!(head::Symbol)
             _ishead(k) && delete!(d, k)
         end
     end
-    for s in (_TABLE_INPROG, _PARTIAL_READ, _NEG_BARRIER, _SCC_NEG)
+    for s in (_TABLE_INPROG, _PARTIAL_READ, _NEG_BARRIER, _SCC_NEG, _NO_RULE)
         for k in collect(s)
             _ishead(k) && delete!(s, k)
         end
@@ -772,6 +773,7 @@ function auto_table!(space::Space)
     up = setdiff(intersect(pure, user), multi)
     for h in up
         table!(h)
+        push!(_NOREDUCE_HEADS, h)   # auto-tabled ⇒ METTA mode (NotReducible survives the table)
     end
     (tabled=sort!(collect(up)), skipped=sort!(collect(setdiff(user, up))),
         multivalued=sort!(collect(multi)))
@@ -794,9 +796,18 @@ const AUTO_TABLE_DECL = Grounded(
     )
 )
 
-_replay(answers::Vector{Atom}, b::Bindings, prev) =
+const _NO_RULE = Set{Atom}()   # VERIFY-PROBE: keys whose (= key X) query matched NOTHING ⇒ NotReducible
+# MODE SPLIT: which tabled heads use MeTTa NotReducible semantics ("no rule matched ⇒ yield the call
+# itself") rather than SLG/Prolog semantics ("no derivation ⇒ FAIL"). `table!` (the explicit `!(table! h)`
+# directive) is PROLOG mode — that is what `tnot`/WFS is specified against. `auto_table!` (the compile
+# lane's default) is METTA mode — those heads are ordinary user functions and MUST keep hyperon's
+# `metta_call_return` behaviour (interpreter.rs:1456).
+const _NOREDUCE_HEADS = Set{Symbol}()
+@inline _noreduce_for(key::Atom, red::Atom) =
+    (key in _NO_RULE && head_name(key) in _NOREDUCE_HEADS) ? red : nothing
+_replay(answers::Vector{Atom}, b::Bindings, prev, noreduce::Union{Atom, Nothing}=nothing) =
     if isempty(answers)
-        finished_result(EMPTY, b, prev)
+        finished_result(noreduce === nothing ? EMPTY : noreduce, b, prev)
     else
         reduce(vcat, (finished_result(ans, b, prev) for ans in answers))
     end
@@ -1052,6 +1063,14 @@ _merge_partial(
 
 # One resolution pass for the leader: apply key's `(= key body)` rules and reduce each body. A recursive
 # sub-call to an in-progress variant hits the hook → consumer → reads partials. Returns this pass's answers.
+function _probe_no_rule(key::Atom, space::Space)::Bool
+    X = freshvar("X")
+    for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
+        is_present(mb, X) && return false
+    end
+    true
+end
+
 function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     out = Atom[]
     X = freshvar("X")
@@ -1852,6 +1871,25 @@ end
 
 function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
     red = _reduced_goal(atom, space, b)
+    # ── EMPTY/ERROR ABSORPTION — the `args-cont` rule (Eval.jl:1303-1310), which `_reduced_goal` does
+    # NOT apply. `interpret-tuple` short-circuits a call whose EVALUATED argument came back Empty/Error;
+    # `_reduced_goal` reduces the very same arguments (Tabling.jl:949-952) but keeps CONSING the goal, so
+    # the tabled lane can reach here as `(s-tv Empty)` where the untabled lane already collapsed to
+    # `Empty`. That divergence was INVISIBLE while an unmatched key replayed as EMPTY — the same value by
+    # coincidence. It stops being invisible the moment an unmatched key can answer with ITSELF, which is
+    # exactly what `_NOREDUCE_HEADS` enables (measured on conformance/c3_pln_stv.metta: `(s-tv Empty)` and
+    # `(c-tv Empty)` both entered `_NO_RULE`). Absorb only a CHANGED argument, exactly as `args_cont_instr`
+    # does — an argument that was ALREADY the literal `Empty` is a legitimate datum to pass on.
+    if red isa Expression && length(red.children) > 1
+        g0 = subst(atom, b)
+        if g0 isa Expression && length(g0.children) == length(red.children)
+            for i in 2:length(red.children)
+                rc = red.children[i]
+                (rc != g0.children[i] && (is_empty_atom(rc) || is_error_atom(rc))) &&
+                    return finished_result(rc, b, prev)
+            end
+        end
+    end
     # ── §7.11.1 SUBGOAL ABSTRACTION — `start_abstract_tabling/3` (boot/tabling.pl:477-499) ────────
     # Upstream's dispatch, in its own words (`:469-472`): *"If the goal is not abstracted this is
     # simple variant tabling. If the goal is abstracted we must solve the more general goal and use
@@ -1917,9 +1955,11 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             else
                 _ANSWER_TABLE[key]
             end
-            return _replay(_project(answers, red), b, prev)                      #   FRESH ⇒ project+replay
+            return _replay(_project(answers, red), b, prev,
+                _noreduce_for(key, red))                               #   FRESH ⇒ project+replay
         end
         delete!(_ANSWER_TABLE, key)
+        delete!(_NO_RULE, key)
         delete!(_ANSWER_STAMP, key)                 #   STALE (space mutated) ⇒ evict + recompute
         # ── §7.7: RE-EVALUATE rather than DISCARD ───────────────────────────────────────────────
         # `drop_answer_trie!` throws the old answers away, and with them the only thing that could
@@ -1987,6 +2027,8 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         for m in comp()
             _ANSWER_TABLE[m] = _PARTIAL[m]
             _ANSWER_STAMP[m] = _stamp
+            (isempty(_PARTIAL[m]) && _probe_no_rule(m, space)) ? push!(_NO_RULE, m) :
+                delete!(_NO_RULE, m)
         end  # the (space, revision) it holds for
         # ── roadmap 1.0b, STEP 1: MIRROR the completed answers into the ANSWER TRIE ──────────────
         # The trie is not yet the read path — `_ANSWER_TABLE` above still is — so this changes NO
@@ -2050,7 +2092,7 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
             end
         end
     end
-    _replay(_project(ans, red), b, prev)
+    _replay(_project(ans, red), b, prev, _noreduce_for(key, red))
 end
 
 # tnot — SLG tabled negation (SWI boot/tabling.pl:852), negation of PROVABILITY (distinct from grounded `not`,
@@ -2154,6 +2196,11 @@ const TNOT = Grounded(
             # the WRONG member: in the pure paradox `p :- tnot(q), q :- tnot(p)`, p's own `tnot` DRIVES q
             # rather than finding it in progress, so p got no record and its residual came back `True`.
             tainted && (_record_neg_delay!(key); return ExecOk(Atom[und]))
+            # 🔴 NOTREDUCIBLE IS NOT A DERIVATION. Under METTA mode a rule-less tabled goal answers with
+            # ITSELF, so `A` is non-empty and the provably-true test below would call G true. `_NO_RULE`
+            # is the side-band record that the table completed with ZERO derived answers — which is
+            # exactly this branch's "G complete, NO answers ⇒ True". Read it BEFORE `A`.
+            key in _NO_RULE && return ExecOk(Atom[Sym("True")])
             any(a -> !is_undefined(a), A) && return ExecOk(Atom[])                  # G provably true ⇒ ¬G false ⇒ Empty
             # G only-undefined ⇒ ¬G undefined. The reason is OUR negative delay CONJOINED with whatever made
             # G's own answers undefined — the residual must reach THROUGH the negation, or it names only the
