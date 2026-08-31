@@ -52,7 +52,14 @@ function _ip_tabled(defs::AbstractString, q::AbstractString)
     Eval.auto_table!(s)
     r = load_metta!(s, q)
     Eval.untable_all!()
-    string(r)
+    # ⚠️ STRIP THE MODULE QUALIFIER. `string(::Vector{Atom})` renders `MeTTaCore.StandardMeTTa.Atom[T]`
+    # when the type is out of scope and bare `Atom[T]` when it is in scope — so a COLD suite process and
+    # a WARM one disagree on a value that has nothing to do with the code under test. That is not
+    # hypothetical: it turned this file RED under `warm_suite.sh` while the identical tree was GREEN cold,
+    # and because a failing top-level @testset throws, it took testsets 2-4 (including the `_reduced_goal`
+    # prediction) down UNRUN with it. Normalise here so every assertion below pins the ANSWER, not the
+    # renderer's scope. See `[[feedback_assert_the_contract_not_the_representation]]`.
+    replace(string(r), "MeTTaCore.StandardMeTTa." => "")
 end
 
 @testset "intercept position: TYPE ERRORS ARE ANSWERS (b5_types_prelim)" begin
@@ -75,9 +82,9 @@ end
     # anti-vacuity probes elsewhere: observe the event, not its residue.
     @test occursin("(eq Z S)", _ip_tabled(defs, "!(eq Z S)\n"))                       # today: the call itself
     @test_broken occursin("BadArgType", _ip_tabled(defs, "!(eq Z S)\n"))
-    @test _ip_tabled(defs, "!(of-same-type Green Color)\n") == "MeTTaCore.StandardMeTTa.Atom[T]"
+    @test _ip_tabled(defs, "!(of-same-type Green Color)\n") == "Atom[T]"
     @test_broken occursin("BadArgType", _ip_tabled(defs, "!(of-same-type Green Color)\n"))
-    @test _ip_tabled(defs, "!(of-same-type Green Circle)\n") == "MeTTaCore.StandardMeTTa.Atom[T]"
+    @test _ip_tabled(defs, "!(of-same-type Green Circle)\n") == "Atom[T]"
     @test_broken occursin("BadArgType", _ip_tabled(defs, "!(of-same-type Green Circle)\n"))
 end
 
@@ -90,7 +97,7 @@ end
     #
     # PREDICTION: the type-check hoist does NOT fix this one. If it does, the `_reduced_goal` theory
     # is weaker than the isolated repros below suggest.
-    @test _ip_tabled(defs, "!(eqa Z (Add Z Z))\n") == "MeTTaCore.StandardMeTTa.Atom[T]"   # today: wrongly matches
+    @test _ip_tabled(defs, "!(eqa Z (Add Z Z))\n") == "Atom[T]"   # today: wrongly matches
     @test_broken occursin("(eqa Z (Add Z Z))", _ip_tabled(defs, "!(eqa Z (Add Z Z))\n"))
 end
 
