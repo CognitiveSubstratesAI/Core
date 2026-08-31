@@ -20,6 +20,14 @@
 # until a corpus query lands on it. Converting bypass→wrapper is the real fix; the per-instance
 # repairs below are stepping stones and should say so.
 #
+# ─── PROBE-DESIGN RULE (learned twice, the same way) ─────────────────────────────────────────────
+# A DIFFERENTIAL WHERE BOTH ARMS RETURN THE UNREDUCED INPUT IS ALMOST ALWAYS VACUOUS — nothing
+# exercised the path under test. Twice on 2026-08-31 a probe "passed" because the rejection never
+# fired: `!(h foo)` with two overloads gave TWO answers (both accepted, `errs` empty, the trap
+# untouched), and `!(kk foo)` gave `(+ foo 1)` in both arms (no declared type ⇒ %Undefined% ⇒ no
+# rejection). Both fixes were the same shape: give the ARGUMENT a declared type — `(: foo Symbol)` —
+# so the constraint is live. Check that an assertion can FAIL before trusting that it passed.
+#
 # ─── WHY `@test_broken` ──────────────────────────────────────────────────────────────────────────
 # These assert the CORRECT (post-fix) values and are expected to FAIL today. Written BEFORE the fix
 # deliberately: a prediction recorded after the run is a description, which is exactly the failure
@@ -113,4 +121,67 @@ end
     # runs after this one in the same process — the leak `reset_execution_flags!` exists to prevent.
     Eval.untable_all!()
   end
+end
+
+@testset "hoist guard: POLYMORPHIC DISPATCH must survive the type-check hoist" begin
+    # ⚠️ NOT A PREDICTION — a REGRESSION GUARD. This works today and the hoist must not break it.
+    #
+    # `Eval.jl:1220-1242` accumulates type errors across ALL overloads and returns them ONLY if none
+    # produced a program:
+    #     for ft in ftypes; te = type_check_errors(...); isempty(te) || (append!(errs,...); continue)
+    #                       ...build prog...; append!(out, ...)  end
+    #     !isempty(out)  && return out      # SOME overload applied ⇒ errs DISCARDED
+    #     !isempty(errs) && return errs     # ALL rejected ⇒ BadArgType
+    #
+    # Hoisting the check above the tabling intercept naively — returning `errs` on the FIRST failing
+    # overload — turns this call into a BadArgType. The hoisted check must keep the
+    # ALL-OVERLOADS-REJECTED condition, not a per-overload early return.
+    #
+    # `(: foo Symbol)` is what makes the Number overload genuinely REJECT (landing in `errs`) while
+    # Symbol ACCEPTS. Without it both overloads pass, `errs` stays empty, and the case does not
+    # exercise the trap at all — which is how the first version of this test was wrong.
+    ov = "(: foo Symbol)\n(: h (-> Number Number))\n(: h (-> Symbol Symbol))\n(= (h \$x) (wrapped \$x))\n"
+    s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, ov)
+    got = string(load_metta!(s, "!(h foo)\n"))
+    @test occursin("(wrapped foo)", got)          # the accepting overload applied
+    @test !occursin("BadArgType", got)            # the rejecting one did NOT short-circuit it
+end
+
+@testset "intercept position: ERROR PROVENANCE (instance 2's SECOND symptom, not a 4th site)" begin
+    # 🔴 MECHANISM CONFIRMED BY INSTRUMENTATION, not inferred. A `println` in `type_check_errors`
+    # reporting the atom it was called with:
+    #     untabled -> TCE called with: (kk foo)      the ORIGINAL call
+    #     tabled   -> TCE called with: (+ foo 1)     the REDUCED BODY
+    # So the check is NEVER called with `(kk foo)` on the tabled path. The tabled path DERIVES first
+    # and the error then fires from inside that derivation. That is instance 2's mechanism
+    # (derive-before-check) producing a different SYMPTOM — provenance loss — not a fourth skipped
+    # stage. The invariant has THREE sites and FOUR symptoms.
+    #
+    # ⚠️ THIS PREDICTION IS NOT TESTABLE AS STATED — IF IT FLIPS, CHECK WHY BEFORE BELIEVING IT.
+    # `(: kk (-> Number Number))` gives non-empty `ftypes`, so a hoisted check runs
+    # `type_check_errors((kk foo), …)`, finds BadArgType, and returns `errs` BEFORE the intercept —
+    # the tabled path is never entered. The assertion then passes because the call was rejected
+    # early, NOT because provenance was preserved. That is a test passing for a reason other than
+    # the one it names, which is the failure this whole file exists to catch.
+    #
+    # MEASURED 2026-08-31, the distinguishing case: a tabled head with NO declared type
+    # (`(= (nn $x) (+ $x 1))`, `!(nn foo)`) gives `(Error (+ foo 1) …)` in BOTH arms — so there is
+    # NO provenance divergence without a declared type, and the only divergent case is the one the
+    # hoist short-circuits. ⇒ provenance may not be separately observable at all; treat a flip here
+    # as evidence about the hoist, not about instance ②'s second symptom.
+    #
+    # ⚠️ `(: foo Symbol)` is load-bearing — without it `foo` is %Undefined%, nothing rejects, and both
+    # arms return `(+ foo 1)`. See the probe-design rule in the header.
+    Eval.untable_all!()
+    try
+        defs = "(: foo Symbol)\n(: kk (-> Number Number))\n(= (kk \$x) (+ \$x 1))\n"
+        s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, defs)
+        Eval.auto_table!(s)
+        got = string(load_metta!(s, "!(kk foo)\n"))
+        @test occursin("BadArgType", got)                 # the check DOES fire — not a b5-style miss
+        @test occursin("(+ foo 1)", got)                  # today: names the derived body
+        @test_broken occursin("(Error (kk foo)", got)     # correct: names the original call
+    finally
+        Eval.untable_all!()
+    end
 end
