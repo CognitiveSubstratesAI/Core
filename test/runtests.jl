@@ -425,7 +425,18 @@ Main.@suite("test_langdef_welding.jl")
     # representation then ("the failure type is the stable half of the contract"); this assertion
     # kept testing it, and went red the moment the source became right.
     _b = mork_unify("(f \$x)", "(f bar)")                                             # match → bindings
-    @test _b isa AbstractDict && !isempty(_b)
+    @test _b isa AbstractDict
+    # ⚠️ `!isempty` WAS THE WHOLE ASSERTION UNTIL 2026-08-31, and it checks the SHAPE of the
+    # result, never its CONTENT — it passes for ANY non-empty binding set, including binding the
+    # wrong variable, the wrong term, or too many. Pin the contract instead:
+    #   (a) EXACTLY ONE variable is bound — `(f $x)` has one, so 0 or 2 is a real defect;
+    #   (b) its key is the FIRST POSITIONAL variable `(0x00, 0x00)`. MORK identifies variables by
+    #       `(source_id, index)` assigned by occurrence order, which is precisely the CRUX
+    #       invariant `src/eval/MorkBridge.jl` is built on — if variable identity ever stopped
+    #       being positional, every crossed-var rewrite would silently transpose.
+    # [[feedback_assert_the_contract_not_the_representation]]
+    @test length(_b) == 1
+    @test first(first(pairs(_b))) == (0x00, 0x00)
     @test mork_unify("(f \$x)", "(h bar)") === nothing                                # no match
 end
 
