@@ -105,7 +105,21 @@ Rewrite Core's `__var_NAME` ground symbols into MORK-native variables, so a rule
 
 First occurrence of a name becomes `Tag(NewVar)` (0xC0); each later occurrence becomes
 `Tag(VarRef(k))` (0x80|k) where `k` is that variable's 0-based ordinal among the NewVars — the same
-de-Bruijn discipline MORK's own reader produces for `\$x`. Every other byte is copied through.
+de-Bruijn LEVELS discipline MORK's own reader produces for `\$x` — LEVELS, not indices: `k` counts
+NewVars from the LEFT of the whole Expr, never from the nearest binder. MORK.wiki `Data-in-MORK.md:105-110`
+draws exactly that distinction ("not to be confused with De Bruijn indices which are _relative_ to the most
+recent bindings"), and its worked `(\$x \$x)` => `[2] \$ &0` is what this reproduces.
+
+VERIFIED FROM MORK's CODE, not just that prose — the arithmetic is what proves it, because MORK's own
+naming points the WRONG way (`Expr.jl:7` calls VarRef a "back-reference", which reads like an index):
+  * `_expr_bind!` (ExprAlg.jl:1068, ports Rust `Expr::bind` lib.rs:598) renumbers a spliced term with a
+    UNIFORM additive shift — `NewVar => VarRef(n + running-newvar-count)`, `VarRef(i) => VarRef(n + i)`.
+    A single `+n` is only sound under LEVELS; under indices each occurrence would need adjusting by how
+    many binders it crosses.
+  * `expr_equate_var` (ExprAlg.jl:1404, ports `Expr::equate_var` lib.rs:439-473) drops one binder and
+    shifts EVERY reference above it down by one (`r > new_var => VarRef(r-1)`). A global `r > k` test is
+    level semantics; under indices removal is depth-dependent and scope-local.
+Every other byte is copied through.
 
 The scan is a flat pass because the encoding is prefix-free (Expr.jl:5-8):
     Arity      0x00..0x3F  (no payload)
