@@ -672,6 +672,49 @@ function is_multivalued(heads::Vector{Atom})::Bool
     false
 end
 
+"""Heads with DISJOINT clause heads whose BODIES ARE EQUAL ⇒ one call, two identical answers.
+
+🔴 THE HALF `is_multivalued` MISSES, MEASURED 2026-08-30. That guard asks whether two clause HEADS
+unify with EACH OTHER, which is necessary but not sufficient:
+
+    (= (makes humidifier (air wet)) T)
+    (= (makes kettle     (air wet)) T)     heads GROUND and DISJOINT ⇒ is_multivalued = false
+    !(makes \$y (air wet))                  untabled [T, T] · tabled [T]  ← AN ANSWER DROPPED
+
+Multiplicity is not lost because clauses match each other — it is lost because ONE call matches
+several clauses AND THEY RETURN THE SAME VALUE, so the answer trie dedups by variant.
+
+⚠️ THE OPERATOR IS EQUALITY, NOT UNIFIABILITY, AND THAT DISTINCTION IS THE WHOLE FIX. Using
+unifiability here breaks the suite: stdlib's
+
+    (= (if True  \$then \$else) \$then)
+    (= (if False \$then \$else) \$else)
+
+has two DISTINCT variable bodies. They UNIFY (any two fresh variables do), so a unifiability test
+flags `if`, and every head calling it inherits that through the callee closure — `fib` included.
+They are not EQUAL, and they are not the same answer: for `(if \$c a b)` clause 1 yields `a` and
+clause 2 yields `b`. Equality separates the two cases correctly.
+
+Overlapping-head cases like `(= (h \$x) \$x)` / `(= (h \$y) \$y)` return the same answer too, but those
+heads DO unify and `is_multivalued` already refuses them — the two tests are complementary.
+
+⚠️ INCOMPLETE, DELIBERATELY. Syntactic equality misses bodies that DIFFER but EVALUATE alike —
+`(= (k a) (+ 1 1))` / `(= (k b) 2)` both answer 2 for `(k \$x)`. Catching that needs evaluation and is
+undecidable statically. This is a strict improvement on the status quo, not a complete predicate."""
+function _coincident_answer_heads(rules::Dict{Symbol, Vector{Atom}})::Set{Symbol}
+    out = Set{Symbol}()
+    for (h, bodies) in rules
+        length(bodies) <= 1 && continue
+        for i in 1:(length(bodies) - 1), j in (i + 1):length(bodies)
+            if bodies[i] == bodies[j]
+                push!(out, h)
+                break
+            end
+        end
+    end
+    out
+end
+
 """
     _multivalued_heads(atoms) -> Set{Symbol}
 
@@ -693,7 +736,10 @@ head can run through library code.
 function _multivalued_heads(atoms)::Set{Symbol}
     rh = _rule_heads_of(atoms)
     rules = _rules_of(atoms)
-    multi = Set{Symbol}(h for (h, pats) in rh if is_multivalued(pats))   # seed: overlapping clauses
+    # seed: overlapping clause HEADS (is_multivalued), OR disjoint heads with EQUAL bodies
+    # (`_coincident_answer_heads`) — one call, two identical answers, dedup loses one.
+    multi = Set{Symbol}(h for (h, pats) in rh if is_multivalued(pats))
+    union!(multi, _coincident_answer_heads(rules))
     changed = true
     while changed                                                        # close over calls
         changed = false
@@ -711,6 +757,34 @@ function _multivalued_heads(atoms)::Set{Symbol}
         end
     end
     multi
+end
+
+"""Heads whose body IS a parameter, or APPLIES one — higher-order heads.
+
+🔴 THE OTHER HALF OF A TWO-PART DEFECT. `_pure_heads` and `_multivalued_heads` are fixpoints over
+`_callees!`, which walks a rule BODY. A higher-order head's real callee is not in its body — it
+arrives as an ARGUMENT — so both gates clear it:
+
+    (= (ift True \$then) \$then)      body IS a parameter
+    (= (pair \$x \$y) (\$x \$y))       body APPLIES one (variable in head position)
+    (= (rev \$x \$y) (\$y \$x))
+
+MEASURED on `b4_nondeterm`: `!(pair (bin) (bin))` and `!(rev A (superpose (B C D)))` lose answers
+when tabled, because `bin`/`superpose` are multivalued and the multiplicity enters through the
+ARGUMENT, where `_multivalued_heads` cannot see it.
+
+⚠️ NEITHER HALF MOVES THE NUMBER ALONE, AND THAT COST ME A DAY. Added on its own this guard fires
+correctly and the corpus divergence count does not budge, because `_coincident_answer_heads`'s case
+(`makes`) keeps the same files failing; added on its own THAT fix does not budge it either, because
+`pair`/`rev` keep them failing. I reverted each in turn as useless. Measure them TOGETHER."""
+function _higher_order_heads(atoms)::Set{Symbol}
+    out = Set{Symbol}()
+    for (h, bodies) in _rules_of(atoms), b in bodies
+        if b isa Var || (b isa Expression && !isempty(b.children) && b.children[1] isa Var)
+            push!(out, h)
+        end
+    end
+    out
 end
 
 """
@@ -770,13 +844,16 @@ function auto_table!(space::Space)
     # ROADMAP 2.0: refuse heads whose rules can BOTH fire on one call — tabling is set-semantics and
     # would silently drop the duplicate answers MeTTa's multiset semantics requires.
     multi = _multivalued_heads(all_atoms(space))
-    up = setdiff(intersect(pure, user), multi)
+    # HIGHER-ORDER REFUSAL — body analysis cannot see impurity or multiplicity arriving through a
+    # PARAMETER, so a head that returns or applies one is refused. See `_higher_order_heads`.
+    ho = _higher_order_heads(all_atoms(space))
+    up = setdiff(intersect(pure, user), multi, ho)
     for h in up
         table!(h)
         push!(_NOREDUCE_HEADS, h)   # auto-tabled ⇒ METTA mode (NotReducible survives the table)
     end
     (tabled=sort!(collect(up)), skipped=sort!(collect(setdiff(user, up))),
-        multivalued=sort!(collect(multi)))
+        multivalued=sort!(collect(multi)), higher_order=sort!(collect(intersect(ho, user))))
 end
 
 # `!(auto-table!)` — the MeTTa surface for the auto-tabler (the analog of MeTTa-TS's automatic tabling; cf.
