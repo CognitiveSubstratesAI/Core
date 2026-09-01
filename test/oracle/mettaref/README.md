@@ -12,6 +12,28 @@ flagship Lean package covering probability, PLN, HOL, AIXI. None of that can sta
 our compiler actually gets wrong, which are about **our own representations agreeing with each
 other** (`show` being lossy; parse-equivalence being space-relative). Those are found by execution,
 not by theory.
+> 🔴 **THAT LAST SENTENCE IS FALSIFIED — corrected 2026-09-01. The claim above is kept for the record.**
+> MeTTapedia's Lean side stated a property our implementation gets wrong, and stated it BEFORE any
+> execution found it. `Languages/MeTTa/HE/VariantQueryCorrectness.lean` proves variant-cache reuse for
+> the LEGACY one-way `simpleMatch` model ONLY, and its `## Boundary` section explicitly refuses to
+> carry the result to the faithful `matchAtoms`/`mergeBindings` interface because that interface "can
+> expose equality-threading". Our tabling is variant-keyed over a bidirectional matcher — exactly the
+> uncovered case. Probing that named gap found a SOUNDNESS defect (tabling reduces `(eq a b)` to `T`)
+> that three days of corpus differentials had not: Core `5894b13`,
+> `test/standard/tabling/test_answer_substitution.jl`.
+>
+> The corpus/theory split is about METHOD, not capability. A corpus finds what its cases happen to
+> exercise; a formalization's BOUNDARY says where a guarantee STOPS, which is where to aim a probe.
+> So: read the boundaries, not only the theorems — and read the STATEMENT, not the name.
+> `HE/Properties.lean`'s `cons_decons_roundtrip` mentions only `cons-atom` and its proof is a single
+> constructor, so the round-trip its docstring advertises is proved nowhere.
+>
+> ✅ CHECKED AGAINST CORE 2026-09-01, ALL PASSING — recorded because a property that HOLDS says where
+> the implementation is on solid ground, which is precisely what we lacked for variant tabling:
+> `(cons-atom X (Y Z))→(X Y Z)`, `(decons-atom (X Y Z))→(X (Y Z))`, the empty-tail and singleton
+> edges, and the unproved round-trip in BOTH directions. ⚠️ The round-trip must be composed as TWO
+> STEPS: `decons-atom` takes its argument as DATA, so nesting the calls decomposes the literal
+> `(cons-atom …)` expression and errors — that is correct behaviour, not a defect.
 
 What `metta-ref` has that theory does not is **executable cases**, and they cover our thinnest area:
 
