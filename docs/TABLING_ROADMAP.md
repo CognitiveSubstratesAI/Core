@@ -1079,6 +1079,52 @@ and it may make 1.1/1.4 much cheaper than the ~8 600-vs-250 line comparison sugg
 
 ---
 
+## 7.C — TYPE-CHECK HOIST: what it can and cannot buy, measured 2026-09-01
+
+**Status: the hoist is unbuilt; this bounds it before it is built.** Predictions live in
+`test/standard/tabling/test_intercept_position.jl` (lines 76 / 98 / 134 / 167), not here.
+
+The hoist moves `type_check_errors` above the tabling intercept (`Eval.jl:1226` is ~30 lines BELOW
+`:1196`), so a tabled head currently never runs it. Its COST is paid on every call; its BENEFIT is
+bounded by how often the check could reject at all.
+
+**It can only reject when NEITHER side is `%Undefined%`/`Atom`.** `match_types_b` (`Eval.jl:1653`)
+short-circuits on a four-way disjunction — and is a line-for-line match with MeTTapedia's
+`HE/Matching.lean:190`, which is why `matchTypes_undefined_succeeds` / `matchTypes_atom_succeeds`
+both hold against Core (checked 2026-09-01, with a positive control that DID reject, so the pass is
+not vacuous).
+
+**Measured over the 22-file LeaTTa corpus**, by temporarily wrapping `type_check_errors` and counting
+whether any argument position reached the non-short-circuit branch:
+
+| level | eligible | of | note |
+|---|---|---|---|
+| **per CALL** (the figure the hoist turns on) | **51.0%** | 1,243 `type_check_errors` calls | a call is eligible if ANY position could reject |
+| per POSITION | 26.5% | 4,350 `match_types_b` invocations | ⚠️ NOT the call figure — `match_types_b` fires once per argument position PER OVERLOAD, so a 3-arg call against 2 overloads is 6 invocations |
+
+⇒ **cost on 100% of calls, possible benefit on 51%.** Concentrated in the type-system files
+(c1 90.6%, b5 87.8%, d2 85.7%, d3 85.4%, d5 80.0%, d4 70.1%).
+
+### 🔑 THE LOAD-BEARING RESULT — the hoist CANNOT fix `b4_nondeterm`
+
+**`b4_nondeterm`: 29 `type_check_errors` calls, 0 reject-eligible, 0.0% at BOTH levels.** Ten of 22
+files are 0.0%: a1 a2 a3 b0 b1 b2 b3 **b4** c2 e1. Type checking is inert there regardless of where
+the intercept sits, so `b4`'s divergences — including `(is (air dry))` — must have another cause and
+should NOT be on the hoist's expected-fix list.
+
+⚠️ **HOW THIS CONCLUSION WAS REACHED MATTERS, because the FIRST version of it was wrong.** It was
+first argued from DECLARATION DENSITY (`b4` has zero `(:` lines) and WITHDRAWN the same day: stdlib
+is loaded into every space, so a file declaring nothing still reaches declared stdlib signatures —
+`b2_backchain` records 90 type-match calls while declaring none. Density measures user declarations,
+not reject-eligibility. The claim was withdrawn, the real quantity was instrumented, and only then
+re-asserted. Someone reading "the hoist can't fix b4" should see WHICH evidence supports it.
+[[feedback_no_perf_attribution_without_profiling]]
+
+**Reproducing it:** wrap `type_check_errors` in a throwaway process (NOT the warm server — a counting
+`match_types_b` left resident there silently changes every later probe), delegating to the original
+body re-emitted under a private name. Self-check first: the `(: h (-> Number Number))` / `!(h foo)`
+control must count as eligible, or the instrumentation is not live.
+
 ## 7.B — ANSWER-LEVEL DELAY: the design constraint, measured 2026-08-19
 
 **Status: unbuilt, with a concrete failing case.** XSB gold program `p31` is marked `@test_broken` in
