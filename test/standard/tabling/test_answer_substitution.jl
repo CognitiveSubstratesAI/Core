@@ -27,12 +27,31 @@
 # ONE fix closes both. Do not treat them as two bugs — that was the working hypothesis and the table
 # dump refuted it.
 #
-# ── WHY NOT JUST REFUSE THESE HEADS IN `auto_table!` ─────────────────────────────────────────────
-# Because the refusal predicate would be "this head can be called with a variable in a position the
-# match binds" — a property of the CALL, not of the head. ANY head can be called that way. This is
-# the same reason the NotReducible gap could not be closed by refusing more heads (see
-# `CompileLane.jl`'s own comment). The correct fix is substitution-valued answers, which is the same
-# rewrite as converting `tabled_eval` from a BYPASS into a WRAPPER.
+# ── THE OPTION SPACE IS THREE, NOT TWO ──────────────────────────────────────────────────────────
+# (1) SUBSTITUTION-VALUED ANSWERS — what SLG requires, what `Continuation`'s docstring already claims
+#     the design is, and the same rewrite as converting `tabled_eval` from a BYPASS into a WRAPPER.
+#
+# (2) NARROW THE PREDICATE AT LOAD TIME — extend `auto_table!`'s existing refusals. ⚠️ This does not
+#     work, and the reason is specific: the predicate would have to be "this head can be called with
+#     a variable in a position the match binds" — a property of the CALL, not of the head. ANY head
+#     can be called that way, and `auto_table!` sees heads. Same reason the NotReducible gap could
+#     not be closed by refusing more heads (`CompileLane.jl`'s own comment).
+#
+# (3) DECIDE AT COMPILE TIME instead of load time — and note the (2) objection DOES NOT APPLY here,
+#     because a compile-time decision has the CALL SITES in hand. Not hypothetical: Core has a
+#     compile lane. JeTTa is a working existence proof — `JettaMemo` (runtime/…/JettaMemo.kt) tables
+#     a function only when the compiler proves it "pure, deterministic and state-independent (no
+#     match/IO/mutation, PRIMITIVE args + result, transitively pure callees)", decided at COMPILE
+#     time on the AOT closed-world path, and `Generator.kt:166` additionally refuses `isMultivalued`
+#     functions. Narrow on two axes by construction, and nobody upstream treats that as a defect —
+#     the substitution defect below is simply UNREACHABLE there, since a variable is never primitive.
+#     ⚠️ BUT THE AXIS IS *WHEN*, NOT MERELY HOW NARROW, so the predicate is not portable as-is:
+#     `auto_table!` decides at LOAD time over a MUTABLE space — which is why `_ANSWER_STAMP` carries
+#     `(objectid(space), revision)` for eviction — while JeTTa has no space and nothing to
+#     invalidate. "Primitive args + result" is what makes CLOSED-WORLD decidable, not primarily a
+#     fence against variables. Adopting it wholesale would also exclude essentially everything the
+#     cognitive libs table (`Map.find`, `InsertionSort`, `DecayedConfidence` all take structured
+#     arguments), and it does nothing for the INTERPRETER lane.
 #
 # ── UPSTREAM PREDICTED THIS ──────────────────────────────────────────────────────────────────────
 # MeTTapedia `Languages/MeTTa/HE/VariantQueryCorrectness.lean` proves `canonical_legacy_cache_reusable`
