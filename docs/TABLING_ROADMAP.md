@@ -1127,10 +1127,27 @@ diagnosis has a second cause in it that the table dump did not show, and that is
 
 ### The design is already in the paper we ported
 
-Desouter et al. §4.4 `store_answer/2` stores the **instantiated call term** — i.e. the substitution
-over the call variables — not a bare value. That is exactly what this diagnosis says the table should
-hold. We already ported that paper's completion loop (§1.0 step 4, resumption, on by default); the
-answer representation is the half that did not come with it.
+Desouter et al. `store_answer/2` stores the **instantiated call term** — i.e. the substitution over
+the call variables — not a bare value. That is exactly what this diagnosis says the table should hold.
+
+✅ **VERIFIED AGAINST THE PDF 2026-09-02**, not against the extraction — and the paper's own wording is
+stronger than the paraphrase. `docs/research/papers/prolog/Tabling/Tabling as a library with Delimited
+Control.pdf`:
+
+  * `table(Wrapper,Worker) :- get_table_for_variant(Wrapper,Table), …` ⇒ **`Wrapper` IS the tabled
+    call term**, and the table is keyed by its VARIANT.
+  * **Fig. 7 `delim/3`**: `reset(Worker,Continuation,SourceCall), ( Continuation == 0 -> store_answer(Table,Wrapper) ; … )`
+    ⇒ on normal success the term stored is `Wrapper` itself, after the Worker has bound its variables.
+  * p. 6: *"the Wrapper … **contains the partial answer**"*
+  * p. 7: *"**binding the variables in the partial answer Wrapper** along the way"*
+
+⚠️ **`Core/docs/tabling_delimited_control_spec.md` IS SILENT ON THIS.** Its §4.4 extraction covers the
+answer trie and `store_answer/2`'s dedup role but never says WHAT is stored — so the extraction alone
+cannot support this design pointer, and a reader who stops at the spec will not find it. Standing
+instance of CLAUDE.md's rule: prefer the spec, cross-check the PDF, treat neither as complete.
+
+We already ported that paper's completion loop (§1.0 step 4, resumption, on by default); **the answer
+representation is the half that did not come with it.** ⇒ the fix is a PORT, not a design.
 
 ---
 
