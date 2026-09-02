@@ -507,14 +507,24 @@ end
 # interpreter, so an unsound ZAM answer is never returned):
 #   (1) every (=) rule lowered (partition leaves no `=` in data) and no user-authored raw execs
 #       (their MM2-native effects have no interpreter counterpart);
-#   (2) ONE clause per head — the reduction exec DELETES the redex when it fires, so a second
-#       overlapping clause would never fire (the interpreter's collect-all returns BOTH);
+#   (2) REMOVED — multi-clause heads now CO-FIRE via the collect-all shape (add-only @prio 0,
+#       delete-redex-once @prio 1). See the long note at the `heads`/`rules` build below. ⚠️ This
+#       list said "ONE clause per head" until 2026-09-02, contradicting that note in the SAME FILE;
+#       the code has been multi-clause since the collect-all shape landed.
 #   (3) rule-head call graph ACYCLIC — an exec is consumed on firing, so self/mutual recursion
 #       needs a reduction-mode re-fire loop (absent); distinct-rule chains DO complete in one
 #       space_metta_calculus! call (the kernel re-selects still-present execs to fixpoint);
 #   (4) no NESTED rule-head call in any rule's LHS/RHS args or in the bang's args — MM2 matches
 #       whole atoms and binds nested redexes LITERALLY, diverging from the interpreter's
 #       innermost-first order (design §6 R1, OPEN).
+#   (5) a MULTI-CLAUSE head may not also CHAIN unless its clauses AGREE (all chain, or none) —
+#       a MIXED head silently loses answers. Implemented at the `chains` check; see its note.
+#       ⚠️ AND ALL-CHAIN ADMISSION IS TRIE-ORDER DEPENDENT (found 2026-09-02): execs are selected
+#       in lexicographic order and consumed on selection, so a downstream head sorting BEFORE its
+#       upstream head is destroyed before the atom it needs exists. MEASURED, same shape, names
+#       only: `a -> p,q -> m,n` (ascending) is SERVED; `z -> a,b -> m,n` (descending) is DECLINED.
+#       It fails SAFE — declined, not served truncated — so this is a COMPLETENESS limit, not a
+#       soundness bug. Pinned by test/standard/test_mm2_zam_gates.jl.
 # Ground bangs only (a var-bearing redex won't round-trip the trie dump byte-identically).
 
 # true iff any sub-expression BELOW the top level of `form` has a head in `heads`
@@ -646,9 +656,14 @@ function mm2_zam_answers(program::AbstractString, bangs::AbstractVector{<:Abstra
     #   NONE chain   (= (c $x)(r1 $x)) (= (c $x)(r2 $x))                              -> r1,r2         ✅
     #   MIXED        (= (z $x)(a $x)) (= (z $x)(t $x)) (= (a $x)(m $x))               -> (t 1) ONLY    ❌
     #
-    # A first cut of this gate rejected EVERY multi-clause chaining head and broke the ALL-chain case
-    # the suite already locks (`test_dual_track.jl:315-320`). That regression is what produced the
-    # discriminator: the suite knew something the repro did not.
+    # A first cut of this gate rejected EVERY multi-clause chaining head and broke an ALL-chain case
+    # the suite locked at the time. That regression is what produced the discriminator: the suite
+    # knew something the repro did not.
+    #
+    # 🔴 BUT THAT LOCK IS GONE. This note cited `test_dual_track.jl:315-320`; verified
+    # 2026-09-02, NO SUCH FILE exists anywhere in Core and nothing greps for `done_b`/ALL-chain —
+    # it went with the 4b54e71 delete and was never restored, so the gate's own justification
+    # pointed at a test that could not run. Replaced by test/standard/test_mm2_zam_gates.jl.
     chains = Dict{String, Set{Bool}}()
     for (h, _, rhs) in rules
         c = startswith(strip(rhs), "(") && mm2_head(rhs) in heads

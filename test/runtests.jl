@@ -133,6 +133,7 @@ Main.@suite("standard/test_instr_arity.jl")
 # MeTTa Invariant 1 (sequential effects) at the FORM level — the lane-neutral partition that
 # stops a query being answered with a rule added after it. Lives above every lane on purpose.
 Main.@suite("standard/test_program_regions.jl")
+Main.@suite("standard/test_mm2_zam_gates.jl")
 Main.@suite("standard/test_interpreter.jl")
 Main.@suite("standard/test_tnot_wfs.jl")
 # The LIVE swipl differential. test_tnot_wfs.jl's header claims oracle verification but its
