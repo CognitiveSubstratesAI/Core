@@ -290,6 +290,7 @@ Main.@suite("standard/tabling/test_intercept_position.jl")   # the intercept-pos
 # NOT part of the intercept invariant above — the table's ANSWER REPRESENTATION (values where SLG
 # requires substitutions over the call variables). The type-check hoist does not touch it.
 Main.@suite("standard/tabling/test_answer_substitution.jl")   # substitution-valued answers: 2 symptoms, 1 root cause
+Main.@suite("standard/tabling/test_answer_substitution_cyclic.jl")  # same defect where tabling is LOAD-BEARING
 Main.@suite("compiler/test_il_wire_roundtrip.jl")  # randomized parse(il_text(a))==a over the
 Main.@suite("compiler/test_type_declarations.jl")  # `(: name type)` visible to the compiler —
 Main.@suite("compiler/test_lib_differential.jl")   # Core/lib compiled-vs-interpreted answers —

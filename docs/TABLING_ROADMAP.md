@@ -1096,6 +1096,44 @@ and it may make 1.1/1.4 much cheaper than the ~8 600-vs-250 line comparison sugg
 
 ---
 
+## 7.E — THE SUBSTITUTION FIX: what lands it, and the check that can FAIL
+
+**Status 2026-09-02: DIAGNOSED, ATTRIBUTED, PINNED IN TWO FILES. Not fixed.**
+
+`_ANSWER_TABLE` stores a bare answer VALUE where SLG requires an answer SUBSTITUTION over the call
+variables. One root cause, two symptoms (fails to BIND / fails to CHECK).
+
+**ATTRIBUTION IS SHOWN, NOT INHERITED** (`test_answer_substitution_cyclic.jl`, first testset). Same
+program, same idiom, symmetry clause dropped so both arms terminate; only tabling differs:
+
+    UNTABLED  ->  (pair schiphol schiphol)     the interpreter DOES propagate the binding
+    TABLED    ->  (pair $w schiphol)           tabling DROPS it
+
+This rules out the competing explanation — that Core never propagates a body-match binding to a
+caller's variable at all — under which "symptom A" would have been misattributed in BOTH files.
+⚠️ A BARE call cannot find this: identical in both arms (`["schiphol"]`), because `!`-queries surface
+VALUES, not substitutions. The wrapper `(= (m $u) (pair $u (reach a $u)))` is MANDATORY, not stylistic.
+
+### 🔑 THE ACCEPTANCE CHECK, and it is designed to be able to FAIL
+
+Two files carry a `@test_broken` for this defect:
+
+  * `test/standard/tabling/test_answer_substitution.jl`         (`eq`/`g`, untabled-arm oracle)
+  * `test/standard/tabling/test_answer_substitution_cyclic.jl`  (cyclic `reach`, SWI + BFS oracles)
+
+⇒ **BOTH MUST FLIP TO PASS IN THE SAME COMMIT, or the "one root cause" claim was WRONG.** If a fix
+flips one and not the other, do not ship it and do not widen the other's `@test_broken` — the
+diagnosis has a second cause in it that the table dump did not show, and that is the finding.
+
+### The design is already in the paper we ported
+
+Desouter et al. §4.4 `store_answer/2` stores the **instantiated call term** — i.e. the substitution
+over the call variables — not a bare value. That is exactly what this diagnosis says the table should
+hold. We already ported that paper's completion loop (§1.0 step 4, resumption, on by default); the
+answer representation is the half that did not come with it.
+
+---
+
 ## 7.D — THE MULTIVALUED REFUSAL IS CORRECT AND CHEAP; and fib CANNOT test the substitution defect
 
 **Measured 2026-09-02, three engines on the same program.** Yesterday's option-2 write-up implied
@@ -1113,6 +1151,68 @@ gate is declining to table a DIVERGENT program, not sacrificing a legitimate one
 also what PeTTa's own `examples/tabling_fib.metta` does — the identical guarded form. Core then
 tables it with no directive: `fib(25)` = 75025 in 0.03 s, where untabled it exceeds the DEFAULT
 minimal-machine bound.
+
+### ⚠️ 7.D.1 — "COSTS NOTHING" IS TRUE ON THE ARITHMETIC AXIS ONLY. ON RELATIONAL RECURSION IT COSTS EVERYTHING.
+
+**Measured 2026-09-02, printing the refusal fields** (the only way to know — a probe that prints just
+`tabled=Symbol[]` tells you nothing about WHY):
+
+    (edge amsterdam schiphol) (edge schiphol leiden)
+    (= (reach $x $y) (match &self (edge $x $y) $y))
+    (= (reach $x $y) (reach $y $x))
+    ⇒ tabled = Symbol[]   skipped = [:reach]   multivalued = [:reach]   higher_order = Symbol[]
+
+🔴 **THE ARGUMENT ABOVE DOES NOT COVER THIS CASE.** §7.D's reason the refusal is cheap is that the
+refused arithmetic form *"is BROKEN independent of tabling"* — it diverges through negative `n`. That
+is true, and it does not generalise. `reach` is the canonical left-recursive relational program: it is
+NOT broken, it is the shape tabling EXISTS for, it is already in our SWI differential
+(`test_tabling_swipl_differential.jl:126`), and tabled it terminates and answers correctly. The gate
+refuses it purely for having TWO CLAUSES.
+
+⇒ **AND EVERY RECURSIVE RELATIONAL PROGRAM IS MULTI-CLAUSE** — base case plus recursive case is the
+form. So on this axis `auto_table!` skips essentially everything it exists for. The guarded-single-
+clause guidance in §7.D rescues ARITHMETIC recursion; it has no analogue for relational recursion,
+because you cannot fold a base case and a transitive case into one guarded clause.
+
+**Consequence, and it is a scope statement rather than a caveat:** `auto_table!` is an
+ARITHMETIC-AND-SINGLE-CLAUSE facility. Any relational program needs explicit `table!(:head)`, which is
+what every tabling suite here already passes (`[:reach]`, `[:conn]`) — the automatic path was never
+exercising them.
+
+**DECIDED 2026-09-02 — (a), and it is a SPLIT OF ROLES, not a demotion.**
+
+> **`auto_table!` is an OPTIMISATION PASS. `table!(:head)` is the DECLARATION.**
+
+That is the same split every other engine makes, and Core is the odd one out for trying to guess:
+
+| engine | who decides | when |
+|---|---|---|
+| PeTTa / SWI | the USER, explicitly (`:- table fib/2.`) | — |
+| JeTTa | the compiler, **with the call sites in hand** | compile time, closed world |
+| Core | `auto_table!` guessing | LOAD time, over a MUTABLE space |
+
+Guessing at load time is the hardest position of the three, and **the multivalued refusal is that guess
+being conservative for the RIGHT reason**: two MeTTa clauses CAN legitimately yield the same answer
+twice — `edge` plus the symmetry clause is exactly that — and an answer table is set-semantics, so
+auto-tabling such a head would SILENTLY COLLAPSE a multiplicity nobody asked it to collapse. That is a
+semantics change, not an optimisation. The refusal stays.
+
+⇒ **THE RULE, zero code, and it is what every suite in this repo already does:**
+  * relational / recursive predicates → **declare with `table!(:head)`**. That is the documented way to
+    opt IN to set semantics, and it is an explicit choice by someone who knows the predicate is
+    set-valued.
+  * `auto_table!` → documented as an ARITHMETIC / SINGLE-CLAUSE optimisation. It is not the front door
+    for relational recursion and never was; `[:reach]` / `[:conn]` are passed explicitly everywhere.
+
+**Option (b) — widening the refusal for relational heads — is not closed, but is expected to LOSE.**
+Revisit only after the substitution defect is fixed. The case FOR is convenience; the case AGAINST is
+that it is a silent semantics change on precisely the programs where MeTTa's multiset semantics is
+most likely to matter. Convenience does not usually win that.
+
+⚠️ ORDERING CONSTRAINT: do not widen `auto_table!` before the substitution defect is fixed —
+`test_answer_substitution_cyclic.jl` shows tabled `reach` LOSES the caller's binding
+(`(pair $w schiphol)` where `(pair schiphol schiphol)` belongs, untabled arm as oracle). Widening
+would spread that silently across exactly the programs it would newly admit.
 
 ### How the three engines decide (same program, 2026-09-02)
 
