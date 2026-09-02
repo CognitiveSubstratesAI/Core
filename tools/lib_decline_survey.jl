@@ -15,9 +15,20 @@
 # number (see Emit.jl:918): a clause blocked by TWO classes appears in NEITHER row, so fixing one
 # class does not unblock it.
 #
-# ⚠️ DO NOT compute "compiling clauses" as total - sum(fully). That was in the first version of this
-# script and it OVERCOUNTS, for exactly the reason above (multi-class clauses are in no `fully` row).
-# decline_histogram does not return a declining-CLAUSE count; add one before quoting a coverage %.
+# ⚠️ DO NOT compute "compiling clauses" as total - sum(fully). It OVERCOUNTS, for exactly the reason
+# above (multi-class clauses are in no `fully` row). MEASURED 2026-09-02: that formula gives 51/183
+# where the truth is 46/170 — 11% and 8% relative overcount.
+# 🔴 THE SECOND HALF OF THIS NOTE WAS STALE AND THE CODE BELOW WAS PRINTING THE FORBIDDEN NUMBER.
+# It used to read "decline_histogram does not return a declining-CLAUSE count; add one before quoting
+# a coverage %". `declining` HAS been returned since 2026-08-15 — the counter sat unused while this
+# header warned against exactly the computation the driver was doing. Fixed 2026-09-02.
+#
+# ── THE COVERAGE NUMBER (2026-09-02, warm :7702) — this project's first ─────────────────────────
+#   ECAN   total=115  declining=69   COMPILING=46    ⇒ 40.0%
+#   PLN    total=283  declining=113  COMPILING=170   ⇒ 60.1%
+#   COMBINED                                          ⇒ 216/398 = 54.3%
+# Fully-blocking classes, summed: residual 80 · call_in_body 39 · mixed_arithmetic 31 ·
+# structural_unify 12 · control_flow 2. `residual` is the single largest unblocker.
 #
 # ⚠️ control_flow = 1 in both, with 146 clauses expanded, is `expand_control` working at scale —
 # consistent with the corpus measurement (7 -> 0) that Emit.jl:918 records.
@@ -77,8 +88,16 @@ function survey(name; show_first_error=true)
     isempty(allcl) && return nothing
     h = CE.decline_histogram(allcl)
     tot = sum(values(h.paths); init=0)
-    println("     declining paths=", tot, "  expanded=", h.expanded,
-        "  COMPILING clauses=", length(allcl) - sum(values(h.fully); init=0))
+    # 🔴 FIXED 2026-09-02 — this line computed `length(allcl) - sum(values(h.fully))`, the EXACT
+    # formula this file's own header forbids ("it OVERCOUNTS", because a clause blocked TWO ways is
+    # in NO `fully` row). `decline_histogram` has returned `declining` since 2026-08-15; the header
+    # note saying "add one before quoting a coverage %" is STALE, and the counter was sitting unused
+    # while the header warned against the wrong number the code was printing.
+    compiling = h.total - h.declining
+    pct = h.total == 0 ? 0.0 : round(100 * compiling / h.total; digits=1)
+    println("     declining paths=", tot, "  expanded=", h.expanded)
+    println("     CLAUSES total=", h.total, "  declining=", h.declining,
+        "  COMPILING=", compiling, "   ⇒ COVERAGE=", pct, "%")
     println("     ", rpad("reason", 20), rpad("paths", 8), "fully")
     for k in sort(collect(keys(h.paths)); by=x -> -h.paths[x])
         println(
