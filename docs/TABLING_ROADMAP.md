@@ -11,15 +11,32 @@ Every item cites the upstream file:line it came from and the check that decides 
 
 ---
 
-## ⚠️ READ FIRST — THE ENGINE QUESTION IS OPEN (added 2026-08-16)
+## ✅ READ FIRST — THE ENGINE QUESTION IS **SETTLED** (opened 2026-08-16, closed the same day; banner corrected 2026-09-02)
 
 `Core/docs/tabling_delimited_control_spec.md` (Desouter et al., **tabling in under 600 lines
-of Prolog** via delimited control) shows this whole roadmap may be scoped against the wrong base.
+of Prolog** via delimited control) showed this roadmap was scoped against the wrong base.
+**THE BASE THEN MOVED — see below. Do not re-open this.**
 
-**OUR ENGINE IS THE "EXTENSION TABLE" DESIGN, WHICH THAT PAPER NAMES AND REJECTS:** `_leader_pass` is
-RE-RUN each fixpoint round (`Tabling.jl:374-380, :467-473`), i.e. we recompute suspended goals rather
-than resuming them. *"The approach cannot achieve satisfactory performance as suspended goals are
-always re-evaluated."*
+🔴 **THIS BANNER WAS WRONG FOR TWO WEEKS AND COST A SESSION A WRONG ANSWER (2026-09-02).** It said
+our engine was the rejected design; it was written the same day the replacement was switched on, and
+recorded the verdict from *before* that. Corrected here rather than deleted, because the failure shape
+matters: **a READ-FIRST banner states a verdict at a point in time and is refreshed by hand.**
+
+**WHAT IS ACTUALLY TRUE — COMPLETION BY RESUMPTION IS ON BY DEFAULT** (`Tabling.jl`, section
+"COMPLETION BY RESUMPTION — roadmap §1.0 step 4", ~line 1318). Desouter §4.3 `completion/0`:
+a worklist-driven least fixpoint that RESUMES each suspended continuation with each answer instead of
+re-running the worker. On by default since **2026-08-16**, on two pieces of evidence:
+whole-suite agreement (81 files), and 3 stable runs with byte-identical allocations —
+symmetric conn 1305→815 KiB (−38%), mutual left-rec 186→70 (−62%), cycle 3 354→98 (−72%),
+fib 15 unchanged at 6919 KiB (never resumes, so the non-resuming path is provably untouched).
+
+**`_leader_pass` SURVIVES ONLY AS THE INITIAL PASS** (`Tabling.jl:2077`). It is no longer the
+completion loop. ⚠️ The line numbers this banner used to cite (`:374-380, :467-473`) had drifted
+off the symbol entirely — **locate it by name, not by line.**
+
+⚠️ **WE DO NOT HAVE DELIMITED CONTROL ITSELF.** `Eval.jl` is a CPS stack machine, which is the
+substrate delimited control would need; resumption is implemented over it directly. Do not claim
+"delimited control" as a feature — claim *continuation resumption*, which is what shipped.
 
 ⚠️ **AN EARLIER VERSION OF THIS PREAMBLE CLAIMED THIS ALSO EXPLAINS 2.0. IT DOES NOT — RETRACTED
 2026-08-16.** Recomputation does force `unique`, but **tabling is SET-SEMANTICS BY DESIGN in every
