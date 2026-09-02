@@ -1079,6 +1079,63 @@ and it may make 1.1/1.4 much cheaper than the ~8 600-vs-250 line comparison sugg
 
 ---
 
+## 7.D — THE MULTIVALUED REFUSAL IS CORRECT AND CHEAP; and fib CANNOT test the substitution defect
+
+**Measured 2026-09-02, three engines on the same program.** Yesterday's option-2 write-up implied
+narrowing `auto_table!` costs real coverage. On the multivalued axis specifically, it costs nothing.
+
+    (= (fib $n) (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))   ⇒ tabled=[:fib]        ACCEPTED
+    (= (fib 0) 0) (= (fib 1) 1) (= (fib $n) (+ …))                    ⇒ multivalued=[:fib]   REFUSED
+
+🔑 **THE REFUSED FORM IS BROKEN INDEPENDENT OF TABLING**, which is the part that makes this cheap
+rather than a trade-off. In MeTTa EVERY matching clause fires, so `(fib 0)` matches BOTH the ground
+clause and the general one, and the general branch recurses through negative `n` forever. So the
+gate is declining to table a DIVERGENT program, not sacrificing a legitimate one.
+
+⇒ **GUIDANCE RULE, no code change: write arithmetic recursion as a SINGLE GUARDED CLAUSE.** That is
+also what PeTTa's own `examples/tabling_fib.metta` does — the identical guarded form. Core then
+tables it with no directive: `fib(25)` = 75025 in 0.03 s, where untabled it exceeds the DEFAULT
+minimal-machine bound.
+
+### How the three engines decide (same program, 2026-09-02)
+
+| engine | mechanism | decides | multivalued |
+|---|---|---|---|
+| Core | `auto_table!` | LOAD time, over a MUTABLE space (hence `_ANSWER_STAMP` eviction) | refuses — the answer table is set-semantics |
+| PeTTa | `!(tabled (fib $N))` → emits `:- table fib/2.` | the USER, explicitly | **no analysis at all** — SWI's SLG is natively multi-answer |
+| JeTTa | `JettaMemo` | COMPILE time, closed-world | refuses `isMultivalued` |
+
+PeTTa's whole tabling library is 11 lines (`lib/lib_tabling.metta`): it string-builds a SWI directive
+and injects it. Note `(+ 1 (length (cdr-atom $call)))` — arity+1, because a MeTTa function becomes a
+Prolog predicate with an OUTPUT argument (`'fib-list'(2, A)` in the transpiler trace). Core is the
+only one of the three deciding automatically at LOAD time, which is the hardest position and where
+the substitution defect lives.
+
+### 🔴 DO NOT USE fib TO TEST THE SUBSTITUTION DEFECT — IT CANNOT EXPOSE IT
+
+`test_answer_substitution.jl` needs a tabled call made with a variable in a position the match BINDS.
+**Every `fib` call is GROUND**, so there is no binding to lose and a green result proves nothing —
+the exact vacuity shape that file's anti-vacuity asserts exist to catch. Use a genuinely multivalued
+AND TERMINATING predicate: `ancestor`/`path` over a small cyclic graph, which is also the canonical
+SLG test and the shape where storing bare values instead of substitutions over the call variables
+produces a wrong ANSWER SET.
+
+⚠️ Likewise do not probe `!(table! fib)` on the two-clause form: under PROLOG mode it enumerates the
+divergent branch. A 240 s hang against the warm server on 2026-09-02 was probably that.
+
+### ⚠️ TWO STEP CAPS, AND THE OBVIOUS ONE IS USUALLY WRONG
+
+`metta_max_steps!(n)` bounds the REDUCE-CHAIN (`_METTA_MAX`, default 0 = unlimited).
+`interpret_max_steps!(n)` bounds the MINIMAL MACHINE's `interpret` loop (`_INTERPRET_MAX`, default
+512_000). Untabled `fib(20)` exceeds the SECOND one; raising the first does nothing for it, and the
+only signal is the error text ("minimal interpreter step limit"). Check which loop you are bounding.
+
+🔴 AND NEITHER IS A MEMORY BOUND. A corpus pass with `metta_max_steps!(2_000_000)` still reached
+**22 GB of a 23 GB box** on 2026-09-02 — a step cap bounds STEPS, and a step can allocate. That also
+qualifies MettaJam `67c0557`'s claim that its cap converts "take the machine down" into "return an
+error": it makes a runaway less likely, not impossible. For corpus runs use `ulimit -v`, which fails
+the RUN instead of the MACHINE.
+
 ## 7.C — TYPE-CHECK HOIST: what it can and cannot buy, measured 2026-09-01
 
 **Status: the hoist is unbuilt; this bounds it before it is built.** Predictions live in
