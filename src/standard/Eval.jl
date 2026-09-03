@@ -614,6 +614,26 @@ uncompile_all!() = (empty!(_COMPILED_HEADS); nothing)
 is_compiled(name::Base.Symbol) = haskey(_COMPILED_HEADS, name)
 
 """
+Equation-lookup counter — THE DISCRIMINATOR for "did the compiler do the work, or delegate?".
+
+🔴 `fired(head) > 0` PROVES A CLOSURE RAN. IT DOES NOT PROVE COMPILED CODE DID THE WORK. A closure
+whose body is `interpret(…)` delegates everything and is indistinguishable from the interpreter by
+that measure alone — the same vacuity class as a structural test that passes while nothing executes.
+
+Equation lookup is the honest instrument: a NATIVELY compiled step (`:gcall_native` -> `execute` on a
+grounded op) performs ZERO lookups, while an interpreted evaluation performs one per reduction. So
+`lookups(compiled) / lookups(interpreted)` measures how much of the work actually left the
+interpreter. Ratio ~1 means the compiled lane is the interpreter wearing a hat.
+
+The pre-existing counters cannot answer this: `_METTA_STEPS` only increments inside `metta_step`
+(the ARGUMENT-reduction path via `_reduce`), and the main dispatch loop's counter is a LOCAL.
+"""
+const _LOOKUPS = Ref(0)
+reset_lookups!() = (_LOOKUPS[] = 0)
+lookups() = _LOOKUPS[]
+
+
+"""
     rule_results(call, space, b) -> Vector{Tuple{Atom, Bindings}}
 
 **THE equation lookup — `eqnLookup` as a FUNCTION, and the ONLY place the compiled-head seam lives.**
@@ -641,6 +661,7 @@ indistinguishable from "no clause matched" and would silently turn a match into 
 is deliberately NO special empty branch here; the contract is two-valued so the lanes cannot diverge.
 """
 function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindings}}
+    _LOOKUPS[] += 1
     out = Tuple{Atom, Bindings}[]
     let cc = compiled_head(call, space)
         if cc !== nothing

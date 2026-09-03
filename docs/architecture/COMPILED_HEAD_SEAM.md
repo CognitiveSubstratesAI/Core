@@ -159,6 +159,60 @@ program that writes. Two mechanisms, two triggers, no overlap: `_ANSWER_STAMP` (
 keyed `(objectid(space), space.revision)`) gives a tabled compiled head its DATA invalidation; the
 clause hash gives its RULE invalidation.
 
+## 🔴 STOP — READ THIS BEFORE CONTINUING `EmitJulia` (written 2026-09-03, end of session)
+
+**`_run_plan` IS AN INTERPRETER FOR A-NORMAL FORM, AND THAT IS WHY IT WILL NEVER BE FAST.** It walks
+a plan of tuples calling `match_atoms` / `subst` / `merge_bindings` AT RUNTIME — the same dynamic
+work the MeTTa interpreter does, in the same order, one level up. `reference_jetta_aot_jvm_compiler`
+records the standard this fails: *"compiled bodies do NOT bounce back through an interpreter"*
+(that memory calls the alternative "the metta-wam trap"). Plan-walking is that trap in Julia clothing.
+
+**REAL COMPILATION GENERATES JULIA CODE PER CLAUSE**: a closure body where `$x` is a Julia LOCAL,
+`(+ $x 1)` is `x + 1`, and unification happens ONLY at the head match. Build an `Expr`, `eval` it
+once per head at compile time, call through `invokelatest` — the world-age cost is paid once, which
+is fine. Note this refutes the "Julia cannot add code to a running program" framing in this file's
+own history: it can, cheaply, when the unit is a CLOSURE rather than a method.
+
+### The measurement that says so, and the one that does NOT
+
+| workload | interp lookups | compiled lookups | ratio |
+|---|---|---|---|
+| `!(inc 41)` grounded | 1 | 1 | 1.00 |
+| `!(b 41)` user call via seam | 2 | 2 | 1.00 |
+| fact clause | 1 | 1 | 1.00 |
+| multi-goal `let`+call | 2 | 1 | 0.50 |
+
+⚠️ **DO NOT READ THIS AS "THE EMITTER BUYS NOTHING".** Lookups measure DELEGATION, not WORK: `inc`
+costs one lookup in BOTH arms because the query itself is one lookup, and the interpreter then calls
+`execute` on `+` natively too. There is nothing to save on `inc`. The interpreter's real cost is
+stack-machine STEPS, and that counter is a LOCAL at `Eval.jl:1665` — making it global is one line.
+**Every program this emitter can currently run is too small to show a constant factor**, and the only
+ones that could (fib, list recursion) need `GBranch`. The value question is not answered "no"; it is
+UNANSWERABLE until one more goal type lands.
+
+### The sequencing error to not repeat
+
+Milestone 1's acceptance gate was `bench_fib.jl` — and fib needs `if`, i.e. `GBranch`. Three
+sub-milestones landed with the gate still unable to run. **`GBranch` should have been FIRST**: it is
+the one goal type standing between this emitter and any workload that can render a verdict.
+
+### THE NEXT INCREMENT, bounded, and the decision rule
+
+One increment, fresh session:
+1. `GBranch`, and
+2. GENERATE JULIA CODE for the clause body (`Expr` -> `eval` -> `invokelatest`), replacing plan-walking.
+3. Then `tools/bench_fib.jl`, closure vs interpreter: tabled fib(90) and untabled fib(16).
+
+**DECISION RULE, fixed in advance so the result cannot be argued with: if the untabled arm is not
+>= 2x, PARK `EmitJulia` and record the number here.** If it is, milestone 2 has its justification.
+One increment, one number, then decide.
+
+⚠️ And close the session before the next one. Measured today: the same docstring-splice mistake twice
+in an hour, soft-scope twice, and a heredoc inside a hook-blocked command FOUR times. That is fatigue
+in a long context, not a capability limit. A fresh session reading THIS FILE will move faster.
+
+---
+
 ## Milestone 1 — in order, 1.2 FIRST
 
 | # | item | why this order |

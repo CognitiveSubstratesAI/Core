@@ -29,7 +29,12 @@ end
 const _V = MeTTaCore.StandardMeTTa
 
 "Compiled `hc`: `(hc \$u)` reduces to `schiphol` AND binds `\$u` to it. Returns NO-MATCH otherwise."
-function _chs_hc(args::Vector{_V.Atom}, space)
+function _chs_hc(call::_V.Atom, space)
+    # ⚠️ TAKES THE CALL ATOM, not a Vector of args. The seam passes `to_eval` itself since
+    # 2026-09-03: rebuilding a call from (head, args) LOSES SHAPE — a zero-arg call `(d)` has no
+    # children past the head, so a reconstruction yields the bare symbol and matches nothing.
+    args = (call isa _V.Expression && length(call.children) > 1) ?
+           _V.Atom[call.children[2:end]...] : _V.Atom[]
     length(args) == 1 || return Eval.ExecNoReduce()
     u = args[1]
     u isa _V.Var || return Eval.ExecNoReduce()      # ground/mismatched call ⇒ no clause matched
@@ -177,7 +182,9 @@ end
         Eval.uncompile_all!()
         sp = Eval.Space(); load_core_stdlib!(sp)
         # closure for `f`: `(f $x)` reduces to `(g $x)` — the OUT is NOT ground.
-        function f_nonground(args::Vector{_V.Atom}, space)
+        function f_nonground(call::_V.Atom, space)
+            args = (call isa _V.Expression && length(call.children) > 1) ?
+                   _V.Atom[call.children[2:end]...] : _V.Atom[]
             length(args) == 1 || return Eval.ExecNoReduce()
             u = args[1]
             bs = _V.add_var_binding(_V.Bindings(), _V.Var("x"), u)
