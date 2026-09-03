@@ -1096,6 +1096,69 @@ and it may make 1.1/1.4 much cheaper than the ~8 600-vs-250 line comparison sugg
 
 ---
 
+## 7.F — THE TABLED BASELINE, and the script that owns it (2026-09-03)
+
+**Cite `Core/tools/bench_fib.jl` for any perf claim on this lane.** It warms, VERIFIES THE ANSWER
+against a BigInt reference computed in-script, runs N times, reports MIN AND SPREAD, and prints TREE
+IDENTITY (`rule_results` / `inlined_lookups` counts) so an A/B cannot silently measure one side twice.
+
+### Numbers, all same-machine same-hour, nothing else running
+
+| workload | Core | PeTTa -> SWI |
+|---|---|---|
+| tabled `fib(90)` | **0.117 s** | **< ~0.01 s** (marginal; 0.306 s total vs a 0.307 s startup floor) |
+| untabled `fib(16)` | **12.00 s** (spread 1.01x) | 0.43 s total |
+| tabled `fib(30)` | 0.08 s | 0.35 s total (~all startup) |
+
+⇒ **Core is ~12x slower than SWI-native tabling on marginal compute.** Constant-factor interpreter
+overhead — NOT a scaling defect: Core's tabled `fib(16)`->`fib(30)` goes 0.02 s -> 0.08 s, i.e. the
+memoisation genuinely works (untabled `fib(30)` is ~2^30 calls).
+
+⚠️ **PeTTa's wall-clock is ~ALL SWI BOOT.** Its noop program costs 0.307 s and tabled `fib(90)` costs
+0.306 s. Any PeTTa comparison that does not subtract the floor is measuring process startup. I
+reported "Core is 14x SLOWER" (Core-cold vs PeTTa-steady) and then "Core is 4x FASTER" (Core-warm vs
+PeTTa-with-startup) before measuring marginal cost on both sides. Only the ~12x figure is comparable.
+
+### 🔴 ROW 233's `0.44 s` IS SUPERSEDED, NOT WRONG — and the number stays as recorded
+
+`CODEMAP` row 233 records `!(fib 16)` 19.4 s -> 0.44 s through `compile_run(…; auto_table=true)`.
+Re-measured warm on 2026-09-03, Core does tabled `fib(16)` in **0.02 s** — 20x faster than its own
+recorded figure. That is consistent with 0.44 s having been measured SEMI-WARM (no dedicated warmup),
+so it is a floor on that day's methodology rather than a target. **Do not edit the row**; it is an
+honest record of what was measured then. Cite `bench_fib.jl` for current numbers.
+
+### 🔴 TWO PRE-EXISTING DEFECTS, found by the benchmark's answer check
+
+1. **SILENT Int64 OVERFLOW IN MeTTa ARITHMETIC.** `fib(92)` is the last correct value. `fib(93)`
+   returns **`-6246583658587674878`** — a NEGATIVE Fibonacci number, no error, no promotion.
+   `fib(1000)` returns a wrong 18-digit value in 2.96 s and looks like a clean measurement.
+   `NumericSeam.jl` is the designated owner for numeric boundary decisions; whether this is
+   deliberate (hyperon is i64-backed) or an unguarded edge is UNVERIFIED — check the spec before
+   calling it a bug. ⚠️ But any MeTTa program doing arithmetic past 2^63 gets a wrong answer silently.
+2. **TABLED DEEP RECURSION OVERFLOWS THE JULIA STACK.** `fib(2000)` tabled dies with
+   `StackOverflowError` even though tabling makes the WORK linear. This contradicts `Eval.jl`'s own
+   "deep MeTTa recursion grows the heap plan, not the Julia stack" — so either that guarantee does
+   not cover the tabled path, or `_reduce`/`metta_step` recurses natively. Ceiling is between 1000
+   (runs) and 2000 (throws).
+3. ⚠️ Also measured: untabled `fib(20)` burns 23 s and returns **`<EMPTY>`** — it exhausts
+   `_INTERPRET_MAX` (default 512_000) and `compile_run` surfaces that in `exhausted` rather than
+   throwing. A benchmark above `fib(16)` untabled times an exhausted run.
+
+### The A/B that `d5ef1be` claimed without establishing
+
+`d5ef1be`'s "within noise" was RIGHT and rested on a CROSS-DAY comparison, which attributes nothing.
+Re-run properly — same tree, two files swapped via `git checkout 61490d2 -- src/standard/{Eval,Tabling}.jl`,
+nothing else running, answers verified, tree identity printed per arm:
+
+    BEFORE  rule_results=0 inlined=5   tabled 0.1189 s   untabled 12.1226 s  spread 1.01x
+    AFTER   rule_results=1 inlined=1   tabled 0.1166 s   untabled 12.0034 s  spread 1.01x
+
+⇒ **the five-lookups-to-one refactor is FREE** — marginally faster, inside a 1% spread.
+⚠️ An earlier attempt showed a 78% spread (24.8-44.1 s); that was CONTENTION from jobs I ran
+concurrently, not an inherent noise floor. Run the bench alone.
+
+---
+
 ## 7.E — THE SUBSTITUTION FIX: what lands it, and the check that can FAIL
 
 **Status 2026-09-02: DIAGNOSED, ATTRIBUTED, PINNED IN TWO FILES. Not fixed.**
