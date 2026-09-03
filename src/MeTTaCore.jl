@@ -142,6 +142,9 @@ include("compiler/EmitIL.jl")
 # stage 4c: A-normal clauses -> JULIA CLOSURES. AFTER EmitIL — imports its `_atom_of`, whose
 # `specials::Bool` flag is the two-builder split EmitIL warns about (one builder is the easy mistake).
 include("compiler/EmitJulia.jl")
+# stage 4d: A-normal clauses -> GENERATED JULIA CODE (Expr -> eval -> invokelatest).
+# Splices the EXISTING grounded Operation from TOKEN_REGISTRY; does NOT reimplement arithmetic.
+include("compiler/EmitJuliaCode.jl")
 
 # MeTTa-IL → surface MeTTa: the INVERSE of EmitIL.jl, and the oracle for it. `decompile ∘ compile ≡ id`
 # observes a defect class no answer-comparison can — a lowering that changes a clause's MEANING while
