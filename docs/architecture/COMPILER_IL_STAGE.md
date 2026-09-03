@@ -79,69 +79,94 @@ That is a hypothesis to MEASURE on the corpus, not a claim to assert; the ratche
 Oracle, not pinned literals: feed each emitted clause to `Eval.jl` and compare answers against the
 same source program through the interpreter. Assert on evaluated **answers**, never on emitted text.
 
-## 5. CORRECTED (2026-09-03) — there is NO map-atom gap; `max_steps` EXHAUSTION IS SILENT
+## 5. ROOT CAUSE (2026-09-03) — a CROSS-HEAD call in `let`-VALUE position is frozen as DATA
 
-An earlier revision of this section (commit `dfe1536`) claimed the compiled lane could not evaluate
-`map-atom` over a recursively-built list. **That claim was WRONG and is retracted.** The compiled
-lane is correct. What follows is the real defect, which is about DIAGNOSABILITY, not semantics.
+This section was wrong twice before landing here. Both earlier readings are recorded at the end,
+because each was refuted by a cheaper test than the one that produced it.
 
-### The actual behaviour
+### The defect
 
-`compile_run` returns an EMPTY ANSWER GROUP when it exhausts `max_steps`. An empty group is exactly
-what a query with genuinely no answers returns, so **budget exhaustion is indistinguishable from a
-correct negative result**. Nothing in the return value says "I ran out".
-
-Sweeping the one parameter I was passing myself settles it — same program, same process:
-
-```
-max_steps=    4000   <NO ANSWER>
-max_steps=   20000   (0 1 1 2 3 5)
-max_steps=  100000   (0 1 1 2 3 5)
-max_steps= 2000000   (0 1 1 2 3 5)
-```
-
-And the 2x2 that the retracted section said was a broken pairing — all four cells pass at a
-sufficient budget:
-
-| list source            | template     | result at max_steps = 2_000_000 |
-|------------------------|--------------|---------------------------------|
-| literal `(0 1 2 3 4 5)`| `(+ $x 1)`   | `(1 2 3 4 5 6)`                 |
-| literal                | `(fib $x)`   | `(0 1 1 2 3 5)`                 |
-| recursive `(upto 0 5)` | `(+ $x 1)`   | `(1 2 3 4 5 6)`                 |
-| recursive              | `(fib $x)`   | `(0 1 1 2 3 5)`                 |
-
-`(fib $x)` inside `map-atom` is simply expensive — the budget, not the construct, was the variable.
-
-### Why this is still worth a section
-
-1. **It manufactured a false cross-engine divergence.** `workflows/metta_xcheck.sh` calls
-   `compile_run(...; max_steps = 40000)` for ONE FILE containing MANY queries, and the budget is
-   spent across all of them. Early queries starve later ones, so the "Core COMPILED lane" column
-   showed a partial answer list and the verdict read DIVERGENCE while every other engine agreed.
-   The lane was right; the budget was too small and said nothing.
-2. **It cost a whole bisection.** Seven constructs were varied before the one number being passed
-   in was. [[feedback_cheapest_disconfirming_test_first]]
-
-### The fix worth making
-
-Exhaustion must be OBSERVABLE in the result — a flag, a distinct sentinel, or a raised error —
-so a caller can tell "no answers" from "ran out of steps". Until then, any `compile_run` caller
-reporting a negative result is reporting an unfalsifiable one, and `metta_xcheck.sh` should pass a
-budget scaled to the query count.
-
-### Genuinely open, NOT explained by the budget
-
-The `decons-atom` spelling of the same program does not terminate in a reasonable time and is not
-bounded by `max_steps` as expected: at `max_steps = 40000` it held the MettaJam interpreter lock
-198s+, and at `max_steps = 200_000` it exceeded a 30s deadline still running, twice requiring a
-server restart.
+`compile_run` answers EMPTY for a head whose body `let`-binds a call to ANOTHER user-defined head:
 
 ```metta
-(= (map-t $f $l)
-   (if (== $l ()) () (let ($h $t) (decons-atom $l) (let $m (map-t $f $t) (cons-atom ($f $h) $m)))))
-!(let $ix (upto 0 5) (map-t fib $ix))
+(= (upto $k $n) (if (> $k $n) () (let $rest (upto (+ $k 1) $n) (cons-atom $k $rest))))
+(= (fl   $n)    (let $ix (upto 0 $n) (map-atom $ix $x (fib $x))))
+!(fl 5)     ; compiled: <EMPTY>    interpreter: (0 1 1 2 3 5)
 ```
 
-No root cause claimed. Whether this is the same budget being consumed far more slowly, or a path
-`max_steps` does not bound at all, is UNDETERMINED — the two were not distinguished, and the
-distinction is the whole question.
+`compiled = 3`, `fell_back = 0`, `exhausted = String[]` — the compiler accepted it, declined nothing
+and did not run out of steps. It emitted a wrong clause. Compare the IL, same program, same run:
+
+```
+upto  ✅  … (chain (metta (upto $__t3 $n) %Undefined% &self) $__t4 (unify $rest $__t4 …
+fl    ❌  (= (fl $n) (function (unify $ix (upto 0 $n) (return (map-atom $ix $x (fib $x))) …
+```
+
+`upto`'s call is LIFTED into `chain (metta …)` and evaluated. `fl`'s is not: `$ix` unifies with the
+UNEVALUATED TERM `(upto 0 $n)`. `map-atom`'s list parameter is typed `Expression` and so receives it
+unreduced, deconses it as data, and the head symbol leaks into the result — the visible signature is
+a stray `upto` where a value belongs:
+
+```
+(= (f2 $n) (let $ix (upto 0 $n) (map-atom $ix $x (+ $x 1))))   ⟹  ((+ upto 1) 1 6)
+```
+
+That WRONG ANSWER is worse than the empty one and comes from the same lowering.
+
+### Which calls get lifted — measured, one process
+
+| call in `let`-value position | lifted? |
+|---|---|
+| grounded primitive `(+ $n 1)`            | ✅ `chain (metta …)` |
+| SELF-recursive `(b3 (- $n 1))`           | ✅ `chain (metta …)` |
+| **CROSS-HEAD `(fib $n)`, `(upto 0 $n)`** | ❌ **bare `unify`** |
+| undefined head `(zzz $n)`                | ❌ bare `unify` |
+
+A nested argument does NOT rescue it: in `(upto 0 (+ $n 0))` the inner grounded call lifts and the
+outer cross-head call still does not.
+
+### Why — and it is ALREADY DOCUMENTED HERE
+
+`ANormal.jl:341` decides CALL vs DATA by `is_fun(c, h, length(args))`, a STATIC set. A head that is
+not in it "is DATA and stays a term, producing NO goal and being its own value". Cross-head callees
+are not in that set, so they freeze.
+
+`ANormal.jl:160-195` already states the whole thing, including the failed fix:
+
+> Passing the Space's defined heads through as `extra_funs` was tried on 2026-08-11 and the corpus
+> differential rejected it … "give `is_fun` the whole program" is NOT sufficient and is actively
+> harmful on its own.
+> WHAT PeTTa ACTUALLY HAS, and we have only half of. It runs BOTH mechanisms: a global `fun/1`
+> AND the runtime dispatcher `reduce/2`, which keeps the term when `fun(F)` fails
+> (`Out = partial(F,Args)`). We took the static half and have no deferral, so an unresolved head is
+> frozen as data forever instead of being decided at run time.
+
+So the fix shape is fixed and known: Space-wide `is_fun` for what is statically known **plus** a
+`metta` chain for what is not. Neither half alone. See [[feedback_is_fun_static_half_alone_is_harmful]].
+
+**This is why the INTERPRETER has no such bug**: it decides call-vs-data at RUN time, where the head
+is either defined or it is not. The compiler must decide at COMPILE time, and currently answers "not
+a function" for every head outside a narrow static set.
+
+### `f4` LOOKED like it worked, and did not
+
+`(= (f4 $n) (let $ix (0 1 2 3) (map-atom $ix $x (fib $x))))` returns the right answer — because it is
+DECLINED and falls back to SOURCE. This lane's own docstring warns of exactly this: *"a fallback that
+silently rescues the result is how a compiler comes to look complete."* Use `fallback=false` when
+measuring compiled coverage; a passing answer is not evidence the compiled path produced it.
+
+### Two refuted readings, kept so they are not re-derived
+
+1. **"map-atom over a recursively-built list is unsupported"** (`dfe1536`) — WRONG. Bisected across
+   seven constructs without varying the one number being passed in.
+2. **"it is silent `max_steps` exhaustion"** (`03ec332`) — ALSO WRONG, in the opposite direction, and
+   it over-retracted a real defect. `max_steps` IS surfaced, in the `exhausted` field, which was
+   empty here. The budget *is* real for the INLINE spelling (4000 fails, 20000 passes) — but the
+   INLINE spelling is a different lowering path from the DEFINED-HEAD one, and only the latter is
+   broken. Comparing them without noticing that is what produced the false retraction.
+
+### Still open, NOT explained by this
+
+The `decons-atom` spelling does not terminate reasonably — 198s at `max_steps = 40000`, still running
+past a 30s deadline at 200_000, twice forcing a server restart. Whether that is this same frozen-term
+defect spinning, or a path `max_steps` does not bound, is UNDETERMINED.
