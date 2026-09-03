@@ -42,6 +42,57 @@
 #
 # ⚠️ AND THERE IS NO UPSTREAM ORACLE FOR THIS FILE. The swipl differential covers TABLING, which is a
 # port; the index is ours. Any change here needs its own test — it cannot lean on `swipl_tabling_oracle.sh`.
+#
+# 🔶 PARTIALLY WRONG, corrected 2026-09-03: a partial oracle DOES exist —
+# `dev-zone/swipl-devel/tests/db/test_jit.pl` (237 lines). Most of it is useless to us (6 of ~25
+# tests assert DETERMINISM — `Det == true`, `var(Det)`, `nondet` — which is meaningless here), but
+# `test(retract)` / `test(retract2)` / `test(clause)` (:101-115) assert the COMPLETE, ORDERED answer
+# set (`Xs == Xsok`, `numlist(11,100,Xsok)`) survives enumeration while the index is mutated
+# underneath, including a `garbage_collect_clauses/0` fired mid-walk. That is exactly our multiset
+# requirement, and `test(remove)` ×2 covers index MIGRATION between arguments. Reframe as: "the index
+# yields a SUPERSET of the true matches, and enumerating it gives exactly the true multiset in source
+# order." [[feedback_upstream_tests_are_the_first_thing_to_port]]
+#
+# ── 🔴 IF YOU TAKE MORE OF `pl-index.c`, TWO OF ITS DECISIONS ARE WRONG FOR A MULTISET LANGUAGE ──
+# Analysed 2026-09-03 against HEAD `63240a40`. We currently have NEITHER — verified by grep, not
+# assumed. Do not acquire them by transcribing.
+#
+#   1. THE METRIC IS BIASED TOWARD DETERMINISM. We ported the formula's clean half. Upstream then
+#      divides by a stdev term ("punish bad distributions", `pl-index.c:2657-2660`) and bails out at
+#      `a->size == 1` (`:2652`), because for Prolog an argument where every clause shares a key is a
+#      FAILURE. For MeTTa that is a legitimate multi-answer relation. `first_clause_guarded`
+#      (`:672-690`) also short-circuits the moment the primary scan is unique, and only hunts for a
+#      better index when it finds DUPLICATES — the opposite of what we want.
+#      ✅ ABSENT here: no `stdev`, no `perfect_size`, no `size == 1` bailout, nothing dedupes.
+#
+#   2. 🔴 DEEP (nested-argument) INDEXING IS INCOMPLETE BY DESIGN — IT DROPS ANSWERS.
+#      `nextClauseFromList` (`:380-410`) recurses into the matching functor and RETURNS
+#      UNCONDITIONALLY; the variable-clause sublist (`!cref->d.key`) is reached only when the functor
+#      lookup FAILS. Upstream knows, and guards it by building a list index only when NO clause has a
+#      variable there (`var_count == 0`, `:2666-2669`), admitting at `:2599-2603`: *"we cannot combine
+#      variables with functor indexes … after going into the recursive indexes we lose the context to
+#      find the unbound clause."*
+#      That precondition WE CANNOT HONOUR. MeTTa heads routinely mix them: `(= (foo (bar $x)) …)` and
+#      `(= (foo $y) …)` must BOTH fire on `(foo (bar 1))`. Porting `nextClauseFromList` as-is would
+#      silently drop the second — the same defect class as the frozen-call miscompile
+#      (`COMPILER_IL_STAGE.md` §5). The idea is worth having; the control flow must union the functor
+#      and variable sublists instead of tail-calling.
+#      ✅ ABSENT here: no deep/list index at all.
+#
+# ── AND `MAX_LOOKAHEAD` IS DEAD WEIGHT FOR US ──
+# `pl-index.c:302-320` scans ahead up to 100 clauses PURELY to answer "will there be a second
+# answer?", so the VM can skip creating a choice point. We always want every answer. ✅ ABSENT.
+#
+# ── COST, IF SOMEONE PROPOSES TAKING MORE ──
+# You cannot PORT this file, you can only READ it. Every index key upstream derives from a stored
+# clause comes from decoding WAM head BYTECODE (`indexKeyFromClause` :1600 -> `skipToTerm` :2733 ->
+# `argKey` pl-comp.c:5416); no function there takes a clause and a TERM. That is ~450 lines replaced
+# by ~60 in Julia. About 60% of the 4128 lines are deletions for us: ~540 MVCC/generations, ~150
+# threading, ~640 Prolog-level plumbing. A full port is ~1000-1200 lines of Julia, a useful subset
+# ~400-500 — concentrated in the assessment/policy layer, which is the part already here.
+# READ FIRST, before any C: `dev-zone/swipl-devel/man/overview.plx:3761` (§Just-in-time clause
+# indexing) and `:3859` (§Deep indexing) — ~140 lines of prose giving the strategy ordering, the
+# formula's rationale, and deep indexing's stated limitations.
 
 # ── DISCRIMINATION-TRIE TYPES — HOISTED HERE ON PURPOSE ──────────────────────────────────────────
 # These are declared BEFORE `VectorStore` only so that `bucket_trie` can name its value type. They
