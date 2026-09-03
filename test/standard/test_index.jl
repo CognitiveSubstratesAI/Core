@@ -1,6 +1,13 @@
 # test_index.jl — the ADAPTIVE (JIT) argument-index assessment. `src/standard/Index.jl`.
 #
-# 🔴 THIS FILE EXISTS BECAUSE THERE IS NO UPSTREAM ORACLE FOR IT. `workflows/swipl_tabling_oracle.sh`
+# 🔶 CORRECTED 2026-09-03: "no upstream oracle" was TOO STRONG — SWI ships an indexing suite at
+# `dev-zone/swipl-devel/tests/db/test_jit.pl`, and its ANSWER-SET half is now ported alongside as
+# `test_index_jit_oracle.jl`. What is genuinely absent is an oracle for the ASSESSMENT below: 6 of
+# upstream's ~25 tests assert DETERMINISM, which is meaningless here, and its metric is deliberately
+# biased toward it (see `Index.jl`'s header). So this file's hand-computed formula values still stand
+# on their own — but the ANSWERS the index produces now have an upstream-derived grader.
+#
+# 🔴 THIS FILE EXISTS BECAUSE THERE IS NO UPSTREAM ORACLE FOR THE ASSESSMENT LAYER. `workflows/swipl_tabling_oracle.sh`
 # grades TABLING, which is a port; the index is ours, and `pl-index.c` cannot be run against us — its
 # unit of indexing is a CLAUSE with argument positions, ours is an ATOM in a store. What ports
 # EXACTLY is the speedup FORMULA (pl-index.c:3004-3020), so that is what this file pins, with values

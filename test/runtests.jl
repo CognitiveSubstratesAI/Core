@@ -257,6 +257,8 @@ Main.@suite("standard/tabling/upstream/test_xsb_delay_corpus.jl")
 # differential covers TABLING (a port), while the index is ours and pl-index.c's unit is a CLAUSE
 # with argument positions, not an ATOM in a store. The formula ports exactly; the plumbing does not.
 Main.@suite("standard/test_index.jl")
+Main.@suite("standard/test_index_jit_oracle.jl")  # the ANSWER-SET half of swipl tests/db/test_jit.pl —
+                                                 # indexed must equal unindexed exactly, duplicates and var-clauses included
 Main.@suite("standard/test_grounded_payloads.jl")
 # How a WFS bottom travels through the INTERPRETER: constructors and control forms must not
 # absorb one (a rule that ignores its argument must still fire), while strict ops must, and
