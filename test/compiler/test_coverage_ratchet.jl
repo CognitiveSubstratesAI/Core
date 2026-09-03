@@ -162,6 +162,19 @@ const FLOOR_TOTAL = 380    # of 1000  (377 -> 379 arity-aware `is_fun` 2026-08-1
 # With that declined, this lands clean: both corpora green, fuzz green, and the eval-one-step gate
 # still 0 violations over all 930 clauses. Reverting it was right; so was going back for it.
 const FLOOR_IL_TOTAL = 930   # of 1000
+# ── IL's RESIDUAL-FREE floor — how much of that 930 is actually COMPILED ────────────────────────
+# MEASURED 2026-09-03: 742 of 1000. ⇒ **20.2% of IL's EMITTED clauses carry a `GResidual` escape**,
+# i.e. `_instr(::GResidual)` renders the node VERBATIM into IL for the MINIMAL INTERPRETER to run.
+# A real deferral at a different layer — exactly what a closure calling `interpret` would be.
+#
+# 🔴 SO `FLOOR_IL_TOTAL = 930` OVERSTATES NATIVE COMPILATION BY ~188 CLAUSES, and nothing said so
+# until this floor existed. "Emitted" and "compiled" are DIFFERENT NUMBERS for any emitter with a
+# deferral path — IL, and the coming closure emitter — but NOT for MM2, whose exec atoms cannot
+# express an interpreter call, so there the two coincide.
+#
+# ⚠️ THIS IS THE HONEST BASELINE FOR A CLOSURE EMITTER'S THIRD NUMBER: comparing "closure
+# residual-free" against 930 would flatter it. 742 is the number to beat.
+const FLOOR_IL_RESIDUAL_FREE = 742   # of 1000
 
 "Parens balance, ignoring anything inside a MeTTa string literal."
 function _rt_balanced(s::AbstractString)::Bool
@@ -317,6 +330,7 @@ end
     # caught the zero-branch GDisj bug — a clause was counted emitted while producing nothing, and
     # only the totals disagreeing revealed it.
     il_em = 0
+    il_resfree = 0
     il_tot = 0
     il_out = 0
     il_decl = 0
@@ -330,6 +344,10 @@ end
         end
         r = MeTTaCore.CompilerEmitIL.emit_il_program(cls)
         il_em += r.emitted
+        for c in cls           # residual-free = emitted AND no `GResidual` anywhere in its goals
+            MeTTaCore.CompilerEmitIL.emit_il_clause(c) === nothing && continue
+            MeTTaCore.CompilerEmitIL._first_residual(c.goals) === nothing && (il_resfree += 1)
+        end
         il_tot += length(cls)
         il_out += length(r.clauses)
         il_decl += length(r.declined)
@@ -354,7 +372,10 @@ end
     @test !_rt_wellformed("(foo bar)")                           # not a `(=)` clause
     @test _rt_wellformed("(= (f \$x) (function (return \$x)))")  # …and a real one passes
     @info "MeTTa-IL coverage TOTAL" emitted=il_em total=il_tot floor=FLOOR_IL_TOTAL clauses_out=il_out
+    @info "MeTTa-IL RESIDUAL-FREE" residual_free=il_resfree emitted=il_em floor=FLOOR_IL_RESIDUAL_FREE
     @test il_em >= FLOOR_IL_TOTAL
+    @test il_resfree >= FLOOR_IL_RESIDUAL_FREE
+    @test il_resfree <= il_em                # residual-free is a SUBSET of emitted, never larger
     @test il_em + il_decl == il_tot          # every clause is emitted OR declined — never dropped
     @test il_out >= il_em                    # emission never produces FEWER clauses than it counts
     @test il_em > total_em                   # the IL is the better target; if this flips, find out why
