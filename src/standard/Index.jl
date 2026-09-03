@@ -19,11 +19,26 @@
 #                  above `_TRIE_MIN_BUCKET`. Threshold and idea from CeTTa `subst_tree` (space.c:497);
 #                  the TOKENS are MORK's `Expr` encoding (arity-prefixed pre-order) — see `_Tok`.
 #
-# ⚠️ 🔴 THE PRIMITIVE MeTTa PROGRAMS ACTUALLY USE DOES NOT COME HERE. `match` runs `_match_pat`
-# (`Eval.jl`), which scans `all_atoms` UNCONDITIONALLY — no key, no bucket, no trie. Everything in
-# this file serves `query()`, i.e. `(=)` rule lookup and `(:)` type lookup. MEASURED 2026-08-27:
-# `query` is O(1) at ~4 µs, while a `match` over 4000 atoms costs ~62 ms. So the largest indexing
-# opportunity in this engine is not tuning what is here — it is that `match` never arrives.
+# ⚠️ ✅ CORRECTED 2026-09-03 — THE WARNING BELOW WAS TRUE FOR ONE DAY AND IS NOW STALE. It read:
+# "THE PRIMITIVE MeTTa PROGRAMS ACTUALLY USE DOES NOT COME HERE. `match` runs `_match_pat`, which
+# scans `all_atoms` UNCONDITIONALLY … the largest indexing opportunity in this engine is that
+# `match` never arrives." MEASURED 2026-08-27: `query` O(1) at ~4 µs vs a `match` over 4000 atoms
+# at ~62 ms.
+#
+# THAT GAP WAS CLOSED THE SAME DAY THIS FILE WAS EXTRACTED, by the pl-index port itself:
+#   a0447d6  port pl-index.c's ADAPTIVE argument selection (the assessment layer, with its oracle)
+#   78e6358  WIRE the JIT argument index into `match` — O(N) becomes O(1) on a ground argument
+#   f10505d  fix: `arg_tried` must be keyed (head, POSITION)
+# `_match_pat` (`Eval.jl:2550`) now calls `index_candidates(...)`, which returns the full store
+# whenever no index applies — so the unindexed behaviour stays bit-identical.
+#
+# The header was simply never updated after the wiring landed. Left visible rather than deleted
+# because a stale "largest opportunity" note is exactly the kind of thing a later session acts on:
+# it would send someone to build what `78e6358` already shipped.
+# [[feedback_verify_code_body_not_comments]] · [[feedback_refresh_generated_indexes_after_commits]]
+#
+# STILL TRUE from the original note: the three structures below serve `query()` — `(=)` rule lookup
+# and `(:)` type lookup. What changed is that `match` ALSO reaches the JIT argument index now.
 #
 # ⚠️ AND THERE IS NO UPSTREAM ORACLE FOR THIS FILE. The swipl differential covers TABLING, which is a
 # port; the index is ours. Any change here needs its own test — it cannot lean on `swipl_tabling_oracle.sh`.
