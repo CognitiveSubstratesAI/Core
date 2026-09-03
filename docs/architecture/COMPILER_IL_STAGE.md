@@ -79,45 +79,69 @@ That is a hypothesis to MEASURE on the corpus, not a claim to assert; the ratche
 Oracle, not pinned literals: feed each emitted clause to `Eval.jl` and compare answers against the
 same source program through the interpreter. Assert on evaluated **answers**, never on emitted text.
 
-## 5. MEASURED GAP (2026-09-03) — `map-atom` over a RECURSIVELY-COMPUTED list returns NO ANSWER
+## 5. CORRECTED (2026-09-03) — there is NO map-atom gap; `max_steps` EXHAUSTION IS SILENT
 
-`compile_run` silently returns an EMPTY answer group where the interpreter answers correctly. Not a
-crash, not a decline — the answer group is present and empty, so anything counting *groups* rather
-than *answers* reads this as success. Found by running a fib-list exercise across the engines:
-hyperon, CeTTa, PeTTa and the Core interpreter all returned `(0 1 1 2 3 5)`; the compiled lane
-returned nothing for two of three queries.
+An earlier revision of this section (commit `dfe1536`) claimed the compiled lane could not evaluate
+`map-atom` over a recursively-built list. **That claim was WRONG and is retracted.** The compiled
+lane is correct. What follows is the real defect, which is about DIAGNOSABILITY, not semantics.
 
-REPRO (`MeTTaCore.compile_run(src; max_steps = 4000)`):
+### The actual behaviour
 
-```metta
-(= (fib $n)  (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))
-(= (upto $k $n) (if (> $k $n) () (let $rest (upto (+ $k 1) $n) (cons-atom $k $rest))))
-!(let $ix (upto 0 5) (map-atom $ix $x (fib $x)))    ; compiled: <NO ANSWER>   interp: (0 1 1 2 3 5)
+`compile_run` returns an EMPTY ANSWER GROUP when it exhausts `max_steps`. An empty group is exactly
+what a query with genuinely no answers returns, so **budget exhaustion is indistinguishable from a
+correct negative result**. Nothing in the return value says "I ran out".
+
+Sweeping the one parameter I was passing myself settles it — same program, same process:
+
+```
+max_steps=    4000   <NO ANSWER>
+max_steps=   20000   (0 1 1 2 3 5)
+max_steps=  100000   (0 1 1 2 3 5)
+max_steps= 2000000   (0 1 1 2 3 5)
 ```
 
-ISOLATED — every ingredient works ALONE, so this is a pairing, not a missing feature:
+And the 2x2 that the retracted section said was a broken pairing — all four cells pass at a
+sufficient budget:
 
-| case                                                   | compiled lane   |
-|--------------------------------------------------------|-----------------|
-| `map-atom` over a LITERAL list                          | `(0 1 1 2 3 5)` |
-| `upto` alone (bare, or wrapped in a user head)          | `(0 1 2 3 4 5)` |
-| `let`-bound **literal** + `map-atom`                    | `(0 1 1)`       |
-| `let`-bound list from a **recursive** fn + `map-atom`   | **`<NO ANSWER>`** |
+| list source            | template     | result at max_steps = 2_000_000 |
+|------------------------|--------------|---------------------------------|
+| literal `(0 1 2 3 4 5)`| `(+ $x 1)`   | `(1 2 3 4 5 6)`                 |
+| literal                | `(fib $x)`   | `(0 1 1 2 3 5)`                 |
+| recursive `(upto 0 5)` | `(+ $x 1)`   | `(1 2 3 4 5 6)`                 |
+| recursive              | `(fib $x)`   | `(0 1 1 2 3 5)`                 |
 
-`car-atom`/`cdr-atom`/`cons-atom`/`decons-atom`/`chain`/`function`+`return`/`unify`/`let` each
-compile and evaluate correctly in isolation. The failing ingredient is the COMBINATION: a value
-produced by a RECURSIVE user-defined function, `let`-bound, then passed to `map-atom` (whose list
-parameter is typed `Expression` and so receives its argument UNREDUCED).
+`(fib $x)` inside `map-atom` is simply expensive — the budget, not the construct, was the variable.
 
-A RELATED and probably same-root symptom: the `decons-atom`-recursion spelling of the same program
-(`(= (map-t $f $l) (if (== $l ()) () (let ($h $t) (decons-atom $l) ...)))`) did not return empty —
-it HUNG, holding the MettaJam interpreter lock for 198s+ past `max_steps = 40000`, requiring a
-server restart. Whatever bounds `max_steps` did not bound that path.
+### Why this is still worth a section
 
-WHY §4's ORACLE DID NOT CATCH IT: §4 is the right oracle and it is wired — it compares compiled
-answers against interpreter answers. It cannot see a defect the CORPUS never exercises, and no
-corpus program passes a recursively-built list to a `Expression`-typed stdlib parameter. The fix is
-a corpus entry, not a new oracle. [[feedback_oracle_inherits_corpus_coverage]]
+1. **It manufactured a false cross-engine divergence.** `workflows/metta_xcheck.sh` calls
+   `compile_run(...; max_steps = 40000)` for ONE FILE containing MANY queries, and the budget is
+   spent across all of them. Early queries starve later ones, so the "Core COMPILED lane" column
+   showed a partial answer list and the verdict read DIVERGENCE while every other engine agreed.
+   The lane was right; the budget was too small and said nothing.
+2. **It cost a whole bisection.** Seven constructs were varied before the one number being passed
+   in was. [[feedback_cheapest_disconfirming_test_first]]
 
-NOT YET DIAGNOSED: no root cause is claimed here. The above is the reproducer and the bisection,
-recorded so the next session starts from the narrow case rather than the exercise.
+### The fix worth making
+
+Exhaustion must be OBSERVABLE in the result — a flag, a distinct sentinel, or a raised error —
+so a caller can tell "no answers" from "ran out of steps". Until then, any `compile_run` caller
+reporting a negative result is reporting an unfalsifiable one, and `metta_xcheck.sh` should pass a
+budget scaled to the query count.
+
+### Genuinely open, NOT explained by the budget
+
+The `decons-atom` spelling of the same program does not terminate in a reasonable time and is not
+bounded by `max_steps` as expected: at `max_steps = 40000` it held the MettaJam interpreter lock
+198s+, and at `max_steps = 200_000` it exceeded a 30s deadline still running, twice requiring a
+server restart.
+
+```metta
+(= (map-t $f $l)
+   (if (== $l ()) () (let ($h $t) (decons-atom $l) (let $m (map-t $f $t) (cons-atom ($f $h) $m)))))
+!(let $ix (upto 0 5) (map-t fib $ix))
+```
+
+No root cause claimed. Whether this is the same budget being consumed far more slowly, or a path
+`max_steps` does not bound at all, is UNDETERMINED — the two were not distinguished, and the
+distinction is the whole question.
