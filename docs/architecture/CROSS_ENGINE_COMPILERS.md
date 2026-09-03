@@ -131,3 +131,185 @@ row records CeTTa OOMing where PeTTa completes.
 
 So: no cross-engine speed claim from any of these repos is citable without re-running it here.
 [[feedback_upstream_number_has_a_pair_and_a_unit]]
+
+---
+
+# PART II — four more repos, 2026-09-03 (same day)
+
+Read after Part I, at the user's request: `MeTTaIL`, `mettail-rust`, `rholang-rs`, `MeTTaScript`, plus
+`MeTTa-Compiler` (MeTTaTron), which was NOT requested — it was noticed while listing `dev-zone` for
+something else, and it is a MeTTa compiler sitting unread while we debug ours. That is the failure
+the VISIBILITY PROTOCOL exists to prevent; a targeted search is not a survey.
+[[feedback_targeted_search_is_not_a_survey]]
+
+## 6. 🔴 TWO NAME COLLISIONS — neither "mettail" repo is our MeTTa-IL
+
+**Check this before citing either repo.** Both were plausible reads of the name and both are wrong.
+
+| repo | what it ACTUALLY is | proof |
+|---|---|---|
+| `mettail-rust` | a K-Framework-style **language-definition framework** (F1R3FLY-io). A `language!` proc-macro generating a parser + Ascent Datalog rewrite engine from a spec. Motivating case: rho-calculus. | `grep -rniE "metta" --include='*.rs' . \| grep -viE "mettail\|metta_il"` → **0**. `PatternTerm`/`Pattern` are closed enums with NO control-flow variant. |
+| `MeTTaIL` (F1R3FLY) | **"Meta Type Talk Intermediate Language"** — Meredith's meta-language for ALGEBRAIC THEORY PRESENTATIONS. A `.module` composes theories in a lattice algebra (`/\`, `\/`, `\`, `Exports`, `Terms`, `Equations`, `Rewrites`) and elaborates to a BNFC grammar. | Its whole term language is 3 constructors — `ASTVar`, `ASTSExp`, `ASTSubst` (`metta_venus.cf:313-315`). No `chain`, no `cons-atom`, no A-normal form anywhere. |
+
+**The thing that IS our MeTTa-IL exists upstream under a different name: "minimal MeTTa",** in LeaTTa's
+`MettaHyperonFull/Minimal/Interpreter.lean` — a CPS nondeterministic stack machine, and a faithful
+port of Hyperon's `interpreter.rs`.
+
+**⇒ Our instruction set is a STRICT SUBSET of theirs: 8 of 13.**
+
+    ours:    chain unify function return decons-atom cons-atom eval metta
+    theirs:  …those 8… + evalc collapse-bind superpose-bind metta-thread capture context-space
+
+Nothing of ours is missing upstream. INFERRED and worth testing: `GDisj`/`GFindall` are
+`superpose-bind`/`collapse-bind`. That matters because LeaTTa runs Hyperon's UNMODIFIED corpus (270
+assertions), so those two are the road to oracle-compatibility. Their `unify` is 4-ary
+`(unify a p t e)` — ✅ so is ours, checked against today's IL dumps.
+
+**TEXT SERIALIZATION IS VINDICATED, with the same rationale we used.** `MeTTaIL/Runtime/Sexpr.lean:5-16`:
+*"gives every dialect a uniform surface syntax for free, with no per-dialect parser."* They use `$x`
+for variables, as we do. Interop is nearly free. [[reference_il_text_roundtrip_is_the_wire_format]]
+
+**⚠️ THE PROJECT RULE'S NAME COLLIDES.** "MeTTa-IL IS THE DISTRIBUTED ARTIFACT (MORK/Rholang/JAX/Rust)"
+may be right about OUR artifact, but upstream the thing that goes to Rholang is a **GSLT
+presentation** and the thing that goes to MORK is a **coded atom** (`MorkCodec`: 6-bit arity fields,
+≤64 var slots). Neither is an instruction stream. **JAX appears NOWHERE** in either repo — the
+analogue is `MeTTaIL2Matrix` (rholang → symbolic execution → automata → triangularize → GPU).
+Consider "minimal-MeTTa IL" in anything published. [[feedback_mettail_is_the_distributed_artifact]]
+
+## 7. THE CALL-vs-DATA TABLE, EXTENDED — and the one design that cannot have our bug
+
+| engine | how it decides | on doubt |
+|---|---|---|
+| **PeTTa** | whole-program PRE-PASS + arity-keyed `fun/1` | defers to run time (`reduce/2` keeps the term) |
+| **CeTTa** | bit-set of proof obligations | DECLINES, counted, with a reason |
+| **MeTTaScript** | `hasEquations()` index lookup; **default-data** | **`BAIL`** — throws, re-runs in the interpreter |
+| **JeTTa** | resolver `resolved != null` | quotes it silently |
+| **MeTTaTron** | *never decides at compile time* | data — **and mutates the space**, plus a Levenshtein carve-out |
+| **OURS (was)** | static set, filled PER FORM | emitted a wrong clause |
+| **OURS (now)** | + `_space_defines_rule` guard | DECLINES (`4decc63`) |
+
+### 🔴 PeTTa's pre-pass is the ONLY design that STRUCTURALLY cannot have this bug
+MeTTaTron reaches OUR EXACT FAILURE SHAPE from a different direction: `(= …)` is a RUNTIME special
+form (`eval/space.rs:29`) and the driver is strictly sequential (`main.rs:191`), so **rule visibility
+is TEXTUALLY POSITIONAL** — a call written above its own definition silently becomes data. Same
+defect, arrived at by having no pre-pass rather than by having a per-form one.
+
+### MeTTaScript is the closest to what we should build, and it converges on today's guard
+`compile.ts:94-98`, verbatim:
+
+```ts
+/** Whether `name` is defined by equations at all. Its negation is what marks a constructor, so a head
+ *  this misses is compiled as inert data and never reduces. */
+function hasEquations(env: MinEnv, name: string): boolean
+```
+
+That is `CompileLane._space_defines_rule` under another name — INDEPENDENT CONVERGENCE on the
+predicate written today. Three things they carry that we do not:
+
+1. **`BAIL`** (`compile.ts:130`) — a compiled node that meets a case it cannot handle faithfully
+   THROWS, and the call re-runs in the interpreter. Sound because the compiled subset is
+   side-effect-free. **That is our decline, but at RUN time, so it costs no coverage.**
+2. **A var-headed-rule KILL SWITCH** (`eval.ts:1694-1697`): *"A variable-headed runtime equation
+   `(= ($f $x) …)` can fire on a call to ANY head, so nothing compiled can be trusted while one is
+   loaded."* **We have no such check. It is a real soundness hole in ANY static call/data partition,
+   including the one shipped today.** ⇐ next thing to verify about our own lane.
+3. **Epoch invalidation, deliberately conservative**: *"a data position can cause extra compilation,
+   but a missing head can never expose stale compiled code."*
+
+### MeTTaTron's fuzzy fallback — a genuinely novel answer, and a cautionary one
+`eval/mod.rs:639-671`: an unknown head is classified by **Levenshtein distance ≤ 1** against known
+rule heads. Within 1 ⇒ `Error`. Otherwise ⇒ **added to the space as a fact** and returned as data.
+Two semantically opposite outcomes chosen by string similarity, and the failed call MUTATES THE
+SPACE. It is name-shape-sensitive in a way our static-set bug was not: adding an unrelated definition
+can flip a working program into an error.
+
+## 8. ANF: WE ARE THE ONLY ONE OF FIVE
+
+No A-normal form, CPS or SSA in CeTTa (196k LOC C), JeTTa, MeTTaTron (`grep` → 0; its `src/ir.rs` is a
+DOCUMENTED RENAME of `SExpr`, spans kept for LSP indexing), or PeTTa (a flat goal list, never
+materialized as a type). Not a reason to drop ours — but it is a design we must be able to justify
+rather than assume, and no upstream corroborates it.
+
+## 9. RHOLANG AS A TARGET — weaker than the project rule assumes
+
+* **`rholang-rs` has NO ZAM**, confirmed BY SHAPE, not just by name: a plain PC + operand-stack
+  machine, `cont_last` is a ONE-SLOT `(u32, Value)` register, no focus/path-to-root pair anywhere.
+  This CONFIRMS `docs/specs/Mork/concurrent_zipper_machines_spec.md:326`, which said so from a grep;
+  the shape search is the stronger version of the same claim.
+* **`P | Q` compiles SEQUENTIALLY** — `compile_par` emits `P; POP; Q` (`codegen.rs:754-770`). A
+  `SPAWN_ASYNC` opcode exists and codegen never emits it for `Par`.
+* **No scheduler, no priority, no gas.** Nothing resembling our DISPATCH priority or its
+  lexicographic-minimality argument. ⚠️ `AGENTS.md:14` advertises `drain_ready_processes` for
+  ready-queue scheduling; **that function does not exist in the source.** Stale doc.
+* The realistic seam is the 4-byte instruction word / public `Process { code, names, constants }` —
+  NOT Rholang surface syntax. That layer discards `Name::Quote` reflection and models channels as
+  `String`.
+* **MeTTaTron is NOT prior art for a MeTTa→Rholang compiler.** Its Rholang codegen is marked "the old
+  architecture", unimplemented (`docs/ISSUE_3_SATISFACTION.md:425-429`). The relationship is the
+  INVERSE of ours: Rholang CALLS IN via a `rho:metta:compile` sysproc and gets `Par`-encoded data
+  back — and a multi-result degrades to an ordinary `EList`, so even that bridge does not map MeTTa
+  nondeterminism onto Rholang's `|`.
+
+## 10. ⚠️ MeTTaTron DEPENDS ON MORK AND PATHMAP BY PATH
+
+`Cargo.toml:64-88` — `mork`, `mork-expr`, `mork-frontend`, `pathmap`. It is a downstream CONSUMER of
+the two upstreams we port. Its `Space::query_multi` rule lookup and its `exec`/`coalg`/`lookup`/
+`rulify` MeTTa-level operators are a live, non-trivial usage example of MORK — worth reading before
+designing anything MORK-facing.
+
+Scale caveat before weighting it: **30 kLOC of Rust against 139 kLOC of Markdown in 250 files** (4.5:1).
+Several headline claims have NO runnable driver in tree — "5-10x faster than FFI" (`README.md:610`),
+"100-1000× parallel speedup" (`Cargo.toml:98`). **No benchmark anywhere compares MeTTaTron to another
+MeTTa engine.** The citable artifact is `benches/e2e/e2e_throughput.rs`, not the prose.
+[[feedback_upstream_number_has_a_pair_and_a_unit]]
+
+## 11. BUDGETS, all seven engines
+
+| engine | bound | on exhaustion |
+|---|---|---|
+| PeTTa | none (`--stack_limit=8g`) | resource error |
+| CeTTa | none (`fuel_limit = -1`); C-stack guard 1–16 MiB | empty result set |
+| mettail-rust | **NONE — Datalog runs to fixpoint** | diverge / OOM |
+| rholang-rs | none found | — |
+| JeTTa | 1024 steps, runtime reducer ONLY | **silent** |
+| MeTTaTron | depth 1000 · cartesian 10000 · iterations 1000 | `Error` value |
+| **OURS** | `max_steps = 512_000`, both lanes | **surfaced in `exhausted`** |
+
+Ours remains the only one that REPORTS the overrun. Note MeTTaTron's are depth/width caps, not a fuel
+counter — closer to a stack guard than to a budget.
+
+## 12. WHAT TO DO WITH THIS
+
+1. 🔴 **THE VAR-HEADED-RULE HOLE IS REAL — CONFIRMED THE SAME HOUR, and it is a SEPARATE defect from
+   the frozen-call one.** MeTTaScript's kill switch pointed straight at it; one probe settled it.
+   [[feedback_cheapest_disconfirming_test_first]]
+
+   ```metta
+   (= (g 1) one)
+   (= ($f $x) (caught $f $x))     ; a VAR-HEADED rule — fires on a call to ANY head
+   !(g 1)
+   !(h 2)
+   ```
+
+   ```
+   COMPILED     (g 1) -> one                    (h 2) -> (h 2)
+   INTERPRETED  (g 1) -> (caught g 1) | one     (h 2) -> (caught h 2)
+   ```
+
+   `compiled=2  fell_back=0` — ACCEPTED, nothing declined. The compiled lane SILENTLY DROPS the
+   var-headed rule's answers: one answer where the interpreter gives two, and an unreduced term where
+   the interpreter reduces. A MISSING-ANSWER divergence, which no `fell_back` or `exhausted` field
+   reports.
+
+   NOT caused by today's guard — `_space_defines_rule` only ever DECLINES more, and this clause is
+   never even reached. It is a pre-existing hole in the static call/data partition itself, and it is
+   exactly what `eval.ts:1694-1697` refuses to tolerate: *"nothing compiled can be trusted while one
+   is loaded."*
+
+   The fix shape is theirs: detect any `(= ($f …) …)` in the space and decline compilation wholesale
+   while one is present. Cost is unmeasured — such rules are rare, but the gate is the corpus
+   differential, not this note. NOT DONE; recorded, not fixed.
+2. **Consider `BAIL` over decline** — a runtime bailout costs no coverage where a compile-time decline
+   does. Ours is side-effect-free in the same way theirs is, so the soundness argument transfers.
+3. **`superpose-bind`/`collapse-bind`** if oracle-compatibility with Hyperon's corpus is wanted.
+4. **Read MeTTaTron's MORK usage** before further MORK-facing design.
