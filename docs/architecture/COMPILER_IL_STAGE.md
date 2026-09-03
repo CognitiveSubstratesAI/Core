@@ -78,3 +78,46 @@ That is a hypothesis to MEASURE on the corpus, not a claim to assert; the ratche
 
 Oracle, not pinned literals: feed each emitted clause to `Eval.jl` and compare answers against the
 same source program through the interpreter. Assert on evaluated **answers**, never on emitted text.
+
+## 5. MEASURED GAP (2026-09-03) — `map-atom` over a RECURSIVELY-COMPUTED list returns NO ANSWER
+
+`compile_run` silently returns an EMPTY answer group where the interpreter answers correctly. Not a
+crash, not a decline — the answer group is present and empty, so anything counting *groups* rather
+than *answers* reads this as success. Found by running a fib-list exercise across the engines:
+hyperon, CeTTa, PeTTa and the Core interpreter all returned `(0 1 1 2 3 5)`; the compiled lane
+returned nothing for two of three queries.
+
+REPRO (`MeTTaCore.compile_run(src; max_steps = 4000)`):
+
+```metta
+(= (fib $n)  (if (< $n 2) $n (+ (fib (- $n 1)) (fib (- $n 2)))))
+(= (upto $k $n) (if (> $k $n) () (let $rest (upto (+ $k 1) $n) (cons-atom $k $rest))))
+!(let $ix (upto 0 5) (map-atom $ix $x (fib $x)))    ; compiled: <NO ANSWER>   interp: (0 1 1 2 3 5)
+```
+
+ISOLATED — every ingredient works ALONE, so this is a pairing, not a missing feature:
+
+| case                                                   | compiled lane   |
+|--------------------------------------------------------|-----------------|
+| `map-atom` over a LITERAL list                          | `(0 1 1 2 3 5)` |
+| `upto` alone (bare, or wrapped in a user head)          | `(0 1 2 3 4 5)` |
+| `let`-bound **literal** + `map-atom`                    | `(0 1 1)`       |
+| `let`-bound list from a **recursive** fn + `map-atom`   | **`<NO ANSWER>`** |
+
+`car-atom`/`cdr-atom`/`cons-atom`/`decons-atom`/`chain`/`function`+`return`/`unify`/`let` each
+compile and evaluate correctly in isolation. The failing ingredient is the COMBINATION: a value
+produced by a RECURSIVE user-defined function, `let`-bound, then passed to `map-atom` (whose list
+parameter is typed `Expression` and so receives its argument UNREDUCED).
+
+A RELATED and probably same-root symptom: the `decons-atom`-recursion spelling of the same program
+(`(= (map-t $f $l) (if (== $l ()) () (let ($h $t) (decons-atom $l) ...)))`) did not return empty —
+it HUNG, holding the MettaJam interpreter lock for 198s+ past `max_steps = 40000`, requiring a
+server restart. Whatever bounds `max_steps` did not bound that path.
+
+WHY §4's ORACLE DID NOT CATCH IT: §4 is the right oracle and it is wired — it compares compiled
+answers against interpreter answers. It cannot see a defect the CORPUS never exercises, and no
+corpus program passes a recursively-built list to a `Expression`-typed stdlib parameter. The fix is
+a corpus entry, not a new oracle. [[feedback_oracle_inherits_corpus_coverage]]
+
+NOT YET DIAGNOSED: no root cause is claimed here. The above is the reproducer and the bisection,
+recorded so the next session starts from the narrow case rather than the exercise.
