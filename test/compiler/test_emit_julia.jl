@@ -53,7 +53,7 @@ end
 
 const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
 
-@testset "EmitJulia — stage 4c registration path (milestone 1a: FACT CLAUSES)" begin
+@testset "EmitJulia — stage 4c registration path (1a facts + 1b goals)" begin
 
     @testset "emits per HEAD, not per clause" begin
         sp = Eval.Space(); load_core_stdlib!(sp)
@@ -89,12 +89,61 @@ const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
         # The seam SHADOWS the head, so a partial registration means the interpreter never sees the
         # clauses the closure lacks and their answers are silently lost. Milestone 1a declines any
         # clause with goals, so a two-clause head with one goal-bearing clause is the natural probe.
-        # ⚠️ `(other $x)` does NOT work as the declining clause — MEASURED: it A-normalises to
-        # goals=0 with `out` = the expression itself, i.e. a FACT clause, so it emits and the head
-        # registers. `(+ $x 1)` is the real probe: goals=1, kind GCall, declined in milestone 1a.
-        prog = "(= (mix a) T)\n(= (mix \$x) (+ \$x 1))\n"
+        # ⚠️ THIS PROBE HAS BEEN WRONG TWICE, both times because MY OWN CAPABILITY MOVED:
+        #   `(other $x)` — A-normalises to goals=0 (unknown head stays DATA ⇒ fact clause ⇒ emits).
+        #   `(+ $x 1)`   — declined in 1a, but 1b COMPILES grounded GCall, so it now emits.
+        # `if` lowers to GBranch, which is MILESTONE 2. Stable until that lands, and when it does
+        # THIS TEST GOES RED — which is correct: the probe must then move again.
+        prog = "(= (mix a) T)\n(= (mix \$x) (if (> \$x 0) yes no))\n"
         sp = Eval.Space(); load_core_stdlib!(sp)
         heads = _EJE.emit_julia_program(_ej_clauses(sp, prog))
         @test !haskey(heads, :mix)                   # partially-emittable ⇒ NOT registered
+    end
+
+    # ── MILESTONE 1b: THE GOAL LOOP — the first genuinely COMPILED code here ─────────────────────
+    @testset "🔑 grounded GCall runs via DIRECT `execute` — native, no interpreter round trip" begin
+        # `(= (inc $x) (+ $x 1))` A-normalises to one GCall head=`+`. `+` resolves through
+        # TOKEN_REGISTRY to a Grounded op, so the plan calls `execute` on it directly. THIS is the
+        # part that is compiled rather than relocated: no `interpret`, no IL text, no lookup.
+        (got, _, fired) = _ej_ask(raw"(= (inc $x) (+ $x 1))" * "\n", "!(inc 41)\n")
+        @test fired[:inc] > 0
+        @test got == ["42"]
+    end
+
+    @testset "🔑 GUnify binds — `let` lowered to unification, FREE on Eval and absent from MM2" begin
+        # `Emit.jl` records GUnify+GFindall as 73 of 279 blocked paths on ECAN+PLN, "FREE on Eval
+        # and ABSENT from MM2 BY CONSTRUCTION". This is that class working.
+        (got, _, fired) = _ej_ask(raw"(= (dup $x) (let $y $x (pair $y $y)))" * "\n", "!(dup 7)\n")
+        @test fired[:dup] > 0
+        @test got == ["(pair 7 7)"]
+        @test !any(a -> occursin("#", a), got)   # no renamed variable leaked into the answer
+    end
+
+    @testset "🔴 rule and plan are renamed as ONE unit (variable correspondence)" begin
+        # THE BUG THIS PINS, measured before the fix: `rename_fresh` is applied per call so a
+        # clause's variables cannot capture across calls — but it renames ONE atom. The plan's
+        # atoms are built at COMPILE time, so renaming the rule alone left the plan pointing at the
+        # original names and every goal unified against a variable that no longer existed.
+        # `(dup 7)` answered `(pair $y#1097 $y#1097)`; `(inc 41)` returned the call itself.
+        # Two calls in a row is what catches a rename that only works once.
+        for _ in 1:2
+            (got, _, fired) = _ej_ask(raw"(= (dup $x) (let $y $x (pair $y $y)))" * "\n", "!(dup 7)\n")
+            @test fired[:dup] > 0
+            @test got == ["(pair 7 7)"]
+        end
+    end
+
+    @testset "a NON-GROUNDED GCall is DECLINED, not deferred to `interpret`" begin
+        # ⚠️ `(zzz $x 1)` does NOT work as this probe — MEASURED: goals=0, because an unknown head
+        # stays as DATA, so it is a fact clause and legitimately emits. A real non-grounded GCall
+        # needs a head that IS a known function but NOT in TOKEN_REGISTRY — i.e. a call to another
+        # user-defined function, which is what `_plan_goals` declines.
+        sp = Eval.Space(); load_core_stdlib!(sp)
+        prog = raw"(= (a $x) (+ $x 1))" * "\n" * raw"(= (b $x) (a $x))" * "\n"
+        heads = _EJE.emit_julia_program(_ej_clauses(sp, prog))
+        @test haskey(heads, :a)                  # grounded call ⇒ emits
+        @test !haskey(heads, :zzzz)              # sanity: no phantom heads
+        @test haskey(Eval.TOKEN_REGISTRY, "+")   # the gate's premise
+        @test !haskey(Eval.TOKEN_REGISTRY, "a")  # `a` is NOT grounded — a call to it must decline
     end
 end

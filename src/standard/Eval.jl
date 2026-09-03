@@ -691,7 +691,11 @@ function compiled_head(to_eval::Atom, space)
     ch = get(_COMPILED_HEADS, Base.Symbol(h.name), nothing)
     ch === nothing && return nothing
     ch.fired += 1                      # anti-vacuity: see CompiledHead's docstring
-    ch.fn(Atom[to_eval.children[2:end]...], space)
+    # 🔴 PASS `to_eval` ITSELF, NOT `children[2:end]`. Handing the closure only the ARGS forces it to
+    # REBUILD the call, and the rebuild loses shape: a ZERO-ARG call `(d)` has no children past the
+    # head, so a reconstruction yields the bare symbol `d` and matches nothing. MEASURED — `!(d)`
+    # against `(= (d) (c))` returned `(d)` with the callee's closure never firing.
+    ch.fn(to_eval, space)
 end
 
 struct Operation
