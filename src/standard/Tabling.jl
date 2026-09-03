@@ -1140,25 +1140,24 @@ _merge_partial(
 
 # One resolution pass for the leader: apply key's `(= key body)` rules and reduce each body. A recursive
 # sub-call to an in-progress variant hits the hook → consumer → reads partials. Returns this pass's answers.
-function _probe_no_rule(key::Atom, space::Space)::Bool
-    X = freshvar("X")
-    for qb in query(space, Expression(Sym("="), key, X)), mb in merge_bindings(Bindings(), qb)
-        is_present(mb, X) && return false
-    end
-    true
-end
+# 🔴 THIS FEEDS `_NO_RULE`, WHICH `tnot` CONSULTS — so it is a NEGATION path, not a lookup
+# convenience. It used to query the space directly, which meant a head with a COMPILED
+# implementation and no space rules was reported as "no rule": `tnot` would then treat a derivable
+# goal as underivable. Routing through `rule_results` closes that by construction, because the
+# compiled-head seam lives inside it. See `Eval.rule_results`.
+_probe_no_rule(key::Atom, space::Space)::Bool = isempty(rule_results(key, space, Bindings()))
 
 function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     out = Atom[]
-    X = freshvar("X")
     saved_target = _CURRENT_TARGET[]
     _CURRENT_TARGET[] = key   # whose worker is running (dependency TARGET)
     try
-        for qb in query(space, Expression(Sym("="), key, X)),
-            mb in merge_bindings(Bindings(), qb)
-
-            is_present(mb, X) || continue
-            for (at, bnd) in interpret(_metta(subst(X, mb), typ), space, mb)
+        # Equation lookup via `rule_results` — the ONE site the compiled-head seam lives in, so a
+        # tabled COMPILED head reaches its closure here. Before this refactor `_leader_pass` queried
+        # the space directly and compiled heads were invisible to tabling; "tabling composes with no
+        # special case" was a claim, and is now true by construction.
+        for (rx, mb) in rule_results(key, space, Bindings())
+            for (at, bnd) in interpret(_metta(rx, typ), space, mb)
                 is_empty_atom(at) && continue
                 v = subst(at, bnd)
                 # 🔴 7.B: `true ∧ undefined = undefined`. `_leader_pass` calls `interpret` DIRECTLY,

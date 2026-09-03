@@ -554,6 +554,136 @@ struct ExecRuntime
 end
 const ExecResult = Union{ExecOk, ExecNoReduce, ExecRuntime}
 
+# ── COMPILED HEADS ───────────────────────────────────────────────────────────────────────────────
+# Design + rationale: docs/architecture/COMPILED_HEAD_SEAM.md. Gate: test/standard/test_compiled_head_seam.jl
+#
+# 🔴 WHY A SEPARATE TYPE AND NOT `ExecOk`. The seam a compiled head plugs into (`eval_op`, immediately
+# before its `(= …)` query) is BINDING-VALUED: it merges each answer's bindings into the caller's and
+# builds the answer as `subst(X, mb)`. `ExecOk`'s one-argument constructor above yields EMPTY `binds`,
+# which makes the consumer fall through to the caller's UNMERGED bindings — i.e. it returns
+# `(pair $w schiphol)` where `(pair schiphol schiphol)` belongs. That is the SAME root cause as the
+# tabling substitution defect (test/standard/tabling/test_answer_substitution*.jl), which has now
+# appeared three times in three different clothes, and it SURVIVES a differential on ground calls.
+# The inner constructor makes the shape unconstructible by ANY caller rather than merely discouraged —
+# a lint on the emitter would not catch a hand-written closure.
+struct CompiledOk
+    results::Vector{Atom}
+    binds::Vector{Bindings}
+    function CompiledOk(results::Vector{Atom}, binds::Vector{Bindings})
+        length(results) == length(binds) || error(
+            "CompiledOk: $(length(results)) results but $(length(binds)) bindings — a result without " *
+            "its bindings is the `(pair \$w schiphol)` defect. Every answer must carry its substitution."
+        )
+        new(results, binds)
+    end
+end
+
+"""
+A compiled head: the closure, the hash of the CLAUSE SET it was compiled from, and an INVOCATION
+COUNTER.
+
+🔴 THE COUNTER IS NOT DIAGNOSTIC SCAFFOLDING — IT IS THE ANTI-VACUITY GUARD, and it exists because
+its absence already cost a wrong conclusion. MEASURED 2026-09-03: the seam was first wired into
+`eval_op`, every structural assertion passed (the lookup provably precedes the query, 5/5), and the
+closure NEVER FIRED — `eval_op` serves the MINIMAL lane, not the `metta` lane. A "no-match returns
+itself" test passed while nothing ran, because an UNREGISTERED head returns itself too.
+⇒ every seam test asserts `fired(head)` MOVED before it compares an answer. A structural assertion
+that a lookup sits before a query is not evidence the lookup runs.
+"""
+mutable struct CompiledHead
+    fn::Function              # (args::Vector{Atom}, space) -> Union{CompiledOk, ExecNoReduce}
+    clause_hash::UInt64
+    fired::Int
+end
+CompiledHead(fn::Function, h::UInt64) = CompiledHead(fn, h, 0)
+
+"How many times head `name`'s closure has been INVOKED. 0 ⇒ the seam never reached it."
+fired(name::Base.Symbol) = (ch = get(_COMPILED_HEADS, name, nothing); ch === nothing ? 0 : ch.fired)
+
+# head NAME -> its compiled closure. Keyed by the head's clause-set hash, NOT by `space.revision`:
+# a closure never inlines `match` results (every `match` inside it runs LIVE), so adding a FACT
+# invalidates nothing and only a change to this head's own RULES does. A revision key would recompile
+# on every `add-atom` and make the compiled lane slower than the interpreter on any writing program.
+const _COMPILED_HEADS = Dict{Base.Symbol, CompiledHead}()
+
+"Register `fn` as the compiled implementation of head `name`, valid while its clause set hashes to `h`."
+compile_head!(name::Base.Symbol, fn::Function, h::UInt64) =
+    (_COMPILED_HEADS[name] = CompiledHead(fn, h); nothing)
+uncompile_head!(name::Base.Symbol) = (delete!(_COMPILED_HEADS, name); nothing)
+uncompile_all!() = (empty!(_COMPILED_HEADS); nothing)
+is_compiled(name::Base.Symbol) = haskey(_COMPILED_HEADS, name)
+
+"""
+    rule_results(call, space, b) -> Vector{Tuple{Atom, Bindings}}
+
+**THE equation lookup — `eqnLookup` as a FUNCTION, and the ONLY place the compiled-head seam lives.**
+
+Returns one `(result, bindings)` pair per matching rule. **EMPTY VECTOR = NO RULE MATCHED**; the
+caller supplies its own miss behaviour (the interpreter's is NotReducible: the call returns itself).
+
+🔴 WHY THIS EXISTS. The same lookup idiom — `query(space, (= call X))`, merge into `b`, filter
+`is_present(mb, X)`, take `subst(X, mb)` — was INLINED AT FIVE SITES: `eval_op` (minimal lane),
+`metta_call_instr` (metta dispatch), `metta_call_step` (argument/head reduction via `_reduce`), and
+Tabling's `_leader_pass` + `_probe_no_rule`. Wiring a compiled-head check into each would be five
+copies of the seam and five ways to drift — the bypass-drift shape CODEMAP row 232 names as the
+disease. MEASURED 2026-09-03, before this refactor: the seam was wired at `eval_op` alone, every
+structural assertion passed, and the closure NEVER FIRED because that site serves only the minimal
+lane. One function, one seam, one place to be wrong.
+
+⇒ `_probe_no_rule` becomes `isempty(rule_results(key, space, Bindings()))`, which is CORRECT for a
+compiled head — before this it queried the space directly and would report "no rule" for a head with
+a compiled implementation, feeding `_NO_RULE` and therefore `tnot`. That was a negation hazard, not
+merely a missed optimisation.
+
+⚠️ **A CLOSURE THAT MATCHED BUT PRODUCED NOTHING MUST RETURN ONE `EMPTY` RESULT WITH ITS BINDINGS**,
+exactly as an equation whose body reduces to `Empty` does. It must NOT return zero results — that is
+indistinguishable from "no clause matched" and would silently turn a match into NotReducible. There
+is deliberately NO special empty branch here; the contract is two-valued so the lanes cannot diverge.
+"""
+function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindings}}
+    out = Tuple{Atom, Bindings}[]
+    let cc = compiled_head(call, space)
+        if cc !== nothing
+            cc isa ExecNoReduce && return out          # no clause matched ⇒ caller's miss branch
+            co = cc::CompiledOk
+            for (j, res) in enumerate(co.results)
+                for mb in merge_bindings(b, co.binds[j])
+                    push!(out, (res, mb))
+                end
+            end
+            return out
+        end
+    end
+    space === nothing && return out
+    X = freshvar("X")
+    for qb in query(space::Space, Expression(Sym("="), call, X)), mb in merge_bindings(b, qb)
+        # resolve-filter (hyperon interpreter.rs query:619): drop a match whose rewrite-RHS X is
+        # TRULY unbound — a bare variable space atom binds itself to the `(= …)` query and would
+        # leak as a spurious `$X`. `is_present` NOT `resolve===nothing`: X equated to another var
+        # (e.g. `(= (id $x) $x)`) is LEGIT and must be kept.
+        is_present(mb, X) || continue
+        push!(out, (subst(X, mb), mb))
+    end
+    out
+end
+
+"""
+    compiled_head(to_eval, space) -> Union{CompiledOk, ExecNoReduce, Nothing}
+
+The compiled-head lookup at the seam. `nothing` = no compiled implementation, so the caller runs its
+ordinary `(= …)` query. `ExecNoReduce` = compiled, and NO clause head matched ⇒ the call returns
+ITSELF (hyperon `metta_call_return`), which is NOT the same as `Empty`.
+"""
+function compiled_head(to_eval::Atom, space)
+    (to_eval isa Expression && !isempty(to_eval.children)) || return nothing
+    h = to_eval.children[1]
+    h isa Sym || return nothing
+    ch = get(_COMPILED_HEADS, Base.Symbol(h.name), nothing)
+    ch === nothing && return nothing
+    ch.fired += 1                      # anti-vacuity: see CompiledHead's docstring
+    ch.fn(Atom[to_eval.children[2:end]...], space)
+end
+
 struct Operation
     name::String
     fn::Function          # (args::Vector{Atom}) -> ExecResult
@@ -923,6 +1053,38 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
 end
 
 # eval (interpreter.rs eval_impl:504) — ONE step, normal-order
+"""
+    _merge_producer_results(results, binds, b, f) -> Vector{Tuple{Frame, Bindings}}
+
+Consume a PRODUCER's `(results, binds)` into continuation frames, merging each answer's own bindings
+into the caller's `b`. Extracted 2026-09-03 from the grounded branch so the compiled-head seam reuses
+the MERGE and not the BRANCH — routing compiled heads through `is_executable` would make a compiled
+`Sym` head look `Grounded` and change what `get-metatype` / `is-function` observe.
+
+🔴 THE MERGE IS THE POINT. `binds[j]` carries the substitution over the CALL's variables; dropping it
+returns an answer with the caller's variables still unbound — `(pair \$w schiphol)` where
+`(pair schiphol schiphol)` belongs. `CompiledOk` makes a missing binding unconstructible; this
+function is where it would otherwise be silently discarded, via the `else` arm.
+
+⚠️ The `else` arm (fewer binds than results) exists for `ExecOk`, whose one-argument constructor
+allows empty `binds`. `CompiledOk` cannot reach it — its inner constructor requires equal lengths.
+"""
+function _merge_producer_results(
+    results::Vector{Atom}, binds::Vector{Bindings}, b::Bindings, f::Frame
+)::Vector{Tuple{Frame, Bindings}}
+    out = Tuple{Frame, Bindings}[]
+    for (j, res) in enumerate(results)
+        if j <= length(binds)
+            for mb in merge_bindings(b, binds[j])
+                append!(out, eval_result(res, mb, f.prev, f.depth + 1))
+            end
+        else
+            append!(out, eval_result(res, b, f.prev, f.depth + 1))
+        end
+    end
+    out
+end
+
 function eval_op(f::Frame, b::Bindings, space)
     a = f.atom
     (a isa Expression && length(a.children) == 2) ||
@@ -933,17 +1095,7 @@ function eval_op(f::Frame, b::Bindings, space)
         r = execute(to_eval.children[1]::Grounded, Atom[to_eval.children[2:end]...], space)
         if r isa ExecOk
             isempty(r.results) && return finished_result(EMPTY, b, f.prev)
-            out = Tuple{Frame, Bindings}[]
-            for (j, res) in enumerate(r.results)
-                if j <= length(r.binds)
-                    for mb in merge_bindings(b, r.binds[j])
-                        append!(out, eval_result(res, mb, f.prev, f.depth + 1))
-                    end
-                else
-                    append!(out, eval_result(res, b, f.prev, f.depth + 1))
-                end
-            end
-            return out
+            return _merge_producer_results(r.results, r.binds, b, f)
         elseif r isa ExecNoReduce
             return finished_result(NOT_REDUCIBLE, b, f.prev)            # NoReduce/IncorrectArgument
         else
@@ -964,20 +1116,17 @@ function eval_op(f::Frame, b::Bindings, space)
             )
         ) &&
             return finished_result(NOT_REDUCIBLE, b, f.prev)   # variable-headed expr not reducible
-        X = freshvar("X")
-        results = query(space::Space, Expression(Sym("="), to_eval, X))
+        # ── EQUATION LOOKUP (minimal lane) ────────────────────────────────────────────────────────
+        # `rule_results` IS the lookup, and the compiled-head seam lives inside it — see its
+        # docstring for why one function rather than five inlined copies. Empty ⇒ no rule matched ⇒
+        # NotReducible: the call returns itself (hyperon `metta_call_return`), never `Empty`.
+        rr = rule_results(to_eval, space, b)
+        isempty(rr) && return finished_result(NOT_REDUCIBLE, b, f.prev)
         out = Tuple{Frame, Bindings}[]
-        for qb in results, mb in merge_bindings(b, qb)
-            # resolve-filter (mirrors hyperon interpreter.rs query:619 `resolve(&var_x)→None`): drop a query match
-            # where the rewrite-RHS X is TRULY unbound — a bare variable space atom binds itself to the whole
-            # `(= …)` query, leaving X free, which would leak as a spurious `$X` and shadow grounded ops. Uses
-            # `is_present` NOT `resolve===nothing`: Core's resolve also returns nothing for X equated to a
-            # var (no value), but those (e.g. `(= (id $x) $x)` → a var) are LEGIT and must be KEPT. (See :564, :883.)
-            is_present(mb, X) || continue
-            x = subst(X, mb)
+        for (x, mb) in rr
             append!(out, eval_result(x, mb, f.prev, f.depth + 1))
         end
-        return isempty(out) ? finished_result(NOT_REDUCIBLE, b, f.prev) : out
+        return out
     end
 end
 
@@ -1453,20 +1602,14 @@ function metta_call_instr(f::Frame, b::Bindings, space)
             return finished_result(error_atom(atom, (r::ExecRuntime).msg), b, f.prev)
         end
     else
-        X = freshvar("X")
-        # No space ⇒ no `=` rule base to query (bare/minimal eval): no rewrites, atom returned as-is.
-        qres = if space === nothing
-            Bindings[]
-        else
-            query(space::Space, Expression(Sym("="), atom, X))
+        # ── EQUATION LOOKUP (metta dispatch lane) ─────────────────────────────────────────────────
+        # One lookup function, one seam — see `rule_results`. Empty ⇒ no rule matched ⇒ the call
+        # returns ITSELF (NotReducible), which is what this lane's miss branch already did.
+        rr = rule_results(atom, space, b)
+        isempty(rr) && return finished_result(atom, b, f.prev)
+        for (x, mb) in rr
+            append!(out, push_nested(_metta(x, typ), mb, anchor, f.depth + 1))
         end
-        reduced = false
-        for qb in qres, mb in merge_bindings(b, qb)
-            is_present(mb, X) || continue                # resolve-filter (identical to Eval.jl :309)
-            reduced = true
-            append!(out, push_nested(_metta(subst(X, mb), typ), mb, anchor, f.depth + 1))
-        end
-        reduced || return finished_result(atom, b, f.prev)                   # no real rewrite survived → non-reducible
         return out
     end
 end
@@ -1992,15 +2135,16 @@ function metta_call_step(a::Atom, type::Atom, space::Space, b::Bindings)::Vector
             return _STEP[(error_atom(a, (r::ExecRuntime).msg), type, b, true)]
         end
     else
-        X = freshvar("X")
-        qres = query(space, Expression(Sym("="), a, X))
-        reduced = false
-        for qb in qres, mb in merge_bindings(b, qb)
-            is_present(mb, X) || continue                # resolve-filter (identical to Eval.jl :309)
-            reduced = true
-            push!(out, (subst(X, mb), type, mb, false))                 # rewrite result → reduce again
+        # ── EQUATION LOOKUP (argument/head reduction lane, via `_reduce`) ─────────────────────────
+        # Same single lookup + seam as the other lanes; only the continuation shape differs.
+        rr = rule_results(a, space, b)
+        if isempty(rr)
+            push!(out, (a, type, b, true))          # no rule ⇒ not reducible → as-is, terminal
+        else
+            for (x, mb) in rr
+                push!(out, (x, type, mb, false))    # rewrite result → reduce again
+            end
         end
-        reduced || push!(out, (a, type, b, true))                       # no real rewrite survived → non-reducible
     end
     isempty(out) ? _STEP[(EMPTY, type, b, true)] : out
 end

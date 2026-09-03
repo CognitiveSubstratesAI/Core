@@ -1,16 +1,71 @@
-# The compiled-head seam — `Eval.jl:968`
+# The compiled-head seam — `rule_results`
 
-> **This header cites the seam and the tests, not a description of them.** Every claim below is a
-> file:line you can open or a test that fails if it stops being true. Written 2026-09-02 because
-> rediscovering this cost an hour twice in one session.
+> **Cited BY SYMBOL, not by line.** Line numbers are a courtesy; they drift and then mislead —
+> `TABLING_ROADMAP`'s banner cited `Tabling.jl:374-380` for `_leader_pass` after the lines had moved
+> off the symbol, and it misled a session for two weeks. Every claim here is a symbol you can locate
+> or a test that fails if it stops being true.
 >
-> * seam: `Core/src/standard/Eval.jl:968` (`eval_op`, defined `:926`)
-> * merge template to factor: `Core/src/standard/Eval.jl:936-946`
-> * contract types: `Core/src/standard/Eval.jl:546-552`
-> * intercept invariant this AVOIDS: CODEMAP row 232 · `test/standard/tabling/test_intercept_position.jl`
-> * coverage baseline to ratchet: `tools/lib_decline_survey.jl` (54.3%, 2026-09-02)
+> * **the seam**: `Eval.rule_results` — the ONLY equation lookup, and the only place the compiled
+>   check lives. Gate: `test/standard/test_compiled_head_seam.jl`, testset "SINGLE SITE".
+> * contract: `Eval.CompiledOk` (inner constructor) / `Eval.ExecNoReduce`
+> * anti-vacuity: `Eval.fired(head)` — every seam test asserts it MOVED before comparing an answer
+> * coverage baseline to ratchet: `tools/lib_decline_survey.jl` (MM2 54.3%, 2026-09-02)
 
-## Why the seam is equation lookup, and NOT the intercept
+## 🔴 THIS DOCUMENT WAS WRONG TWICE, AND BOTH ERRORS PASSED A GREEN TEST
+
+**Corrected 2026-09-03, by execution.** Recorded rather than quietly fixed, because the failure shape
+is the point and it is the same one the tabling banner taught.
+
+**(1) "The seam is `Eval.jl:968` (`eval_op`)" — FALSE.** There were **FIVE** inlined equation lookups,
+each running the same idiom (`query(space, (= call X))` → merge into `b` → filter `is_present(mb, X)`
+→ `subst(X, mb)`):
+
+| site | lane it serves |
+|---|---|
+| `eval_op` | minimal lane |
+| `metta_call_instr` | `metta` dispatch — **the live one for a `!(f x)` query** |
+| `metta_call_step` | argument/head reduction, via `_reduce` ← `interpret_args` |
+| `_leader_pass` | tabling's worker |
+| `_probe_no_rule` | `_NO_RULE`, which `tnot` consults |
+
+`eval_op` serves the MINIMAL lane only. Wiring the seam there produced a closure that **NEVER FIRED**
+(`fired = 0` on every shape) while a structural test asserting "the lookup precedes the query inside
+`eval_op`" passed **5/5**. A structural assertion is only as strong as the claim it encodes.
+
+**(2) "Tabling composes with no special case" — FALSE as written.** `_leader_pass` ran its OWN query,
+so a tabled compiled head never saw the closure; and `_probe_no_rule` would report "no rule" for a
+head that HAS a compiled implementation — feeding `_NO_RULE` and therefore `tnot`. That is a
+**negation hazard**, not a missed optimisation.
+
+## The fix: `eqnLookup` as a FUNCTION
+
+    rule_results(call, space, b) -> Vector{Tuple{Atom, Bindings}}
+
+**Empty vector = no rule matched.** Non-empty = the answers, each with its substitution. The
+compiled-head check lives INSIDE it, once. All five sites now call it; each lane keeps its own
+continuation construction, which is where they legitimately differ.
+
+⇒ **tabling composes BY CONSTRUCTION** rather than by claim (gate: SEAM TEST 5, `table!` + `fired > 0`),
+and `_probe_no_rule` is `isempty(rule_results(key, space, Bindings()))`, correct for compiled heads.
+
+⚠️ **The contract is TWO-valued, not four.** There is deliberately no `isempty(results)` branch. A
+closure whose clauses matched but produced nothing must return one **`EMPTY` result with its
+bindings**, exactly as an equation whose body reduces to `Empty` does — returning zero results is
+indistinguishable from "no clause matched" and would silently turn a match into NotReducible.
+
+## The contract is BINDING-VALUED
+
+`rule_results` merges each answer's bindings into the caller's. A closure returning bare atoms skips
+that merge and yields `(pair $w schiphol)` where `(pair schiphol schiphol)` belongs — **the same root
+cause as the tabling substitution defect, now seen three times in three different clothes.**
+
+`CompiledOk`'s inner constructor asserts `length(results) == length(binds)`, making the defect shape
+**unconstructible by any caller** rather than merely discouraged. ⚠️ `ExecOk(results)` (one argument)
+is the trap: it yields empty `binds`. A lint on the emitter would not catch a hand-written closure.
+
+---
+
+## Why equation lookup, and NOT the `is_tabled` intercept (still true, and still the reason)
 
 `tabled_eval` is spliced at `Eval.jl:1196`, the top of `metta_instr`'s dispatch. Everything below it —
 minimal ops (`:1198`), types (`:1212`), `type_check_errors` (`:1226`) — is SKIPPED for a tabled head.
