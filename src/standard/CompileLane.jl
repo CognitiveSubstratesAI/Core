@@ -96,6 +96,93 @@ function _resolve_tokens(a::StandardMeTTa.Atom, sp)::StandardMeTTa.Atom
     a
 end
 
+"""
+    _space_defines_rule(sp, name, arity) -> Bool
+
+Does the space hold a `(= (name a1…an) body)` rule at EXACTLY this arity?
+
+ARITY IS PART OF THE QUESTION, never the name alone. `is_fun`'s docstring carries the counterexample
+that forces this: `b1_equal_chain.metta` defines `S` as the SKI combinator at arity 3 and USES it as
+a Peano constructor at arity 1. A name-keyed answer calls `(S \$y)` a function and hoists a pattern
+out of a rule head that then matches nothing. `Tabling._rules_of` is name-keyed, which is why this
+does not reuse it.
+"""
+function _space_defines_rule(sp, name::Base.Symbol, arity::Int)::Bool
+    EQ = Base.Symbol("=")
+    for a in Eval.all_atoms(sp)
+        a isa StandardMeTTa.Expression || continue
+        ch = (a::StandardMeTTa.Expression).children
+        length(ch) == 3 || continue
+        (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) || continue
+        lhs = ch[2]
+        lhs isa StandardMeTTa.Expression || continue
+        lc = (lhs::StandardMeTTa.Expression).children
+        (!isempty(lc) && lc[1] isa StandardMeTTa.Sym) || continue
+        ((lc[1]::StandardMeTTa.Sym).name === name && length(lc) - 1 == arity) && return true
+    end
+    false
+end
+
+"""
+    _frozen_cross_head_call(sp, cls) -> Union{Tuple{Symbol,Int}, Nothing}
+
+The head this clause FROZE AS DATA while the space says it is a FUNCTION — or `nothing` if the
+clause is clean. Naming one is a REFUSAL TO COMPILE, not a diagnosis.
+
+WHY THIS GUARD EXISTS — MEASURED 2026-09-03, and it produced a WRONG ANSWER, not a missing one.
+`ANormal.jl:341` splits CALL from DATA on `is_fun`, a STATIC set. `compile_definition` lowers ONE
+FORM, so `defined_arities` sees ONE definition and `funs` holds ONE head: SELF-recursion and grounded
+primitives lift into `chain (metta …)`, and **every cross-head call is classified as data**. In
+`let`-value position that means the bound variable unifies with the UNEVALUATED TERM:
+
+    (= (upto \$k \$n) (if (> \$k \$n) () (let \$rest (upto (+ \$k 1) \$n) (cons-atom \$k \$rest))))
+    (= (fl   \$n)    (let \$ix (upto 0 \$n) (map-atom \$ix \$x (fib \$x))))
+
+    upto  ✅  … (chain (metta (upto \$__t3 \$n) %Undefined% &self) \$__t4 (unify \$rest \$__t4 …
+    fl    ❌  (= (fl \$n) (function (unify \$ix (upto 0 \$n) (return (map-atom \$ix …
+
+`map-atom`'s list parameter is typed `Expression`, so it takes that raw term, deconses it as data,
+and the HEAD SYMBOL LEAKS INTO THE ANSWER:
+
+    !(f2 5)  ⟹  ((+ upto 1) 1 6)        want (1 2 3 4 5 6)
+
+The lane reported `compiled=3, fell_back=0, exhausted=[]` — accepted, nothing refused, budget
+untouched — for a clause that computes something else.
+
+THE SHAPE OF THE FIX IS BORROWED, AND DELIBERATELY THE CONSERVATIVE HALF. Of the four engines,
+CeTTa is the one that refuses what it cannot prove (`match_decision.h:6-12`: *"its only soundness
+claim is that every omitted clause is structurally impossible … The ordinary matcher remains
+semantic authority"*). PeTTa instead RESOLVES the case — a whole-program pre-pass registers every
+`(= (F …) _)` before compiling any of them — and defers the rest to `reduce/2` at run time. Making
+`is_fun` whole-program is the better fix and is NOT what this is: that was tried and reverted 3×
+(`ANormal.jl:161`, [[feedback_is_fun_static_half_alone_is_harmful]]). A decline is RECOVERABLE — the
+caller loads the source form and the interpreter answers correctly. A wrong clause is not.
+
+SO THE PREDICATE IS "CAN I PROVE THIS IS A FUNCTION?", NOT "IS THIS UNKNOWN?". A head with no rules
+is DATA — `(let \$x (Cons 1 Nil) …)` is a legitimate binding and still compiles. Only a head the
+space defines AT THIS ARITY, appearing where this stage put a raw term, is refused. That keeps the
+coverage cost to clauses that were miscompiling.
+
+Scans the SPACE only when a suspicious `GUnify` exists, which is rare — most clauses cost nothing.
+`all_goals` is used so branch arms and disjunctions are covered too: the same `translate_expr`
+returns the same frozen term for an `if` arm, so the defect is not `let`-specific.
+"""
+function _frozen_cross_head_call(sp, cls)::Union{Tuple{Base.Symbol, Int}, Nothing}
+    for cl in cls
+        for g in CompilerANormal.all_goals(cl.goals)
+            g isa CompilerANormal.GUnify || continue
+            v = g.rhs
+            v isa CompilerIR.IRExpression || continue
+            h = (v::CompilerIR.IRExpression).head
+            h isa CompilerIR.IRSymbol || continue
+            nm = (h::CompilerIR.IRSymbol).name
+            ar = length((v::CompilerIR.IRExpression).args)
+            _space_defines_rule(sp, nm, ar) && return (nm, ar)
+        end
+    end
+    nothing
+end
+
 const ILForm = @NamedTuple{atoms::Vector{StandardMeTTa.Atom}, clauses::Vector{String},
     wire::Union{Nothing, String}}
 
@@ -151,6 +238,10 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
         return nothing
     end
     isempty(cls) && return nothing
+    # REFUSE a clause that froze a known function as data — see `_frozen_cross_head_call`. This runs
+    # BEFORE the emitter because the emitter cannot see the defect: the frozen term is a perfectly
+    # well-formed `unify`, so every downstream stage emits it happily and the answer is wrong.
+    _frozen_cross_head_call(sp, cls) === nothing || return nothing
     r = try
         CompilerEmitIL.emit_il_program(cls)
     catch
