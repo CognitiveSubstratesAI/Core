@@ -37,6 +37,19 @@ so a tabled compiled head never saw the closure; and `_probe_no_rule` would repo
 head that HAS a compiled implementation — feeding `_NO_RULE` and therefore `tnot`. That is a
 **negation hazard**, not a missed optimisation.
 
+**(3) AND FOUR OF THE CHECKS WRITTEN TO VALIDATE THIS WORK WERE WEAKER THAN ONES THE CODEBASE
+ALREADY HAD.** Each passed, and each confirmed the wrong thing:
+
+| the check I wrote | what it missed | the stronger form, now used |
+|---|---|---|
+| `Meta.parseall` → "PARSES OK" | a docstring bound to the wrong expression; the module would not load | actually loading it (`tools/run_tests.sh`) |
+| "the lookup precedes the query inside `eval_op`" — 5/5 green | described a function the live path never enters | `fired(head) > 0` |
+| test 3 asserting "an `Error` appears" | a claim about the TYPE SYSTEM, not the seam; failed for a reason about my closure | compiled-vs-uncompiled DIFFERENTIAL |
+| `readdir("standard")` for the anti-drift count | does not descend into `standard/tabling/`, where TWO of the five copies lived — right answer, subset scope | `walkdir` over the whole `src` tree |
+
+⇒ the seam is now guarded by the stronger form of each. The general rule this keeps re-teaching:
+**a check invented for the occasion is usually weaker than the convention already in the tree.**
+
 ## The fix: `eqnLookup` as a FUNCTION
 
     rule_results(call, space, b) -> Vector{Tuple{Atom, Bindings}}

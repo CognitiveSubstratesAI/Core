@@ -675,6 +675,10 @@ ordinary `(= …)` query. `ExecNoReduce` = compiled, and NO clause head matched 
 ITSELF (hyperon `metta_call_return`), which is NOT the same as `Empty`.
 """
 function compiled_head(to_eval::Atom, space)
+    # 🔴 FIRST LINE, DELIBERATELY. `rule_results` is on the hot path of EVERY MeTTa evaluation, and
+    # every existing consumer has ZERO compiled heads — so this must cost nothing until one exists.
+    # An empty-Dict check is cheaper than the `isa` chain plus a hash lookup below.
+    isempty(_COMPILED_HEADS) && return nothing
     (to_eval isa Expression && !isempty(to_eval.children)) || return nothing
     h = to_eval.children[1]
     h isa Sym || return nothing

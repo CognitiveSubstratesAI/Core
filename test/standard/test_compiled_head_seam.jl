@@ -68,13 +68,19 @@ end
         # THE ANTI-DRIFT ASSERTION: exactly ONE inlined `(= call X)` query in the whole source tree,
         # and it is the one inside `rule_results`. Five copies is five ways to drift — the shape
         # CODEMAP row 232 names as the disease, and today it produced a seam on a dead lane.
-        srcdir = joinpath(dirname(pathof(MeTTaCore)), "standard")
+        # ⚠️ `walkdir`, NOT `readdir` — an earlier version of this scan used `readdir("standard")`,
+        # which does NOT descend into `standard/tabling/`. TWO of the five original copies lived in
+        # `Tabling.jl` and a third subdirectory exists, so the count was measured over a SUBSET while
+        # claiming to be tree-wide. It reached the right answer for the wrong reason. Same class as
+        # the other three weak checks this refactor produced — see the doc's correction section.
+        srcroot = dirname(pathof(MeTTaCore))
         hits = String[]
-        for f in readdir(srcdir; join=true)
-            endswith(f, ".jl") || continue
+        for (root, _, files) in walkdir(srcroot), fname in files
+            endswith(fname, ".jl") || continue
+            f = joinpath(root, fname)
             for (n, l) in enumerate(eachline(f))
                 occursin("Expression(Sym(\"=\")", l) && occursin(", X)", l) &&
-                    push!(hits, "$(basename(f)):$n")
+                    push!(hits, "$(relpath(f, srcroot)):$n")
             end
         end
         @test length(hits) == 1                                   # if this fails, a lane re-inlined it
