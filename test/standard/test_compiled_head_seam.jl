@@ -165,4 +165,33 @@ end
         @test nf > 0                                    # ANTI-VACUITY: the closure ran UNDER tabling
         @test got == ["schiphol"]                       # …and gave the compiled answer
     end
+
+    @testset "🔑 SEAM TEST 6 — a NON-GROUND result must be SUBSTITUTED, like the query branch" begin
+        # 🔴 THE GAP SEAM TEST 1 COULD NOT SEE. Its closure returned a GROUND `schiphol`, so
+        # `subst(res, mb)` and bare `res` are identical and the compiled branch's missing
+        # substitution was invisible. A compiled clause whose OUT carries a variable —
+        # `(= (f $x) (g $x))` — returns `(g $x)` with `$x` bound only inside `mb`. Passing it
+        # uninstantiated makes the answer's shape depend on which lane's continuation consumes it,
+        # while the query branch hands on `subst(X, mb)`. Same defect family as the tabling
+        # substitution bug, now on the compiled side of the same seam.
+        Eval.uncompile_all!()
+        sp = Eval.Space(); load_core_stdlib!(sp)
+        # closure for `f`: `(f $x)` reduces to `(g $x)` — the OUT is NOT ground.
+        function f_nonground(args::Vector{_V.Atom}, space)
+            length(args) == 1 || return Eval.ExecNoReduce()
+            u = args[1]
+            bs = _V.add_var_binding(_V.Bindings(), _V.Var("x"), u)
+            isempty(bs) && return Eval.ExecNoReduce()
+            Eval.CompiledOk(_V.Atom[_V.Expression(_V.Atom[_V.Sym("g"), _V.Var("x")])], [bs[1]])
+        end
+        Eval.compile_head!(:f, f_nonground, UInt64(1))
+        r = load_metta!(sp, "!(f a)\n")
+        got = sort!([string(x) for y in r for x in (y isa AbstractVector ? y : [y])])
+        nf = Eval.fired(:f)
+        Eval.uncompile_all!()
+
+        @test nf > 0                                  # ANTI-VACUITY
+        @test !any(a -> occursin("\$", a), got)       # no variable survives uninstantiated
+        @test got == ["(g a)"]                        # substituted, not `(g $x)`
+    end
 end

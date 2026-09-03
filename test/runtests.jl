@@ -281,7 +281,8 @@ Main.@suite("standard/tabling/test_delays.jl")
 Main.@suite("compiler/test_definition_name.jl")  # which function is a definition ABOUT — grouping identity
 Main.@suite("compiler/test_call_staging.jl")
 Main.@suite("compiler/test_emit_substitution.jl")
-Main.@suite("compiler/test_emit_il.jl")          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
+Main.@suite("compiler/test_emit_il.jl")
+Main.@suite("compiler/test_emit_julia.jl")   # stage 4c: registration path (milestone 1a)          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
 Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
 Main.@suite("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
 Main.@suite("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus

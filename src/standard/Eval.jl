@@ -648,7 +648,13 @@ function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindin
             co = cc::CompiledOk
             for (j, res) in enumerate(co.results)
                 for mb in merge_bindings(b, co.binds[j])
-                    push!(out, (res, mb))
+                    # 🔴 `subst(res, mb)`, NOT bare `res` — PARITY WITH THE QUERY BRANCH BELOW, which
+                    # hands on `subst(X, mb)`. A compiled clause `(= (f $x) (g $x))` returns `(g $x)`
+                    # with `$x` bound only inside `mb`; passing it uninstantiated makes the answer's
+                    # shape depend on which lane's continuation consumes it. Seam test 1 did NOT catch
+                    # this — its hand-written closure returned a GROUND `schiphol`, so substitution was
+                    # a no-op. Gated now by a NON-GROUND seam test.
+                    push!(out, (subst(res, mb), mb))
                 end
             end
             return out

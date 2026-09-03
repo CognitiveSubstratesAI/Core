@@ -139,6 +139,9 @@ include("compiler/Emit.jl")
 # instruction it emits (MINIMAL_OPS). Follows Emit.jl because it reuses `render`.
 # Design + diagrams: docs/architecture/COMPILER_IL_STAGE.md
 include("compiler/EmitIL.jl")
+# stage 4c: A-normal clauses -> JULIA CLOSURES. AFTER EmitIL — imports its `_atom_of`, whose
+# `specials::Bool` flag is the two-builder split EmitIL warns about (one builder is the easy mistake).
+include("compiler/EmitJulia.jl")
 
 # MeTTa-IL → surface MeTTa: the INVERSE of EmitIL.jl, and the oracle for it. `decompile ∘ compile ≡ id`
 # observes a defect class no answer-comparison can — a lowering that changes a clause's MEANING while
