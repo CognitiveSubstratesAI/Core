@@ -203,9 +203,19 @@ One increment, fresh session:
 2. GENERATE JULIA CODE for the clause body (`Expr` -> `eval` -> `invokelatest`), replacing plan-walking.
 3. Then `tools/bench_fib.jl`, closure vs interpreter: tabled fib(90) and untabled fib(16).
 
-**DECISION RULE, fixed in advance so the result cannot be argued with: if the untabled arm is not
->= 2x, PARK `EmitJulia` and record the number here.** If it is, milestone 2 has its justification.
-One increment, one number, then decide.
+**DECISION RULE, fixed in advance so the result cannot be argued with: the untabled arm must be
+>= 10x. Below that, PARK `EmitJulia` and record the number here.**
+
+🔴 **10x, NOT 2x — AND THE REASON MATTERS MORE THAN THE NUMBER.** The interpreter takes ~12 s on
+untabled `fib(16)`; native Julia does that arithmetic in MICROSECONDS. Even paying `Atom` boxing and
+a head-match unification per call, genuinely GENERATED code should land at 10-100x. So a 2-3x result
+would NOT mean "the emitter works a little" — it would mean **the codegen is still interpretive
+somewhere**: plan-walking survived in disguise, or every call is routing back through `interpret`.
+
+⚠️ **TREAT ANYTHING BETWEEN 1x AND 10x AS A DIAGNOSIS TO MAKE, NOT A PASS TO RECORD.** An earlier
+draft of this rule said 2x. That is a bar THE PLAN-WALKER COULD CLEAR WITH TUNING, which would let
+the wrong design through wearing a passing number — the same shape as every green-but-vacuous check
+this file already catalogues. One increment, one number, then decide.
 
 ⚠️ And close the session before the next one. Measured today: the same docstring-splice mistake twice
 in an hour, soft-scope twice, and a heredoc inside a hook-blocked command FOUR times. That is fatigue
