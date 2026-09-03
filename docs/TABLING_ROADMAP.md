@@ -1129,17 +1129,43 @@ honest record of what was measured then. Cite `bench_fib.jl` for current numbers
 
 ### 🔴 TWO PRE-EXISTING DEFECTS, found by the benchmark's answer check
 
-1. **SILENT Int64 OVERFLOW IN MeTTa ARITHMETIC.** `fib(92)` is the last correct value. `fib(93)`
-   returns **`-6246583658587674878`** — a NEGATIVE Fibonacci number, no error, no promotion.
-   `fib(1000)` returns a wrong 18-digit value in 2.96 s and looks like a clean measurement.
-   `NumericSeam.jl` is the designated owner for numeric boundary decisions; whether this is
-   deliberate (hyperon is i64-backed) or an unguarded edge is UNVERIFIED — check the spec before
-   calling it a bug. ⚠️ But any MeTTa program doing arithmetic past 2^63 gets a wrong answer silently.
-2. **TABLED DEEP RECURSION OVERFLOWS THE JULIA STACK.** `fib(2000)` tabled dies with
-   `StackOverflowError` even though tabling makes the WORK linear. This contradicts `Eval.jl`'s own
-   "deep MeTTa recursion grows the heap plan, not the Julia stack" — so either that guarantee does
-   not cover the tabled path, or `_reduce`/`metta_step` recurses natively. Ceiling is between 1000
-   (runs) and 2000 (throws).
+1. ✅ **INT64 WRAPPING IS CONFORMANT — SETTLED BY EXECUTION 2026-09-03, NOT BY READING THE SPEC.**
+   `fib(92)` is the last value that fits i64; `fib(93)` overflows. Run across all five engines via
+   `workflows/metta_xcheck.sh` on an ITERATIVE fib (naive-recursive `fib(92)` is ~2^92 calls and
+   every engine timed out — the oracle correctly refused to certify a reduced quorum):
+
+   | engine | `fib(93)` | integer semantics |
+   |---|---|---|
+   | **hyperon-experimental** | **-6246583658587674878** | i64, WRAPS |
+   | **Core (interpreter)** | **-6246583658587674878** | i64, WRAPS |
+   | **Core (compiled lane)** | **-6246583658587674878** | i64, WRAPS |
+   | CeTTa | 12200160415121876738 | UNBOUNDED |
+   | PeTTa | 12200160415121876738 | UNBOUNDED (SWI host) |
+   | JeTTa | 572466946 | **i32 — breaks around fib(46)** |
+
+   ⇒ **CORE MATCHES HE BIT-FOR-BIT, ON BOTH LANES. Wrapping at 2^63 is the REFERENCE behaviour and
+   this is NOT a defect.** HE is the conformance target (`[[reference_which_metta_is_normative]]`);
+   PeTTa/CeTTa differ because their HOSTS have unbounded integers, which is a host property leaking
+   through, not a semantic choice. **JeTTa is the outlier** — 32-bit, a far narrower boundary than
+   anyone's, and worth knowing before trusting any JeTTa arithmetic result.
+   ⚠️ It is still SILENT in every engine that has a boundary: no error, no flag, just a negative
+   Fibonacci number. `fib(92)`/`fib(93)` is now the boundary pair — keep it as a corpus case so the
+   boundary cannot drift unnoticed.
+   ⚠️ TWO PREDICTIONS I GOT WRONG here: I expected CeTTa to wrap (C `int64_t`) — it is unbounded;
+   and I would not have guessed JeTTa was 32-bit. Reading the spec would have given neither.
+
+2. **TABLED DEEP RECURSION IS BOUNDED BY THE JULIA STACK — A DESIGN CONSEQUENCE, NOT A BROKEN
+   PROMISE.** `fib(2000)` tabled dies with `StackOverflowError` although tabling makes the WORK
+   linear. ⚠️ I first recorded this as contradicting `Eval.jl`'s "deep MeTTa recursion grows the heap
+   plan, not the Julia stack". It does not. **That guarantee is about the INTERPRETER's own frames.**
+   Our tabling takes the `shift` half of delimited control alone — *"the nested `interpret` call IS
+   the delimiter"* (`Tabling.jl:903`, and `Continuation` at `:954` is `shift` with no `reset`). So
+   every suspended consumer is a NESTED JULIA CALL, and derivation depth in a left-recursive tabled
+   goal IS Julia stack depth, by construction. Tabling's delimiter sits outside the heap plan on
+   purpose.
+   ⇒ **Ceiling ~1000 (runs) – 2000 (throws). The fix, if a real program ever hits it, is a
+   TRAMPOLINE in the completion loop** — not a repair, a different choice about nesting vs a real
+   `reset`/`shift`. Not worth doing on a synthetic `fib(2000)`.
 3. ⚠️ Also measured: untabled `fib(20)` burns 23 s and returns **`<EMPTY>`** — it exhausts
    `_INTERPRET_MAX` (default 512_000) and `compile_run` surfaces that in `exhausted` rather than
    throwing. A benchmark above `fib(16)` untabled times an exhausted run.
