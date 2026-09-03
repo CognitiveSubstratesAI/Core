@@ -52,6 +52,25 @@ nsq(src) = (r=_NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
         # decision to be explicit rather than arriving as a side effect.
         @test nsq("!(+ 9223372036854775807 1)") == -9223372036854775808
         @test nsq("!(* 99999999999 99999999999)") == 1864711849423024129
+
+        # THE BOUNDARY PAIR, added 2026-09-03 — a RECURSIVE accumulation reaching the limit, where
+        # the two above are single operations. fib(92) is the last value that fits i64; fib(93) is
+        # the first that does not, and it comes back NEGATIVE with no error or flag.
+        # Cross-checked across all five engines (`workflows/metta_xcheck.sh`, iterative form —
+        # naive-recursive fib(92) is ~2^92 calls and every engine times out):
+        #     hyperon-experimental  -6246583658587674878   i64, wraps
+        #     Core interpreter      -6246583658587674878   i64, wraps  <- byte-identical
+        #     Core compiled lane    -6246583658587674878   i64, wraps  <- byte-identical
+        #     CeTTa                 12200160415121876738   UNBOUNDED
+        #     PeTTa                 12200160415121876738   UNBOUNDED (SWI host)
+        #     JeTTa                    572466946           i32 — breaks around fib(46)
+        # ⇒ FOUR distinct integer semantics across five engines; Core matches the conformance target.
+        let fibi = raw"(= (fibi $n $a $b) (if (< $n 1) $a (fibi (- $n 1) $b (+ $a $b))))" * "\n" *
+                   raw"(= (fib $n) (fibi $n 0 1))" * "\n"
+            _NS.load_metta!(_NSP, fibi)
+            @test nsq("!(fib 92)") == 7540113804746346429      # last value that fits
+            @test nsq("!(fib 93)") == -6246583658587674878     # wraps, matching hyperon
+        end
     end
 
     @testset "CONFORMANT: what the vendored corpus does cover" begin

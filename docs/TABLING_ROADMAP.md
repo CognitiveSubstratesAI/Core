@@ -1129,7 +1129,16 @@ honest record of what was measured then. Cite `bench_fib.jl` for current numbers
 
 ### 🔴 TWO PRE-EXISTING DEFECTS, found by the benchmark's answer check
 
-1. ✅ **INT64 WRAPPING IS CONFORMANT — SETTLED BY EXECUTION 2026-09-03, NOT BY READING THE SPEC.**
+1. ✅ **INT64 WRAPPING IS CONFORMANT — AND WAS ALREADY PINNED. I REDISCOVERED IT.**
+   ⚠️ `test/test_numeric_seam.jl:45` has carried the testset *"CONFORMANT: i64 wraparound matches
+   hyperon byte-for-byte"* since 2026-08-05, measured against **upstream's own prebuilt release
+   binary**, with the mechanism cited (`hyperon-atom/src/gnd/number.rs:7-11`, plain Rust operators,
+   `overflow-checks=false`) and a deliberate tripwire so bignum promotion would FAIL there rather
+   than arrive as a side effect. That file's header even names the gap this fell into: the vendored
+   corpus contains *"no integer above 6 digits anywhere"*. So the Core half of what follows was
+   known; what the cross-check ADDS is the other four engines.
+   ⚠️ I also created a `test/corpus/` directory for a boundary case with NO RUNNER — the
+   zero-call-sites shape. Removed; the boundary pair now lives in that existing registered testset.
    `fib(92)` is the last value that fits i64; `fib(93)` overflows. Run across all five engines via
    `workflows/metta_xcheck.sh` on an ITERATIVE fib (naive-recursive `fib(92)` is ~2^92 calls and
    every engine timed out — the oracle correctly refused to certify a reduced quorum):
