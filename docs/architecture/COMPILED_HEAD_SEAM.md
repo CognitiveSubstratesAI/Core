@@ -221,6 +221,37 @@ this file already catalogues. One increment, one number, then decide.
 in an hour, soft-scope twice, and a heredoc inside a hook-blocked command FOUR times. That is fatigue
 in a long context, not a capability limit. A fresh session reading THIS FILE will move faster.
 
+### ✅ RESOLVED 2026-09-03 — the untabled arm is **502.5x**. `EmitJulia` is NOT parked.
+
+`src/compiler/EmitJuliaCode.jl` (stage 4d, commit `34e20d6`) generates a named Julia function per
+head; self-recursion is a DIRECT Julia call, `GBranch` a native `if`/`else`, and world age is paid
+ONCE at `Base.eval`.
+
+    COMPILED    fib(16)  min=0.010676s
+    INTERPRETED fib(16)  min=5.365065s
+    ⇒ 502.5x            (bar: >= 10x — cleared by 25x)
+
+**THE ANSWER CHECK IS WHY THIS NUMBER MEANS ANYTHING, and it is not a formality.** An earlier draft
+returned `fib(16) = 16` INSTANTLY — it echoed its own input. Timing alone would have reported a
+~4,000,000x speedup on code that did nothing, and this file's own warning about vacuous green checks
+would have been the thing that missed it. 55 / 987 / 6765 at n=10/16/20 were verified against a
+BigInt reference BEFORE any clock was read.
+
+Two things the increment got wrong, both caught by the user, both worth keeping in view:
+* **It reimplemented arithmetic.** A hand-rolled `Grounded(x.value + 1)` dropped WFS bottom-propagation
+  and turned `(+ foo 1)` into a `MethodError` instead of `NotReducible`. It now SPLICES the existing
+  `Operation.fn` out of `TOKEN_REGISTRY`. The speedup was never in the arithmetic; there was nothing
+  to buy. [[feedback_verify_code_body_not_comments]]
+* **It guessed `GBranch`'s semantics** instead of reading `EmitIL._instr` — `condval` is the PATTERN,
+  `cond` holds the TEST. That guess is what produced the input-echoing version above.
+
+NOT CLAIMED: nothing here is measured against PeTTa. Both engines answer 987, but PeTTa's compute is
+below what floor-subtraction resolves (~3 ms inside a ~300 ms wall clock). No winner without
+in-process timing on its side. [[feedback_compare_only_within_one_process]]
+
+STILL OPEN from this increment: `EmitJuliaCode` has no tests of its own, and `codegen_head` is not
+yet wired into `compile_head!`, so generated functions do not reach the seam on a live path.
+
 ---
 
 ## Milestone 1 — in order, 1.2 FIRST

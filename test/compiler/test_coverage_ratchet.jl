@@ -86,8 +86,12 @@ const _RI = MeTTaCore.Eval
 const FLOOR_STDLIB = 11     # of 61  clauses (10 -> 11, the `()` unit-atom fix, 2026-08-12:
 # a stdlib clause containing `()` used to lower to `(Nil)` and fail)
 const FLOOR_STANDARD = 9     # of 51
-const FLOOR_LIB = 360    # of 888   (358 -> 360, arity-aware `is_fun`, 2026-08-11)
-const FLOOR_TOTAL = 380    # of 1000  (377 -> 379 arity-aware `is_fun` 2026-08-11;
+const FLOOR_LIB = 376    # of 888   (358 -> 360, arity-aware `is_fun`, 2026-08-11;
+                         #            360 -> 376 measured 2026-09-03 — DRIFT since 08-11, not one
+                         #            change; the ratchet asked for the raise, so it is banked here)
+const FLOOR_TOTAL = 396    # of 1000  (380 -> 396 measured 2026-09-03, banking pre-existing drift;
+                           #            stdlib + src/standard sum to exactly their floors, so the whole
+                           #            rise is `lib`. 377 -> 379 arity-aware `is_fun` 2026-08-11;
 #           379 -> 380 the `()` unit-atom fix 2026-08-12)
 
 # ── THE MeTTa-IL STAGE (EmitIL.jl, 2026-08-09) — its own floor, on the SAME corpus ───────────────
