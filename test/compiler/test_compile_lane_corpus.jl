@@ -160,7 +160,12 @@ const _CC_KNOWN = Dict{String, Tuple{Int, Int}}(
     # the head being compiled, so it is in `funs`), and the un-hoisted `min`/`s-tv` are USER-DEFINED
     # heads, which are safe under one `eval` (measured: `(eval (member2 $x (cdr-atom $l)))` → True).
     "c1_grounded_basic.metta" => (0, 1),   # NEW: needs >4 000 steps under `metta`; clean at 40 000
-    "c3_pln_stv.metta" => (0, 3),       # error GONE; 3 queries now want more than 4 000 steps
+    # 3 → 1 on 2026-09-03, and it is an IMPROVEMENT the equality assertion correctly surfaced.
+    # `_frozen_cross_head_call` was widened to follow the DATA across goal fields (GUnify BOTH sides,
+    # GFindall template, GCall args) rather than only `GUnify.rhs`. Two of the three queries that
+    # wanted >4 000 steps are now DECLINED and answered by the interpreter instead of spinning in a
+    # compiled clause that had frozen a call as data. Errors unchanged at 0.
+    "c3_pln_stv.metta" => (0, 1),
     #
     # d2_higherfunc's shapes are NESTED-HEAD definitions — `(= (((curry $f) $x) $y) ($f $x $y))`,
     # `(= ((lambda $v $b) $arg) …)`. Both halves are declined: a variable-headed BODY is
@@ -334,7 +339,7 @@ const _CC_KNOWN_LEATTA = Dict{String, Tuple{Int, Int}}(
     # Same `metta`-at-call-sites effect as the other dict, measured against the PROVED baseline:
     # every extra error gone, two scripts now wanting more than 4 000 steps.
     "c1_grounded_basic.metta" => (0, 1),
-    "c3_pln_stv.metta" => (0, 3),
+    "c3_pln_stv.metta" => (0, 1),   # 3 → 1, same widened guard; see the conformance table above
     # d2_higherfunc REMOVED here too — 3 → 0 under the nested-head decline.
     # e1_kb_write REMOVED — 2 → 0 errors.
     # e2_states was (3, 0) here too and is FIXED against the PROVED baseline as well — the same

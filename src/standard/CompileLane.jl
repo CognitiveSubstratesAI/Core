@@ -168,16 +168,39 @@ Scans the SPACE only when a suspicious `GUnify` exists, which is rare — most c
 returns the same frozen term for an `if` arm, so the defect is not `let`-specific.
 """
 function _frozen_cross_head_call(sp, cls)::Union{Tuple{Base.Symbol, Int}, Nothing}
+    # Every goal FIELD that can hold a raw term. A frozen call is frozen wherever it sits, so the
+    # guard follows the DATA, not one goal type. `GUnify` was the only one checked until 2026-09-03;
+    # `case` hid in the other side of it and `collapse` in a `GFindall` TEMPLATE, both as silent
+    # wrong answers. `GCall.args` is included for the same reason — an argument the A-normal stage
+    # failed to hoist is a raw term in exactly the same way.
+    _slots(g) =
+        if g isa CompilerANormal.GUnify
+            CompilerIR.IRAtom[g.lhs, g.rhs]
+        elseif g isa CompilerANormal.GFindall
+            CompilerIR.IRAtom[g.template]
+        elseif g isa CompilerANormal.GCall
+            CompilerIR.IRAtom[g.args...]
+        else
+            CompilerIR.IRAtom[]
+        end
     for cl in cls
         for g in CompilerANormal.all_goals(cl.goals)
-            g isa CompilerANormal.GUnify || continue
-            v = g.rhs
-            v isa CompilerIR.IRExpression || continue
-            h = (v::CompilerIR.IRExpression).head
-            h isa CompilerIR.IRSymbol || continue
-            nm = (h::CompilerIR.IRSymbol).name
-            ar = length((v::CompilerIR.IRExpression).args)
-            _space_defines_rule(sp, nm, ar) && return (nm, ar)
+            # ⚠️ BOTH SIDES. Checking only `rhs` was a REAL MISS, found 2026-09-03 by
+            # `tools/probe_funs_masking.jl`: `let` puts the frozen call on the rhs
+            # (`GUnify(pattern, value)`), but `case`'s ARM TEST puts the SCRUTINEE on the LHS
+            # (`_branch_chain`: `GUnify(scrutval, pattern)`). So a `case` over a cross-head call
+            # emitted `(unify (nd) a …)` — an UNEVALUATED expression unified against a symbol, which
+            # matches nothing — and the clause returned ZERO answers while this guard waved it
+            # through. A missing-answer divergence is the hardest kind to notice late, because it
+            # looks exactly like a query that legitimately has none.
+            for v in _slots(g)
+                v isa CompilerIR.IRExpression || continue
+                h = (v::CompilerIR.IRExpression).head
+                h isa CompilerIR.IRSymbol || continue
+                nm = (h::CompilerIR.IRSymbol).name
+                ar = length((v::CompilerIR.IRExpression).args)
+                _space_defines_rule(sp, nm, ar) && return (nm, ar)
+            end
         end
     end
     nothing
