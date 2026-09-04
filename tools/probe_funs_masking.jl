@@ -37,6 +37,48 @@ function interp(program::AbstractString)::Vector{String}
     sort(out)
 end
 
+"Closure-lane answers: emit Julia per head, register at the seam, then ask.
+
+Rules are ALSO loaded into the space, so a head the emitter DECLINES still answers via the
+interpreter — otherwise a decline would read as a wrong answer. `rule_results` short-circuits on a
+compiled head, so a head that IS compiled cannot also answer from the space (no doubling from the
+harness itself; verified 2026-09-03)."
+function closure(program::AbstractString)
+    E = MeTTaCore.Eval
+    sp = E.Space(); E.load_core_stdlib!(sp)
+    toks = E.tokenize(program); i = Ref(1); atoms = MeTTaCore.StandardMeTTa.Atom[]
+    while i[] <= length(toks)
+        toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+        push!(atoms, E.parse_from(toks, i, sp.tokens))
+    end
+    cls = MeTTaCore.CompilerANormal.translate_program(MeTTaCore.CompilerFrontend.lower_program(atoms))
+    heads = MeTTaCore.CompilerEmitJulia.emit_julia_program(cls)
+    E.uncompile_all!()
+    s2 = E.Space(); E.load_core_stdlib!(s2)
+    out = String[]
+    for (bang, f) in MeTTaCore.mm2_split_forms(program)
+        bang || E.load_metta!(s2, f)              # rules in the space: declines still answer
+    end
+    for (h, fn) in heads
+        E.compile_head!(h, fn, UInt64(1))
+    end
+    for (bang, f) in MeTTaCore.mm2_split_forms(program)
+        if bang
+            res = E.load_metta!(s2, "!" * f)
+            append!(out, String[string(x) for y in res for x in (y isa AbstractVector ? y : [y])])
+        end
+    end
+    # 🔴 THE HEAD UNDER TEST IS `w`, AND ONLY ITS STATUS MEANS ANYTHING. An earlier version of this
+    # probe reported total `fired` across all heads and called `case`/`collapse` GREEN in this lane.
+    # They were not: the emitter declined `w` and emitted only the `nd` CALLEE, so the answer came
+    # from the SPACE — i.e. from the interpreter — while `nd` firing made the row look compiled.
+    # A differential that passes because the thing under test fell back proves the interpreter equals
+    # itself. MEASURED 2026-09-03; the fix is to report `w` specifically.
+    wfired = haskey(heads, :w) ? E.fired(:w) : 0
+    E.uncompile_all!()
+    (sort(out), haskey(heads, :w), wfired)
+end
+
 "Compiled answers for `program`, sorted, plus the decline count."
 function compiled(program::AbstractString)
     r = MeTTaCore.compile_run(program; max_steps = 512_000)
@@ -68,10 +110,13 @@ const CASES = [
 
 function main()
     println("─"^92)
-    println(rpad("CONSTRUCT", 40), rpad("COMPILED", 26), rpad("INTERP", 18), "VERDICT")
+    println(rpad("CONSTRUCT", 34), rpad("INTERP", 17), rpad("IL LANE", 24), "CLOSURE LANE")
     println("─"^92)
     ndoubled = 0
     ndiff = 0
+    il_bad = String[]
+    cl_bad = String[]
+    cl_unproven = String[]
     for (name, defs, q) in CASES
         prog = defs * q * "\n"
         i = interp(prog)
@@ -80,20 +125,41 @@ function main()
         catch e
             (["<EXC $(typeof(e))>"], 0, 0)
         end
+        cl, w_emitted, w_fired = try
+            closure(prog)
+        catch e
+            (["<EXC $(typeof(e))>"], false, 0)
+        end
         same = c == i
-        # DOUBLING is the specific shape: same SET, larger MULTISET.
+        samecl = cl == i
         doubled = !same && sort(unique(c)) == sort(unique(i)) && length(c) > length(i)
-        verdict = same ? "ok" : (doubled ? "✗ DOUBLED" : "✗ DIFFERS")
-        same || (ndiff += 1)
-        doubled && (ndoubled += 1)
-        println(rpad(name, 40), rpad(string(c), 26), rpad(string(i), 18),
-            verdict, nfb > 0 ? "   (declined $(nfb))" : "")
+        same || (ndiff += 1); doubled && (ndoubled += 1)
+        same || push!(il_bad, name); samecl || push!(cl_bad, name)
+        iltag = same ? "ok" : (doubled ? "✗ DOUBLED" : "✗ " * string(c))
+        # "ok" only counts when the head UNDER TEST compiled and fired. Otherwise the answer came
+        # from the space and the row says nothing about this lane.
+        cltag = if !w_emitted
+            "— DECLINED w"
+        elseif w_fired == 0
+            "— w emitted, NOT fired"
+        elseif samecl
+            "ok  [w fired $(w_fired)]"
+        else
+            "✗ " * string(cl)
+        end
+        samecl && w_emitted && w_fired > 0 || push!(cl_unproven, name)
+        println(rpad(name, 34), rpad(string(i), 17), rpad(iltag, 24), cltag)
     end
     println("─"^92)
-    println("cases: $(length(CASES))   differing: $(ndiff)   of which DOUBLED: $(ndoubled)")
+    println("IL lane wrong:      ", isempty(il_bad) ? "none" : join(il_bad, ", "))
+    println("CLOSURE lane wrong: ", isempty(cl_bad) ? "none" : join(cl_bad, ", "))
+    println("CLOSURE NOT PROVEN (declined / never fired — the row says nothing):")
+    println("   ", isempty(cl_unproven) ? "none" : join(cl_unproven, ", "))
     println()
-    println("Run again with the pre-pass applied locally. EVERY NEW ✗ IS A PREREQUISITE for")
-    println("attempt #5, named up front instead of found by a fourth-hour suite run.")
+    println("🔑 THE READING THAT DECIDES THE ARCHITECTURE QUESTION:")
+    println("   red in IL, GREEN in closure  ⇒ the goal-list IR's SHAPE is the cause; the lane matters.")
+    println("   red in BOTH                  ⇒ the seam is NOT the IR's shape. A rewrite buys nothing,")
+    println("                                  and the boundary itself is what has to be fixed.")
 end
 
 main()
