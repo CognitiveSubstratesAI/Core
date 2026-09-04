@@ -170,3 +170,53 @@ measuring compiled coverage; a passing answer is not evidence the compiled path 
 The `decons-atom` spelling does not terminate reasonably — 198s at `max_steps = 40000`, still running
 past a 30s deadline at 200_000, twice forcing a server restart. Whether that is this same frozen-term
 defect spinning, or a path `max_steps` does not bound, is UNDETERMINED.
+
+## 6. TWO MORE SILENT WRONG ANSWERS ON HEAD (2026-09-03) — `case` and `collapse`
+
+Found by `tools/probe_funs_masking.jl`, which was written to size a DIFFERENT question (which
+constructs double when `funs` is widened — §5's blocker). Its BASELINE run, before any pre-pass, was
+supposed to be all-green. Two cases were not, and neither is a doubling.
+
+Both have the same signature as §5's frozen-call defect: `fell_back=0`, `exhausted=[]`, and
+`fallback=false` confirms the COMPILED path produced the answer. Accepted, nothing refused, wrong.
+
+### 6.1 `case` — ZERO answers where the interpreter gives two
+
+```metta
+(= (nd) a)  (= (nd) b)
+(= (w) (case (nd) ((a A) (b B))))
+!(w)        ; compiled: String[]        interpreter: ["A","B"]
+```
+`compiled=3  fell_back=0  exhausted=[]`. A MISSING-ANSWER divergence — the worst kind to find late,
+because nothing in the result distinguishes it from a query that legitimately has no answers.
+
+### 6.2 `collapse` — collapses each branch separately instead of gathering
+
+```metta
+(= (nd) a)  (= (nd) b)
+(= (w) (collapse (nd)))
+!(w)        ; compiled: ["(b)","(a)"]   interpreter: ["(a b)"]
+```
+`compiled=3  fell_back=0`. `collapse` must gather EVERY solution into ONE list; the compiled lane
+returns TWO answers, each a singleton. It applied collapse per path rather than after saturation.
+
+⚠️ **AND `ANormal.jl:922` SAYS THIS SHOULD BE IMPOSSIBLE:** *"`collapse` gathers EVERY solution into
+one list value — saturation-then-collect, not a path split. Expansion cannot express it, so it stays
+declined and stays counted."* It is NOT declining here (`fell_back=0`). So either that comment is
+stale or a second path reaches the emitter without going through `_expand_goal(::GFindall, …)`.
+Undiagnosed — that contradiction is the first thing to resolve, not the symptom.
+[[feedback_reconcile_contradictions_dont_drop]]
+
+### Why no existing gate caught either
+
+Same reason as §5: the corpus does not contain these shapes. `test_compile_lane.jl` covers
+nondeterminism under `chain`/`eval`/`function`/`return` — added precisely because that was the
+suspected double-evaluation site — but nothing puts a nondeterministic call in a `case` SCRUTINEE or
+under `collapse`. [[feedback_oracle_inherits_corpus_coverage]]
+
+### The probe, and what its baseline is worth
+
+`tools/probe_funs_masking.jl` runs 17 constructs, each with a nondeterministic call in one syntactic
+position, compiled vs interpreted. **Run it twice — the DELTA under a widened `funs` is what sizes
+§5's blocker — but its BASELINE is a standing differential in its own right**, and it earned that on
+the first run. 15 of 17 green; the two above are open.
