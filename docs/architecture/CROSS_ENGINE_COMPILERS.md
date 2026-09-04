@@ -110,10 +110,39 @@ bounded fuel at all (decline reason `"bounded fuel"`) — the opposite trade.
 1. **Make the cross-head case DECLINE instead of miscompiling.** CeTTa's counted-decline discipline is
    the cheap, safe half and needs no semantics change. A decline is recoverable — the lane already
    falls back to source. A silently wrong clause is not.
-2. **Then** try program-scoped, arity-keyed `is_fun` as ONE gated experiment against the corpus
-   differential. Program-scoped ≠ the whole-Space attempt that was reverted.
-3. **Only then** consider the runtime `metta`-deferral half, which is what makes PeTTa's static half
-   safe and which `ANormal.jl:190` already specifies.
+2. 🔴 **FIRST, STOP `EmitIL` RE-RENDERING A HOISTED ARGUMENT. This is a NEW prerequisite, added
+   2026-09-03 after attempt #4, and it is the thing three earlier reverts never named.**
+
+   The pre-pass was built and gated exactly as this list said: `program_defined_arities` running
+   PeTTa's pass 1 per region, arity-keyed, program-scoped. It WORKED on its target — `fib-list`
+   compiled instead of declining, `fell_back` 1→0, answers unchanged, 25/25 on the frozen-call gate.
+   Then `test_compile_lane.jl` failed four assertions:
+
+       (= (nd) a)  (= (nd) b)  (= (w) (function (return (nd))))
+       compiled  ["a","a","b","b"]        interpreter  ["a","b"]
+
+   **THE MECHANISM, which was documented all along in a comment nobody connected to the reverts.**
+   `ANormal.jl:556-564`: for `eval`/`function`/`return` — but NOT `chain` — an argument is BOTH
+   hoisted into a goal AND re-rendered inside the verbatim node `EmitIL` emits, so it is evaluated up
+   to three times. That comment calls it *"WASTE, not a wrong answer"* and verifies the claim against
+   a NONDETERMINISTIC `(nd)`, both lanes returning `["a","b"]`.
+
+   **That verification held ONLY BECAUSE `(nd)` WAS NEVER HOISTED.** Under single-form scope `(nd)`
+   is not in `funs`, so it is DATA and only the verbatim node evaluates it — once. Pass 1 puts it in
+   `funs`; it becomes a `GCall` AND stays in the re-rendered node; a nondeterministic call runs twice
+   and the answers double.
+
+   ⇒ **THE FROZEN-CALL DEFECT WAS MASKING A DOUBLE-EVALUATION DEFECT.** Fixing the first exposes the
+   second. The pre-pass is not wrong, it is BLOCKED — on a prerequisite `ANormal.jl:563` already
+   states: *"Removing the waste means teaching `EmitIL` which goals were hoisted for a node it renders
+   whole — a real change, not a tidy-up."* [[feedback_recurring_defect_derive_the_rule]]
+
+3. **THEN** program-scoped, arity-keyed `is_fun`, as ONE gated experiment against the corpus
+   differential. Program-scoped ≠ the whole-Space attempt that was reverted. The code is already
+   written once and its own gate already passes; it should land unchanged once (2) is done.
+4. **Only then** the runtime `metta`-deferral half, which is what makes PeTTa's static half safe and
+   which `ANormal.jl:190` already specifies. Per §11b it MUST come last: a deferral added earlier
+   would look like it worked while every already-frozen term stayed frozen and unreachable.
 
 ⚠️ MEASURE COMPILED COVERAGE WITH `fallback=false`. Several cells scored as "passing" during this
 investigation were DECLINES rescued by source fallback — `(= (f4 $n) (let $ix (0 1 2 3) (map-atom …)))`
@@ -277,6 +306,32 @@ MeTTa engine.** The citable artifact is `benches/e2e/e2e_throughput.rs`, not the
 
 Ours remains the only one that REPORTS the overrun. Note MeTTaTron's are depth/width caps, not a fuel
 counter — closer to a stack guard than to a budget.
+
+## 11b. 🔴 THE ORDERING CONSTRAINT — RESOLVE FIRST, DEFER ONLY THE IRREDUCIBLE
+
+Stated as a principle because it is not about MeTTa, and because getting it backwards is the failure
+JeTTa demonstrates while HAVING the mechanism that supposedly prevents it.
+
+**Every engine here that compiles keeps a runtime escape hatch.** PeTTa's `reduce/2` keeps the term
+when `fun(F)` fails; JeTTa's `JettaCallSite` resolves through six steps at run time via
+`invokedynamic`; MeTTaScript's `BAIL` throws and re-runs interpreted; CeTTa declines to its own
+interpreter, which is its default lane anyway. Core had none — which is why a static misclassification
+became a wrong answer rather than a slow one.
+
+**But a fallback does not make the static stage's mistakes recoverable.** JeTTa has the hatch AND
+still fails `(:: ($f $x) ())`, because codegen already took the QUOTE branch
+(`FunctionGenerator.kt:671-681`) and never emitted the dynamic call. **The call site never reaches
+the fallback.** Our frozen `unify $ix (upto 0 $n)` is the same shape: a `metta`-chain deferral would
+not have rescued it, because the term was committed as DATA at lowering time.
+
+    Resolve statically what CAN be resolved.
+    Defer only what genuinely CANNOT.
+    Never defer what you merely FAILED to resolve — the deferral is unreachable from there.
+
+Consequence for our roadmap, and the reason the order in §12 is not interchangeable: the whole-program
+pre-pass must land BEFORE the runtime deferral, not instead of it and not after. A deferral added
+first would look like it worked — the escape hatch exists, the tests that exercise reachable sites
+pass — while every already-frozen term stayed frozen and invisible.
 
 ## 12. WHAT TO DO WITH THIS
 
