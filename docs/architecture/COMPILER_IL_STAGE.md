@@ -171,6 +171,44 @@ The `decons-atom` spelling does not terminate reasonably — 198s at `max_steps 
 past a 30s deadline at 200_000, twice forcing a server restart. Whether that is this same frozen-term
 defect spinning, or a path `max_steps` does not bound, is UNDETERMINED.
 
+## 5b. 🔴 STANDING RULE — BEFORE REPORTING A MECHANISM, BUILD THE OBSERVATION THAT WOULD REFUTE IT
+
+Derived 2026-09-04 from FOUR wrong claims made in ONE day, all by the same author, all in this file's
+subject area. They are not four mistakes; they are one, four times:
+
+| claimed, as settled | refuted by |
+|---|---|
+| *"we built a Prolog-shaped IR without the Prolog engine"* | `ANormal.jl:31` — the goal list was chosen because a conjunction IS MM2's `(, …)`, which MORK executes via `TrieJoin` |
+| *"`collapse` contradicts `ANormal.jl:922`, so there is a bypass path"* | that comment is about `_expand_goal` for the MM2 lane, not IL emission; `GFindall` has had an emitter at `EmitIL.jl:533` all along |
+| *"the closure lane is GREEN on all 17 constructs"* | it DECLINED `w` on 11 of them; the `fired` count was the `nd` CALLEE, and the answer came from the space |
+| *"`size-atom` is the culprit in the call-guard counts"* | identical across hyperon/CeTTa/PeTTa/Core (1, 3, 0, 2) |
+
+**THE SHAPE, in every case: a plausible mechanism inferred from PARTIAL evidence and stated as
+SETTLED.** Each was consistent with what had been observed. None was distinguished from its nearest
+alternative before being reported. Three of the four would have been acted on — and the fourth would
+have shipped a confident "15-case Core-vs-hyperon conformance gap" that does not exist.
+
+⚠️ **AND THE SAME SHAPE IS WHY THIS FILE'S SUBJECT FELT ENDLESS.** "Fix the next construct at the
+boundary" was itself a mechanism inferred and never tested. Three months of fixing instances, and the
+test that dissolved two whole backlog items (§7) took one afternoon once it was actually posed.
+
+### The countermeasure, which is cheap and went 3-for-3 the day it was written down
+
+**Before reporting a mechanism, construct the observation that DISTINGUISHES it from the nearest
+alternative — and run that, not a confirmation of the mechanism you like.**
+
+| the question | the discriminator that settled it |
+|---|---|
+| does MORK unify, or is the stored variable a WILDCARD? | a REPEATED stored variable: `(p $a $a)` vs query `(p 1 2)`. Wildcard hits, unification misses. → **0**, three ways |
+| is `size-atom` the divergence? | run `size-atom` ALONE across four engines, not inside the corpus |
+| is the closure lane green, or did it DECLINE? | report the head UNDER TEST's own emitted+fired status, not a total |
+
+Note what each has in common: it is an observation on which the two candidate mechanisms give
+DIFFERENT answers. A test the favoured mechanism passes is not evidence — the alternative usually
+passes it too. That is exactly why all four wrong claims survived their own first check.
+
+[[feedback_cheapest_disconfirming_test_first]] · [[feedback_run_the_check_before_making_the_claim]]
+
 ## 6. TWO MORE SILENT WRONG ANSWERS ON HEAD (2026-09-03) — `case` and `collapse`
 
 Found by `tools/probe_funs_masking.jl`, which was written to size a DIFFERENT question (which
