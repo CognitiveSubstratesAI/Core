@@ -220,3 +220,69 @@ under `collapse`. [[feedback_oracle_inherits_corpus_coverage]]
 position, compiled vs interpreted. **Run it twice — the DELTA under a widened `funs` is what sizes
 §5's blocker — but its BASELINE is a standing differential in its own right**, and it earned that on
 the first run. 15 of 17 green; the two above are open.
+
+## 7. 🔴 THE PROLOG FEATURES WE IMPORTED SPLIT IN TWO, AND ONLY ONE HALF WAS EVER NEEDED
+
+Established 2026-09-03, from a question that reframed the whole backlog: *we started adopting Prolog
+features from SLG tabling, but the idea is to MAP them onto MeTTa and MORK/PathMap — what exactly do
+we have in MORK?*
+
+### The test that decides each import
+
+**Is this feature essential to HORN LOGIC, or an artifact of TOP-DOWN EVALUATION?**
+
+Prolog evaluates Horn clauses top-down: start from a goal, resolve against heads, backtrack on
+failure. MORK evaluates the same logic bottom-up: match patterns against the space, produce outputs,
+repeat to fixpoint (`space_metta_calculus!`). Two classical strategies for one logic — and nearly
+everything on this file's backlog is a top-down artifact sitting on a bottom-up substrate.
+
+### The essential half — ALL PRESENT in MORK/PathMap
+
+| Horn-logic essential | MORK/PathMap |
+|---|---|
+| Horn clause `H :- B1…Bn` | `(exec P (, B1 … Bn) (O H))` — body is the `,`, head is the `O` |
+| conjunction | `,` + `TrieJoin` (n-ary, projection pushdown, cardinality-greedy; 680×–111000×) |
+| first-argument indexing | anchored PREFIX match — indexes the whole path, strictly stronger |
+| **unification** | ✅ **TWO-SIDED — MEASURED, not assumed (see below)** |
+| the answer relation | `space_metta_calculus!` to fixpoint |
+| negation | ⚠️ absent in MORK; WFS/`tnot` lives in Core's SLG |
+
+**THE UNIFICATION MEASUREMENT, because everything rests on it and it was an open question.** A trie
+gives fast retrieval of ground data matching a pattern — that is ONE-WAY matching. Full unification
+needs variables on BOTH sides. Store an atom CONTAINING a variable, query with a constant that
+appears nowhere else:
+
+```julia
+space_add_all_sexpr!(s, "(p 1 a)\n(p $a b)\n")
+query "(, (p 1 $y))"  → 2 hits    # (p 1 a) AND the stored-variable atom
+query "(, (p 7 $y))"  → 1 hit     # 7 is NOWHERE in the store except via the stored variable
+```
+⇒ the stored `(p $a b)` UNIFIED with the query's `7`. **`GUnify` maps onto the substrate.**
+(Join sanity: `(, (parent $p $a) (parent $p $b))` over 3 facts → 5 rows = tom×2×2 + ann×1.)
+
+### The top-down half — and it is the ENTIRE backlog
+
+| top-down artifact | why bottom-up does not need it | our status |
+|---|---|---|
+| backtracking, choice points | no goal stack to unwind | absent, correctly — our SLG has ZERO choice points |
+| `findall/3` (`GFindall`) | "all solutions" is not an OPERATION bottom-up; it is the RELATION after saturation | ⇒ `_expand_goal(::GFindall) = nothing` is **NOT A GAP** — MM2 correctly declines something its strategy does not need. This file recorded it as a hole for weeks. |
+| `current_predicate` (`is_fun`) | you never ask "is there a clause to resolve against"; you match and see what fires | ⇒ **four reverted attempts to statically approximate an answer to a question the substrate does not pose** (§5) |
+| cut | — | n/a |
+
+### What this does NOT dissolve — the real engineering
+
+⚠️ **`collapse` and `saturate!` are the same SHAPE at different SCOPE.** `collapse` gathers the
+results of evaluating ONE EXPRESSION; `saturate!` runs rules to fixpoint over A SPACE. The lead is
+right in spirit — the substrate primitive, not Prolog's `findall` — but the scope gap is where the
+work is, not a rename.
+
+⚠️ **One-shot exec is a genuine mismatch, not an artifact.** A Horn clause is PERSISTENT: resolve
+against it as often as you like. MORK's `exec` is CONSUMED on selection. That is production-system /
+linear-resource semantics, not logic-programming semantics, and it is the real content of
+Invariant 6 — the reason `(=)` rules cannot be exec atoms.
+
+⚠️ **OPEN: is SLG + `saturate!` deliberate redundancy or unintended duplication?** Tabling exists to
+give TOP-DOWN evaluation the termination and completeness bottom-up has natively (memoized SLD, close
+cousin to magic sets). We now have both roads to the same place — `tabled_eval` in Core, semi-naive
+`saturate!` in MORK. If that is duplication nobody decided on, it would explain a share of the
+recurring work. Not answerable from the code; it is a design question.
