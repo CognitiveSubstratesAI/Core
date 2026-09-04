@@ -133,9 +133,34 @@ bounded fuel at all (decline reason `"bounded fuel"`) — the opposite trade.
    and the answers double.
 
    ⇒ **THE FROZEN-CALL DEFECT WAS MASKING A DOUBLE-EVALUATION DEFECT.** Fixing the first exposes the
-   second. The pre-pass is not wrong, it is BLOCKED — on a prerequisite `ANormal.jl:563` already
-   states: *"Removing the waste means teaching `EmitIL` which goals were hoisted for a node it renders
-   whole — a real change, not a tidy-up."* [[feedback_recurring_defect_derive_the_rule]]
+   second. The pre-pass is BLOCKED on a prerequisite `ANormal.jl:563` already states: *"Removing the
+   waste means teaching `EmitIL` which goals were hoisted for a node it renders whole — a real
+   change, not a tidy-up."* [[feedback_recurring_defect_derive_the_rule]]
+
+   ⚠️ **AND IT MAY BE BLOCKED ON MORE THAN THIS ONE.** An earlier draft of this section said the
+   pre-pass "should land unchanged once (2) is done." That was a PREDICTION beyond the evidence, and
+   the risk is that attempt #5 gets run as a RE-LAND rather than as a gated experiment. What is
+   actually known: the pre-pass exposed **one** masked defect. Masking is a general property of the
+   narrow `funs` set, not a fact about this interaction — **every construct that behaves differently
+   for a CALL than for DATA is a candidate**, and `(nd)` under `function`/`return` is simply the one
+   the corpus happened to cover. [[feedback_scope_closure_claims_to_what_verified]]
+
+   **THE CHEAP PROBE THAT TURNS THAT INTO A LIST, before attempt #5.** Enumerate the constructs
+   `ANormal` treats differently by `funs` membership, and for each build the `(nd)` test — a
+   nondeterministic head in that position, compiled vs interpreted. Run it with the pre-pass applied
+   LOCALLY, uncommitted. `chain` is the known-safe control (`_KEEP_WHOLE`); `eval`/`function`/`return`
+   are the known-unsafe three; the question is what ELSE is in the set. Each doubling found that way
+   is a prerequisite named up front instead of discovered by a fourth-hour suite run.
+
+   **PARKED, so it is not re-derived from scratch.** Attempt #4 also carried a PASS-1/PASS-2
+   AGREEMENT check that is independent of the doubling defect and correct on its own — it died with
+   the branch and now has nowhere to live. `program_defined_arities` swallows a parse failure and
+   continues (right: pass 1 must not fail a program pass 2 could compile), but the same asymmetry
+   means a form pass 2 parses and pass 1 does not contributes NO heads and silently revives the
+   frozen-call defect for that form. Comparing the two parsers is tautological — they share code — so
+   the check takes an INDEPENDENT route to the same set: pass 1 reads TEXT, the cross-check walks the
+   ATOMS after the space loads them, and asserts the sets are equal. Pin the shapes too: `(fib,1)`,
+   `(S,3)` for the arity counterexample, and a bare fact `(edge a b)` contributing no head.
 
 3. **THEN** program-scoped, arity-keyed `is_fun`, as ONE gated experiment against the corpus
    differential. Program-scoped ≠ the whole-Space attempt that was reverted. The code is already

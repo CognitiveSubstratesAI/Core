@@ -559,7 +559,21 @@ function translate_expr(c::ANCtx, a::IRSpecial)::Tuple{Vector{Goal}, IRAtom}
     #   `(chain (eval (nd)) $t1 (chain (return (nd)) $t2 (chain (function (return (nd))) $t3 …)))`
     # — three evaluations of `(nd)`. It is WASTE, not a wrong answer: verified against the interpreter
     # with a NONDETERMINISTIC `(nd)` (two clauses), where duplicated branches would have shown up as
-    # duplicated answers, and both lanes returned exactly `["a","b"]`. Removing the waste means
+    # duplicated answers, and both lanes returned exactly `["a","b"]`.
+    #
+    # 🔴🔴 BENIGN **ONLY WHILE SUCH ARGUMENTS ARE CLASSIFIED AS DATA — IT BECOMES A WRONG ANSWER THE
+    # MOMENT ONE IS HOISTED.** Added 2026-09-03, after this exact case reverted the whole-program
+    # pre-pass for the FOURTH time. The paragraph above describes the cost from the EMISSION side and
+    # concludes "waste"; that conclusion holds because `(nd)` is a CROSS-HEAD call and `is_fun` — fed
+    # ONE FORM by `CompileLane.compile_definition` — calls it data, so it is re-rendered but never
+    # ALSO hoisted. Widen `funs` and `(nd)` becomes a `GCall` *and* stays in the verbatim node: the
+    # nondeterministic call runs twice and `!(w)` answers `["a","a","b","b"]` against the
+    # interpreter's `["a","b"]`.
+    #
+    # ⇒ THE NARROW `funs` SET IS MASKING THIS. Three earlier attempts recorded only "reverted for
+    # ANSWER DOUBLING" and never connected it to this comment, because nothing here stated the
+    # CONDITION. It does now. Roadmap and the rest of the analysis:
+    # `docs/architecture/CROSS_ENGINE_COMPILERS.md` §12.2. Removing the waste means
     # teaching `EmitIL` which goals were hoisted for a node it renders whole — a real change, not a
     # tidy-up, and out of scope here.
     #
