@@ -257,7 +257,22 @@ space_add_all_sexpr!(s, "(p 1 a)\n(p $a b)\n")
 query "(, (p 1 $y))"  → 2 hits    # (p 1 a) AND the stored-variable atom
 query "(, (p 7 $y))"  → 1 hit     # 7 is NOWHERE in the store except via the stored variable
 ```
-⇒ the stored `(p $a b)` UNIFIED with the query's `7`. **`GUnify` maps onto the substrate.**
+⇒ the stored `(p $a b)` UNIFIED with the query's `7`.
+
+⚠️ **THAT ALONE WAS CONFOUNDED, and the confound is now closed.** One hit on a single position is
+equally consistent with the stored variable being a WILDCARD — "matches anything here" — which
+produces the same count with no binding. A REPEATED stored variable separates them: a wildcard
+matches each position independently and HITS; unification needs ONE consistent binding and MISSES.
+
+```
+stored (p $a $a):   (p 1 1) → 1     (p 1 2) → 0     (p 5 5) → 1     (p 5 6) → 0
+stored (q $a b):    (q 7 b) → 1     (q 7 z) → 0        ← the constant still CONSTRAINS
+stored (r $a $a):   (, (r $x 1) (r $x 2)) → 0          ← cross-conjunct, wildcard would SUCCEED
+```
+
+⇒ **TWO-SIDED UNIFICATION WITH REPEATED-VARIABLE CONSISTENCY, on three independent discriminators.
+`GUnify` maps onto the substrate.** Consistent with LeaTTa's `MatcherCorrect.lean`, which PROVES the
+repeated-variable re-check — a wildcard result here would have contradicted a machine-checked one.
 (Join sanity: `(, (parent $p $a) (parent $p $b))` over 3 facts → 5 rows = tom×2×2 + ann×1.)
 
 ### The top-down half — and it is the ENTIRE backlog
