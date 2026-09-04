@@ -301,3 +301,52 @@ give TOP-DOWN evaluation the termination and completeness bottom-up has natively
 cousin to magic sets). We now have both roads to the same place — `tabled_eval` in Core, semi-naive
 `saturate!` in MORK. If that is duplication nobody decided on, it would explain a share of the
 recurring work. Not answerable from the code; it is a design question.
+
+## 8. ⚠️ LeaTTa IS STALE — MeTTapedia SUPERSEDES IT, AND WE DEPEND ON THE STALE ONE IN 37 FILES
+
+User direction, 2026-09-03: *"dont use LeaTTa .. use MeTTapedia, LeaTTa seems obselete."* Verified:
+
+| repo | HEAD | Lean files |
+|---|---|---|
+| `dev-zone/LeaTTa` | 2026-07-20 (6 weeks) | 231 |
+| `dev-zone/MeTTapedia` | **2026-08-29** | **5,731** |
+
+MeTTapedia's latest commit is *"formalize GSLT execution and MeTTa language verticals"* — our subject.
+
+### THE DEPENDENCY IS DEEP, so this is a migration question, not a citation swap
+
+37 files reference LeaTTa. It is not incidental:
+* `src/compiler/gslt/Presentation.jl` — *"Ported from `LeaTTa/MeTTaIL/Syntax.lean`, which is
+  MACHINE-CHECKED"*; `gslt/Reduce.jl` — *"PORT, FROM `LeaTTa/MeTTaIL/Semantics/Reduce.lean`"*
+* `test/oracle/leatta/` — a whole oracle directory, wired into `Core/bin/health` as the
+  "LeaTTa proved-oracle (CORE_BUG gate)"
+* `test_compile_lane_corpus.jl`'s second corpus — the "LeaTTa PROVED" baseline
+
+⚠️ **NOTHING IS BROKEN.** The oracle passes and the gate is green; a stale reference is not a failing
+one. What it means is that our proved baseline stopped tracking upstream six weeks ago, and any NEW
+claim sourced from LeaTTa should be checked against MeTTapedia first.
+
+### WHAT MeTTapedia HAS THAT BEARS DIRECTLY ON THIS FILE
+
+`lean/batteries/mettail-core/MeTTailCore/`:
+* **`EvalIR.lean`** — a minimal evaluator IR (intLit/boolLit/ifCond/==/+/-/*/userCall), fuel-bounded,
+  sorry-free. Its own primer: *"The MM2 protocol types (ReqId, MM2Fact, MM2Step) formalize the
+  request/result/join state machine **THAT MORK EXECUTES**, including IntArithSink grounded
+  arithmetic."* ⇒ a machine-checked spec for the MM2 side of §7's one-shot-exec question.
+* **`EvalIRMachine.lean`** — an abstract worklist machine, canonical `CallKey`s.
+* **`EvalIRRefinement.lean`** — REFINEMENT from the IR to that machine. That is the
+  "does the lowering preserve semantics" obligation, discharged upstream.
+* **`EvalIRTablingMachine.lean`** — tabling over the same machine, and its doc comment says
+  *"Preserve unique answers while keeping left-to-right arrival order"* ⇒ a machine-checked answer to
+  the ANSWER-ORDER question `test_index_jit_oracle.jl` had to leave unpinned (we measured REVERSE
+  order and correctly declined to pin it as a contract).
+* `Mettapedia/GSLT/` — a whole directory, where our `gslt/` port's source now lives upstream.
+
+⚠️ **SCOPE HONESTLY:** `EvalIR` is a *vertical slice* — int/bool literals, `if`, `==`, three
+arithmetic ops, `userCall`. It is not full MeTTa and is not a drop-in spec. What it is, is a
+machine-checked treatment of exactly the fragment where our defects live, including a refinement
+proof and a tabling machine — read it before deciding §7's open question.
+
+**NOT ACTED ON.** Migrating the GSLT port and the proved oracle off LeaTTa is a real piece of work
+with a green gate currently resting on it. Recorded so the next session does not source a NEW claim
+from a six-week-stale repo — which is precisely how two hours went today on stale prose.
