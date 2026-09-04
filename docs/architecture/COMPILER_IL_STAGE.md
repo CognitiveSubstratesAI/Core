@@ -374,9 +374,48 @@ That is the `Atom`/`Expression`-typed-parameter-receives-its-argument-UNREDUCED 
 `(let $ix (upto 0 5) (map-atom $ix …))` spliced `(upto 0 5)` in raw and answered `(0 upto 1 5)`.
 It also covers `%Undefined%`, the `_` hole, metatype fallback, and the primitive-annotation cut.
 
-⇒ **CANDIDATE NEXT ORACLE, and cheap: run that corpus against Core and diff the branch counts.**
-Unlike the LeaTTa oracle it is not a port — it is a corpus plus a driver, so adopting it costs a
-harness rather than a migration. NOT DONE.
+⇒ **ADOPT IT — but the "cheap" in an earlier draft of this line was wrong, and here is the actual
+cost, measured 2026-09-04.**
+
+**WHY IT IS WORTH ADOPTING, stated properly.** Every oracle we have grades ANSWERS — the interpreter
+differential, both corpora, `probe_funs_masking.jl`. This one grades the TYPE-GUARDED CALL DECISION
+itself, case by case, against a machine-checked judgment. That decision is what produced the frozen
+call, `case`, `collapse`, and four `is_fun` reverts. The payoff is not the ~20 cases: it is that
+`is_fun` attempt #5 stops being an all-or-nothing corpus gamble. Today the only verdict is a
+four-hour suite run saying pass-or-revert; with per-case branch counts you can see WHICH guard
+decisions moved and in which direction. That is the difference between a gated experiment and a coin
+flip, and it is what would have made attempts #1–#4 cheap.
+
+**⚠️ AN ENGINE BASELINE CANNOT SUBSTITUTE FOR THE LEAN JUDGMENT. MEASURED, having tried it:**
+* The corpus is a **PeTTa MAINLINE** reference. hyperon ERRORS on its last two cases —
+  `add-atom &cg_ref_space …` → *"add-atom expects a space as the first argument"* — because it
+  assumes PeTTa's auto-created named spaces.
+* Worse, **hyperon's own numbers are internally inconsistent** on the same expression:
+  `!(collapse (cg_ref_exact 3))` → `[(3)]` (one element) but
+  `!(size-atom (collapse (cg_ref_exact 3)))` → `[2]`. Raw binary, no harness normalisation. So the
+  counts are sensitive to evaluation context and cannot calibrate anything by themselves.
+* `size-atom` is NOT the culprit — it is identical across hyperon/CeTTa/PeTTa/Core (1, 3, 0, 2).
+  That was a hypothesis, checked, and refuted.
+⇒ The expected values come from the driver's own `LEAN_PROBE` via `lake env lean`, and there is no
+shortcut around it. Comparing Core to hyperon on this corpus would have produced a confident wrong
+"15-case conformance gap".
+
+**FEASIBLE — the toolchain is present.** `lake`/`lean`/`elan` on PATH, `~/.elan` present,
+`lean-toolchain` pins `leanprover/lean4:v4.31.0`. The cost is a `lake build` of MeTTapedia (7,067
+Lean files), not a missing dependency.
+
+**CORE'S CURRENT NUMBERS, recorded so the first real run has something to diff against** (from
+`metta_xcheck.sh`, 2026-09-04 — NOT yet graded, no judgment obtained):
+`primitive-number-type 1 · primitive-annotation-cut 0 · primitive-no-undefined 0 ·
+unknown-type-fallback 1 · exact-number 1 · wrong-input 1 · wrong-result 1 · metatype-fallback 1 ·
+raw-atom 1 · unchecked-input 1 · hole-input 1 · exact-softcut-single 1 · two-overloads 1 ·
+duplicate-chain 2 · unchecked-outputs 3 · revision-before-add 1 · revision-after-add 1 ·
+revision-number-after-add 1 · revision-after-remove 1 · owned-number 1 · owned-wrong 1`
+
+**WHEN ADOPTED: DO NOT GATE ON IT IMMEDIATELY.** Record the baseline, treat deviations as FINDINGS,
+and use `_CC_KNOWN`'s pattern from `test_compile_lane_corpus.jl` — EXACT equality against a recorded
+table, so an improvement surfaces instead of staling the baseline silently (which is exactly how that
+file caught `c3_pln_stv` going 3 → 1 today).
 
 **NOT ACTED ON.** Migrating the GSLT port and the proved oracle off LeaTTa is a real piece of work
 with a green gate currently resting on it. Recorded so the next session does not source a NEW claim
