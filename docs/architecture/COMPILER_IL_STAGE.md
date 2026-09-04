@@ -347,6 +347,37 @@ arithmetic ops, `userCall`. It is not full MeTTa and is not a drop-in spec. What
 machine-checked treatment of exactly the fragment where our defects live, including a refinement
 proof and a tabling machine — read it before deciding §7's open question.
 
+### UPDATED 2026-09-04 to `ca13bf8d` — "integrate GSLT, OSLF, and MeTTa metatheory"
+
+1,828 files, +483,700 lines; Lean files 5,731 → 7,067; `papers/metatheory.tex` is new (3,569 lines).
+`MeTTailCore/` (EvalIR, the refinement, the tabling machine) is UNCHANGED, so the reading above
+stands.
+
+🎯 **THE NEW PIECE THAT IS DIRECTLY OURS — a TYPE-GUARDED CALL conformance oracle.**
+`lean/mettapedia/scripts/conformance/petta_mainline_call_guard_reference.metta` (87 lines) +
+`check_petta_mainline_call_guard_reference.py` (283 lines). Each result is
+`(case-name successful-branch-count)`, compared against *"the independently executed Lean judgment"* —
+i.e. an ENGINE-AGNOSTIC driver against a machine-checked answer, which is exactly the shape of oracle
+this file keeps wanting and mostly lacking.
+
+And one of its cases is the defect that cost the first hour of 2026-09-03:
+
+```metta
+; The ordinary Expression output guard makes this case fail if the Atom input
+; is evaluated to 5 instead of being passed as the raw source expression.
+(: cg_ref_raw (-> Atom Expression))
+(= (cg_ref_raw $x) $x)
+!(raw-atom (size-atom (collapse (cg_ref_raw (+ 2 3)))))
+```
+
+That is the `Atom`/`Expression`-typed-parameter-receives-its-argument-UNREDUCED rule — the reason
+`(let $ix (upto 0 5) (map-atom $ix …))` spliced `(upto 0 5)` in raw and answered `(0 upto 1 5)`.
+It also covers `%Undefined%`, the `_` hole, metatype fallback, and the primitive-annotation cut.
+
+⇒ **CANDIDATE NEXT ORACLE, and cheap: run that corpus against Core and diff the branch counts.**
+Unlike the LeaTTa oracle it is not a port — it is a corpus plus a driver, so adopting it costs a
+harness rather than a migration. NOT DONE.
+
 **NOT ACTED ON.** Migrating the GSLT port and the proved oracle off LeaTTa is a real piece of work
 with a green gate currently resting on it. Recorded so the next session does not source a NEW claim
 from a six-week-stale repo — which is precisely how two hours went today on stale prose.
