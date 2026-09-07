@@ -480,6 +480,36 @@ raw-atom 1 · unchecked-input 1 · hole-input 1 · exact-softcut-single 1 · two
 duplicate-chain 2 · unchecked-outputs 3 · revision-before-add 1 · revision-after-add 1 ·
 revision-number-after-add 1 · revision-after-remove 1 · owned-number 1 · owned-wrong 1`
 
+### 🅿️ PARKED 2026-09-07 — on the PAYOFF, not the cost. Infrastructure is on disk and reusable.
+
+**THE REASON THAT DECIDES, and it holds at zero build cost:** these counts encode MeTTapedia's
+formalization of **PeTTa-mainline** semantics. HE-MeTTa is normative for Core, and hyperon already
+ERRORS on part of this corpus (`add-atom &cg_ref_space` → *"expects a space as the first argument"*).
+So it is a PER-CASE INSTRUMENT for "which guard decisions differ and why", never a conformance target
+Core should chase. That alone puts it below a confirmed defect.
+
+**WE ALREADY HAVE THE ORACLE IT WOULD HAVE BEEN.** Reference evaluator vs compiled lane, on our own
+corpus, no Lean and no mathlib — and it already found the var-headed defect:
+`interpreter 2 answers · compiled 1 · fell_back=0`. The Lean judgment was the more expensive path to
+a weaker signal.
+
+**WHAT IS ON DISK, so resuming is cheap:** the 10 bootstrap externals at pinned revs,
+`externals/LeaTTa` symlinked, mathlib **6.9 GB / 8,176 oleans**, and 163 Mettapedia oleans. Plus two
+upstream gaps now worked around: the bootstrap uses `git@github.com:` URLs for repos that are all
+PUBLIC (fix: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0='url.https://github.com/.insteadOf'
+GIT_CONFIG_VALUE_0='git@github.com:'`), and `lakefile.lean:48`'s `input_dir primeMotivationSources`
+points at `MettaKernel/Curriculum/PrimeMotivation`, **which does not exist at `ca13bf8d`** — an empty
+dir unblocks it, and only the `Prime/` subtree (5 files, none in the PeTTa closure) consumes it.
+
+⚠️ **OPEN, AND NOT DIAGNOSED — do not repeat my error here.** The targeted build compiled
+`ProbabilityTheory/Exchangeability/…`, which the PeTTa subtree references ZERO times, and I concluded
+"the targeted build ignored the target scope". **That conclusion is UNSUPPORTED.** Three alternatives
+were never separated: (a) the module name did not resolve and lake fell back to `@[default_target]
+lean_lib Mettapedia`, (b) that lib's `needs := #[@/primeMotivationSources]` pulls the whole lib
+regardless of target, (c) a stale invocation from the earlier `-j3` attempt. **The discriminator is
+one `echo` of the actual command line before running it.** If (a), this un-parks cheaply.
+[[feedback_cheapest_disconfirming_test_first]]
+
 **WHEN ADOPTED: DO NOT GATE ON IT IMMEDIATELY.** Record the baseline, treat deviations as FINDINGS,
 and use `_CC_KNOWN`'s pattern from `test_compile_lane_corpus.jl` — EXACT equality against a recorded
 table, so an improvement surfaces instead of staling the baseline silently (which is exactly how that
