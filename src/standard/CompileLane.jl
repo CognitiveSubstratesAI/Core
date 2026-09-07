@@ -124,6 +124,60 @@ function _space_defines_rule(sp, name::Base.Symbol, arity::Int)::Bool
 end
 
 """
+    region_defined_arities(sp, defs) -> Set{Tuple{Symbol,Int}}
+
+Every `(= (F …) _)` head in the REGION'S OWN TEXT, with its arity.
+
+🔴 **THIS EXISTS FOR THE DECLINE GUARD, NOT FOR `is_fun`, AND THE DIFFERENCE IS THE WHOLE SAFETY
+ARGUMENT.** Feeding these heads to `is_fun` changes WHAT COMPILES and was reverted four times — the
+last one for ANSWER DOUBLING (`COMPILER_IL_STAGE.md` §5, `ANormal.jl:161`). Feeding them to
+`_frozen_cross_head_call` only ever makes it DECLINE MORE, which is recoverable by construction: the
+caller loads the source form and the interpreter answers. Same collector, opposite risk profile.
+
+⚠️ WHY IT IS NEEDED — THE ORDERING TRAP, MEASURED 2026-09-07. `_space_defines_rule` asks the SPACE,
+and `_compile_run_inner` compiles each definition AS IT ADDS IT, so a callee defined LATER in the
+same region is INVISIBLE when the caller compiles. Same two definitions, only the order swapped:
+
+    upto FIRST    compiled=1 fell_back=1   (mapper 3) -> (1 2 3 4)          guard fired
+    mapper FIRST  compiled=2 fell_back=0   (mapper 3) -> ((+ upto 1) 1 4)   guard BLIND
+
+That second line is the head-symbol leak of §5 reappearing purely from definition ORDER, with
+`fell_back=0` — accepted, nothing refused. The space knows what is PAST; only the region's text knows
+what is COMING. Every guard in this lane has to read both.
+"""
+function region_defined_arities(sp, defs)::Set{Tuple{Base.Symbol, Int}}
+    out = Set{Tuple{Base.Symbol, Int}}()
+    EQ = Base.Symbol("=")
+    for d in defs
+        atoms = try
+            toks = Eval.tokenize(d)
+            i = Ref(1)
+            acc = StandardMeTTa.Atom[]
+            while i[] <= length(toks)
+                toks[i[]] == "!" && (i[] += 1)
+                i[] > length(toks) && break
+                push!(acc, Eval.parse_from(toks, i, sp.tokens))
+            end
+            acc
+        catch
+            continue
+        end
+        for a in atoms
+            a isa StandardMeTTa.Expression || continue
+            ch = (a::StandardMeTTa.Expression).children
+            length(ch) == 3 || continue
+            (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) || continue
+            lhs = ch[2]
+            lhs isa StandardMeTTa.Expression || continue
+            lc = (lhs::StandardMeTTa.Expression).children
+            (!isempty(lc) && lc[1] isa StandardMeTTa.Sym) || continue
+            push!(out, ((lc[1]::StandardMeTTa.Sym).name, length(lc) - 1))
+        end
+    end
+    out
+end
+
+"""
     _defs_have_var_headed_rule(sp, defs) -> Bool
 
 The same question as `_space_has_var_headed_rule`, asked of the REGION'S OWN TEXT.
@@ -254,7 +308,9 @@ Scans the SPACE only when a suspicious `GUnify` exists, which is rare — most c
 `all_goals` is used so branch arms and disjunctions are covered too: the same `translate_expr`
 returns the same frozen term for an `if` arm, so the defect is not `let`-specific.
 """
-function _frozen_cross_head_call(sp, cls)::Union{Tuple{Base.Symbol, Int}, Nothing}
+function _frozen_cross_head_call(sp, cls,
+    region_heads::Set{Tuple{Base.Symbol, Int}}=Set{Tuple{Base.Symbol, Int}}()
+)::Union{Tuple{Base.Symbol, Int}, Nothing}
     # Every goal FIELD that can hold a raw term. A frozen call is frozen wherever it sits, so the
     # guard follows the DATA, not one goal type. `GUnify` was the only one checked until 2026-09-03;
     # `case` hid in the other side of it and `collapse` in a `GFindall` TEMPLATE, both as silent
@@ -286,7 +342,10 @@ function _frozen_cross_head_call(sp, cls)::Union{Tuple{Base.Symbol, Int}, Nothin
                 h isa CompilerIR.IRSymbol || continue
                 nm = (h::CompilerIR.IRSymbol).name
                 ar = length((v::CompilerIR.IRExpression).args)
-                _space_defines_rule(sp, nm, ar) && return (nm, ar)
+                # SPACE **or** REGION TEXT. The space knows what is PAST; a callee defined LATER
+                # in this region is invisible to it, and that gap shipped a wrong answer — see
+                # `region_defined_arities`.
+                ((nm, ar) in region_heads || _space_defines_rule(sp, nm, ar)) && return (nm, ar)
             end
         end
     end
@@ -308,7 +367,9 @@ a ground fact like `(edge a b)` — is NOT a compiler failure and must not be co
 is simply data, and it returns `nothing` so the caller loads it verbatim.
 """
 
-function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
+function compile_definition(sp, form::AbstractString;
+    region_heads::Set{Tuple{Base.Symbol, Int}}=Set{Tuple{Base.Symbol, Int}}()
+)::Union{ILForm, Nothing}
     atoms = try
         toks = Eval.tokenize(form)
         i = Ref(1)
@@ -351,7 +412,7 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     # REFUSE a clause that froze a known function as data — see `_frozen_cross_head_call`. This runs
     # BEFORE the emitter because the emitter cannot see the defect: the frozen term is a perfectly
     # well-formed `unify`, so every downstream stage emits it happily and the answer is wrong.
-    _frozen_cross_head_call(sp, cls) === nothing || return nothing
+    _frozen_cross_head_call(sp, cls, region_heads) === nothing || return nothing
     # …and refuse EVERYTHING while a variable-headed rule is loaded, because it can fire on a call to
     # any head and no static call/data decision survives it. See `_space_has_var_headed_rule`.
     _space_has_var_headed_rule(sp) && return nothing
@@ -857,8 +918,12 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
         # call to ANY head, so nothing in it may compile — and the check must read the region's TEXT,
         # because definitions are compiled AS THEY ARE ADDED and a later one is not yet in the space.
         vheaded = _defs_have_var_headed_rule(sp, r.defs) || _space_has_var_headed_rule(sp)
+        # The heads this region DEFINES, computed once. Used ONLY by the decline guard — never fed
+        # to `is_fun`, which is the reverted change. See `region_defined_arities`.
+        rheads = introspects ? Set{Tuple{Base.Symbol, Int}}() : region_defined_arities(sp, r.defs)
         for d in r.defs
-            il = (introspects || vheaded) ? nothing : compile_definition(sp, d)
+            il = (introspects || vheaded) ? nothing :
+                 compile_definition(sp, d; region_heads=rheads)
             if il === nothing
                 fallback ||
                     error("compile_run: declined and fallback=false — $(first(d, 80))")

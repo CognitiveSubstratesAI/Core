@@ -48,6 +48,53 @@ TARGET="${1:-test/runtests.jl}"
 ROOT="$PWD"
 case "$TARGET" in /*) ABS_TARGET="$TARGET" ;; *) ABS_TARGET="$ROOT/$TARGET" ;; esac
 
+# ── PRE-FLIGHT: unescaped `$` in a docstring, CHECKED BEFORE JULIA STARTS ───────────────────────
+# A `$name` in a docstring is INTERPOLATION and kills PRECOMPILE with `UndefVarError`, before any
+# test — including `test_no_docstring_interpolation.jl`, the gate that exists for exactly this — can
+# run. So the gate cannot catch the thing it is for; it only confirms a clean tree afterwards.
+#
+# ⚠️ AND THE PreToolUse HOOK CANNOT CATCH IT EITHER, WHICH IS WHY THIS IS HERE.
+# `.claude/hooks/no-unescaped-dollar-in-docstring.sh` is wired on `Write`/`Edit` — but an edit made
+# through a `python3` heredoc in Bash NEVER TOUCHES THOSE TOOLS and bypasses every Write/Edit hook.
+# MEASURED 2026-09-07: a docstring quoting `(= ($f $x) …)` was written that way and took down the
+# whole package load; the hook was installed and silent, and health's own lint reported ✓ on the
+# previous state. This check does not care HOW the file was edited.
+#
+# Deliberately CRUDE and text-only — the authoritative check stays in the Julia gate. This one has to
+# run in milliseconds before an 8-second load, so it flags `"""` blocks and single-line `"…"`
+# docstrings containing an unescaped `$` and says where. `raw"` and `#` comments are skipped.
+_DOLLAR_HITS=$(python3 - "$ROOT/src" <<'PYEOF' 2>/dev/null || true
+import os, re, sys
+root = sys.argv[1]
+bad = []
+for dp, _, fs in os.walk(root):
+    for f in fs:
+        if not f.endswith(".jl"):
+            continue
+        path = os.path.join(dp, f)
+        indoc = False
+        for i, ln in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
+            if 'raw"' in ln:
+                continue
+            fences = ln.count('"""')
+            inbody = indoc or fences > 0
+            if fences % 2 == 1:
+                indoc = not indoc
+            if not inbody:
+                continue
+            body = ln.split("#", 1)[0] if ln.lstrip().startswith("#") else ln
+            if re.search(r'(?<!\\)\$[A-Za-z_(]', body):
+                bad.append(f"{os.path.relpath(path, root)}:{i}: {ln.strip()[:90]}")
+print("\n".join(bad[:8]))
+PYEOF
+)
+if [ -n "$_DOLLAR_HITS" ]; then
+  echo "run_tests.sh: UNESCAPED \$ IN A DOCSTRING — this breaks PRECOMPILE before any test runs." >&2
+  echo "$_DOLLAR_HITS" >&2
+  echo "  fix: escape as \\\$, or use raw\"...\". (Caught pre-load; the Julia gate cannot reach this.)" >&2
+  exit 1
+fi
+
 if [ ! -f "$ABS_TARGET" ]; then
   echo "run_tests.sh: no such target: $ABS_TARGET" >&2
   exit 1

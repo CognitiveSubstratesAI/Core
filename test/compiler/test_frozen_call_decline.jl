@@ -84,6 +84,30 @@ const _FZ_BASE = """
         @test c.compiled == 2       # `fib` and `upto` are unaffected
     end
 
+    @testset "🔴 DEFINITION ORDER must not change the verdict — the ORDERING TRAP" begin
+        # MEASURED 2026-09-07. `_space_defines_rule` asks the SPACE, and `_compile_run_inner`
+        # compiles each definition AS IT ADDS IT — so a callee defined LATER in the same region was
+        # INVISIBLE to the guard. Same two definitions, only the order swapped:
+        #
+        #   upto FIRST    compiled=1 fell_back=1   (mapper 3) -> (1 2 3 4)          guard fired
+        #   mapper FIRST  compiled=2 fell_back=0   (mapper 3) -> ((+ upto 1) 1 4)   guard BLIND
+        #
+        # The second is §5's head-symbol leak, reappearing purely from ORDER, with fell_back=0.
+        # Found by asking whether the var-headed kill switch's ordering bug was a CLASS rather than
+        # an instance — it was. [[feedback_recurring_defect_derive_the_rule]]
+        upto = "(= (upto \$k \$n) (if (> \$k \$n) () (let \$r (upto (+ \$k 1) \$n) (cons-atom \$k \$r))))\n"
+        mapper = "(= (mapper \$l) (let \$ix (upto 0 \$l) (map-atom \$ix \$x (+ \$x 1))))\n"
+        for (label, prog) in ("callee first" => upto * mapper * "!(mapper 3)\n",
+            "caller first" => mapper * upto * "!(mapper 3)\n")
+            c = _fz_compiled(prog)
+            i = _fz_interp(prog)
+            @test c.answers["(mapper 3)"] == i["(mapper 3)"]        # differential, either order
+            @test c.answers["(mapper 3)"] == ["(1 2 3 4)"]          # …and pinned ($label)
+            @test !any(a -> occursin("upto", a), c.answers["(mapper 3)"])  # no head-symbol leak
+            @test c.fell_back == 1                                  # the guard FIRED in both orders
+        end
+    end
+
     @testset "the LEAKED HEAD SYMBOL is gone — the corruption, not just the emptiness" begin
         # Before the guard this answered `((+ upto 1) 1 6)`: `upto` deconsed as data, in the answer.
         prog = _FZ_BASE *
