@@ -173,6 +173,11 @@ defect spinning, or a path `max_steps` does not bound, is UNDETERMINED.
 
 ## 5b. 🔴 STANDING RULE — BEFORE REPORTING A MECHANISM, BUILD THE OBSERVATION THAT WOULD REFUTE IT
 
+> **FIRST MOVE: open the artifact** (`CLAUDE.md` VISIBILITY PROTOCOL 3b). Three of the four rows below
+> were refuted by READING A FILE, not by running anything. This rule is what remains when there is no
+> file to open and the discriminator has to be BUILT — the `size-atom` row is the one that needed a
+> 4-engine measurement. The two are ordered, not alternatives: read, then construct.
+
 Derived 2026-09-04 from FOUR wrong claims made in ONE day, all by the same author, all in this file's
 subject area. They are not four mistakes; they are one, four times:
 
