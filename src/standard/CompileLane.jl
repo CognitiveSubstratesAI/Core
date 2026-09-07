@@ -124,6 +124,93 @@ function _space_defines_rule(sp, name::Base.Symbol, arity::Int)::Bool
 end
 
 """
+    _defs_have_var_headed_rule(sp, defs) -> Bool
+
+The same question as `_space_has_var_headed_rule`, asked of the REGION'S OWN TEXT.
+
+⚠️ WHY BOTH ARE NEEDED, and the space check ALONE is not enough. `_compile_run_inner` compiles each
+definition AS IT ADDS IT, so when the first form is compiled the later ones are not in the space yet.
+MEASURED 2026-09-07: with only the space check, `(= (g 1) one)` compiled cleanly BEFORE
+`(= (\$f \$x) …)` had been loaded, and the gate never fired — `compiled=2, fell_back=0`, exactly the
+signature it was written to eliminate. The region's text is the only thing that knows what is coming.
+"""
+function _defs_have_var_headed_rule(sp, defs)::Bool
+    EQ = Base.Symbol("=")
+    for d in defs
+        atoms = try
+            toks = Eval.tokenize(d)
+            i = Ref(1)
+            acc = StandardMeTTa.Atom[]
+            while i[] <= length(toks)
+                toks[i[]] == "!" && (i[] += 1)
+                i[] > length(toks) && break
+                push!(acc, Eval.parse_from(toks, i, sp.tokens))
+            end
+            acc
+        catch
+            continue                      # unparseable here is pass 2's problem, not this gate's
+        end
+        for a in atoms
+            a isa StandardMeTTa.Expression || continue
+            ch = (a::StandardMeTTa.Expression).children
+            length(ch) == 3 || continue
+            (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) || continue
+            lhs = ch[2]
+            lhs isa StandardMeTTa.Expression || continue
+            lc = (lhs::StandardMeTTa.Expression).children
+            (!isempty(lc) && lc[1] isa StandardMeTTa.Var) && return true
+        end
+    end
+    false
+end
+
+"""
+    _space_has_var_headed_rule(sp) -> Bool
+
+Does the space hold a rule whose HEAD IS A VARIABLE — `(= (\$f \$x) …)`?
+
+🔴 **ONE SUCH RULE INVALIDATES EVERY STATIC CALL/DATA DECISION IN THE LANE**, because it can fire on
+a call to ANY head. Nothing compiled can be trusted while one is loaded. MeTTaScript states the same
+thing about its own JIT (`eval.ts:1694-1697`): *"A variable-headed runtime equation `(= (\$f \$x) …)`
+can fire on a call to ANY head, so nothing compiled can be trusted while one is loaded."*
+
+MEASURED HERE 2026-09-03 — we had no such check, and the failure is SILENT ANSWER LOSS:
+
+    (= (g 1) one)
+    (= (\$f \$x) (caught \$f \$x))
+
+    COMPILED     !(g 1) -> one                  !(h 2) -> (h 2)
+    INTERPRETED  !(g 1) -> (caught g 1) | one   !(h 2) -> (caught h 2)
+
+`compiled=2  fell_back=0` — ACCEPTED, nothing declined, one answer where the interpreter gives two,
+and an unreduced term where the interpreter reduces. **`fell_back=0` IS THE BUG'S SIGNATURE**: a
+guard that declines is safe, a guard that accepts wrongly is not. No field in the result reports it.
+
+⚠️ NOT the same defect as `_frozen_cross_head_call`. That one is about a call FROZEN AS DATA; this is
+about a rule that can fire on heads the compiler never considered. The frozen-call guard never even
+reaches this clause, which is why widening it did not help.
+
+COST: while such a rule is present, the lane declines EVERYTHING and the interpreter answers. That is
+the correct trade — these rules are rare, and the alternative is dropping answers with every status
+field green. Scans `own_atoms` (not the whole space): a var-headed rule in the loaded stdlib would be
+a different and much larger problem, and gating on it would zero out coverage permanently.
+"""
+function _space_has_var_headed_rule(sp)::Bool
+    EQ = Base.Symbol("=")
+    for a in Eval.own_atoms(sp)
+        a isa StandardMeTTa.Expression || continue
+        ch = (a::StandardMeTTa.Expression).children
+        length(ch) == 3 || continue
+        (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) || continue
+        lhs = ch[2]
+        lhs isa StandardMeTTa.Expression || continue
+        lc = (lhs::StandardMeTTa.Expression).children
+        (!isempty(lc) && lc[1] isa StandardMeTTa.Var) && return true
+    end
+    false
+end
+
+"""
     _frozen_cross_head_call(sp, cls) -> Union{Tuple{Symbol,Int}, Nothing}
 
 The head this clause FROZE AS DATA while the space says it is a FUNCTION — or `nothing` if the
@@ -265,6 +352,9 @@ function compile_definition(sp, form::AbstractString)::Union{ILForm, Nothing}
     # BEFORE the emitter because the emitter cannot see the defect: the frozen term is a perfectly
     # well-formed `unify`, so every downstream stage emits it happily and the answer is wrong.
     _frozen_cross_head_call(sp, cls) === nothing || return nothing
+    # …and refuse EVERYTHING while a variable-headed rule is loaded, because it can fire on a call to
+    # any head and no static call/data decision survives it. See `_space_has_var_headed_rule`.
+    _space_has_var_headed_rule(sp) && return nothing
     r = try
         CompilerEmitIL.emit_il_program(cls)
     catch
@@ -763,8 +853,12 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
     prev_noreduce = auto_table ? copy(Eval._NOREDUCE_HEADS) : nothing
     try
     for r in split_program_regions(program, purity_may_mutate(program))
+        # 🔴 REGION-LEVEL KILL SWITCH. A variable-headed rule anywhere in this region can fire on a
+        # call to ANY head, so nothing in it may compile — and the check must read the region's TEXT,
+        # because definitions are compiled AS THEY ARE ADDED and a later one is not yet in the space.
+        vheaded = _defs_have_var_headed_rule(sp, r.defs) || _space_has_var_headed_rule(sp)
         for d in r.defs
-            il = introspects ? nothing : compile_definition(sp, d)
+            il = (introspects || vheaded) ? nothing : compile_definition(sp, d)
             if il === nothing
                 fallback ||
                     error("compile_run: declined and fallback=false — $(first(d, 80))")

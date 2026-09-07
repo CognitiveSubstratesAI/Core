@@ -287,6 +287,8 @@ Main.@suite("compiler/test_emit_il.jl")
 Main.@suite("compiler/test_emit_julia.jl")   # stage 4c: registration path (milestone 1a)          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
 Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
 Main.@suite("compiler/test_frozen_call_decline.jl")  # a head the space DEFINES must never compile as DATA —
+Main.@suite("compiler/test_var_headed_kill_switch.jl")  # `(= ($f $x) …)` fires on ANY head — nothing
+                                                        # compiled is trustworthy while one is loaded
                                                     # the miscompile answered `((+ upto 1) 1 6)` with every status field green
 Main.@suite("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
 Main.@suite("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus
