@@ -340,7 +340,37 @@ cousin to magic sets). We now have both roads to the same place — `tabled_eval
 `saturate!` in MORK. If that is duplication nobody decided on, it would explain a share of the
 recurring work. Not answerable from the code; it is a design question.
 
-## 8. ⚠️ LeaTTa IS STALE — MeTTapedia SUPERSEDES IT, AND WE DEPEND ON THE STALE ONE IN 37 FILES
+## 8. ⚠️ LeaTTa vs MeTTapedia — "SUPERSEDES" WAS WRONG. MeTTapedia BUILDS ON LeaTTa.
+
+🔴 **CORRECTED 2026-09-07, and the original heading is kept below so the error is visible.** This
+section was written as *"LeaTTa IS STALE — MeTTapedia SUPERSEDES IT"* from two facts: commit dates
+(2026-07-20 vs 2026-08-29) and file counts (231 vs 5,731). Both true. The conclusion did not follow.
+
+**MeTTapedia REQUIRES LeaTTa.** `lean/mettapedia/lakefile.lean:26`:
+```lean
+require MettaHyperonFull from "../externals/LeaTTa"
+```
+and `dev-zone/LeaTTa/lakefile.lean:21` declares `lean_lib «MettaHyperonFull»` — it is that package.
+So LeaTTa is a LIVE BUILD DEPENDENCY of the active repo, not a thing the active repo replaced. A
+six-week-old HEAD on a dependency reads as SETTLED, not neglected — which also explains, correctly
+this time, why `MeTTailCore/` was untouched in MeTTapedia's 1,828-file commit.
+
+⇒ **The "migrate our 37 files off LeaTTa" framing was wrong too.** Those files cite a live dependency
+of the repo we were told to prefer. Nothing to migrate.
+
+⚠️ **AND THE BOOTSTRAP DOES NOT PROVIDE IT.** `lean/bootstrap_local_repos.sh` clones TEN externals
+(Foundation, exchangeability, Metatheory, certifyingDatalog, ordered_semigroups, provenance,
+lean4lean, mm-lean4 ×2, ks-foundations-of-inference) and **LeaTTa is not among them**, while
+`lean/externals/` does not exist at all yet. Placing it is a manual step before any `lake build`.
+
+🔴 **HOW THIS HAPPENED, since §5b was written to prevent exactly it.** The user said LeaTTa
+*"seems obsolete"* — hedged. Two consistent facts were found, no observation was constructed that
+would DISTINGUISH "superseded" from "depended upon", and it was recorded as settled. The
+discriminator cost one command: read the dependant's lakefile. [[feedback_scope_closure_claims_to_what_verified]]
+
+### The original section follows, unedited.
+
+## 8a. (AS WRITTEN 2026-09-04) LeaTTa IS STALE — MeTTapedia SUPERSEDES IT, AND WE DEPEND ON THE STALE ONE IN 37 FILES
 
 User direction, 2026-09-03: *"dont use LeaTTa .. use MeTTapedia, LeaTTa seems obselete."* Verified:
 
