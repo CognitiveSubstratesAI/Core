@@ -273,6 +273,11 @@ Main.@suite("standard/test_tabling_blockers_closed.jl")
 # METTA mode (answer-preserving). Characterized after I wrongly called the difference a defect and
 # committed it — see the file header; p60 remains OPEN with three refuted causes.
 Main.@suite("standard/tabling/test_table_mode_split.jl")
+# 🔴 OPEN, pinned @test_broken: a TABLED call returns its VALUE but not its answer SUBSTITUTIONS, so
+# the caller's variables come back unbound. This is p60's over-derivation, and it reconciles roadmap
+# §0r ("binding lost" — tabled) with §0s ("binding survives" — untabled): both were right about their
+# own shape. Fix direction: consume a table by UNIFYING the call with each stored answer.
+Main.@suite("standard/tabling/test_tabled_call_loses_bindings.jl")
 # §7.11.2 is WIRED: `answer_abstract(N)` fires at the answer-PRODUCTION site, not the completion
 # mirror — the mirror cannot work, because the programs this restraint exists for never complete.
 Main.@suite("standard/tabling/test_answer_restraint_wiring.jl")
