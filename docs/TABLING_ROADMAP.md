@@ -112,6 +112,34 @@ over-invalidation is sound, under-invalidation is the one failure an IDG must no
 
 ---
 
+## 0t. 🟢 p60 SETTLED 2026-09-09 — a TABLED CALL LOSES ITS ANSWER SUBSTITUTIONS
+
+**§0r and §0s were BOTH RIGHT, about DIFFERENT SHAPES, and the missing word is TABLED.**
+
+    (= (g a) True) (= (g b) True)      !(let $c (g $z) $z)
+        UNTABLED -> ["a","b"]      TABLED -> ["$z"]
+
+A variable-headed callee that binds inside its body behaves identically, so it is **not** the head
+shape — tabling alone is the discriminator. A tabled call returns the answer's VALUE and never the
+substitutions. §0s's callee was UNTABLED (binding survives ✓); p60's `q` is TABLED (binding lost).
+Neither test named the property it turned on, so for eleven days each read as a refutation of the
+other. See `test/standard/tabling/test_tabled_call_loses_bindings.jl`.
+
+p60, on the TRANSLATOR'S OWN OUTPUT: `(q $v1)` leaves `$v1` unbound, so
+`(match &self (t $v0 $v1) $v1)` ranges over the whole relation — `t(2,1)` yields `q(2)` from nothing,
+and the wrong `q(2)` kills `p(2)/p(3)/p(4)` via `tnot(q(2))`. All four mismatches, one cause.
+
+**FIX DIRECTION:** consume a table by UNIFYING the call with each stored answer. The answer trie
+already holds each answer's goal INSTANCE (§7.11.1); threading it back to the caller is the gap.
+
+⚠️ **THREE CAUSES WERE PROPOSED AND REFUTED FIRST** — §0r's (as stated), §0s's (real, guard built and
+measured INSUFFICIENT), and a data-fact-tabling claim that was committed and retracted the same day
+(`b46b8c4` → `f4441cd`) because its repro used a bare data atom, **a shape the translator never emits
+for a tabled predicate**. Any future claim about generative calls must state the CALLEE'S TABLED
+STATUS, and must be run against the translator's output rather than a hand-written stand-in.
+
+---
+
 ## 0s. 🔴 §0r's DIAGNOSIS WAS WRONG — the binding is NOT lost; the gap is `NotReducible` vs FAILURE
 
 **MEASURED 2026-08-29, and it replaces the cause given in §0r below.**
