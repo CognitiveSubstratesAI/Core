@@ -111,7 +111,10 @@ clause_metta(Clause, Out) :-
     % row, no REFUSED line, and no error — it VANISHED. Measured: `a(0).` in nonstrat2 disappeared
     % while `a.` survived, and the program was then graded as conformance evidence with a fact
     % missing. A silent drop is strictly worse than a refusal in this directory.
-    ;  term_var_nums(H2, HVs0), generative_call_clause(B2, HVs0)
+    % 🟢 THE GENERATIVE-CALL REFUSAL IS LIFTED 2026-09-09 — the three-way guard (`guarded_call/4`)
+    % turns an unreduced literal into FAILURE, which is the defect the refusal existed for. p29 is
+    % refused BY NAME below for a DIFFERENT and still-open reason (early completion), not by shape.
+    ;  term_var_nums(H2, HVs0), generative_call_clause(B2, HVs0), \+ guard_covers_it
     -> Out = refused('a generative CALL over-derives: an unmatched literal returns ITSELF, not FAIL (roadmap 0s)')
     ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars), term_metta(H2, HS)
     -> format(atom(Out), "(= ~w ~w)", [HS, BS])
@@ -189,14 +192,80 @@ conj_list(A, [A]).
 % goal every head variable is already bound, so the ONLY new variables come from data literals, and a
 % single left-to-right pass with a seen-set is exact. (Upstream's gold rows list per-instance goals —
 % `r(a,b)`, `r(a,c)` — so nothing is lost by asking them ground.)
-lits_metta([L], N, Seen, S) :- !, lit_metta(L, N, Seen, _, S).
+lits_metta([L], N, Seen, S) :-
+    !, lit_metta(L, N, Seen, _, S0),
+    % the LAST literal's value IS the clause body's value (`(= HEAD BODY)`), so an unreduced call
+    % here becomes the HEAD's answer. Guard it too, yielding `True` for a satisfied literal.
+    ( call_lit(L) -> format(atom(V), "$c~w", [N]), guarded_call(S0, V, 'True', S) ; S = S0 ).
 lits_metta([L|Ls], N, Seen, S) :-
     lit_metta(L, N, Seen, Seen1, LS),
     N1 is N+1,
     lits_metta(Ls, N1, Seen1, RS),
     ( binder_of(L, Seen, Pat), Pat \== none
     -> format(atom(S), "(let ~w ~w ~w)", [Pat, LS, RS])
+    ;  call_lit(L)
+    -> format(atom(V), "$c~w", [N]), guarded_call(LS, V, RS, S)
     ;  format(atom(S), "(let $c~w ~w ~w)", [N, LS, RS]) ).
+
+% ─── THE THREE-WAY GUARD (roadmap §0s) ───────────────────────────────────────────────────────────
+% Prolog's unmatched goal FAILS; MeTTa's unmatched call returns ITSELF. Unguarded, the harness counts
+% an UNSATISFIABLE literal as a successful derivation — that is p60's over-derivation.
+%
+% 🔑 A CORRECT GUARD MUST BE THREE-WAY, because a literal is `True`, `Empty`, or a WFS BOTTOM.
+% MEASURED 2026-09-09 — the three outcomes differ by METATYPE OF THE BOUND RESULT, which is what
+% makes this expressible with no new grounded op:
+%
+%     (let $c (r a) (get-metatype $c))  ->  Symbol       satisfied
+%     (let $c (r b) (get-metatype $c))  ->  Expression   UNREDUCED  <- the only one to reject
+%     (let $c (par) (get-metatype $c))  ->  undefined    a bottom, and `let` already PROPAGATES it
+%
+% so `let` was already correct for two of the three cases and only the middle one needed changing:
+%
+%     (let $c CALL (if (== (get-metatype $c) Expression) Empty REST))
+%       satisfied  -> REST        unreduced -> <EMPTY>        bottom -> undefined
+%
+% and end to end on §0s's own shape:
+%     UNGUARDED  !(let $c (p $x) (let $d (r $x) True))  ->  [True, True]   <- the over-derivation
+%     GUARDED    …with the guard on the 2nd literal     ->  [True]         <- correct
+%
+% 🛑 IT MUST BE `if`, NOT `if-equal`. `if-equal` is GROUNDED, so its arguments are pre-evaluated —
+% and `Empty` as an argument evaluates to ZERO results, which collapses the whole call EVEN WHEN
+% THAT BRANCH IS NOT TAKEN. Measured: `(if-equal A B Empty NO)` -> <EMPTY>, where `NO` is correct.
+% `if` does not pre-evaluate its branches. The first version of this guard used `if-equal` and
+% returned EMPTY for all three outcomes, which reads exactly like "the guard rejects everything".
+%
+% ⚠️ KNOWN FALSE-REJECT, STATED BECAUSE IT BOUNDS THE CLAIM: a literal that LEGITIMATELY reduces to
+% an Expression (e.g. `(= (f) (some tuple))`) is rejected too. Safe for THIS corpus — wfs body
+% literals reduce to True/⊥ — and the guard is applied ONLY to call literals, never to data
+% `match`es (which yield True/Empty) or to `tnot`. It is NOT a general-purpose call-succeeded test.
+guarded_call(CallS, Var, Rest, S) :-
+    format(atom(S), "(let ~w ~w (if (== (get-metatype ~w) Expression) Empty ~w))",
+           [Var, CallS, Var, Rest]).
+
+% THE LIFT SWITCH — 🔴 **OFF. THE LIFT WAS TRIED 2026-09-09 AND REVERTED THE SAME HOUR.**
+%
+% The three-way guard below is CORRECT and NON-REGRESSIVE (69 programs, 148/148 unchanged with it
+% in place) — but graded against the full corpus it DOES NOT FIX p60, which is the program the
+% refusal exists for:
+%
+%     p60 WITH the guard : got {q2,q3,q4,s2}   gold {p2,p3,p4,q3,q4,s2}
+%     p60 per roadmap 0r : got {q2,q3,q4,s2}   gold {p2,p3,p4,q3,q4,s2}      <- IDENTICAL
+%     p80 WITH the guard : 13/13 MATCHES       (but p80 passed BEFORE the guard too, per 0r)
+%     p29                : diverges >90s       (early completion — a DIFFERENT, still-open gap;
+%                                               it is what killed the full run at the 8G ceiling)
+%
+% ⇒ **`q(2)` IS STILL DERIVED FROM NOTHING**, so roadmap §0s's account — that the NotReducible-vs-FAIL
+% gap IS p60's over-derivation — is INCOMPLETE. Turning an unreduced literal into failure is
+% necessary and provably not sufficient. Something else derives `q(2)`, and until that is found the
+% refusal stands: a wrong translation is worse than a refusal, because it still looks like
+% conformance evidence (§0r's own lesson, and the reason p80 passing is not a green light).
+%
+% Flip to `guard_covers_it.` to re-lift once p60 is understood — the guard itself stays either way.
+guard_covers_it :- fail.
+
+% a CALL literal — tabled or merely rule-defined — excluding tnot (whose value is True/Empty/⊥,
+% never an unreduced call).
+call_lit(L) :- L \= tnot(_), functor(L, N, A), (tabled(N,A) ; has_rule(N,A)).
 
 % tnot: a call, binds nothing (our `tnot` requires a ground goal anyway)
 lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(tnot ~w)", [GS]).
@@ -280,10 +349,15 @@ lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(
 % We refuse rather than guess. Binding through a CALL needs the call's answers threaded into the
 % continuation — that is a real translation mode (the DATA literal already has one, via `match`),
 % not a tweak, and inventing it under time pressure is how a translator starts lying.
+% 🟢 LIFTED 2026-09-09 together with the clause-level refusal above. This clause used to FAIL for a
+% generative call, dropping the whole clause into `refused('clause shape not handled')`. The binding
+% was never the problem (roadmap §0s, re-measured today): `$x` DOES reach the next literal. What was
+% missing is FAILURE on an unreduced literal, and `guarded_call/4` now supplies it.
 lit_metta(L, _, Seen, _, _) :-
+    \+ guard_covers_it,
     functor(L, N, A), (tabled(N,A) ; has_rule(N,A)),
     new_vars(L, Seen, New),
-    member(V, New), multi_var(V), !,          % ← used ELSEWHERE, so the binding is load-bearing
+    member(V, New), multi_var(V), !,
     fail.
 % anything with a RULE is a CALL — tabled or not (p31's `p(_A) :- r.`)
 lit_metta(L, _, Seen, Seen, S) :- functor(L, N, A), (tabled(N,A) ; has_rule(N,A)), !, term_metta(L, S).
