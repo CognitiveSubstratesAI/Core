@@ -123,7 +123,7 @@ A variable-headed callee that binds inside its body behaves identically, so it i
 shape — tabling alone is the discriminator. A tabled call returns the answer's VALUE and never the
 substitutions. §0s's callee was UNTABLED (binding survives ✓); p60's `q` is TABLED (binding lost).
 Neither test named the property it turned on, so for eleven days each read as a refutation of the
-other. See `test/standard/tabling/test_tabled_call_loses_bindings.jl`.
+other. **This defect was ALREADY PINNED on 2026-09-01** as `test/standard/tabling/test_answer_substitution.jl` ("the answer table stores VALUES where SLG requires SUBSTITUTIONS", `5894b13`), with its fix option space worked out in `a89f7db`. I re-discovered it on 09-09 and opened a duplicate file, now deleted and folded back in. ⚠️ Read that file's header BEFORE proposing a fix — option (2) is already refuted there.
 
 p60, on the TRANSLATOR'S OWN OUTPUT: `(q $v1)` leaves `$v1` unbound, so
 `(match &self (t $v0 $v1) $v1)` ranges over the whole relation — `t(2,1)` yields `q(2)` from nothing,

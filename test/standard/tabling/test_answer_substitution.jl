@@ -66,6 +66,31 @@
 # Anti-vacuity is asserted per case: `auto_table!` must actually have tabled the head, or the
 # comparison is between two identical untabled runs. That check is not optional here — an earlier
 # pass of this investigation reported "0 divergences" from exactly that mistake.
+# ── 2026-09-09 ADDENDUM: THE ONE-VARIABLE A/B, AND THE CORPUS PROGRAM THIS BREAKS ───────────────
+# ⚠️ I RE-DISCOVERED THIS DEFECT ON 2026-09-09 AND OPENED A SECOND FILE FOR IT
+# (`test_tabled_call_loses_bindings.jl`, now deleted). It was pinned here on 09-01 with the option
+# space already worked out. Eight days, and the search that would have found it —
+# `capability_search.sh "answer substitution"` — was never run. Recorded because the DUPLICATE is
+# the evidence: narrative session logs do not have a "still open" column, so a pinned defect is
+# invisible to the next session unless something enumerates it. `workflows/status.sh` now does.
+#
+# WHAT THE RE-DISCOVERY DID ADD, and it is the cleanest statement of the defect yet — ONE VARIABLE:
+#
+#     (= (g a) True) (= (g b) True)          !(let $c (g $z) $z)
+#         UNTABLED -> ["a","b"]          TABLED -> ["$z"]
+#
+# A variable-headed callee that binds inside its body behaves IDENTICALLY (["a","b"] untabled,
+# ["$z"] tabled), so it is not the callee's head shape — TABLING ALONE is the discriminator.
+#
+# AND IT IS THE CAUSE OF wfs p60, which reconciles an eleven-day contradiction in the roadmap.
+# §0r said a generative call loses its binding; §0s said it survives. Both ran real experiments and
+# both were right ABOUT THEIR OWN SHAPE — §0s's callee was UNTABLED, p60's `q` is TABLED. Neither
+# test named the property it turned on. p60, on the translator's own output:
+#     (= (q $v0) (let $c1 (q $v1) (if … Empty (match &self (t $v0 $v1) $v1))))
+# `(q $v1)` comes back unbound, so the match ranges over the WHOLE `t` relation — `t(2,1)` yields
+# `q(2)` from nothing, and the wrong `q(2)` then kills p(2)/p(3)/p(4) via `tnot(q(2))`. All four
+# p60 mismatches, one cause. ⇒ closing THIS defect is what un-refuses p29/p60/p80.
+
 using MeTTaCore
 using MeTTaCore.Eval
 using Test
