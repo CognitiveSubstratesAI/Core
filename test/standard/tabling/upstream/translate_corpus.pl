@@ -112,7 +112,7 @@ clause_metta(Clause, Out) :-
     % while `a.` survived, and the program was then graded as conformance evidence with a fact
     % missing. A silent drop is strictly worse than a refusal in this directory.
     ;  term_var_nums(H2, HVs0), generative_call_clause(B2, HVs0)
-    -> Out = refused('a generative CALL loses its binding — silently OVER-DERIVES (see roadmap 0r)')
+    -> Out = refused('a generative CALL over-derives: an unmatched literal returns ITSELF, not FAIL (roadmap 0s)')
     ;  term_var_nums(H2, HeadVars), body_metta(B2, BS, HeadVars), term_metta(H2, HS)
     -> format(atom(Out), "(= ~w ~w)", [HS, BS])
     ;  Out = refused('clause shape not handled') ).
@@ -209,6 +209,34 @@ lit_metta(tnot(G), _, Seen, Seen, S) :- !, term_metta(G, GS), format(atom(S), "(
 %   p60  FAILS: got {q2,q3,q4,s2}, gold {p2,p3,p4,q3,q4,s2} — FOUR mismatches from ONE cause.
 %   p29  diverges (early completion; `findall(B,e(B,0),L)` times out in SWI too).
 %
+% 🔴🔴 THE CAUSE BELOW IS **RETRACTED** — RE-MEASURED 2026-09-09, AND THE BINDING IS NOT LOST.
+% See roadmap §0s (2026-08-29), which this comment was never updated to match. The discriminating
+% run, printing the TYPE of every answer so it cannot be read two ways:
+%
+%     (= (p a) True) (= (p b) True) (= (r a) True)
+%     !(let $c (p $x) (r $x))  ->  (r b) :: Expression        <- $x DID reach `r`, bound to `b`
+%                                  True  :: Sym               <- and the $x=a alternative succeeded
+%     !(r b)                   ->  (r b)                      <- unmatched call returns ITSELF
+%
+% `(r b)` is constructible ONLY if `$x` was bound to `b` and passed on. So "the call succeeds with
+% `$b` STILL UNBOUND" is FALSE.
+%
+% ⚠️ AND NOTE WHAT THAT MEANS ABOUT THIS FILE: the retracted paragraph below ALSO says "This one was
+% executed", directly under a correction of an EARLIER unexecuted diagnosis. A claim of measurement
+% is not itself a measurement — two successive causes here were both asserted with that phrase and
+% both were wrong. Re-run the check, do not read the comment.
+%
+% THE ACTUAL CAUSE (roadmap §0s): Prolog's unmatched goal FAILS and contributes nothing; MeTTa's
+% unmatched call returns ITSELF (`NotReducible`, `metta_language_spec.md` §2.5). The corpus harness
+% counts ANY answer as a derivation, so an UNSATISFIABLE literal reads as a successful one. That is
+% p60's over-derivation, and it is a TRANSLATION-SEMANTICS gap, not a binding bug.
+% 🛑 The obvious fix — bind each call literal to `True` instead of a throwaway `$cN` — was TRIED,
+% MEASURED and REVERTED: it broke NINE corpus assertions, because `True` is a TWO-valued pattern in
+% a THREE-valued logic (a literal is `True`, `Empty`, or a WFS BOTTOM, and `(let True ⊥ …)` turns
+% definite answers undefined). A correct fix must be THREE-WAY: accept `True`, accept and PROPAGATE
+% a bottom, and reject only an UNREDUCED term.
+%
+% ─── RETRACTED TEXT, KEPT BECAUSE THE FAILURE SHAPE MATTERS ──────────────────────────────────────
 % THE CAUSE. A generative call returns its RHS VALUE and does NOT report the binding:
 %       (= (p a) True) (= (p b) True)      !(p $x)  ->  [True, True]      $x is LOST
 % So in `q(A) :- q(B), t(A,B)` the call `(q $b)` succeeds with `$b` STILL UNBOUND, and the following

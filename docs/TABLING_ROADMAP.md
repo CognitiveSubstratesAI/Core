@@ -390,7 +390,21 @@ it has been tested and refuted.
 
 ---
 
-## 0. BLOCKERS — these gate other work, and two are live defects
+## 0. BLOCKERS — ⚠️ BOTH "LIVE" ROWS ARE CLOSED (re-verified 2026-09-09); only 0.2's remainder stands
+
+🔴 **THIS HEADER SAID "two are live defects" AND WAS STALE ON BOTH COUNTS.** Re-run 2026-09-09 using
+the CHECK EACH ROW NAMES FOR ITSELF — not inspection, not a grep:
+
+| row | its own stated check | result |
+|---|---|---|
+| **0.1** | "assert `:fib` pure in IL form" | ✅ **PASSES.** `:fib` pure in SOURCE = `true`, **in IL = `true`**, on a body that is exactly the `(= (fib $n) (function (chain (metta (< $n 2) …) …)))` shape the row describes as failing. Fixed 2026-08-16: the six ops are in `_PURE_PRIMS` (`Tabling.jl:502`). |
+| **0.3** | "two `compile_run` calls in one process; assert the second is unaffected" | ✅ **PASSES 4/4.** `CompileLane.jl:910-913` snapshots `_TABLED_HEADS` and `:971-972` restores it; the second call is unaffected and answers `55`. A per-head `delete!` also exists (`Tabling.jl:374`), so "`untable_all!` is the only removal" is false too. |
+
+⇒ **the same failure this file already warns about at its own §-READ-FIRST banner** — *"a READ-FIRST
+banner states a verdict at a point in time and is refreshed by hand."* It cost a session a wrong
+answer on 2026-09-02 and cost this one a wrong priority on 2026-09-09. **Rows below are kept
+verbatim for the diagnosis, NOT as live status.**
+
 
 | # | item | why it blocks | verify |
 |---|---|---|---|

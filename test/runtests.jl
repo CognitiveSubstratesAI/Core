@@ -265,6 +265,10 @@ Main.@suite("standard/test_grounded_payloads.jl")
 # `unify` must not launder ⊥ into its `else` branch. Both properties were wrong until
 # 2026-08-18 and cost four XSB gold programs.
 Main.@suite("standard/test_wfs_propagation.jl")
+# The roadmap's §0 BLOCKERS, each run BY THE CHECK ITS OWN ROW NAMES. The header read "two are live
+# defects" for weeks after both were fixed and a session ranked its day off that line — a hand-refreshed
+# STATUS ROW goes stale silently, a TEST goes red.
+Main.@suite("standard/test_tabling_blockers_closed.jl")
 # §7.11.2 is WIRED: `answer_abstract(N)` fires at the answer-PRODUCTION site, not the completion
 # mirror — the mirror cannot work, because the programs this restraint exists for never complete.
 Main.@suite("standard/tabling/test_answer_restraint_wiring.jl")
