@@ -269,10 +269,10 @@ Main.@suite("standard/test_wfs_propagation.jl")
 # defects" for weeks after both were fixed and a session ranked its day off that line — a hand-refreshed
 # STATUS ROW goes stale silently, a TEST goes red.
 Main.@suite("standard/test_tabling_blockers_closed.jl")
-# 🔴 OPEN WRONG-ANSWER DEFECT, pinned @test_broken: tabling is NOT answer-preserving for a DATA-FACT
-# predicate, so `tnot` over one reads a TRUE fact as underivable. This is p60's over-derivation, and
-# it supersedes roadmap §0r (refuted) and §0s (necessary but insufficient). Fix site: Tabling.jl:1148.
-Main.@suite("standard/tabling/test_tabled_data_fact_negation.jl")
+# `table!` = PROLOG mode (a clause-less goal FAILS; a data atom is not a clause) vs `auto_table!` =
+# METTA mode (answer-preserving). Characterized after I wrongly called the difference a defect and
+# committed it — see the file header; p60 remains OPEN with three refuted causes.
+Main.@suite("standard/tabling/test_table_mode_split.jl")
 # §7.11.2 is WIRED: `answer_abstract(N)` fires at the answer-PRODUCTION site, not the completion
 # mirror — the mirror cannot work, because the programs this restraint exists for never complete.
 Main.@suite("standard/tabling/test_answer_restraint_wiring.jl")
