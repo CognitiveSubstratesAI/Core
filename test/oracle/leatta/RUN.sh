@@ -5,6 +5,10 @@
 #   1. verifies LeaTTa itself still proves the corpus (270/270, "ORACLE OK");
 #   2. re-vendors corpus/*.metta + EXPECTED.txt from the LeaTTa checkout into ./corpus/.
 #
+# ⚠️ ~/dev-zone/LeaTTa was REMOVED 2026-09-16 (user decision). To re-vendor, clone it first:
+#   git clone https://github.com/godelclaw/LeaTTa ~/dev-zone/LeaTTa && git -C ~/dev-zone/LeaTTa checkout 3885010
+# The standing gate does NOT need it — it reads the frozen ./corpus/.
+#
 # After re-vendoring, re-run the Julia gate and update LEATTA_LEDGER_BASELINE if the corpus changed:
 #   cd ../../.. && printf 'using MeTTaCore,Test; include("test/oracle/leatta/test_leatta_oracle.jl")\n' \
 #     | julia --project=. -i tools/repl.jl
