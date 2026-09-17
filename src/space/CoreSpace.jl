@@ -687,7 +687,7 @@ function _walk_atoms(f::Function, s::CoreSpace)
             rel_bytes = collect(path(rz))
             local atom
             try
-                atom = from_sexpr(strip(expr_serialize(rel_bytes)))
+                atom = from_sexpr(strip(expr_serialize2(rel_bytes)))
             catch err
                 @warn "CoreSpace _walk_atoms: skipping unparseable atom (prefixed)" exception=err maxlog=5
                 continue
@@ -791,7 +791,7 @@ function _walk_atoms_narrowed(f::Function, s::CoreSpace, prefix_bytes::Vector{UI
         # CORE-2 fix (audit 2026-06-05): guard ONLY the parse, let callback errors propagate.
         local atom
         try
-            atom = from_sexpr(strip(expr_serialize(full)))
+            atom = from_sexpr(strip(expr_serialize2(full)))
         catch err
             @warn "CoreSpace _walk_atoms_narrowed: skipping unparseable atom" exception=err maxlog=5
             continue
@@ -915,7 +915,7 @@ function core_match_bind(
             function (_bindings, loc)
                 local atom
                 try
-                    atom = from_sexpr(strip(expr_serialize(loc)))
+                    atom = from_sexpr(strip(expr_serialize2(loc)))
                 catch err
                     @warn "core_match_bind: skipping unparseable match" exception=err maxlog=5
                     return true
@@ -1019,7 +1019,7 @@ function core_atoms(s::CoreSpace)::Vector{SExprConvertible}
         while to_next_val!(rz)
             rel_bytes = collect(path(rz))
             try
-                str = expr_serialize(rel_bytes)
+                str = expr_serialize2(rel_bytes)
                 push!(results, from_sexpr(strip(str)))
             catch e
                 @warn "core_atoms: failed to deserialize atom in prefix region" exception=e
@@ -1130,7 +1130,7 @@ function core_match_bind_multi(
                     i <= length(e.buf) || return true       # combined shorter than n factors — skip
                     sp = expr_span(e, i)
                     atom = try
-                        from_sexpr(strip(expr_serialize(collect(sp))))
+                        from_sexpr(strip(expr_serialize2(collect(sp))))
                     catch err
                         @warn "core_match_bind_multi: unparseable factor" k exception=err maxlog=5
                         return true
