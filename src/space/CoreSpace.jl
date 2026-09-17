@@ -629,7 +629,7 @@ end
 Internal: walk every stored value under `s.prefix` and invoke `f(atom)` for
 each.  Uses `space_dump_all_sexpr` (whole-trie text dump) for root-prefix —
 matches `core_atoms`'s fast path.  For prefixed spaces, walks the subtrie
-via `read_zipper_at_path` + `zipper_to_next_val!` and serializes each
+via `read_zipper_at_path` + `to_next_val!` and serializes each
 relative-to-anchor path through `expr_serialize`.
 
 Why we walk instead of `space_query_multi` — ⚠️ CORRECTED 2026-07-29, the original reason
@@ -683,8 +683,8 @@ function _walk_atoms(f::Function, s::CoreSpace)
         end
     else
         rz = read_zipper_at_path(s.inner.btm, s.prefix)
-        while zipper_to_next_val!(rz)
-            rel_bytes = collect(zipper_path(rz))
+        while to_next_val!(rz)
+            rel_bytes = collect(path(rz))
             local atom
             try
                 atom = from_sexpr(strip(expr_serialize(rel_bytes)))
@@ -786,8 +786,8 @@ end
 
 function _walk_atoms_narrowed(f::Function, s::CoreSpace, prefix_bytes::Vector{UInt8})
     rz = read_zipper_at_path(s.inner.btm, vcat(s.prefix, prefix_bytes))
-    while zipper_to_next_val!(rz)
-        full = vcat(prefix_bytes, collect(zipper_path(rz)))   # full atom bytes (no region prefix)
+    while to_next_val!(rz)
+        full = vcat(prefix_bytes, collect(path(rz)))   # full atom bytes (no region prefix)
         # CORE-2 fix (audit 2026-06-05): guard ONLY the parse, let callback errors propagate.
         local atom
         try
@@ -832,10 +832,10 @@ end
 # `ExprEnv` dict is the real answer — that path needs the span arithmetic above". That is a plausible
 # mental model and it is not what the code does. CORRECTED 2026-08-27 by reading the kernel:
 #
-#     MORK/src/kernel/Space.jl:840   combined = collect(pzg_origin_path(loc))
+#     MORK/src/kernel/Space.jl:840   combined = collect(origin_path(loc))
 #     MORK/src/kernel/Space.jl:877   return effect(trie_bindings, combined)
 #
-# `pzg_origin_path` is the ProductZipperG's ORIGIN PATH, which for an N-factor product is the
+# `origin_path` is the ProductZipperG's ORIGIN PATH, which for an N-factor product is the
 # CONCATENATION of all N matched factor paths. So the effect callback ALREADY RECEIVES EVERY MATCHED
 # ATOM — the `ExprEnv` dict is not needed, and neither is the cursor-tail span arithmetic this
 # comment warned about (that warning is still correct ABOUT THE DICT; it is simply not on this path).
@@ -998,7 +998,7 @@ end
 Scoped to `s.prefix`:
 - Empty prefix → original fast-path via `space_dump_all_sexpr` (whole trie)
 - Non-empty prefix → walk the subtrie anchored at `s.prefix` via a read
-  zipper; `zipper_path(rz)` returns paths RELATIVE to the anchor so they
+  zipper; `path(rz)` returns paths RELATIVE to the anchor so they
   are the bare atom expression bytes (no manual prefix stripping needed).
 """
 function core_atoms(s::CoreSpace)::Vector{SExprConvertible}
@@ -1016,8 +1016,8 @@ function core_atoms(s::CoreSpace)::Vector{SExprConvertible}
     results = SExprConvertible[]
     with_read_permit(s) do
         rz = read_zipper_at_path(s.inner.btm, s.prefix)
-        while zipper_to_next_val!(rz)
-            rel_bytes = collect(zipper_path(rz))
+        while to_next_val!(rz)
+            rel_bytes = collect(path(rz))
             try
                 str = expr_serialize(rel_bytes)
                 push!(results, from_sexpr(strip(str)))
@@ -1083,7 +1083,7 @@ them — it would silently read one pattern's elements as three factors and retu
 name fails loudly instead of quietly.
 
 HOW IT WORKS, and every step of this was verified against the kernel rather than assumed:
-`space_query_multi_at` hands the effect `combined = pzg_origin_path(loc)`
+`space_query_multi_at` hands the effect `combined = origin_path(loc)`
 (`MORK/src/kernel/Space.jl:840`), which for an N-factor product is the CONCATENATION of all N matched
 atoms — not one location. So the bindings need no `ExprEnv` cursor arithmetic: split `combined` with
 `expr_span` (the encoding is prefix-free, so each call yields exactly one factor) and run the same

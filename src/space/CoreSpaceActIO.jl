@@ -46,8 +46,8 @@ function snapshot_space_to_act!(s::CoreSpace, name::AbstractString)::Bool
         # Walk the space's prefix region.  For root prefix, this iterates the
         # whole trie (still correct — just slower).
         rz = read_zipper_at_path(s.inner.btm, s.prefix)
-        while zipper_to_next_val!(rz)
-            rel_bytes = collect(zipper_path(rz))
+        while to_next_val!(rz)
+            rel_bytes = collect(path(rz))
             set_val_at!(temp_pm, rel_bytes, UNIT_VAL)
             n_atoms += 1
         end

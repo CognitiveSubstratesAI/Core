@@ -41,7 +41,7 @@ using MORK: Space, new_space,
     asource_new, source_factor, ACT_PATH
 using MorkSupercompiler: plan!, execute!, SCOptions, SC_DEFAULTS, SCResult
 using PathMaps: PathMap, UnitVal, UNIT_VAL,
-    read_zipper_at_path, zipper_to_next_val!, zipper_path,
+    read_zipper_at_path, to_next_val!, path,
     set_val_at!, remove_val_at!,
     act_from_zipper, act_save, ArenaCompactTree
 

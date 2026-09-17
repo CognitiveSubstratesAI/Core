@@ -178,8 +178,8 @@ function core_rule_exprs(cs::CoreSpace)::Vector{MORK.Expr}
     rules = MORK.Expr[]
     with_read_permit(cs) do
         rz = read_zipper_at_path(cs.inner.btm, cs.prefix)
-        while zipper_to_next_val!(rz)
-            e = mork_native_vars(MORK.Expr(collect(zipper_path(rz))))
+        while to_next_val!(rz)
+            e = mork_native_vars(MORK.Expr(collect(path(rz))))
             args = MORK.ExprEnv[]
             try
                 MORK.ee_args!(MORK.ExprEnv(UInt8(0), UInt8(0), UInt32(0), e), args)
