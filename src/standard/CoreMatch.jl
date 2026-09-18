@@ -96,19 +96,45 @@ function disagreement_class(pattern, data)::Base.Symbol
 end
 
 """
-    core_match_disagreement_counts() -> (; semantic, namespace, total)
+Declines tallied PER CLASS. A decline is a THIRD outcome, not a kind of agreement: `core_match`
+never ran, so the pair says nothing about whether the two engines agree.
 
-The corpus gate reads TWO NUMBERS, not one list. `semantic == 0` is the gate; `namespace` is a
-measure, not a failure.
+🔴 REPORTED SEPARATELY BECAUSE AGGREGATING IT HIDES IT. `core_match_differential` returns
+`agree = true` for a decline — correct, since a decline is not a disagreement — so a summary that
+counts only agreements and disagreements lets "never ran" sit inside "agreed". On the tabling corpus
+that matters: goals over the Rule of 64 decline, and they are exactly the ones where the two engines
+differ in MECHANISM.
+"""
+const CORE_MATCH_DECLINES = Dict{Base.Symbol, Int}(:semantic => 0, :namespace => 0)
+
+"""
+    core_match_disagreement_counts() -> (; semantic, namespace, declined_semantic, declined_namespace, total)
+
+The corpus gate reads SEVERAL numbers, not one list, and they mean different things:
+
+* `semantic` — **the gate. Must be zero.** Both engines answered the same question and differed.
+* `namespace` — a MEASURE, not a failure: how much of `match_atoms` survives seam 1.
+* `declined_*` — `core_match` never ran. Neither agreement nor disagreement; evidence about COVERAGE.
+
+⚠️ A corpus summary that reports only `semantic` is not enough: `semantic == 0` with a high decline
+count means the gate passed on the pairs that ran, which is a weaker statement than it looks.
 """
 core_match_disagreement_counts() = (;
     semantic = count(d -> d.class === :semantic, CORE_MATCH_DISAGREEMENTS),
     namespace = count(d -> d.class === :namespace, CORE_MATCH_DISAGREEMENTS),
+    declined_semantic = CORE_MATCH_DECLINES[:semantic],
+    declined_namespace = CORE_MATCH_DECLINES[:namespace],
     total = length(CORE_MATCH_DISAGREEMENTS),
 )
 
-"Forget every recorded disagreement, so a corpus run measures ITSELF and not the session before it."
-reset_core_match_disagreements!() = (empty!(CORE_MATCH_DISAGREEMENTS); nothing)
+"Forget every recorded disagreement AND decline, so a corpus run measures ITSELF and not the session
+before it. ⚠️ Both, or the decline tally leaks across runs while the disagreements do not."
+function reset_core_match_disagreements!()
+    empty!(CORE_MATCH_DISAGREEMENTS)
+    CORE_MATCH_DECLINES[:semantic] = 0
+    CORE_MATCH_DECLINES[:namespace] = 0
+    nothing
+end
 
 """
     core_match(pattern::Atom, data::Atom) -> Vector{Bindings} | nothing
@@ -175,8 +201,11 @@ what it DOES: the pattern's variables mapped to their resolved values.
 function core_match_differential(pattern, data)
     oracle = _CM_ATOM.match_atoms(pattern, data)
     ours = core_match(pattern, data)
-    ours === nothing &&
-        return (; declined = true, agree = true, class = disagreement_class(pattern, data), oracle, ours)
+    if ours === nothing
+        cls = disagreement_class(pattern, data)
+        CORE_MATCH_DECLINES[cls] = get(CORE_MATCH_DECLINES, cls, 0) + 1
+        return (; declined = true, agree = true, class = cls, oracle, ours)
+    end
     o = _subst_multiset(pattern, oracle)
     m = _subst_multiset(pattern, ours)
     agree = o == m

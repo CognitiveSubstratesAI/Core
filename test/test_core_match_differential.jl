@@ -161,6 +161,30 @@ P(s) = EV.parse_program(s)[1][2]
         @test c.namespace == 1 && c.semantic == 0 && c.total == 1
         MC.reset_core_match_disagreements!()                             # leave no residue
         @test MC.core_match_disagreement_counts().total == 0
+
+        # 🔴 A DECLINE IS A THIRD OUTCOME, AND IT MUST NOT HIDE INSIDE "agreed".
+        # `core_match_differential` returns `agree = true` for a decline — correct, a decline is not
+        # a disagreement — so a summary counting only agreements and disagreements would let "never
+        # ran" read as "ran and matched". On the tabling corpus that is exactly the wrong place to be
+        # imprecise: goals over the Rule of 64 decline, and those are where the two engines differ in
+        # MECHANISM.
+        MC.reset_core_match_disagreements!()
+        over = P("(f " * join(["a" for _ in 1:70], " ") * ")")
+        r = MC.core_match_differential(over, over)
+        @test r.declined && r.agree                       # agree=true, yet nothing was compared
+        c2 = MC.core_match_disagreement_counts()
+        @test c2.declined_semantic == 1                   # ground ⇒ semantic class
+        @test c2.semantic == 0 && c2.namespace == 0 && c2.total == 0
+        # and a declining pair IN the namespace class is tallied separately, not merged
+        MC.reset_core_match_disagreements!()
+        over_ns = P("(f \$t " * join(["a" for _ in 1:70], " ") * ")")
+        MC.core_match_differential(over_ns, over_ns)
+        c3 = MC.core_match_disagreement_counts()
+        @test c3.declined_namespace == 1 && c3.declined_semantic == 0
+        MC.reset_core_match_disagreements!()
+        # ⚠️ reset must clear BOTH tallies, or a decline count leaks into the next corpus run
+        c4 = MC.core_match_disagreement_counts()
+        @test c4.declined_semantic == 0 && c4.declined_namespace == 0 && c4.total == 0
     end
 
     @testset "🔴 DECLINE IS PART OF THE CONTRACT — and the differential covers it" begin
