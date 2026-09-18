@@ -89,32 +89,43 @@ P(s) = EV.parse_program(s)[1][2]
         end
     end
 
-    @testset "🔴 OPEN — a SECOND divergence, and it is a different question" begin
-        # `(f $x)` against `(f (g $x))` — THE SAME VARIABLE NAME ON BOTH SIDES.
-        #   match_atoms : REJECT   (one namespace; $x occurs in (g $x) ⇒ occurs check fires)
-        #   core_match  : ACCEPT   (pattern is source 0, data source 1 ⇒ two DIFFERENT variables)
+    @testset "🔴 OPEN + REACHABLE — the two engines disagree about the NAMESPACE" begin
+        # `core_match` puts the pattern at ExprEnv source 0 and the data at source 1, so a variable
+        # NAME appearing on both sides is TWO variables. `match_atoms` has ONE namespace, so it is
+        # one variable. Both engines are self-consistent; they disagree about the model.
+        p, d = P("(pair \$t X)"), P("(pair Y \$t)")
+        @test isempty(AT.match_atoms(p, d))              # one namespace: $t = Y AND $t = X, conflict
+        @test !isempty(MC.core_match(p, d))              # two sources: both bind freely
+        @test !MC.core_match_differential(p, d).agree
+        # CONTROL — with DISTINCT names they agree, which localises the disagreement to the SHARED
+        # NAME rather than to the shape.
+        @test MC.core_match_differential(P("(pair \$t X)"), P("(pair Y \$u)")).agree
+
+        # 🔴 AND IT IS REACHABLE. An earlier version of this pin said it was not, reasoning that
+        # `rename_fresh` alpha-renames stored rules before matching. That is true of the RULE path
+        # and false in general — CENSUSED 2026-09-18, and two live sites pass BOTH arguments through
+        # the SAME bindings, so any surviving variable is from ONE namespace by construction:
         #
-        # This is NOT the occurs defect just fixed — it is whether a pattern variable and a data
-        # variable that happen to SHARE A NAME denote the same variable. Both engines are
-        # self-consistent; they disagree about the namespace, and that is a MeTTa-semantics question.
+        #   Eval.jl:1834  match_types_b   match_atoms(subst(t1, b), subst(t2, b))
+        #   EmitJulia.jl:200 _bind_step!  match_atoms(subst(step[2], sigma), subst(step[3], sigma))
         #
-        # ⚠️ PINNED AS OPEN, NOT RESOLVED, AND DELIBERATELY NOT GUESSED AT. It was nearly folded into
-        # the resolved testset above by picking a case with the same name on both sides — which would
-        # have asserted agreement on a question nobody had settled. The occurs question was settled by
-        # running the reference engines; so must this one be.
-        # ⚠️ AND IT IS NOT REACHED BY THE NORMAL PATH: `rename_fresh` alpha-renames a stored rule
-        # before matching (Eval.jl:1063), so shared names between pattern and data do not arise in
-        # ordinary evaluation. That is why it is pinned here rather than treated as urgent.
-        p, d = P("(f \$x)"), P("(f (g \$x))")
-        @test isempty(AT.match_atoms(p, d))              # one namespace
-        @test !isempty(MC.core_match(p, d))              # two sources
-        @test !MC.core_match_differential(p, d).agree    # ⇒ recorded as a disagreement
-        # CONTROL: with DISTINCT names the two agree, which is what localises the disagreement to
-        # the shared name rather than to the shape.
-        p2, d2 = P("(f \$x)"), P("(f (g \$y))")
-        @test !isempty(AT.match_atoms(p2, d2))
-        @test !isempty(MC.core_match(p2, d2))
-        @test MC.core_match_differential(p2, d2).agree
+        # `match_types_b`'s own comment states the intent: "Applying `b` first lets a type variable
+        # bound by an earlier argument constrain a later one (polymorphism)."
+        #
+        # ⚠️ AND THE ONE-NAMESPACE READING IS THE CORRECT ONE THERE, measured end to end:
+        @test !isempty(AT.match_atoms(P("(-> \$t \$t)"), P("(-> Number Number)")))
+        @test isempty(AT.match_atoms(P("(-> \$t \$t)"), P("(-> Number String)")))
+        # (that pair is sharing WITHIN the pattern, so `core_match` agrees — it is level 0 then
+        #  VarRef 0 inside source 0. The disagreement needs the name on BOTH sides, as above.)
+        @test MC.core_match_differential(P("(-> \$t \$t)"), P("(-> Number String)")).agree
+
+        # ⇒ CONSEQUENCE FOR SEAM 1, and it revises this file's own header: `core_match` is NOT a
+        # drop-in for EVERY `match_atoms` call site. It is correct where the two sides come from
+        # DIFFERENT namespaces (a pattern against a freshly renamed stored rule) and WRONG where they
+        # share one (type unification, `:unify` plan steps). "Delete match_atoms from the live path"
+        # therefore needs either a same-namespace MODE for `core_match` — encode both sides into ONE
+        # source so a shared name maps to one de Bruijn level — or `match_atoms` surviving at those
+        # sites. Not decided here; recorded before the flag can flip.
     end
 
     @testset "🔴 DECLINE IS PART OF THE CONTRACT — and the differential covers it" begin

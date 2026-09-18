@@ -1,6 +1,22 @@
 # CoreMatch.jl — SEAM 1: one matcher, on the MORK term model.
 #
 # 🔴 THIS EXISTS TO **DELETE** `match_atoms` FROM THE LIVE PATH, NOT TO ADD A SECOND MATCHER.
+#
+# ⚠️ REVISED 2026-09-18, AND THE REVISION NARROWS THAT GOAL. `core_match` puts the pattern at
+# `ExprEnv` source 0 and the data at source 1, so a variable NAME appearing on BOTH sides is TWO
+# variables. `match_atoms` has ONE namespace. That is a genuine semantic difference, and a census of
+# every `match_atoms` call site found TWO LIVE SITES where both arguments go through the SAME
+# bindings, so one namespace is correct BY CONSTRUCTION:
+#     Eval.jl:1834      match_types_b   match_atoms(subst(t1, b), subst(t2, b))
+#     EmitJulia.jl:200  _bind_step!     match_atoms(subst(step[2], sigma), subst(step[3], sigma))
+# `match_types_b`'s own comment states why: "Applying `b` first lets a type variable bound by an
+# earlier argument constrain a later one (polymorphism)" — measured live, `(same 1 "x")` against
+# `(: same (-> $t $t Bool))` answers `BadArgType 2 Number String`.
+# ⇒ `core_match` replaces `match_atoms` where the two sides come from DIFFERENT namespaces (a pattern
+# against a freshly renamed stored rule) and NOT where they share one. Closing the gap needs a
+# SAME-NAMESPACE MODE — encode both sides into ONE source so a shared name maps to one de Bruijn
+# level — or `match_atoms` surviving at those sites. Undecided; it must be settled before the flag
+# flips, because it is the difference between one matcher and one-and-a-fraction.
 # Say it here because the INTERMEDIATE STATE — two matchers behind a flag — is indistinguishable from
 # the duplication this whole effort is removing, and a flag left in place long enough stops reading
 # as a migration and starts reading as a permanent option. It is not an option. The end state is
