@@ -648,7 +648,17 @@ function _register_william_primitives!()
             st = MORK._AuState()
             MORK._au_merge!(a_expr.buf, 1, b_expr.buf, 1, out, st)
             try
-                MORK.expr_serialize(out)
+                # 🔴 `expr_serialize2`, NOT `expr_serialize` — anti-unification's OUTPUT IS VARIABLES,
+                # so this is the worst possible site for the lossy renderer. MEASURED 2026-09-18:
+                # `_au_merge!` correctly emits `NewVar NewVar` for lgg((g 1 2), (g 3 4)), but
+                # `expr_serialize` flattens both binders to a bare `$` — "(g $ $)" — which RE-PARSES
+                # as `NewVar VarRef0`. So the least general generalisation of those terms, meaning
+                # "any g with two arguments", came back meaning "any g whose two arguments are EQUAL":
+                # strictly MORE specific than the lgg, i.e. not a generalisation at all.
+                # `serialize2` renders `(g $a $b)` and round-trips to `NewVar NewVar`.
+                # The algorithm was never wrong — verified over four shapes, including `(p 1 1)` vs
+                # `(p 2 2)` where `NewVar VarRef0` IS correct. Only the rendering was.
+                MORK.expr_serialize2(out)
             catch
                 "\$"
             end

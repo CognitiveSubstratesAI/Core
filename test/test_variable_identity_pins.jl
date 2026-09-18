@@ -57,8 +57,6 @@ const AT = MeTTaCore.StandardMeTTa
                 "String-contract convenience wrappers; migrating to serialize2 (de Bruijn plan, stage a)",
             "src/standard/MeTTaIL.jl" =>
                 "re-parses its own output; the round trip itself is slated for deletion (stage a)",
-            "src/primitives/Primitives.jl" =>
-                "WILLIAM.lgg — anti-unification output; unregistered today, see the side finding",
         )
 
         root = normpath(joinpath(@__DIR__, ".."))
@@ -75,10 +73,28 @@ const AT = MeTTaCore.StandardMeTTa
         # Every offender is a NEW lossy site: either use expr_serialize2, or allowlist it with a reason.
         @test offenders == String[]
 
+        # ✅ Primitives.jl was REMOVED from this list on 2026-09-18 when WILLIAM.lgg moved to
+        # `expr_serialize2`. The stale-entry check below is what confirms the site is really gone —
+        # dropping an entry without fixing the code fails PIN 1's first assertion instead.
+        #
         # The allowlist must not rot: an entry whose file stopped calling it should be removed.
         stale = [rel for rel in keys(ALLOWED)
                  if !occursin(r"expr_serialize\(", read(joinpath(root, rel), String))]
         @test stale == String[]
+
+        # WILLIAM.lgg — the site the allowlist just lost, asserted on BEHAVIOUR not on the file text.
+        # Anti-unification's output IS variables, so it is the sharpest test of the renderer.
+        # MEASURED: `_au_merge!` emits `NewVar NewVar` (correct — two INDEPENDENT generalisation
+        # positions); `expr_serialize` flattened both to a bare `$`, and "(g $ $)" re-parses as
+        # `NewVar VarRef0` — "any g whose two arguments are EQUAL", strictly more specific than the
+        # least general generalisation. The algorithm was never wrong; the rendering was.
+        MC.register_core_primitives!()          # opt-in registry (MeTTaCore.jl:250-253), not auto
+        lgg = MC.MORK.GROUNDED_REGISTRY["WILLIAM.lgg"]
+        @test tagwalk(MK.sexpr_to_expr(String(lgg(["(g 1 2)", "(g 3 4)"])))) ==
+              ["Arity3", "Sym(g)", "NewVar", "NewVar"]
+        # …and co-reference that is GENUINE must survive: `(p 1 1)` vs `(p 2 2)` really is `(p $a $a)`.
+        @test tagwalk(MK.sexpr_to_expr(String(lgg(["(p 1 1)", "(p 2 2)"])))) ==
+              ["Arity3", "Sym(p)", "NewVar", "VarRef0"]
     end
 
     @testset "PIN 2 — distinct Core Vars must not MERGE into one MORK variable" begin
