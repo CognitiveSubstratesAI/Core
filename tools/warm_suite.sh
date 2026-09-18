@@ -347,7 +347,16 @@ case "${1:-run}" in
      _use_lane "$SUITE_PORT"
      # The old behaviour, kept as the arbiter. Use it to confirm a suspicious `run` failure, or when
      # you have just added a test that touches shared/global state.
-     "$0" restart >/dev/null 2>&1
+     # 🔴🔴 PASS THE LANE THROUGH THE ENV — `_use_lane` SETS SHELL VARS, AND `$0` IS A SUBPROCESS.
+     # MEASURED 2026-09-18: this line was `"$0" restart`, so the child re-ran `_use_lane "$PORT"` at
+     # its own top level and restarted the PROBE lane while the GATE daemon kept running. `run-cold`
+     # therefore never restarted the thing it exists to restart, and was not the arbiter it claims to
+     # be. The cost: a struct field was added to `Var` and reverted; the stale gate daemon held a
+     # `const Set{Var}` from the OLD world age, and the next run reported **83 files failed** with
+     # `MethodError: Frame(::Sym, ::Set{@world(Var, 39141:42827)}, ...)`. That reads exactly like a
+     # catastrophic regression in the change under test. It was the harness.
+     # `stop-gate` (two verbs above) already had the right idiom; this one did not.
+     CORE_WARM_SUITE_PORT="$SUITE_PORT" "$0" restart >/dev/null 2>&1
      _start || exit 1
      shard="${2:-}"
      if [ -n "$shard" ]; then
