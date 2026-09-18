@@ -49,23 +49,72 @@ P(s) = EV.parse_program(s)[1][2]
         end
     end
 
-    @testset "🔴 KNOWN DIVERGENCE — `match_atoms` has NO OCCURS CHECK" begin
-        # (f $x $x) vs (f $y (g $y)): $x aliases $y, then $x must also equal (g $y) — CYCLIC.
-        #   match_atoms : x => (g $y)   ACCEPTS
-        #   core_match  : []            rejects, via `expr_unify_cycle_safe`
-        # Pinned as a DIVERGENCE, not silently resolved: which engine is right is a MeTTa-semantics
-        # question, and the flag is off precisely so this can be decided rather than shipped.
-        p, d = P("(f \$x \$x)"), P("(f \$y (g \$y))")
-        oracle = AT.match_atoms(p, d)
-        ours = MC.core_match(p, d)
-        @test !isempty(oracle)            # match_atoms accepts
-        @test ours !== nothing            # not a decline — a genuine, considered rejection
-        @test isempty(ours)               # core_match rejects
-        # CONTROL, so this is about the CYCLE and not about var-var binding in general: the same
-        # shape without the cycle must be accepted by BOTH.
-        p2, d2 = P("(f \$x \$x)"), P("(f \$y \$y)")
+    @testset "✅ RESOLVED — the occurs divergence was a DEFECT IN `match_atoms`, now fixed" begin
+        # HISTORY, kept because the sequence is the point. This testset first landed asserting a
+        # DIVERGENCE: `match_atoms` ACCEPTED `(f $x $x)` against `(f $y (g $y))` — a cyclic binding —
+        # where `core_match` rejected. The differential found it; the reference engines settled it.
+        #
+        #   workflows/metta_xcheck.sh, 2026-09-18, with two controls matching in EVERY engine:
+        #     hyperon-experimental   []                 REJECTS   <- the reference
+        #     CeTTa                  (no result)        REJECTS
+        #     PeTTa                  CYCLE-ACCEPTED     accepts
+        #     Core, before the fix   CYCLE-ACCEPTED     accepts   <- the defect
+        #
+        # So `core_match` was already right and `match_atoms` — the AUTHORITATIVE matcher — carried a
+        # live wrong-answer class. Fixed THERE rather than carried as a permanent exception here,
+        # which is what makes this differential clean instead of exceptional.
+        #
+        # The defect was NOT "no occurs check": the DIRECT case `(f $x)` vs `(f (g $x))` was rejected
+        # correctly all along. `_occurs` was not ALIAS-AWARE — it asked whether `$x` literally occurs,
+        # not whether $x's equality CLASS does. Three places had to change, and the first two alone
+        # changed nothing: `add_var_binding`, the class-merge in `add_var_equality`/
+        # `_extend_eq_inplace!`, and `merge_bindings`, which was testing only for `:fork` and
+        # SILENTLY DISCARDING the `:fail` the new check returned.
+        for (why, p, d) in [
+            ("alias, bind-then-equate", P("(f \$x \$x)"), P("(f \$y (g \$y))")),
+            ("alias, equate-then-bind", P("(f \$x \$x)"), P("(f (g \$y) \$y)")),
+        ]
+            @test isempty(AT.match_atoms(p, d))          # rejects the cycle, as hyperon does
+            @test isempty(MC.core_match(p, d))           # and so does core_match
+            @test MC.core_match_differential(p, d).agree # ⇒ no divergence left
+        end
+        # 🔴 CONTROLS — without these a matcher that rejected EVERYTHING would pass the loop above.
+        for (why, p, d) in [
+            ("same shape, NO cycle", P("(f \$x \$x)"), P("(f \$y \$y)")),
+            ("plain bind to a term", P("(k \$x)"),     P("(k (g \$y))")),
+        ]
+            @test !isempty(AT.match_atoms(p, d))
+            @test !isempty(MC.core_match(p, d))
+            @test MC.core_match_differential(p, d).agree
+        end
+    end
+
+    @testset "🔴 OPEN — a SECOND divergence, and it is a different question" begin
+        # `(f $x)` against `(f (g $x))` — THE SAME VARIABLE NAME ON BOTH SIDES.
+        #   match_atoms : REJECT   (one namespace; $x occurs in (g $x) ⇒ occurs check fires)
+        #   core_match  : ACCEPT   (pattern is source 0, data source 1 ⇒ two DIFFERENT variables)
+        #
+        # This is NOT the occurs defect just fixed — it is whether a pattern variable and a data
+        # variable that happen to SHARE A NAME denote the same variable. Both engines are
+        # self-consistent; they disagree about the namespace, and that is a MeTTa-semantics question.
+        #
+        # ⚠️ PINNED AS OPEN, NOT RESOLVED, AND DELIBERATELY NOT GUESSED AT. It was nearly folded into
+        # the resolved testset above by picking a case with the same name on both sides — which would
+        # have asserted agreement on a question nobody had settled. The occurs question was settled by
+        # running the reference engines; so must this one be.
+        # ⚠️ AND IT IS NOT REACHED BY THE NORMAL PATH: `rename_fresh` alpha-renames a stored rule
+        # before matching (Eval.jl:1063), so shared names between pattern and data do not arise in
+        # ordinary evaluation. That is why it is pinned here rather than treated as urgent.
+        p, d = P("(f \$x)"), P("(f (g \$x))")
+        @test isempty(AT.match_atoms(p, d))              # one namespace
+        @test !isempty(MC.core_match(p, d))              # two sources
+        @test !MC.core_match_differential(p, d).agree    # ⇒ recorded as a disagreement
+        # CONTROL: with DISTINCT names the two agree, which is what localises the disagreement to
+        # the shared name rather than to the shape.
+        p2, d2 = P("(f \$x)"), P("(f (g \$y))")
         @test !isempty(AT.match_atoms(p2, d2))
         @test !isempty(MC.core_match(p2, d2))
+        @test MC.core_match_differential(p2, d2).agree
     end
 
     @testset "🔴 DECLINE IS PART OF THE CONTRACT — and the differential covers it" begin

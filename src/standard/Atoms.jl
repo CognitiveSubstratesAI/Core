@@ -153,11 +153,72 @@ end
 
 # metta.md §add_var_binding
 # occurs check: does `v` appear anywhere inside `a`? (prevents the cyclic binding $v <- (… $v …))
-function _occurs(v::Var, a::Atom)
+#
+# 🔴 ALIAS-AWARE, AND IT HAS TO BE. The structural form below — `a == v` on a bare `Var` — MISSES
+# every cycle reached through variable ALIASING, because the offending variable need not be `v`
+# itself, only a member of v's EQUALITY CLASS. MEASURED 2026-09-18:
+#
+#     (f $x $x) against (f $y (g $y))
+#       child 1: $x ≟ $y        -> add_var_equality, so $y and $x are ONE class
+#       child 2: $x ≟ (g $y)    -> `_occurs($x, (g $y))` is FALSE: $x does not literally occur there
+#       result:  Binding($y, $x), Binding($x, (g $y))   — A CYCLE
+#
+# and the DIRECT form `(f $x)` against `(f (g $x))` was rejected correctly all along, so the check
+# existed and was simply blind to aliasing. Structurally the same defect MORK fixed on 2026-07-25 by
+# making its own `_occurs_check` DEREF-AWARE (ADR-057): upstream's short-circuit "only scans e's OWN
+# -namespace var indices" and caught cross-namespace cycles only because its binding ORDER happened
+# to bring the variable home. Ours does not.
+#
+# ⚠️ SETTLED BY THE REFERENCE ENGINES, NOT BY REASONING (workflows/metta_xcheck.sh):
+#     hyperon-experimental  []                 REJECTS   <- the reference
+#     CeTTa                 (no result)        REJECTS
+#     PeTTa                 CYCLE-ACCEPTED     accepts
+#     Core, before this fix CYCLE-ACCEPTED     accepts   <- the defect
+# with two controls (the same shape without a cycle, and a plain bind-to-term) matching in EVERY
+# engine, so the probe provably reached the case.
+#
+# Found by the seam-1 differential: `core_match`, built on MORK's cycle-safe unifier, rejected where
+# `match_atoms` accepted. The oracle disagreeing with the engine under test is the differential
+# working, and the fix belongs in the AUTHORITATIVE matcher rather than being carried as a permanent
+# exception in the new one.
+_occurs(v::Var, a::Atom) = _occurs_structural(v, a)
+
+function _occurs_structural(v::Var, a::Atom)
     a isa Var && return a == v
     if a isa Expression
         @inbounds for c in a.children
-            _occurs(v, c) && return true
+            _occurs_structural(v, c) && return true
+        end
+    end
+    return false
+end
+
+"""
+Does `v`'s EQUALITY CLASS occur anywhere inside `a`, following both aliases and the values already
+bound to the classes encountered? `b` supplies the classes; without it only the structural form is
+possible and that is what was blind.
+
+⚠️ DEPTH-GUARDED, AND EXHAUSTION COUNTS AS "OCCURS". Following bound values can only loop if the map
+is ALREADY cyclic, which this function exists to prevent — so a chain that outruns the guard is
+evidence of the very condition being tested. Treating it as "occurs" fails CLOSED. Same choice, and
+same reason, as MORK's `_occurs_check` depth guard.
+"""
+function _occurs_aliased(b::Bindings, v::Var, a::Atom)
+    _occurs_in_class(b, canonical_var(b, v), a, 0)
+end
+
+function _occurs_in_class(b::Bindings, root::Var, a::Atom, depth::Int)
+    depth > 64 && return true                       # fail CLOSED — see the docstring
+    if a isa Var
+        canonical_var(b, a) == root && return true
+        # the cycle can also hide BEHIND a binding: `a`'s class may already hold a term containing
+        # `root`. `resolve` returns the class value, or `nothing` for a free class.
+        val = resolve(b, a)
+        val === nothing && return false
+        return _occurs_in_class(b, root, val, depth + 1)
+    elseif a isa Expression
+        @inbounds for c in a.children
+            _occurs_in_class(b, root, c, depth + 1) && return true
         end
     end
     return false
@@ -166,7 +227,8 @@ end
 function add_var_binding(b::Bindings, var::Var, val::Atom)::Vector{Bindings}
     prev = resolve(b, var)
     if prev === nothing
-        _occurs(var, val) && return Bindings[]      # occurs check — reject (unify $v with (… $v …) fails)
+        # ALIAS-AWARE: `var`'s CLASS, not just `var` — see `_occurs_aliased`.
+        _occurs_aliased(b, var, val) && return Bindings[]   # reject the cyclic binding
         nb = copy(b)
         push!(nb.entries, Binding(canonical_var(nb, var), val))   # value on the root
         return [nb]
@@ -189,6 +251,17 @@ function add_var_equality(b::Bindings, a::Var, c::Var)::Vector{Bindings}
         r1 = canonical_var(nb, a)
         r2 = canonical_var(nb, c)
         if r1 !== r2
+            # 🔴 MERGING TWO CLASSES CAN CREATE A CYCLE, AND THIS PATH HAD NO OCCURS CHECK AT ALL.
+            # If the value that survives the merge CONTAINS a variable of either class, then after
+            # the merge it contains a variable of its OWN class. MEASURED: `(f $x $x)` against
+            # `(f (g $y) $y)` — the bind happens first ($x := (g $y), correctly, no cycle yet), and
+            # the cycle is created HERE when $y is then aliased to $x. Fixing only `add_var_binding`
+            # left this ORDER still accepting, which is why the two probes were run in both orders.
+            val0 = av !== nothing ? av : cv
+            if val0 !== nothing &&
+               (_occurs_in_class(b, r1, val0, 0) || _occurs_in_class(b, r2, val0, 0))
+                return Bindings[]
+            end
             (r2.id, r2.name) < (r1.id, r1.name) && ((r1, r2) = (r2, r1))   # r1 = smaller = new root
             push!(nb.entries, Binding(r2, r1))                              # r2 → r1 (larger → smaller)
             val = av !== nothing ? av : cv                                  # preserve the class value
@@ -224,7 +297,7 @@ end
 function _extend_bind_inplace!(b::Bindings, root::Var, val::Atom)::Symbol
     prev = resolve(b, root)
     prev === nothing || return (prev == val ? :ok : :fork)
-    _occurs(root, val) && return :fail
+    _occurs_aliased(b, root, val) && return :fail      # ALIAS-AWARE — see `_occurs_aliased`
     push!(b.entries, Binding(canonical_var(b, root), val))
     :ok
 end
@@ -236,6 +309,12 @@ function _extend_eq_inplace!(b::Bindings, a::Var, c::Var)::Symbol
     r1 = canonical_var(b, a)
     r2 = canonical_var(b, c)
     if r1 !== r2
+        # same cycle-on-merge hazard as `add_var_equality` — see the note there
+        val0 = av !== nothing ? av : cv
+        if val0 !== nothing &&
+           (_occurs_in_class(b, r1, val0, 0) || _occurs_in_class(b, r2, val0, 0))
+            return :fail
+        end
         (r2.id, r2.name) < (r1.id, r1.name) && ((r1, r2) = (r2, r1))
         push!(b.entries, Binding(r2, r1))
         val = av !== nothing ? av : cv
@@ -258,9 +337,15 @@ function merge_bindings(left::Bindings, right::Bindings)::Vector{Bindings}
     for (root, vars) in by_root
         for v in vars                              # equality relations within the class
             v === root && continue
-            _extend_eq_inplace!(left, root, v) === :fork && (forked=true; break)
+            # ⚠️ `:fail` MUST BE HANDLED HERE. This line used to test ONLY for `:fork`, so an occurs
+            # rejection from the equality path was SILENTLY DISCARDED and the merge proceeded. That
+            # is why making `_extend_eq_inplace!` cycle-aware changed nothing until this line did
+            # too: the check fired, returned `:fail`, and the caller dropped it on the floor.
+            s = _extend_eq_inplace!(left, root, v)
+            s === :fail && (ok = false; break)
+            s === :fork && (forked = true; break)
         end
-        forked && break
+        (forked || !ok) && break
         val = resolve(right, root)                 # assignment relation root <- val
         if val !== nothing
             s = _extend_bind_inplace!(left, root, val)

@@ -30,10 +30,47 @@ rewrites lower to KBSaturation forward rules ([`metta_il_lower_saturation`](@ref
 
 ## Congruence
 
-GSLT/mettail-rust spell out explicit congruence rules (`let Src ~> Tgt in (Ctx Src) ~> (Ctx Tgt)`) only
-because their relational backend can't reduce subterms. MeTTaCore builds congruence as a **subterm-rewriting
-normalizer** ([`metta_il_normalize`](@ref)): rewrite any subterm matching a base-rewrite LHS, innermost, to
-fixpoint — the subterm descent *is* the congruence.
+> 🔴 **THE PARAGRAPH BELOW IS REFUTED. Kept, struck through, because the error is the useful part.**
+>
+> ~~GSLT/mettail-rust spell out explicit congruence rules … only because their relational backend
+> can't reduce subterms … the subterm descent *is* the congruence.~~
+>
+> **Congruence rules are the specification of WHERE reduction is permitted, not a workaround for a
+> weak backend.** The author's own AGI-2026 Hyperon Workshop presentation (L.G. Meredith, F1R3FLY.IO)
+> settles it:
+>
+> * `Lambda` declares ONE base rule (`Beta`) and **THREE** congruence rules (`AppCongL`, `AppCongR`,
+>   `LamCong`). If base rewrites already fired under any context, all three would be redundant.
+> * `RhoCalc` is the sharper case: **exactly one** congruence rule, `ParCong` for `PPar`, and **none**
+>   for `PInput`. That is the specification saying reduction happens under parallel composition and
+>   **not** under an input prefix.
+>
+> ⚠️ **Weight of this source, stated:** a summary deck presenting a draft, by the framework's author.
+> Normative for what MeTTaIL *intends*; not a substitute for the implementation where the two differ.
+>
+> **MEASURED IN OUR TREE 2026-09-18 — the defect is real and it is in the TRAVERSAL, not the rules.**
+> A two-rule theory: base `(f $X) ~> $X`; `par` declares a congruence rule, `guard` declares none.
+>
+> | call | `(par (f a))` | `(guard (f a))` | |
+> |---|---|---|---|
+> | `reducts` (root only) | `(par a)` | `Atom[]` | ✅ the rules themselves are correct |
+> | `cond_step` | `(par a)` | **`(guard a)`** | 🔴 stepped with no congruence rule |
+> | `cond_normalize` | — | **`((guard a), 1023)`** | 🔴 normalizes through it |
+> | `one_step` (`Context.jl`) | — | **`(guard a)`** | 🔴 the PORTED layer |
+>
+> The root-only control is what localises it: at the root the declared rules behave exactly as the
+> spec says, so declared congruence rules are not being ignored — `Context.step_with` descends into
+> every argument unconditionally, so they cannot *restrict* anything. For `Lambda` that is harmless
+> (the three rules permit exactly what the closure does anyway); for `RhoCalc` it is wrong.
+>
+> **FIX SHAPE:** `step_with`'s unconditional descent becomes opt-in per theory — correct for Lambda,
+> SKI and anything orthogonal; restricted theories descend only through declared congruence rules.
+> The Lean citation stays intact: `oneStep` is the full-closure mode.
+>
+> ⚠️ **NOT YET EXPRESSIBLE, AND IT BLOCKS THE SHARPEST TEST:** the GSLT layer has no AC support, so
+> `PPar . ps:HashBag(Proc)` and `...rest` in `Comm` have no counterpart and `RhoCalc` itself cannot be
+> written. The probe above deliberately does not need it — any constructor with no declared
+> congruence rule exhibits the property.
 
 ## The `def/match/emit` pipeline surface (§9.1 → §9.2)
 
