@@ -128,6 +128,41 @@ P(s) = EV.parse_program(s)[1][2]
         # sites. Not decided here; recorded before the flag can flip.
     end
 
+    @testset "🔴 THE CORPUS GATE READS TWO COUNTS, and the classifier is an OVER-APPROXIMATION" begin
+        # Triaging hundreds of corpus disagreements by inspection is where the signal gets lost, so
+        # the class is computed FROM THE INPUTS, before either matcher runs:
+        #   :namespace — a variable NAME occurs on BOTH sides ⇒ the engines answer DIFFERENT
+        #                questions (one namespace vs two sources). Not a defect in either; the count
+        #                measures how much of `match_atoms` survives seam 1.
+        #   :semantic  — no shared name ⇒ SAME question, and a difference is a defect. Gate: zero.
+        @test MC.disagreement_class(P("(pair \$t X)"), P("(pair Y \$t)")) === :namespace
+        @test MC.disagreement_class(P("(pair \$t X)"), P("(pair Y \$u)")) === :semantic
+        @test MC.disagreement_class(P("(f a)"), P("(f b)")) === :semantic          # no variables
+
+        # ⚠️ IT IS DELIBERATELY AN OVER-APPROXIMATION, and reading the counts without knowing that
+        # would misattribute them. A shared NAME makes a pair namespace-SENSITIVE; it only produces a
+        # DISAGREEMENT when the shared variable is actually constrained on both sides. MEASURED over
+        # stdlib rule heads x stdlib atoms (6,273 pairs): 482 pairs were in the namespace class and
+        # ZERO of them disagreed (429 agreed, 53 declined). So the class flags more than it needs to,
+        # which is the safe direction — it can over-report expected disagreements, never hide a
+        # semantic one.
+        agreeing_shared = (P("(pair \$t X)"), P("(pair \$t X)"))
+        @test MC.disagreement_class(agreeing_shared...) === :namespace   # flagged …
+        @test MC.core_match_differential(agreeing_shared...).agree       # … and yet agrees
+
+        # 🔴 AND THE COUNT IS ONLY EVIDENCE IF THE CLASS IS EXERCISED. A first corpus run reported
+        # "0 namespace disagreements" without measuring how many pairs were IN the class — a clean
+        # result on data that could not have shown the defect. The distribution has to be counted
+        # over ALL pairs, not over the disagreeing ones.
+        MC.reset_core_match_disagreements!()
+        @test MC.core_match_disagreement_counts().total == 0
+        MC.core_match_differential(P("(pair \$t X)"), P("(pair Y \$t)"))   # a namespace disagreement
+        c = MC.core_match_disagreement_counts()
+        @test c.namespace == 1 && c.semantic == 0 && c.total == 1
+        MC.reset_core_match_disagreements!()                             # leave no residue
+        @test MC.core_match_disagreement_counts().total == 0
+    end
+
     @testset "🔴 DECLINE IS PART OF THE CONTRACT — and the differential covers it" begin
         # Over-limit inputs are exactly where the two engines differ in MECHANISM, so leaving them
         # out of the differential would untest the path most likely to diverge.

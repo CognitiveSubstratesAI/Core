@@ -64,8 +64,51 @@ const _CM_ATOM = StandardMeTTa
 
 const CORE_MATCH_ENABLED = Ref(false)
 
-"Recorded disagreements between `core_match` and `match_atoms`. Diagnostic only; never consulted."
-const CORE_MATCH_DISAGREEMENTS = Vector{NamedTuple{(:pattern, :data, :oracle, :ours), Tuple{Any, Any, Any, Any}}}()
+"""
+Recorded disagreements between `core_match` and `match_atoms`. Diagnostic only; never consulted.
+
+Each carries its CLASS, because the two kinds mean opposite things and a corpus run produces too
+many to triage by inspection:
+
+* `:namespace` — a variable NAME occurs in BOTH the pattern and the data, so the engines are
+  answering different questions (one namespace vs two sources). **Not a defect in either.** The
+  count measures HOW MUCH OF `match_atoms` SURVIVES SEAM 1, which is a design quantity.
+* `:semantic` — no shared name, so both engines are answering the SAME question and differ.
+  **This is the one that must be zero**, and it is the gate on flipping the flag.
+"""
+const CORE_MATCH_DISAGREEMENTS =
+    Vector{NamedTuple{(:pattern, :data, :class, :oracle, :ours),
+                      Tuple{Any, Any, Base.Symbol, Any, Any}}}()
+
+"""
+    disagreement_class(pattern, data) -> :namespace | :semantic
+
+🔴 COMPUTED FROM THE INPUTS, NOT INFERRED FROM THE OUTPUTS. The discriminator is whether a variable
+name is shared across the two sides, by Core's OWN identity relation — which is decidable before
+either matcher runs, so a class is never assigned by looking at how the two engines happened to
+differ. Classifying from the outputs would make every unexplained disagreement look like the
+expected kind.
+"""
+function disagreement_class(pattern, data)::Base.Symbol
+    pv = collect_vars(pattern)
+    dv = collect_vars(data)
+    any(v -> any(w -> w == v, dv), pv) ? :namespace : :semantic
+end
+
+"""
+    core_match_disagreement_counts() -> (; semantic, namespace, total)
+
+The corpus gate reads TWO NUMBERS, not one list. `semantic == 0` is the gate; `namespace` is a
+measure, not a failure.
+"""
+core_match_disagreement_counts() = (;
+    semantic = count(d -> d.class === :semantic, CORE_MATCH_DISAGREEMENTS),
+    namespace = count(d -> d.class === :namespace, CORE_MATCH_DISAGREEMENTS),
+    total = length(CORE_MATCH_DISAGREEMENTS),
+)
+
+"Forget every recorded disagreement, so a corpus run measures ITSELF and not the session before it."
+reset_core_match_disagreements!() = (empty!(CORE_MATCH_DISAGREEMENTS); nothing)
 
 """
     core_match(pattern::Atom, data::Atom) -> Vector{Bindings} | nothing
@@ -132,12 +175,14 @@ what it DOES: the pattern's variables mapped to their resolved values.
 function core_match_differential(pattern, data)
     oracle = _CM_ATOM.match_atoms(pattern, data)
     ours = core_match(pattern, data)
-    ours === nothing && return (; declined = true, agree = true, oracle, ours)
+    ours === nothing &&
+        return (; declined = true, agree = true, class = disagreement_class(pattern, data), oracle, ours)
     o = _subst_multiset(pattern, oracle)
     m = _subst_multiset(pattern, ours)
     agree = o == m
-    agree || push!(CORE_MATCH_DISAGREEMENTS, (; pattern, data, oracle = o, ours = m))
-    (; declined = false, agree, oracle = o, ours = m)
+    cls = disagreement_class(pattern, data)
+    agree || push!(CORE_MATCH_DISAGREEMENTS, (; pattern, data, class = cls, oracle = o, ours = m))
+    (; declined = false, agree, class = cls, oracle = o, ours = m)
 end
 
 """
