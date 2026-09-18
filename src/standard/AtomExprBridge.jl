@@ -170,12 +170,33 @@ end
 # `(name, id)` tuple, which allocates nothing and hashes directly, but switching it is a change to
 # the identity relation and belongs with a measurement, not with the first version. No caller is on
 # a hot path today: `atom_to_expr` runs at INGEST, not per rewrite step.
-_var_key(v)::String = v.id == 0 ? v.name : string(v.name, "#", v.id)
+# 🔴 A TUPLE, NOT A STRING — AND THE STRING FORM WAS A SILENT VARIABLE-CAPTURE BUG.
+# It was `v.id == 0 ? v.name : string(v.name, "#", v.id)`, which renders the id INTO the key, so:
+#     _var_key(Var("x", 7))    == "x#7"
+#     _var_key(Var("x#7", 0))  == "x#7"      ← SAME KEY, two DISTINCT variables
+# and `(f $x#7 $x#7-as-a-name)` encoded as `NewVar VarRef0` — one variable used twice, imposing an
+# equality CONSTRAINT the source never wrote (MM2 tutorial §Basics: "having the same variable in an
+# expression behaves as a reference … in a dual way it behaves as a constraint that both values must
+# be the same"). MEASURED 2026-09-18; reachable from ordinary source, because `parse_atom("$x#7")`
+# yields `Var(name="x#7", id=0)` — the HE grammar reserves `#` precisely to prevent this and we do
+# not enforce it.
+#
+# ⚠️ THE COLLISION WAS IN THE KEY, NOT THE RENDERER. Both `atom_to_expr` (bytes) and
+# `typed_atom_to_expr` (string) merged, identically, because both derive identity from a NAME. So
+# "use the byte path" was not a fix; this is. The tuple was already named as the correct key in the
+# cost note below — it allocates nothing and hashes directly — and was deferred pending measurement.
+# The measurement arrived as a wrong answer.
+#
+# This closes BOTH halves of the capture (a hand-built `Var` and a parsed `$x#7`), which the
+# alternative stopgap — rejecting `#` at parse time — could not: it would leave the programmatic half
+# open. It does NOT remove the need for positional identity; it fixes identity INSIDE Core, while
+# levels remove the question at the boundary (docs/specs/blocker2_variable_identity_design_2026-09-18.md).
+_var_key(v)::Tuple{String, UInt64} = (v.name, v.id)
 
 # The single pre-order pass. `nvars` is threaded because levels are ABSOLUTE (see above).
 # Returns `nothing` on success or the decline reason.
 function _atom_bytes!(
-    out::Vector{UInt8}, a, seen::Dict{String, UInt8}, nvars::Base.RefValue{UInt8}
+    out::Vector{UInt8}, a, seen::Dict{Tuple{String, UInt64}, UInt8}, nvars::Base.RefValue{UInt8}
 )::Union{Nothing, String}
     if a isa _MM2_ATOM.Expression
         ch = (a::_MM2_ATOM.Expression).children
@@ -242,7 +263,7 @@ Declines with a reason (never throws, never wraps) on: arity ≥ 64, a symbol of
 """
 function atom_to_expr(a)::AtomEncoding
     out = UInt8[]
-    r = _atom_bytes!(out, a, Dict{String, UInt8}(), Ref(UInt8(0)))
+    r = _atom_bytes!(out, a, Dict{Tuple{String, UInt64}, UInt8}(), Ref(UInt8(0)))
     r === nothing ? AtomEncoding(MORK.Expr(out), nothing) : AtomEncoding(nothing, r)
 end
 

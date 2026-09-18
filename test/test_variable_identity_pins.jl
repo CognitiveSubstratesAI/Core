@@ -124,9 +124,20 @@ const AT = MeTTaCore.StandardMeTTa
         # (Tabling.jl:1011) builds `Var("_v", UInt64(n))`. None can put a `#` into a name. So after
         # the guard the residual hole is EXACTLY hand-written `Var`s — not source, not renaming.
         collide = AT.Expression(AT.Atom[AT.Sym("f"), AT.Var("x", UInt64(7)), AT.Var("x#7", UInt64(0))])
+
+        # ✅ HALF A — CLOSED 2026-09-18 by `_var_key` becoming a `(name, id)` TUPLE. The collision was
+        # in the identity KEY (`string(name, "#", id)` made both variables `"x#7"`), not in either
+        # renderer — so the BYTE path is the one that had to change, and it is the one asserted here.
+        encb = MC.atom_to_expr(collide)
+        @test encb.declined === nothing
+        @test tagwalk(encb.expr) == ["Arity3", "Sym(f)", "NewVar", "NewVar"]   # two DISTINCT binders
+
+        # ⚠️ THE STRING PATH STILL MERGES, and that is expected, not a regression: `typed_atom_to_expr`
+        # prints `$x#7` for both, and MORK's frontend de-Bruijns BY NAME. Nothing keyed on a printed
+        # name can distinguish them. That half closes when `Var` carries a positional level and the
+        # bridge stops rendering identity as text (design note §4/§7 step 4).
         tgc = tagwalk(MK.sexpr_to_expr(MC.typed_atom_to_expr(collide)))
-        @test_broken tgc == ["Arity3", "Sym(f)", "NewVar", "NewVar"]   # HALF A — BLOCKER 2 flips this
-        @test tgc == ["Arity3", "Sym(f)", "NewVar", "VarRef0"]         # today: MERGED — the hole, pinned
+        @test tgc == ["Arity3", "Sym(f)", "NewVar", "VarRef0"]         # string path: still MERGED
 
         # HALF B — reachable from ORDINARY SOURCE: our parser accepts `#` in a variable name, which
         # the HE grammar reserves precisely to prevent this. 🔴 THE `#` GUARD FLIPS THIS ONE.
