@@ -51,13 +51,13 @@ const AT = MeTTaCore.StandardMeTTa
         #
         # ⚠️ Keep this list SHORT and give each entry a reason. An entry with no reason is a defect
         # waiting to be rediscovered — that is precisely how the four sites below accumulated.
-        ALLOWED = Dict(
-            # file => why a LOSSY rendering is acceptable at this site
-            "src/eval/MorkBridge.jl" =>
-                "String-contract convenience wrappers; migrating to serialize2 (de Bruijn plan, stage a)",
-            "src/standard/MeTTaIL.jl" =>
-                "re-parses its own output; the round trip itself is slated for deletion (stage a)",
-        )
+        # 🟢 EMPTY as of 2026-09-18 — stage (a) closed the last three sites:
+        #   Primitives.jl  WILLIAM.lgg              -> expr_serialize2  (bb34ae5)
+        #   MeTTaIL.jl     _normalize_subterm       -> Expr in/Expr out; the round trip DELETED
+        #   MorkBridge.jl  both String wrappers     -> expr_serialize2 at the API edge
+        # An empty allowlist is the strong form of this pin: ANY new `expr_serialize(` in live src/
+        # now fails, and re-opening the list requires writing down why.
+        ALLOWED = Dict{String, String}()
 
         root = normpath(joinpath(@__DIR__, ".."))
         offenders = String[]

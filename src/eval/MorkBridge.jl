@@ -85,7 +85,11 @@ function mork_rule_rewrite(rule::AbstractString, data::AbstractString)
     r = mork_rule_rewrite(
         MORK.sexpr_to_expr(String(rule)), MORK.sexpr_to_expr(String(data))
     )
-    r === nothing ? nothing : strip(MORK.expr_serialize(r.buf))
+    # `expr_serialize2`, not `expr_serialize`: a String IS this method's contract (the Expr method
+    # above is the no-text path), so the one rendering it does must be RE-PARSEABLE. The lossy form
+    # prints a NewVar as bare `$` and a VarRef as `_N`, which re-parses as a ground symbol — and a
+    # rewrite result is exactly where free variables appear (see BLOCKER 3).
+    r === nothing ? nothing : strip(MORK.expr_serialize2(r.buf))
 end
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -285,7 +289,9 @@ function core_normalize(cs::CoreSpace, term::AbstractString; max_steps::Int=1000
         nxt === nothing && break
         cur = nxt
     end
-    strip(MORK.expr_serialize(cur.buf))
+    # Serialise ONCE, at the API edge, with the re-readable renderer. The loop above is Expr-in/
+    # Expr-out already — `core_rewrite_step` returns an `Expr`, so no text crosses the iteration.
+    strip(MORK.expr_serialize2(cur.buf))
 end
 
 export mork_native_vars, core_rule_exprs, core_rewrite_step, core_normalize

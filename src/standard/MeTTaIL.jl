@@ -221,21 +221,56 @@ end
 # (subterms × rules × 2) to (subterms + rules). Pure implementation change: same innermost-to-fixpoint
 # congruence, same results (guarded by the test_mettail/test_gslt congruence tests + JeTTa's own
 # Derivative.metta oracle, which both lanes already reproduce byte-for-byte).
-function _normalize_subterm(rules::Vector{MORK.Expr}, term::AbstractString)::String
-    term = strip(term)
-    if startswith(term, "(")                          # compound: normalize children first (← congruence)
-        term =
-            "(" * join([_normalize_subterm(rules, a) for a in mm2_expr_args(term)], " ") *
-            ")"
+# 🔴 `Expr` IN, `Expr` OUT — NO TEXT ANYWHERE INSIDE THE LOOP (2026-09-18).
+#
+# The previous form rendered with `expr_serialize` and rebuilt the parent by joining child STRINGS,
+# so the lossy text did THREE jobs: the fixpoint test, the recursion's input, and the representation
+# at every level of the congruence descent. All three are wrong for variable-bearing terms, and the
+# fixpoint one is wrong SILENTLY:
+#
+#     (g $a $a)   tags Arity3 Sym(g) NewVar VarRef0   ─┐ both render as "(g $ _1)"
+#     (g $  _1)   tags Arity3 Sym(g) NewVar Sym(_1)   ─┘ so `rs != term` calls them EQUAL
+#
+#   MEASURED 2026-09-18 (`~/csai-work/gates/probes/mettail_normalize_roundtrip.jl`):
+#       buffers equal? false      ← byte equality keeps normalising, correctly
+#       strings equal? true       ← the string test stopped, one step early
+#
+# A `VarRef` re-parses as a ground `Sym("_N")` and two distinct binders both print bare `$` and MERGE
+# on re-parse, so every level of the descent could corrupt variable structure. Byte equality on the
+# buffers is both correct and cheaper than building and comparing strings.
+#
+# The congruence is unchanged — innermost-first, then a top-level reduction, renormalise on success.
+# Only the CARRIER changed. `metta_il_normalize` parses once at the entry and serialises once at the
+# edge (with `expr_serialize2`, the re-readable renderer).
+function _normalize_subterm(rules::Vector{MORK.Expr}, te::MORK.Expr)::MORK.Expr
+    tag = MORK.byte_item(te.buf[1])
+    if tag isa MORK.ExprArity && Int(tag.arity) > 0   # compound: normalize children first (← congruence)
+        n = Int(tag.arity)
+        kids = Vector{MORK.Expr}(undef, n)
+        i = 2                                          # byte 1 is the arity tag
+        changed = false
+        for k in 1:n
+            span = MORK.expr_span(te, i)
+            child = MORK.Expr(collect(span))
+            kids[k] = _normalize_subterm(rules, child)
+            changed |= kids[k].buf != child.buf
+            i += length(span)
+        end
+        if changed                                     # rebuild only when a child actually reduced
+            oz = MORK.ExprZipper(MORK.Expr(Vector{UInt8}(undef, max(length(te.buf) * 2, 64))), 1)
+            MORK.ez_write_arity!(oz, UInt8(n))
+            for k in 1:n
+                MORK.ez_write_move!(oz, kids[k].buf)
+            end
+            te = MORK.Expr(oz.root.buf[1:(oz.loc - 1)])
+        end
     end
-    te = MORK.sexpr_to_expr(String(term))             # parse the TERM once, not once per rule
-    for rule in rules                                 # then a top-level reduction; renormalize on success
-        r = mork_rule_rewrite(rule, te)               # Expr method — no parsing of either side
+    for rule in rules                                  # then a top-level reduction; renormalize on success
+        r = mork_rule_rewrite(rule, te)                # Expr method — no parsing of either side
         r === nothing && continue
-        rs = strip(MORK.expr_serialize(r.buf))
-        rs != term && return _normalize_subterm(rules, rs)
+        r.buf != te.buf && return _normalize_subterm(rules, r)   # BYTE equality, not string
     end
-    term
+    te
 end
 
 """
@@ -259,7 +294,10 @@ function metta_il_normalize(program::AbstractString, term::AbstractString)::Stri
         MORK.sexpr_to_expr("(= $(mm2_expr_args(f)[2]) $(mm2_expr_args(f)[3]))")
         for (bang, f) in mm2_split_forms(program) if !bang && mm2_head(f) == "~>"
     ]
-    _normalize_subterm(rules, term)
+    # Parse ONCE at the entry, serialise ONCE at the edge — `expr_serialize2`, the re-readable
+    # renderer (`$a`/`$b` from the level table, binder and back-references sharing a name), never the
+    # lossy `expr_serialize`, whose `$`/`_N` output is not re-parseable as the same term.
+    strip(MORK.expr_serialize2(_normalize_subterm(rules, MORK.sexpr_to_expr(String(strip(term)))).buf))
 end
 
 # --- def/match/emit pipeline surface (scalable-infra §9.1, lowered to MM2 per §9.2) ------------------
