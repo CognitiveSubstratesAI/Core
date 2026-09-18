@@ -134,6 +134,54 @@ const AT = MeTTaCore.StandardMeTTa
         @test_broken MC.Eval.parse_atom("\$x#7").name != "x#7"
     end
 
+    @testset "PIN 4 — the Rule of 64 DECLINES; it never truncates or aliases" begin
+        # The Rule of 64 caps three things (Data-in-MORK: Arity 0..63, SymbolSize 1..63, VarRef a de
+        # Bruijn LEVEL 0..63). The dangerous outcome would be SILENT TRUNCATION — `VarRef` is 6 bits,
+        # so variable 65 aliasing variable 1 would make two distinct variables co-referent, the same
+        # wrong-answer shape as the merge cases above. MEASURED 2026-09-18: it does not happen on any
+        # path. This pins the ABSENCE, because an absence is what silently stops being true.
+        #
+        # ⚠️ NEST when building the over-limit case. A flat `(f $v1 … $v65)` has arity 66, so the
+        # ARITY guard fires first and the VARIABLE limit is never reached — an earlier probe measured
+        # exactly that and would have reported one guard as the other.
+        function nvars(n)
+            chunks = AT.Atom[]; i = 1
+            while i <= n
+                hi = min(i + 29, n)
+                push!(chunks, AT.Expression(AT.Atom[AT.Sym("g");
+                                                    [AT.Var("v$(k)", UInt64(k)) for k in i:hi]]))
+                i = hi + 1
+            end
+            AT.Expression(AT.Atom[AT.Sym("f"); chunks])
+        end
+
+        # 64 distinct variables ENCODE, and stay 64 DISTINCT binders — no aliasing at the boundary.
+        enc64 = MC.atom_to_expr(nvars(64))
+        @test enc64.declined === nothing
+        tg64 = tagwalk(enc64.expr)
+        @test count(==("NewVar"), tg64) == 64
+        @test count(t -> startswith(t, "VarRef"), tg64) == 0
+
+        # 65 DECLINES on the byte path, with a reason rather than a bare flag.
+        enc65 = MC.atom_to_expr(nvars(65))
+        @test enc65.declined !== nothing
+        @test occursin("64 distinct variables", enc65.declined)
+        @test enc65.expr === nothing
+
+        # …and THROWS on the string path — outcome (b), a real exception with a meaningful message.
+        @test_throws Exception MK.sexpr_to_expr(MC.typed_atom_to_expr(nvars(65)))
+
+        # THE CASE THAT OUTLIVES THE CALL: an over-limit atom must not be half-stored.
+        cs = MC.new_core_space()
+        MC.core_add!(cs, MC.typed_atom_to_expr(nvars(65)))     # warns, does not throw
+        @test strip(MC.space_dump_all_sexpr(cs.inner)) == ""   # nothing stored — declined, not corrupted
+
+        # Arity and symbol length decline the same way (the byte path guards all THREE).
+        @test MC.atom_to_expr(AT.Expression(AT.Atom[AT.Sym("f");
+              [AT.Sym("a$(i)") for i in 1:63]])).declined !== nothing      # arity 64
+        @test MC.atom_to_expr(AT.Sym("s"^64)).declined !== nothing          # symbol 64 bytes
+    end
+
     @testset "PIN 3 — a variable only on the RHS survives as a variable (the general property)" begin
         rw(rule, data) = MC.mork_rule_rewrite(MK.sexpr_to_expr(rule), MK.sexpr_to_expr(data))
         isvar(t) = t == "NewVar" || startswith(t, "VarRef")
