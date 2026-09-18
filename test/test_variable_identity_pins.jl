@@ -90,16 +90,30 @@ const AT = MeTTaCore.StandardMeTTa
 
         # 🔴 THE COLLISION, MEASURED 2026-09-18: `Var("x", 7)` prints `$x#7`, and so does a Var
         # literally NAMED "x#7". Two different variables, one rendered name, and they merge silently.
-        # This currently FAILS to stay distinct — it is a KNOWN HOLE, pinned so the guard has
-        # something to flip. See the `#`-in-variable-name guard (BLOCKER 2 keystone: while identity
-        # crosses as text, distinctness depends on string uniqueness).
+        #
+        # ⚠️ THERE ARE TWO HALVES, AND THE `#` PARSE GUARD ONLY CLOSES ONE. Read this before
+        # concluding "guard landed but the test is still broken" — that is the CORRECT state.
+        #
+        #   HALF A — PROGRAMMATIC (below): `AT.Var("x#7", 0)` built directly in Julia. The guard does
+        #     NOT close this and is not meant to; it stays `@test_broken` until BLOCKER 2 gives `Var`
+        #     a positional NewVar/VarRef level, at which point there is no name left to collide.
+        #   HALF B — SOURCE-REACHABLE (further below): `parse_atom("$x#7")`. The guard DOES close
+        #     this; that `@test_broken` is the one expected to flip, and flipping it is how the guard
+        #     is verified.
+        #
+        # ESCAPE AUDIT, 2026-09-18 — the guard is not bypassed by the renamers it protects.
+        # Every `Var` construction site that synthesises a name was checked: `freshvar(name) =
+        # (…; Var(name, _VAR_COUNTER[]))` (Eval.jl:987) keeps the counter in the ID FIELD and passes
+        # the base name through; `rename_fresh` calls `freshvar(v.name)`; `_variant_rename`
+        # (Tabling.jl:1011) builds `Var("_v", UInt64(n))`. None can put a `#` into a name. So after
+        # the guard the residual hole is EXACTLY hand-written `Var`s — not source, not renaming.
         collide = AT.Expression(AT.Atom[AT.Sym("f"), AT.Var("x", UInt64(7)), AT.Var("x#7", UInt64(0))])
         tgc = tagwalk(MK.sexpr_to_expr(MC.typed_atom_to_expr(collide)))
-        @test_broken tgc == ["Arity3", "Sym(f)", "NewVar", "NewVar"]
-        @test tgc == ["Arity3", "Sym(f)", "NewVar", "VarRef0"]     # today: MERGED — the hole, pinned
+        @test_broken tgc == ["Arity3", "Sym(f)", "NewVar", "NewVar"]   # HALF A — BLOCKER 2 flips this
+        @test tgc == ["Arity3", "Sym(f)", "NewVar", "VarRef0"]         # today: MERGED — the hole, pinned
 
-        # And it is reachable from ORDINARY SOURCE: our parser accepts `#` in a variable name, which
-        # the HE grammar reserves precisely to prevent this.
+        # HALF B — reachable from ORDINARY SOURCE: our parser accepts `#` in a variable name, which
+        # the HE grammar reserves precisely to prevent this. 🔴 THE `#` GUARD FLIPS THIS ONE.
         @test MC.Eval.parse_atom("\$x#7") isa AT.Var
         @test_broken MC.Eval.parse_atom("\$x#7").name != "x#7"
     end
