@@ -128,4 +128,33 @@ _old_alpha1(a::AT.Atom) = _old_alpha_canon(a, Dict{AT.Var, Int}())
         fresh = AT.canon_rename(P("(g \$x)"), AT.CANON_VARIANT)
         @test fresh == MC.Eval._variant_rename(P("(g \$x)"))        # independent, as the callers do
     end
+
+    @testset "🔴 SHARING `seen` IS WRONG FOR KEYS — demonstrated, not just documented" begin
+        # The docstring warns that a shared map makes a variant key depend on ARRIVAL ORDER. Prose
+        # that nothing executes is how the parameter grows a caller and the semantics go
+        # un-re-examined, so here is the failure itself.
+        g1, g2 = P("(p \$a)"), P("(q \$b \$a)")
+
+        # INDEPENDENT (what every key-producing caller does): a goal's key depends only on itself.
+        k1 = MC.Eval._variant_rename(g1)
+        @test MC.Eval._variant_rename(g1) == k1                    # same goal ⇒ same key, always
+
+        # SHARED: canonicalise g2 first, then g1, through ONE map.
+        shared = Dict{AT.Var, AT.Var}()
+        AT.canon_rename(g2, AT.CANON_VARIANT, shared)
+        k1_after = AT.canon_rename(g1, AT.CANON_VARIANT, shared)
+        @test k1_after != k1        # 🔴 the SAME goal now keys differently, purely from arrival order
+        # ⇒ a table keyed this way would stop deduplicating: two arrivals of one goal, two entries.
+
+        # and the reason, made visible rather than asserted abstractly: `$a` was already numbered
+        # while walking g2, so it keeps that ordinal instead of restarting at 1.
+        @test MC.collect_vars(k1)[1].id == UInt64(1)
+        @test MC.collect_vars(k1_after)[1].id != UInt64(1)
+
+        # CONTROL — sharing is CORRECT for comparison: two terms that must agree on a variable do.
+        s2 = Dict{AT.Var, AT.Var}()
+        a1 = AT.canon_rename(P("(p \$z)"), AT.CANON_VARIANT, s2)
+        a2 = AT.canon_rename(P("(q \$z)"), AT.CANON_VARIANT, s2)
+        @test MC.collect_vars(a1)[1] == MC.collect_vars(a2)[1]     # one variable across both ✅
+    end
 end

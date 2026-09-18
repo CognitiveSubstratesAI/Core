@@ -39,7 +39,17 @@ end
 "Tabling's variant key: `_v`, 1-based. SWI's variant canonicalization (`\$tbl_variant_table`)."
 const CANON_VARIANT = CanonPolicy("_v", UInt64(1))
 
-"Alpha-equality for `unique-atom` / `assertAlphaEqualToResult`: `\$α`, 0-based."
+"""
+Alpha-equality for `unique-atom` / `assertAlphaEqualToResult`: `\$α`, 0-based.
+
+⚠️ THE DOUBLE `\$` IN THE RENDERED OUTPUT IS AN ARTEFACT, NOT A DESIGN. The spelling already begins
+with `\$` and the printer prefixes another, so these canonical variables render as `\$\$α`,
+`\$\$α#1`, … Harmless today — nothing PARSES that output; alpha-canonical forms are compared as
+ATOMS, never round-tripped through text — and `test_term_canon.jl` now pins the string, so a change
+in either the spelling or the printer will show up as a test failure rather than as a silent shift in
+a rendered form. Recorded because "harmless" here means "nothing depends on it YET", and the day
+something reads that output the double `\$` stops being cosmetic.
+"""
 const CANON_ALPHA = CanonPolicy("\$α", UInt64(0))
 
 """
@@ -51,7 +61,19 @@ equal terms; non-equivalent ones do not.
 `seen` is exposed so a caller can canonicalise several terms in ONE namespace. ⚠️ Both current callers
 pass a FRESH map per atom — `_alpha1`'s comment says "each atom canonicalized independently" and
 `_variant_rename` allocates internally — and the census confirming that is what made this merge safe.
-A future caller that shares the map is doing something different and should say why.
+
+🔴 **WHEN SHARING `seen` IS WRONG, stated because the parameter will otherwise grow a caller and the
+semantics will not be re-examined.** Sharing makes the SAME source variable receive the SAME canonical
+variable across every term walked with that map. That is:
+
+* **CORRECT for COMPARING terms** — canonicalising two terms together answers "are these the same up
+  to renaming, IN A SHARED SCOPE", e.g. a goal and an answer that must agree on a variable.
+* 🔴 **WRONG for producing independent KEYS** — a variant table key must depend only on its OWN goal.
+  Share the map across two goals and the second one's numbering depends on which goal was canonicalised
+  first, so the same goal yields different keys depending on arrival order, and the table stops
+  deduplicating. Every current key-producing caller passes a fresh map for exactly this reason.
+
+If you are producing a key, do not share. If you are comparing, sharing is the point.
 """
 function canon_rename(a::Atom, policy::CanonPolicy, seen::Dict{Var, Var}=Dict{Var, Var}())::Atom
     if a isa Var
