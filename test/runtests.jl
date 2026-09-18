@@ -88,6 +88,9 @@ Main.@suite("test_corespace.jl")
 # has no core_match_bind to diff against; see the file header.
 Main.@suite("test_corespace_bind_multi.jl")
 Main.@suite("test_corespace_load.jl")   # load_metta!(::CoreSpace) — libs into the shared MORK trie
+# The de Bruijn storage migration's GATE (plan §5). Its two `@test_broken`s are the ratchet: they pass
+# as "Broken" today and FAIL LOUDLY when Stage 2 flips `to_sexpr`, which is when they become `@test`.
+Main.@suite("test_debruijn_storage_gate.jl")
 # Space constructor REGISTRY + capability ledger. Every declared capability is exercised, so the ledger
 # fails when it drifts from the code — including the DECLINES (:mork evaluate=false IS compile-arrow 6).
 Main.@suite("test_spaces_registry.jl")
