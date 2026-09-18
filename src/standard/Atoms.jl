@@ -18,6 +18,7 @@ export Atom, Sym, Var, Expression, Grounded, metatype, isvar
 export Bindings,
     Binding, resolve, match_atoms, merge_bindings, add_var_binding, add_var_equality
 export is_present, canonical_var
+export canon_rename, CanonPolicy, CANON_VARIANT, CANON_ALPHA   # the one canonicalising walker
 
 # ── Atom: a typed sum-type (Julia's faithful equivalent of hyperon's `enum Atom`) ──
 abstract type Atom end
@@ -71,6 +72,11 @@ Base.:(==)(a::Expression, b::Expression) = a.children == b.children
 Base.:(==)(a::Grounded, b::Grounded) = (a.value == b.value) === true
 Base.hash(a::Sym, h::UInt) = hash(a.name, hash(:Sym, h))
 Base.hash(a::Var, h::UInt) = hash(a.id, hash(a.name, hash(:Var, h)))
+
+# ONE audited variable-renaming walker, shared by tabling's variant key and alpha-equality. Included
+# HERE, in the module that owns `Var`/`Expression`, so both subsystems reach it without either owning
+# it — the arrangement that let two copies drift in the first place.
+include("TermCanon.jl")
 Base.hash(a::Expression, h::UInt) = hash(a.children, hash(:Expression, h))
 Base.hash(a::Grounded, h::UInt) = hash(a.value, hash(:Grounded, h))
 

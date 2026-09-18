@@ -1008,17 +1008,11 @@ const _DEPS = Dict{Atom, Vector{Dependency}}()   # source key ↦ dependencies w
 # pre-call arg eval — then (b) RENAME vars by first occurrence (= SWI's variant canonicalization). Result:
 # `(fib (- 20 2))` and `(fib (- 19 1))` both key to `(fib 18)` (halves the table → O(n)), and `(fib $x)` /
 # `(fib $y)` share one table.
-function _variant_rename(a::Atom)::Atom
-    seen = Dict{Var, Var}()
-    n = Ref(0)
-    rn(x::Atom) =
-        if x isa Var
-            get!(() -> (n[] += 1; Var("_v", UInt64(n[]))), seen, x)
-        else
-            (x isa Expression ? Expression(Atom[rn(c) for c in x.children]) : x)
-        end
-    rn(a)
-end
+# ⚠️ ONE WALKER, A POLICY — see standard/TermCanon.jl. This was a hand-rolled copy of the same
+# first-encounter renaming `_alpha_canon` (Eval.jl) also carried, in another file, with a different
+# spelling and a different base. Byte-identical output is the gate, not partition equality: `_v`
+# names are live TABLE KEYS.
+_variant_rename(a::Atom)::Atom = canon_rename(a, CANON_VARIANT)
 # reduced goal = subst + REDUCE args (no var-rename); _canonical_goal renames on top ⇒ the variant KEY.
 function _reduced_goal(atom::Atom, space, b::Bindings)::Atom
     g = subst(atom, b)

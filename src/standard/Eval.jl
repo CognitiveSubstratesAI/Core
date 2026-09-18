@@ -2391,16 +2391,11 @@ const ASSERT_EQUAL_TO_RESULT = Grounded(
 # alpha-equality: canonicalize variables by first-encounter order so alpha-equivalent atoms compare
 # equal (a freshly-renamed $t' from type-checking ≡ the literal $t in an expected result). hyperon's
 # assertAlphaEqualToResult (stdlib.metta:1173) compares result sets up to variable renaming.
-function _alpha_canon(a::Atom, m::Dict{Var, Int})
-    if a isa Var
-        return Var("\$α", UInt64(get!(m, a, length(m))))   # name+id determined purely by encounter order
-    elseif a isa Expression
-        return Expression(Atom[_alpha_canon(c, m) for c in a.children])
-    else
-        return a
-    end
-end
-_alpha1(a::Atom) = _alpha_canon(a, Dict{Var, Int}())          # each atom canonicalized independently
+# ⚠️ ONE WALKER, A POLICY — see standard/TermCanon.jl. `_variant_rename` (Tabling.jl) carried the
+# same first-encounter renaming under a different spelling and base; the two were measured to induce
+# the SAME partition while producing DIFFERENT representatives, and neither file mentioned the other.
+# The spellings stay distinct on purpose: `_v#1` and `$α#1` must not become equal.
+_alpha1(a::Atom) = canon_rename(a, CANON_ALPHA)               # each atom canonicalized independently
 # Multiset set ops on collapsed-list Expressions (hyperon atom.rs UniqueAtomOp/UnionAtomOp/
 # IntersectionAtomOp/SubtractionAtomOp). Element identity = alpha-equivalence (via _alpha1). unique =
 # dedup-keep-first; union = concat; intersection/subtraction = multiset min-multiplicity / difference.
