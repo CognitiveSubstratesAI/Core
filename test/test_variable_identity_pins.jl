@@ -139,10 +139,28 @@ const AT = MeTTaCore.StandardMeTTa
         tgc = tagwalk(MK.sexpr_to_expr(MC.typed_atom_to_expr(collide)))
         @test tgc == ["Arity3", "Sym(f)", "NewVar", "VarRef0"]         # string path: still MERGED
 
-        # HALF B — reachable from ORDINARY SOURCE: our parser accepts `#` in a variable name, which
-        # the HE grammar reserves precisely to prevent this. 🔴 THE `#` GUARD FLIPS THIS ONE.
+        # HALF B — reachable from ORDINARY SOURCE, and it is a SPEC VIOLATION, not a convention.
+        # `docs/specs/metta grammar/metta_language_spec.md` §1.2 states it normatively:
+        #   "`#` is reserved: used internally by HE to represent auto-generated variables, so it
+        #    cannot appear inside a variable name."
+        # The reservation is what makes GENERATED names (`$x#7`, which `typed_atom_to_expr` emits)
+        # safe from collision — so a parser that accepts `#` in a USER variable breaks the very
+        # guarantee the generated form relies on. 🔴 THE `#` GUARD FLIPS THIS ONE.
         @test MC.Eval.parse_atom("\$x#7") isa AT.Var
         @test_broken MC.Eval.parse_atom("\$x#7").name != "x#7"
+
+        # 🔴 THE SAME CLASS, SECOND INSTANCE — a BARE `$` parses to a variable with an EMPTY NAME.
+        # Grammar: `VARIABLE ::= '$', ( CHAR | '"' ), { CHAR | '"' }` — at least ONE character is
+        # REQUIRED after `$`, so `$` alone is ungrammatical and must not yield a Var.
+        #
+        # ⚠️ WHY THIS ONE MATTERS BEYOND CONFORMANCE: `expr_serialize` renders EVERY `NewVar` as a
+        # bare `$`. Each one parses back to `Var("")`, and `Var("") == Var("")`, so every variable in
+        # a lossily-serialised term becomes THE SAME VARIABLE. That is the typed-lane mechanism
+        # behind the byte-lane merge pinned in MORK's unit_serialize_roundtrip.jl, where
+        # `(p $x $y $x)` round-trips as `NewVar VarRef0 Sym(_1)`. Two lanes, one cause.
+        @test MC.Eval.parse_atom("\$") isa AT.Var                       # today: a Var…
+        @test MC.Eval.parse_atom("\$").name == ""                       # …with an empty name
+        @test_broken !(MC.Eval.parse_atom("\$") isa AT.Var)             # grammar: NOT a variable
     end
 
     @testset "PIN 4 — the Rule of 64 DECLINES; it never truncates or aliases" begin
