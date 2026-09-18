@@ -163,6 +163,47 @@ const AT = MeTTaCore.StandardMeTTa
         @test_broken !(MC.Eval.parse_atom("\$") isa AT.Var)             # grammar: NOT a variable
     end
 
+    @testset "PIN 5 — everything `atom_to_expr` produces is WELL-SCOPED (step-4 baseline)" begin
+        # BLOCKER 2 step 4 safety net, landed BEFORE `Var` changes shape so that a red afterwards is
+        # SIGNAL rather than ambiguity. The invariant lives in MORK (`expr_has_unbound`, pinned in
+        # unit_varref_scope_verifier.jl); this is the CORE-side claim: our encoder never emits a
+        # VarRef out of scope, so today's green is a real baseline and not an untested assumption.
+        wellscoped(a) = begin
+            e = MC.atom_to_expr(a)
+            e.declined === nothing && !MK.expr_has_unbound(e.expr)
+        end
+        _v(n, i=0) = AT.Var(n, UInt64(i))
+        CASES = [
+            AT.Sym("a"),
+            AT.Expression(AT.Atom[AT.Sym("k"), AT.Sym("1"), AT.Sym("2")]),          # ground
+            AT.Expression(AT.Atom[AT.Sym("g"), _v("a")]),                            # one binder
+            AT.Expression(AT.Atom[AT.Sym("g"), _v("a"), _v("a")]),                   # binder + backref
+            AT.Expression(AT.Atom[AT.Sym("g"), _v("a"), _v("b")]),                   # two binders
+            AT.Expression(AT.Atom[AT.Sym("p"), _v("a"), _v("b"), _v("a")]),          # NewVar NewVar VarRef0
+            # NESTED, and the subterm's binder is to the LEFT in a SIBLING — levels are ABSOLUTE, so
+            # this is the shape that would break first if a rebase were wrong.
+            AT.Expression(AT.Atom[AT.Sym("q"), _v("z"),
+                                  AT.Expression(AT.Atom[AT.Sym("path"), _v("z"), _v("y")])]),
+            AT.Expression(AT.Atom[AT.Sym("r"), _v("a"), _v("b"),
+                                  AT.Expression(AT.Atom[AT.Sym("path"), _v("x"), _v("x")])]),
+        ]
+        for a in CASES
+            @test wellscoped(a)
+        end
+
+        # …and the same over a REAL loaded corpus, not only constructed shapes: every atom a library
+        # puts in the store must encode well-scoped.
+        cs = MC.new_core_space()
+        MC.load_core_lib!(cs, "metamo")
+        bad = Any[]
+        for a in MC.core_atoms(cs)
+            enc = try MC.atom_to_expr(MC.Eval.parse_atom(MC.to_sexpr(a))) catch; nothing end
+            enc === nothing && continue
+            enc.declined === nothing && MK.expr_has_unbound(enc.expr) && push!(bad, a)
+        end
+        @test bad == Any[]
+    end
+
     @testset "PIN 4 — the Rule of 64 DECLINES; it never truncates or aliases" begin
         # The Rule of 64 caps three things (Data-in-MORK: Arity 0..63, SymbolSize 1..63, VarRef a de
         # Bruijn LEVEL 0..63). The dangerous outcome would be SILENT TRUNCATION — `VarRef` is 6 bits,
