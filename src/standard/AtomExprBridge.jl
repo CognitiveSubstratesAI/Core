@@ -156,11 +156,58 @@ expr_to_atom(e::MORK.Expr)::_MM2_ATOM.Atom = _expr_to_atom!(e, Ref(1), _MM2_ATOM
 # the CID incident, `Expr.jl:57-63`.
 # ══════════════════════════════════════════════════════════════════════════════════════════════════
 
-"Result of encoding an `Atom` to MORK bytes. Exactly one of `expr`/`declined` is non-`nothing`."
+"""
+Result of encoding an `Atom` to MORK bytes. Exactly one of `expr`/`declined` is non-`nothing`.
+
+SEAM 1 (docs/specs/term_model_boundary.md I2): the encoder ALREADY computes the correspondence
+between Core identity and MORK position, and used to throw it away. It is returned here instead, so
+no consumer ever has to RE-DERIVE it — re-derivation by name is what produced the `#` collision and
+the bare-`\$` merge.
+
+`vars` — de Bruijn LEVEL k (0-based) ⇒ `vars[k + 1]`, the Core `Var` that was assigned that level.
+The inverse of the encoder's `seen` map. A `Bindings` key from `expr_unify` is `(source, index)`
+where `index` IS that level, so this is exactly what turns a MORK binding back into a Core variable.
+
+`offsets`/`nodes` — parallel, in PRE-ORDER: `nodes[i]` is the SOURCE subterm whose bytes begin at
+`offsets[i]`. 🔴 THIS IS WHY BINDINGS ARE NOT TRANSLATED BY DECODING BYTES. A binding's dereferenced
+`ExprEnv` carries `(base, offset)` and MEASURED 2026-09-18 that `base` IS the data buffer we passed,
+with `offset` at the bound subterm's first byte — so the bound value can be recovered from the
+ORIGINAL `Atom`. Decoding instead would silently downgrade values: `Grounded(true)`, `Grounded(false)`,
+`Grounded("hello")` and `Grounded(:sym)` all come back as `Sym` (4 of 7 types measured), and the loss
+is on the ENCODE side — "No grounded TAG exists" (below) makes `Grounded("hello")` and `Sym("hello")`
+the SAME BYTES, so no decoder can fix it. Position recovery is loss-free BY CONSTRUCTION.
+
+⚠️ On a DECLINE all three are empty: a partial encoding describes bytes that were never returned.
+"""
 struct AtomEncoding
     expr::Union{MORK.Expr, Nothing}
     declined::Union{Nothing, String}      # a REASON, never a bare flag
+    vars::Vector{_MM2_ATOM.Var}           # level k ⇒ vars[k+1]
+    offsets::Vector{UInt32}               # strictly increasing (pre-order) — pinned, not assumed
+    nodes::Vector{_MM2_ATOM.Atom}         # nodes[i] begins at offsets[i]
 end
+
+"""
+    encoding_subterm(e::AtomEncoding, offset) -> Atom | nothing
+
+The SOURCE subterm whose encoded bytes begin at `offset`, or `nothing` if `offset` is not a node
+boundary. `offsets` is strictly increasing because the encoder is a single pre-order pass over the
+buffer it is filling, so this is a binary search and not a hash lookup.
+"""
+function encoding_subterm(e::AtomEncoding, offset::Integer)
+    off = UInt32(offset)
+    i = searchsortedfirst(e.offsets, off)
+    (i <= length(e.offsets) && e.offsets[i] == off) ? e.nodes[i] : nothing
+end
+
+"""
+    encoding_var(e::AtomEncoding, level) -> Var | nothing
+
+The Core `Var` assigned de Bruijn LEVEL `level` (0-based). ⚠️ A level is a property of a POSITION in
+ONE expression, never of the variable (I4) — so this is only meaningful for the encoding it came from.
+"""
+encoding_var(e::AtomEncoding, level::Integer) =
+    (0 <= level < length(e.vars)) ? e.vars[Int(level) + 1] : nothing
 
 # Variable identity key — name AND id. See the name+id note above; `id == 0` is a source var.
 #
@@ -196,15 +243,20 @@ _var_key(v)::Tuple{String, UInt64} = (v.name, v.id)
 # The single pre-order pass. `nvars` is threaded because levels are ABSOLUTE (see above).
 # Returns `nothing` on success or the decline reason.
 function _atom_bytes!(
-    out::Vector{UInt8}, a, seen::Dict{Tuple{String, UInt64}, UInt8}, nvars::Base.RefValue{UInt8}
+    out::Vector{UInt8}, a, seen::Dict{Tuple{String, UInt64}, UInt8}, nvars::Base.RefValue{UInt8},
+    vars::Vector{_MM2_ATOM.Var}, offsets::Vector{UInt32}, nodes::Vector{_MM2_ATOM.Atom}
 )::Union{Nothing, String}
+    # Record BEFORE emitting: `length(out)` is this node's first byte. Pre-order over the buffer we
+    # are filling ⇒ `offsets` comes out strictly increasing for free.
+    push!(offsets, UInt32(length(out)))
+    push!(nodes, a)
     if a isa _MM2_ATOM.Expression
         ch = (a::_MM2_ATOM.Expression).children
         length(ch) < 64 ||
             return "arity $(length(ch)) exceeds the Rule of 64 (max 63) — nest instead"
         push!(out, MORK.item_byte(MORK.ExprArity(UInt8(length(ch)))))
         for c in ch
-            r = _atom_bytes!(out, c, seen, nvars)
+            r = _atom_bytes!(out, c, seen, nvars, vars, offsets, nodes)
             r === nothing || return r
         end
         return nothing
@@ -214,6 +266,7 @@ function _atom_bytes!(
             nvars[] < 64 || return "more than 64 distinct variables — not a STORABLE expression " *
                                    "(Data-in-MORK: the limit is on storage, not on computation)"
             seen[_var_key(a)] = nvars[]
+            push!(vars, a)          # level nvars[] ⇒ vars[nvars[]+1]; `vars` IS the inverse of `seen`
             push!(out, MORK.item_byte(MORK.ExprNewVar()))
             nvars[] += UInt8(1)
         else
@@ -263,8 +316,14 @@ Declines with a reason (never throws, never wraps) on: arity ≥ 64, a symbol of
 """
 function atom_to_expr(a)::AtomEncoding
     out = UInt8[]
-    r = _atom_bytes!(out, a, Dict{Tuple{String, UInt64}, UInt8}(), Ref(UInt8(0)))
-    r === nothing ? AtomEncoding(MORK.Expr(out), nothing) : AtomEncoding(nothing, r)
+    vars = _MM2_ATOM.Var[]
+    offsets = UInt32[]
+    nodes = _MM2_ATOM.Atom[]
+    r = _atom_bytes!(out, a, Dict{Tuple{String, UInt64}, UInt8}(), Ref(UInt8(0)), vars, offsets, nodes)
+    # ⚠️ A DECLINE RETURNS EMPTY MAPS, not the partial ones. They would describe bytes no caller ever
+    # receives, and a half-filled correspondence is worse than none: it looks usable.
+    r === nothing ? AtomEncoding(MORK.Expr(out), nothing, vars, offsets, nodes) :
+                    AtomEncoding(nothing, r, _MM2_ATOM.Var[], UInt32[], _MM2_ATOM.Atom[])
 end
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════════
