@@ -252,7 +252,12 @@ case "${1:-run}" in
      "$0" stop; "$0" stop-gate ;;
   stop-gate)
      _use_lane "$SUITE_PORT"
-     "$0" stop 2>/dev/null || true
+     # ⚠️ ONE `stop`, WITH THE LANE IN THE ENV. There used to be a bare `"$0" stop` on the line above
+     # this one; `$0` is a subprocess and does not inherit `_use_lane`'s SHELL variables, so it fell
+     # back to `PORT=${CORE_WARM_SUITE_PORT:-3001}` and `stop-gate` SILENTLY KILLED THE PROBE DAEMON
+     # as well as the gate one. Found 2026-09-18 by sweeping every `"$0"` re-invocation in this file
+     # after the same class was found in `run-cold` — where it had been forging an 83-file failure.
+     # `run` and `run-warm` do not re-invoke `$0` at all and were clean.
      CORE_WARM_SUITE_PORT="$SUITE_PORT" "$0" stop ;;
   stop)
      # 🔴🔴 KILL BY PORT, NOT ONLY BY PIDFILE. MEASURED 2026-08-18, and it silently invalidated FOUR
