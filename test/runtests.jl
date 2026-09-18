@@ -96,6 +96,7 @@ Main.@suite("test_debruijn_storage_gate.jl")
 # form of BLOCKER 3, which passed both its controls while broken).
 Main.@suite("test_variable_identity_pins.jl")
 Main.@suite("test_atom_encoding_correspondence.jl")
+Main.@suite("test_core_match_differential.jl")
 # Space constructor REGISTRY + capability ledger. Every declared capability is exercised, so the ledger
 # fails when it drifts from the code — including the DECLINES (:mork evaluate=false IS compile-arrow 6).
 Main.@suite("test_spaces_registry.jl")

@@ -177,6 +177,7 @@ include("space/CoreSpaceLoad.jl")    # load lib/*.metta into the SHARED MORK tri
 include("space/Spaces.jl")           # Space constructor REGISTRY + capability ledger. Needs BOTH store
 # families in scope (Eval.Space and CoreSpace), so it follows both.
 include("standard/AtomExprBridge.jl")  # typed Atom ⇄ MORK.Expr — lane-neutral, live in CoreSpace/Primitives
+include("standard/CoreMatch.jl")       # SEAM 1: one matcher, on the MORK term model (flag OFF)
 include("standard/SexprForms.jl")   # lane-neutral s-expr form parsers — MUST precede every consumer
 # COMPILER-PRIMARY lane: MeTTa → MeTTa-IL → evaluate the IL. The live consumer of compiler/EmitIL.jl,
 # without which that stage is measured coverage of nothing. Placed HERE — after SexprForms (it drives
