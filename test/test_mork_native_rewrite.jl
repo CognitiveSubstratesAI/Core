@@ -139,3 +139,58 @@ const MK = MeTTaCore.MORK
                 ), atoms)
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# BLOCKER 3 — a FREE right-hand-side variable took a DIFFERENT variable's binding.
+#
+# `mork_apply` called the 3-arg `expr_apply`, which hardcodes `original_intros = 0`. Upstream resolves
+# a NewVar as `bindings.get(&(n, original_intros))` (expr/src/lib.rs:2126), so that argument is the de
+# Bruijn LEVEL the walked sub-expression STARTS at. A rule body is a SUBTERM: in `(= (f $x) (h $y))`
+# it begins after one binder, so its `$y` is level 1. Told it was level 0, the body's first variable
+# resolved to key (0,0) — `$x`'s binding — and the free variable silently became `5`.
+#
+# ⚠️ It is the `CRUX` note at the top of MorkBridge.jl, HALF-APPLIED: that note established head and
+# body share one namespace and must be split with `ee_args!`, and `ee_args!` computes this very base
+# (`env.v + new_var_count`). The base was never missing; `mork_apply` discarded it — the same shape
+# `Sinks.jl`'s `_expr_rebase_varrefs` documents for a different consumer.
+#
+# ORACLE: Core's own interpreter, which returns `(h $y#N)` — a free variable, alpha-renamed.
+# Tags, never text: `expr_serialize` prints a NewVar and a ground symbol indistinguishably.
+@testset "BLOCKER 3 — a FREE rhs variable must NOT take another variable's binding" begin
+    tags(e) = begin
+        out = String[]; i = 1
+        while i <= length(e.buf)
+            t = MK.byte_item(e.buf[i])
+            if t isa MK.ExprSymbol
+                push!(out, "Sym(" * String(e.buf[(i + 1):(i + Int(t.size))]) * ")")
+                i += 1 + Int(t.size)
+            else
+                push!(out, t isa MK.ExprNewVar ? "NewVar" :
+                           t isa MK.ExprVarRef ? "VarRef$(Int(t.idx))" :
+                           t isa MK.ExprArity  ? "Arity$(Int(t.arity))" : "?")
+                i += 1
+            end
+        end
+        out
+    end
+    rw(rule, data) = MC.mork_rule_rewrite(MK.sexpr_to_expr(rule), MK.sexpr_to_expr(data))
+
+    # THE DEFECT: `$y` is free — it never appears in the head, so nothing can bind it.
+    r = rw("(= (f \$x) (h \$y))", "(f 5)")
+    @test r !== nothing
+    @test tags(r) == ["Arity2", "Sym(h)", "NewVar"]      # was ["Arity2","Sym(h)","Sym(5)"]
+
+    # One free, one bound — the mixed case, which is where an off-by-base is easiest to miss.
+    r2 = rw("(= (f \$x) (h \$y \$x))", "(f 5)")
+    @test tags(r2) == ["Arity3", "Sym(h)", "NewVar", "Sym(5)"]
+
+    # CONTROLS — these passed even with the bug, which is exactly why it hid: when every rhs variable
+    # also appears on the lhs, the off-by-base lookup still lands on a real binding.
+    @test tags(rw("(= (f \$x \$y) (h \$y \$x))", "(f a b)")) ==
+          ["Arity3", "Sym(h)", "Sym(b)", "Sym(a)"]
+    @test tags(rw("(= (f \$x) (h \$x))", "(f 5)")) == ["Arity2", "Sym(h)", "Sym(5)"]
+
+    # Co-reference among free variables must survive too: one binder, one back-reference.
+    r3 = rw("(= (f \$x) (h \$y \$y))", "(f 5)")
+    @test tags(r3) == ["Arity3", "Sym(h)", "NewVar", "VarRef0"]
+end

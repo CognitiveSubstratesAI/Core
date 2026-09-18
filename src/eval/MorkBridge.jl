@@ -38,10 +38,29 @@ Hygienically substitute `bindings` into the source-0 template sub-expression at 
 `offset` within `base`, via MORK's `expr_apply` (de-Bruijn renaming + cycle handling). Returns the
 result as an owned `Expr`.
 """
-function mork_apply(base::MORK.Expr, offset::Integer, bindings)
+function mork_apply(base::MORK.Expr, offset::Integer, bindings, var_base::Integer = 0)
     out = MORK.Expr(Vector{UInt8}(undef, max(length(base.buf) * 4, 64)))
     oz = MORK.ExprZipper(out, 1)
-    MORK.expr_apply(MORK.ExprZipper(base, Int(offset) + 1), bindings, oz)
+    # 🔴 `var_base` IS `original_intros`, AND DEFAULTING IT TO 0 WAS A WRONG-ANSWER BUG.
+    # Upstream's `apply` resolves a `NewVar` as `bindings.get(&(n, original_intros))`
+    # (expr/src/lib.rs:2126) — so `original_intros` is the de Bruijn LEVEL at which the walked
+    # sub-expression starts. A template that is a SUBTERM does not start at 0: in
+    # `(= (f $x) (h $y))` the body begins after one binder, so its `$y` is level 1.
+    # Calling the 3-arg `expr_apply` (which hardcodes 0) made the body's first variable look up key
+    # (0, 0) — `$x`'s binding — so a FREE right-hand-side variable silently took a DIFFERENT
+    # variable's value: `(= (f $x) (h $y))` on `(f 5)` returned `(h 5)` where Core's own interpreter
+    # returns `(h $y#N)`. MEASURED 2026-09-18, at tag level with no text involved
+    # (`~/csai-work/gates/probes/stage1_unbound_rhs_var.jl`).
+    #
+    # ⚠️ THE SAME HALF-APPLIED INSIGHT AS THE `CRUX` NOTE ABOVE. That note already established that
+    # head and body share ONE namespace and must be split with `ee_args!` — and `ee_args!` computes
+    # this very base (`env.v + new_var_count`, ExprAlg.jl:422). The base was never missing; this
+    # function discarded it. Sinks.jl's `_expr_rebase_varrefs` documents the identical shape in a
+    # different consumer: "The base was therefore never missing — `ee_args!` had already computed it
+    # and the sink discarded it."
+    MORK.expr_apply(UInt8(0), UInt8(var_base), UInt8(0),
+        MORK.ExprZipper(base, Int(offset) + 1), bindings, oz,
+        Dict{MORK.ExprVar, UInt8}(), MORK.ExprVar[], MORK.ExprVar[])
     MORK.Expr(out.buf[1:(oz.loc - 1)])
 end
 
@@ -59,7 +78,8 @@ function mork_rule_rewrite(rule::MORK.Expr, data::MORK.Expr)
     head_ee, body_ee = args[2], args[3]                 # both source 0 ⇒ shared var indices
     b = MORK.expr_unify([(head_ee, MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), data))])
     b isa MORK.UnificationFailure && return nothing   # see mork_unify: never test `isa Dict` here
-    mork_apply(rule, body_ee.offset, b)
+    # `body_ee.v` is the de Bruijn base `ee_args!` computed for the body — pass it, do not drop it.
+    mork_apply(rule, body_ee.offset, b, body_ee.v)
 end
 function mork_rule_rewrite(rule::AbstractString, data::AbstractString)
     r = mork_rule_rewrite(
