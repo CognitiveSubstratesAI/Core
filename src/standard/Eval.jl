@@ -606,6 +606,27 @@ fired(name::Base.Symbol) = (ch = get(_COMPILED_HEADS, name, nothing); ch === not
 # on every `add-atom` and make the compiled lane slower than the interpreter on any writing program.
 const _COMPILED_HEADS = Dict{Base.Symbol, CompiledHead}()
 
+# ── THE JIT HOOK — late-bound, because the compiler loads AFTER `Eval` ───────────────────────────
+# 🔴 UNTIL 2026-09-18 NOTHING IN `src/` EVER CALLED `compile_head!`. Every stage of the compiler
+# worked in isolation and the last two links did not exist:
+#     Frontend.lower_program -> ANormal.translate_program -> EmitJulia.emit_julia_program
+#       -> [MISSING] -> compile_head! -> compiled_head
+# `emit_julia_program`'s only caller was a TEST, and `compile_head!`'s only callers were tests, so
+# `_COMPILED_HEADS` was ALWAYS EMPTY in production and `compiled_head` returned `nothing` on its
+# first line, every time. PROVED with a sentinel rather than by reading call sites: set the emitter's
+# head counter to -1, run `compile_run`, observe -1 survive. ⇒ the compiler's coverage ratchet
+# (FLOOR_TOTAL) measured what the emitter WOULD ACCEPT in a harness, never what executes.
+#
+# `Eval` is included before every compiler module, so the op below cannot call the emitter directly.
+# The compiler installs itself here at load time instead.
+const _JIT_HEAD_HOOK = Ref{Any}(nothing)
+
+"How many heads `compile-head` DECLINED (out of the emitter's scope). The honest denominator: a
+speedup on the heads that compiled says nothing about what fraction of hot heads were in scope."
+const _JIT_DECLINED = Ref(0)
+jit_declined() = _JIT_DECLINED[]
+reset_jit_declined!() = (_JIT_DECLINED[] = 0)
+
 "Register `fn` as the compiled implementation of head `name`, valid while its clause set hashes to `h`."
 compile_head!(name::Base.Symbol, fn::Function, h::UInt64) =
     (_COMPILED_HEADS[name] = CompiledHead(fn, h); nothing)
@@ -2362,6 +2383,42 @@ const GET_METATYPE = Grounded(
 const UNIT = Expression(Atom[])     # () — unit; assert success
 _assert_fail(name, a, b) =
     Expression(ERROR, Expression(Sym(name), a, b), Sym("AssertionFailed"))
+"""
+    (compile-head <name>) -> True | False
+
+Compile ONE head's clauses to a Julia closure and register it, so subsequent calls dispatch through
+`compiled_head` instead of the equation lookup. `False` ⇒ the head declined (out of the emitter's
+scope) and keeps running interpreted, which is a NORMAL outcome, not an error.
+
+⚠️ EXPLICIT, ON PURPOSE, AND FIRST. Compiling at rule-registration time would pay codegen for every
+rule in every loaded library — ~99 shipped `.metta` files, most of which never execute. A hotness
+counter is the right eventual trigger; this op is the deterministic, benchmarkable, testable entry
+point that the counter will later call, and it gives a benchmark a SUPPORTED entry instead of a
+hand-rolled pipeline.
+
+⚠️ TABLING STILL WINS. `metta_instr` checks `is_tabled` and returns `tabled_eval` BEFORE any path
+that reaches `rule_results`, so compiling a tabled head cannot cost it answer reuse. Asserted in
+`test_jit_head_op.jl` rather than left to the reading.
+"""
+const COMPILE_HEAD = Grounded(
+    SpaceOp(
+        "compile-head",
+        function (xs, space)
+            (length(xs) == 1 && xs[1] isa Sym) || return ExecNoReduce()
+            hook = _JIT_HEAD_HOOK[]
+            hook === nothing && return ExecOk(Atom[Sym("False")])   # compiler not loaded
+            name = Base.Symbol((xs[1]::Sym).name)
+            ok = try
+                hook(name, space)::Bool
+            catch
+                false
+            end
+            ok || (_JIT_DECLINED[] += 1)
+            ExecOk(Atom[Sym(ok ? "True" : "False")])
+        end
+    )
+)
+
 const ASSERT_EQUAL = Grounded(
     SpaceOp(
         "assertEqual",
@@ -2946,6 +3003,7 @@ const TOKEN_REGISTRY = Dict{String, Atom}(
     # required by the contract the op's stdlib semantics specify. So it aliases new-space here.
     "new-mork-space" => NEW_SPACE,
     "add-atom" => ADD_ATOM, "remove-atom" => REMOVE_ATOM,
+    "compile-head" => COMPILE_HEAD,
     "import!" => IMPORT, "table!" => TABLE_DECL, "auto-table!" => AUTO_TABLE_DECL,
     "tnot" => TNOT,
     "get-residual" => GET_RESIDUAL)

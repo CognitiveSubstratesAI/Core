@@ -46,6 +46,10 @@ import ..CompilerEmitIL: _atom_of
 # 🔴 IMPORTED EXPLICITLY, NOT ASSUMED. First run died on `UndefVarError: freshvar` — the guessed-name
 # class again. These five live in TWO modules: `match_atoms`/`is_present` in Atoms.jl (StandardMeTTa),
 # `rename_fresh`/`freshvar`/`subst` in Eval.jl. Located before importing, not after failing.
+import ..CompilerEmitJuliaCode: codegen_head
+import ..CompilerFrontend
+import ..CompilerANormal
+import ..Eval          # the MODULE, not only its names — `jit_head!` reaches Eval.all_atoms / _JIT_HEAD_HOOK
 import ..Eval: rename_fresh, freshvar, subst, CompiledOk, ExecNoReduce,
                 TOKEN_REGISTRY, is_executable, execute, ExecOk, Bindings, add_var_binding,
                 interpret, _metta, UNDEF
@@ -234,15 +238,119 @@ emitted. (`docs/architecture/COMPILED_HEAD_SEAM.md`, "the unit is the HEAD".)
 """
 function emit_julia_program(clauses::Vector{ANClause})
     by_head = Dict{Base.Symbol, Vector{Any}}()
+    an_by_head = Dict{Base.Symbol, Vector{ANClause}}()
     declined = Set{Base.Symbol}()
     for cl in clauses
+        push!(get!(an_by_head, cl.name, ANClause[]), cl)
         r = emit_julia_clause(cl)
         r === nothing ? push!(declined, cl.name) : push!(get!(by_head, cl.name, Any[]), r)
     end
     for h in declined                            # any declined clause disqualifies the whole head
         delete!(by_head, h)
     end
-    Dict{Base.Symbol, Function}(h => _seam_fn(h, rules) for (h, rules) in by_head)
+    CODEGEN_NATIVE_HEADS[] = 0
+    out = Dict{Base.Symbol, Function}()
+    for (h, rules) in by_head
+        fn = CODEGEN_ENABLED[] ? codegen_head(h, an_by_head[h]) : nothing
+        if fn === nothing
+            out[h] = _seam_fn(h, rules)          # the PLAN-WALKING closure — an A-normal interpreter
+        else
+            CODEGEN_NATIVE_HEADS[] += 1
+            out[h] = _codegen_seam_fn(h, fn)     # GENERATED JULIA -> LLVM -> native
+        end
+    end
+    out
+end
+
+"""
+Switch for stage 4d. `false` ⇒ every head gets `_seam_fn`, exactly as before this flag existed.
+
+🔴 WHY A FLAG AND NOT A REPLACEMENT. `_seam_fn` handles EVERY clause `emit_julia_clause` accepts;
+`codegen_head` is deliberately NARROW (head args all distinct variables; goals arithmetic/comparison
+GCall, GUnify of a variable, or GBranch — the shape of `fib`). Turning codegen on must never LOSE a
+head: out of scope ⇒ `codegen_head` returns `nothing` ⇒ that head keeps the plan-walking closure.
+Per-head, not per-program, so one unsupported head does not disable the lane.
+"""
+const CODEGEN_ENABLED = Ref(false)
+
+"How many heads the LAST `emit_julia_program` compiled to native code. The lane's own coverage number."
+const CODEGEN_NATIVE_HEADS = Ref(0)
+
+# ── THE LINK THAT DID NOT EXIST ──────────────────────────────────────────────────────────────────
+"""
+    jit_head!(name, space) -> Bool
+
+Compile the clauses of head `name` FROM `space` and register them with the interpreter. `true` ⇒ the
+head now dispatches through `Eval.compiled_head`; `false` ⇒ it declined and stays interpreted.
+
+🔴 THIS CLOSES `Frontend -> ANormal -> emit -> compile_head!`. Until 2026-09-18 nothing in `src/`
+ran that chain: `emit_julia_program`'s only caller was a test and `compile_head!`'s only callers were
+tests, so `_COMPILED_HEADS` was always empty in production. Every stage worked; the last two links
+were absent.
+
+⚠️ INVALIDATION IS BY CLAUSE-SET HASH, which is what `CompiledHead` already keys on — deliberately
+NOT by a space revision, which would recompile on every `add-atom` and make the compiled lane slower
+than the interpreter on any writing program (the reason is recorded at `Eval.jl`'s `_COMPILED_HEADS`).
+The hash is taken over the head's OWN rule atoms, so an unrelated `add-atom` does not disturb it.
+
+⚠️ A DECLINE IS NORMAL. Out-of-scope heads keep the interpreter; the caller counts them so a
+benchmark can report WHAT FRACTION OF HOT HEADS WERE IN SCOPE, not only the speedup on the ones that
+happened to be.
+"""
+function jit_head!(name::Base.Symbol, space)::Bool
+    rules = Atom[]
+    for a in Eval.all_atoms(space)
+        a isa Expression && length(a.children) == 3 || continue
+        h = a.children[1]
+        (h isa Sym && String(h.name) == "=") || continue
+        lhs = a.children[2]
+        hd = lhs isa Expression && !isempty(lhs.children) ? lhs.children[1] : lhs
+        (hd isa Sym && Base.Symbol(hd.name) === name) && push!(rules, a)
+    end
+    isempty(rules) && return false
+    key = hash(rules)                                   # the CLAUSE SET, not the space
+    clauses = try
+        CompilerANormal.translate_program(CompilerFrontend.lower_program(rules))
+    catch
+        return false
+    end
+    mine = ANClause[c for c in clauses if c.name === name]
+    isempty(mine) && return false
+    heads = emit_julia_program(mine)
+    fn = get(heads, name, nothing)
+    fn === nothing && return false                      # every clause must emit — all-or-nothing
+    Eval.compile_head!(name, fn, key)
+    true
+end
+
+"""
+    _codegen_seam_fn(head, fn) -> Function
+
+Adapt a generated closure `(args::Vector{Atom}) -> Vector{Atom}` to the seam's signature
+`(call::Atom, space) -> CompiledOk | ExecNoReduce`.
+
+⚠️ ARGS ARE TAKEN FROM `call`, WHICH MAY HAVE NONE. `compiled_head` passes `to_eval` ITSELF and says
+why: a zero-arg call `(d)` has no children past the head, and a closure that rebuilds the call from
+args alone yields the bare symbol `d` and matches nothing (MEASURED).
+
+⚠️ EMPTY `Bindings` IS CORRECT HERE, AND IT IS THE `(pair \$w schiphol)` DEFECT CLASS IF IT IS NOT.
+`rule_results` applies `subst(res, mb)` to every compiled result. The plan-walking lane needs real
+bindings because it returns a rule's RHS uninstantiated. Codegen does not: `_atomexpr` maps an
+`IRVariable` to the JULIA LOCAL holding its atom, so the generated code substitutes EAGERLY and the
+result leaves already instantiated — `subst` over empty bindings is then a no-op on a ground term.
+That is an argument, not a proof, so `test_codegen_head_seam.jl` asserts it on a NON-GROUND rule
+shape where a missing substitution would show.
+
+`invokelatest` because `fn` was `eval`ed during this call: the world age of the caller predates it.
+"""
+function _codegen_seam_fn(head::Base.Symbol, fn::Function)
+    function (call::Atom, space)
+        args = (call isa Expression && length(call.children) > 1) ?
+               Atom[call.children[i] for i in 2:length(call.children)] : Atom[]
+        rs = Base.invokelatest(fn, args)::Vector{Atom}
+        isempty(rs) && return ExecNoReduce()
+        CompiledOk(rs, Bindings[Bindings() for _ in rs])
+    end
 end
 
 """
@@ -289,6 +397,13 @@ function _head_closure(rules::Vector)
         end
         isempty(out) ? nothing : out
     end
+end
+
+
+# Install the JIT entry point for `Eval`'s `(compile-head …)` op. `Eval` loads FIRST and cannot
+# reference this module, so the dependency is inverted here rather than there.
+function __init__()
+    Eval._JIT_HEAD_HOOK[] = jit_head!
 end
 
 end # module
