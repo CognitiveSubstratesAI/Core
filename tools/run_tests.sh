@@ -145,9 +145,29 @@ HEAP_HINT="${CORE_TEST_HEAP_HINT:-6G}"
 JL=(julia --project=. --threads="${JULIA_TEST_THREADS:-4}" --heap-size-hint="$HEAP_HINT"
     -i "$DRIVER")
 
+# ── THE RUNNER WRITES THE EVIDENCE, NOT THE AGENT ────────────────────────────────────────────────
+# `require-tests-before-commit.sh` blocks a commit unless /tmp/primus_tests_verified is recent. Until
+# now the AGENT touched that file by hand, so the thing being checked was written by the thing being
+# checked: the marker recorded an INTENTION, not a result. It is now set ONLY on a real exit 0 and
+# REMOVED on any failure, so a red suite cannot be followed by a green commit.
+# shellcheck source=../../workflows/test_marker.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/workflows/test_marker.sh"
+_finish() {
+  # ⚠️ ONLY A FULL, UNFILTERED SUITE IS EVIDENCE. `run_tests.sh <path>` runs ONE file, and the
+  # commit hook's own help text advertises that form — so marking on any exit 0 would let a single
+  # passing file authorise a commit. That is the same loophole `warm_suite.sh file` already avoids.
+  if [ "$TARGET" = "test/runtests.jl" ] && [ -z "${CORE_SUITE_SHARD:-}" ]; then
+    write_marker "$(dirname "${BASH_SOURCE[0]}")/.." "$1" "run_tests.sh full suite"
+  else
+    echo "  test_marker: NOT evidence — filtered run (TARGET=$TARGET SHARD=${CORE_SUITE_SHARD:-none})"
+  fi
+  exit "$1"
+}
+
 if [ "$MEM_MAX" = "none" ]; then
   echo "run_tests.sh: memory ceiling DISABLED (CORE_TEST_MEM_MAX=none)" >&2
   "${JL[@]}" < /dev/null
+  _finish $?
 elif command -v systemd-run >/dev/null 2>&1 &&
      systemd-run --user --scope -p MemoryMax=256M --quiet true >/dev/null 2>&1; then
   # `--scope` runs it as a child of THIS shell (not a forked service), so stdin/stdout and the exit
@@ -158,12 +178,13 @@ elif command -v systemd-run >/dev/null 2>&1 &&
   [ $rc -eq 137 ] && echo "run_tests.sh: KILLED at the ${MEM_MAX} ceiling — a test allocated without
   bound. Find it before raising CORE_TEST_MEM_MAX; the usual cause is an unbounded query (a
   space-wide \`match\` with a variable pattern) rather than a suite that legitimately needs more." >&2
-  exit $rc
+  _finish $rc
 else
   # No usable cgroup scope. Say so LOUDLY rather than silently running uncapped — the failure mode
   # this guards against takes down the editor, not the test.
   echo "run_tests.sh: WARNING — systemd-run --user --scope unavailable; running WITHOUT a memory
   ceiling. A runaway test can OOM-kill unrelated processes on this machine." >&2
   "${JL[@]}" < /dev/null
+  _finish $?
 fi
 # allow-cold-start: full-suite runner; a suite run is a cold run by nature

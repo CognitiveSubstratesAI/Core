@@ -14,11 +14,23 @@
 # and keeping the node whole exists to stop A-normalization HOISTING that evaluation out of the
 # binder's scope, not because it never happens. I asserted the opposite while quoting that comment.
 #
-# MEASURED (workflows/metta_xcheck.sh), with two controls that behave in every engine:
-#     hyperon-experimental   (quote $x) -> [(quote (+ 1 2)), (quote (+ 3 4))]   $x -> [3, 7]
-#     CeTTa                             -> same                                 $x -> [3, 7]
-#     Core                              -> same                                 $x -> [7] [3]
-#     PeTTa                                                                      $x -> (+ 1 2) (+ 3 4)   ⚠️ outlier
+# MEASURED (workflows/metta_xcheck.sh). ⚠️ THE CONTROLS DID *NOT* BEHAVE IN EVERY ENGINE, and an
+# earlier version of this header (and of the commit message that shipped it) claimed they did:
+#
+#     engine      (quote $x) control                    bare $x            verdict
+#     hyperon     [(quote (+ 1 2)), (quote (+ 3 4))]    [3, 7]             REDUCED   <- the reference
+#     CeTTa       same                                  [3, 7]             REDUCED
+#     Core        same                                  [7] [3]            REDUCED, reverse order
+#     PeTTa       (+ 1 2) (+ 3 4)   ⚠️ no `quote`        (+ 1 2) (+ 3 4)    outlier on BOTH lines
+#     JeTTa       (add-foo-eq 3) (add-foo-eq 7)  ⚠️ reduced an Atom-typed arg (§7.2) and never
+#                 reached the match lines at all — a FAILED RUN, not a vote. Harness exited rc=2.
+#
+# So the verdict rests on hyperon + CeTTa, not on unanimity. That is still enough — hyperon is the
+# reference — but the weaker claim is the true one.
+#
+# ⚠️ ORDER: Core answers in REVERSE insertion order (three values -> ["11","7","3"]); hyperon and
+# CeTTa use insertion order. Measured, not formatting: `load_metta!` returns ONE Vector of length N.
+# The spec calls results nondeterministic, so parity is a MULTISET question — see the assertions.
 # Core already AGREES with the reference. This file exists so the EMITTER has to.
 
 using Test

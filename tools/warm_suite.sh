@@ -240,8 +240,34 @@ JULIA
     # client so progress is visible as it happens, and the tee keeps a log to point at afterwards.
     stdbuf -oL -eL julia -e "using DaemonMode; runfile(raw\"$drv\"; port=$PORT)" 2>&1 | tee "$RUNDIR/last.log"
     rm -f "$drv"
-    [ -f "$verdict" ] && exit "$(cat "$verdict")"
-    echo "  warm_suite: NO VERDICT WRITTEN — treating as FAILURE (daemon died?)"; exit 1
+    local rc=1
+    [ -f "$verdict" ] && rc="$(cat "$verdict")"
+    [ -f "$verdict" ] || echo "  warm_suite: NO VERDICT WRITTEN — treating as FAILURE (daemon died?)"
+    _mark_verdict "$rc"
+    exit "$rc"
+}
+
+# ── THE MARKER, AND WHY ONLY THE SUITE LANE MAY WRITE IT ─────────────────────────────────────────
+# `require-tests-before-commit.sh` blocks a commit unless /tmp/primus_tests_verified is recent. The
+# AGENT used to touch that by hand, so the evidence was written by the thing being checked. It now
+# comes from a real verdict.
+#
+# ⚠️ ONLY `run`/`run-cold`/`run-warm` SET IT. `_run_driver` also serves the single-FILE probe lane,
+# and a marker written by one passing probe file would authorise a commit of anything — the same
+# loophole in a new place. `MARK_ON_PASS` is opt-in per verb for exactly that reason.
+# ⚠️ A FAILURE REMOVES IT, so a red suite cannot be followed by a green commit on a stale marker.
+MARK_ON_PASS=0
+# shellcheck source=../../workflows/test_marker.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/workflows/test_marker.sh"
+_mark_verdict() {
+    [ "$MARK_ON_PASS" = "1" ] || return 0
+    # ⚠️ A SHARD IS NOT THE SUITE. `run 1/4` passing says nothing about the other three, so it must
+    # not authorise a commit — the same reason the single-FILE lane never sets MARK_ON_PASS.
+    if [ -n "${_SHARD_ARG:-}" ]; then
+        echo "  warm_suite: NOT evidence — sharded run ($_SHARD_ARG)"
+        return 0
+    fi
+    write_marker "$CORE" "$1" "warm_suite $_VERB"
 }
 
 case "${1:-run}" in
@@ -313,6 +339,7 @@ case "${1:-run}" in
      _run_driver "include(raw\"$tgt\")" ;;
   run)
      _use_lane "$SUITE_PORT"
+     MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
      # 🟢 THE SUITE LANE IS NOW WARM BY DEFAULT — 2026-08-18. It restarted on every invocation for a
      # year of sessions, and the reason was real: the suite leaked state, so a second run in one
      # process invented failures, and a harness that invents failures is worse than a slow one.
@@ -350,6 +377,7 @@ case "${1:-run}" in
      fi ;;
   run-cold)
      _use_lane "$SUITE_PORT"
+     MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
      # The old behaviour, kept as the arbiter. Use it to confirm a suspicious `run` failure, or when
      # you have just added a test that touches shared/global state.
      # 🔴🔴 PASS THE LANE THROUGH THE ENV — `_use_lane` SETS SHELL VARS, AND `$0` IS A SUBPROCESS.
@@ -371,6 +399,7 @@ case "${1:-run}" in
      fi ;;
   run-warm)
      _use_lane "$SUITE_PORT"
+     MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
      # 🔬 THE SAME SUITE, IN THE DAEMON THAT IS ALREADY UP — no restart. This is the MEASUREMENT that
      # tells us whether `run` still needs to restart: anything that fails here and passed under `run`
      # is state some file LEAKS into the next one.
