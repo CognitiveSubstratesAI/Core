@@ -53,29 +53,93 @@ function _atomexpr(a::IRAtom, vars::Set{Base.Symbol})
     nothing
 end
 
-"""
-    codegen_clause(cl) -> Union{Expr, Nothing}
+# ─── THE CALLING CONVENTION FOR COMPILED HEADS ───────────────────────────────────────────────────
+# 🔴 THE OLD SHAPE COULD NOT EXPRESS MeTTa. `codegen_head` used to emit `Atom[body₁, …, body_N]` — a
+# Julia vector literal, one element per clause, LENGTH FIXED AT CODEGEN TIME. A clause could not
+# answer zero times and could not answer twice, so `superpose` and EVERY MULTI-EQUATION FUNCTION
+# declined, and the interpreter stayed the only lane that runs.
+#
+# THE CONVENTION. A compiled head is `f(sink, args::Vector{Atom})::Bool`. It calls `sink(answer)`
+# ONCE PER ANSWER: zero calls = no answer, N calls = N answers, so MULTIPLICITY IS PRESERVED BY
+# CONSTRUCTION and order is left unspecified (multiset parity). `sink` returns `false` to ask the
+# producer to stop, and `f` returns `false` iff it stopped early — that is what `once` needs. NO
+# CHOICE POINTS, NO TRAIL: the locked decision against Prolog backtracking machinery holds.
+#
+# ⚠️ `sink` IS A TYPE PARAMETER, NOT A `Function` FIELD. `f(sink::S, …) where {S}` makes Julia
+# specialise and inline the call. Boxing it as `::Function` costs an allocation and a dynamic
+# dispatch PER ANSWER — `[[reference_rust_closures_are_free_julia_closures_allocate]]`.
+#
+# ─── NONDETERMINISM IS NESTED `for` LOOPS, NOT CONTINUATIONS ────────────────────────────────────
+# A goal that can answer N times becomes a loop over its answers, with the REST OF THE CLAUSE
+# generated inside it. Zero answers = the body never runs; N answers = N passes; early stop = a
+# `return false` out of every enclosing loop. Julia's own loops supply the iteration, so there are no
+# closures per choice point and STACK DEPTH DOES NOT GROW WITH THE ANSWER COUNT — it grows only with
+# CHAINED nondeterminism, which is the cost the design note predicted and a far smaller one.
+#
+# ─── WHAT A GROUNDED CALL CAN ANSWER, MEASURED RATHER THAN ASSUMED ──────────────────────────────
+# Every one of the 80 in-scope `Operation`s in `TOKEN_REGISTRY` was CALLED over 10 argument shapes
+# and its result count recorded (2026-09-25). EXACTLY ONE can answer with ≠1 result:
+#
+#     superpose   [3]
+#
+# `match`, `collapse`, `case`, `get-atoms`, `get-type` are `SpaceOp`s, which `_gen_goal` has always
+# excluded, so they never reach here. `_NONDET_OPS` below records that measurement, and
+# `test_codegen_multi_result.jl` RE-RUNS THE CENSUS and fails naming any op outside the set that
+# answers ≠1 — `[[feedback_enforcement_works_prose_memory_does_not]]`, the classification is a GATE
+# rather than a comment that rots. It is NOT an op table in the sense this file forbids above: it
+# says nothing about what an op COMPUTES, only whether it is deterministic.
+const _NONDET_OPS = Set(["superpose"])
 
-Build the Julia body for ONE clause, or `nothing` if it is outside scope. The generated body assumes
-head args are already bound to locals `v_<name>`; `codegen_head` emits that binding.
-"""
-function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""), fname::Base.Symbol=Base.Symbol(""))
-    cl.nested_head && return nothing
-    vars = Set{Base.Symbol}()
-    for a in cl.head_args
-        a isa IRVariable || return nothing          # positional binding only — no unification here
-        push!(vars, a.name)
+# ─── `NotReducible` IS AN ANSWER, AND GETTING THAT WRONG LOSES ONE ──────────────────────────────
+# 🔴 MEASURED by this file's own differential, on its first run. `(= (g $x) (+ $x 1))` applied to a
+# SYMBOL: `+` answers `ExecNoReduce`, and in MeTTa a term that cannot reduce IS the answer — the
+# interpreter returns `(+ foo 1)`. Treating `ExecNoReduce` as "this clause has no answer" silently
+# dropped it:
+#     interpreter ["(+ foo 1)", "tagged"]        compiled ["tagged"]
+# So a declining grounded call yields the RESIDUAL TERM `(op args…)`, rebuilt from the argument
+# atoms the call was made with. (The shape this replaced was worse still: it executed `return
+# nothing` from a function the seam annotated `::Vector{Atom}`, i.e. a `TypeError` instead of an
+# answer.)
+
+"Every goal reachable in this clause, flattened — `GBranch` arms included."
+function _all_goals(gs::Vector{Goal})
+    out = Goal[]
+    for g in gs
+        push!(out, g)
+        if g isa GBranch
+            append!(out, _all_goals(g.cond)); append!(out, _all_goals(g.then))
+            append!(out, _all_goals(g.els))
+        elseif g isa GDisj
+            for br in g.branches; append!(out, _all_goals(br)); end
+        elseif g isa GFindall
+            append!(out, _all_goals(g.body))
+        end
     end
-    stmts = Expr[]
-    for g in cl.goals
-        st = _gen_goal(g, vars, selfname, fname)
-        st === nothing && return nothing
-        push!(stmts, st)
-    end
-    outx = _atomexpr(cl.out, vars)
-    outx === nothing && return nothing
-    Expr(:block, stmts..., outx)
+    out
 end
+
+"Does this clause call `selfname`? Guards the multi-clause decline in `codegen_head`."
+_selfrec(gs::Vector{Goal}, selfname::Base.Symbol) =
+    any(g -> g isa GCall && g.head === selfname, _all_goals(gs))
+
+"""
+Can this clause answer other than exactly once? Then it has no deterministic entry and must take the
+loop path. Two sources, and MISSING THE FIRST IS WHAT MADE `superpose` DECLINE: a `GDisj` or
+`GFindall` NODE is nondeterministic IN ITSELF, and `superpose`'s branches contain no call to
+`superpose` — A-normal has already turned it into a disjunction of plain bindings. Checking only for
+a nondeterministic OP therefore answered `false`, routed the head down the DETERMINISTIC path, whose
+generator has no `GDisj` case, and the head declined with the loop path never consulted.
+"""
+_is_nondet(gs::Vector{Goal}) =
+    any(g -> g isa GDisj || g isa GFindall || (g isa GCall && String(g.head) in _NONDET_OPS),
+        _all_goals(gs))
+
+# ⚠️ THE REST OF THE CLAUSE IS GENERATED INSIDE EACH ARM OR BRANCH, so it is DUPLICATED per arm and
+# nesting MULTIPLIES. The budget is therefore the duplication FACTOR, not a node count: a `GBranch`
+# doubles it, a `GDisj` multiplies by its branch count, and a clause that would exceed the cap
+# declines rather than blowing up at `eval` time. `fib`, the workload this file is measured on, has
+# a factor of 2.
+const _MAX_DUP = 32
 
 """
 Compile `cond`-position goals to a Julia BOOLEAN. A `GUnify` here is a TEST — `\$__t1 = True` asks
@@ -95,7 +159,117 @@ function _gen_test(cond::Vector{Goal}, vars::Set{Base.Symbol})
     ex
 end
 
-function _gen_goal(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, fname::Base.Symbol)
+"""
+The grounded `Operation` behind a `GCall`, its argument expressions, and a fresh symbol pair — or
+`nothing` if the call is out of scope. Shared by both generators so the RESIDUAL TERM and the
+argument vector are built identically in each.
+"""
+function _gcall_parts(g::GCall, vars::Set{Base.Symbol})
+    (g.out isa IRVariable) || return nothing
+    op = get(TOKEN_REGISTRY, String(g.head), nothing)
+    (op isa Grounded && op.value isa Operation) || return nothing   # not grounded ⇒ decline
+    as = Any[]
+    for a in g.args
+        v = _atomexpr(a, vars); v === nothing && return nothing
+        push!(as, v)
+    end
+    n = string(g.head, "_", length(vars))
+    (op.value.fn, as, Base.Symbol("_ar_", n), Base.Symbol("_rs_", n), String(g.head))
+end
+
+# ═══ GENERATOR 1: THE NONDETERMINISTIC FORM ══════════════════════════════════════════════════════
+# Goals become nested loops; `out` is handed to `_sink` at the innermost point of every path.
+
+"""
+    _gen_seq(goals, k, vars, out_ir, nbranch) -> Union{Expr, Nothing}
+
+Generate goals `k..end` with the clause's answer delivered to `_sink` inside every innermost scope.
+Returns `nothing` if anything is out of scope. `vars` is MUTATED along a path and COPIED into each
+`GBranch` arm, because the arms bind different names.
+"""
+function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::IRAtom, dup::Int)
+    if k > length(goals)
+        ox = _atomexpr(out_ir, vars); ox === nothing && return nothing
+        # `||` and not `&&`: a sink answering `false` means STOP, and it must propagate out of every
+        # enclosing loop rather than merely ending this iteration.
+        return Expr(:(||), Expr(:(::), Expr(:call, :_sink, ox), :Bool), Expr(:return, false))
+    end
+    g = goals[k]
+    if g isa GUnify
+        (g.lhs isa IRVariable) || return nothing
+        r = _atomexpr(g.rhs, vars); r === nothing && return nothing
+        push!(vars, (g.lhs::IRVariable).name)
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup); rest === nothing && return nothing
+        return Expr(:block, Expr(:(=), _local(g.lhs), r), rest)
+    elseif g isa GCall
+        p = _gcall_parts(g, vars); p === nothing && return nothing
+        (fn, as, arv, rsv, opname) = p
+        push!(vars, (g.out::IRVariable).name)
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup); rest === nothing && return nothing
+        lv = _local(g.out)
+        return quote
+            $arv = Atom[$(as...)]
+            local $rsv::Vector{Atom}
+            let _r = $(fn)($arv)
+                $rsv = _r isa ExecOk        ? _r.results :
+                       _r isa ExecNoReduce  ? Atom[Expression(Atom[Sym($opname), $arv...])] :
+                                              Atom[]
+            end
+            for $lv in $rsv
+                $rest
+            end
+        end
+    elseif g isa GBranch
+        (g.out isa IRVariable) || return nothing
+        dup * 2 > _MAX_DUP && return nothing
+        # 🔴 THE SEMANTICS, read from `EmitIL._instr(::GBranch)` after guessing them wrong:
+        #   "`cond` carries the REAL test (a GUnify). Its success continuation is the then-arm and
+        #    its FAILURE continuation is the else-arm."
+        # So a `GUnify` means TWO DIFFERENT THINGS BY POSITION: a TEST inside `cond`, an ASSIGNMENT
+        # inside an arm. Treating both as assignments made the then-arm always win — `fib(16)`
+        # returned 16, instantly, which timing alone would have reported as a 4,000,000x speedup.
+        test = _gen_test(g.cond, vars); test === nothing && return nothing
+        rest = goals[k+1:end]
+        tb = _gen_seq(vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2)
+        tb === nothing && return nothing
+        # An EMPTY `els` means "no further arm": this PATH yields nothing, which in the sink
+        # convention is simply not calling `_sink` — no early return, the other clauses still run.
+        eb = isempty(g.els) ? :(nothing) :
+             _gen_seq(vcat(g.els, rest), 1, copy(vars), out_ir, dup * 2)
+        eb === nothing && return nothing
+        return Expr(:if, test, tb, eb)
+    elseif g isa GDisj
+        # 🔴 `superpose` LOWERS TO THIS, NOT TO A GROUNDED CALL. A census of the registry found
+        # `superpose` to be the one in-scope `Operation` answering with !=1 result, but A-normal
+        # never routes it through `GCall`: `build_superpose_branches` turns it into a DISJUNCTION of
+        # goal lists all producing `out` (PeTTa translator.pl:110-112). `EmitJulia.jl` declines this
+        # node as "milestone 2" and `_gen_goal` never matched it, which is why every `superpose`
+        # declined. In the sink convention it is simply each branch in turn, with the rest of the
+        # clause inside: a branch that answers nothing calls no sink, and a `false` from one
+        # propagates out of the whole disjunction.
+        (g.out isa IRVariable) || return nothing
+        isempty(g.branches) && return :(nothing)          # no branches ⇒ no answers, not an error
+        dup * length(g.branches) > _MAX_DUP && return nothing
+        rest = goals[k+1:end]
+        blk = Expr(:block)
+        for br in g.branches
+            bb = _gen_seq(vcat(br, rest), 1, copy(vars), out_ir, dup * length(g.branches))
+            bb === nothing && return nothing
+            push!(blk.args, bb)
+        end
+        return blk
+    end
+    nothing
+end
+
+# ═══ GENERATOR 2: THE DETERMINISTIC FAST PATH ════════════════════════════════════════════════════
+# A head with ONE clause that calls no `_NONDET_OPS` op answers at most once, so it also gets
+# `f_det(args)::Union{Nothing,Atom}` — straight-line code, no sink, no loop. SELF-RECURSION CALLS
+# `f_det` DIRECTLY, which is why `fib` never allocates a sink in its hot loop and the >=10x
+# measurement is not at risk. (It is cheaper than the old shape, which allocated a `Vector{Atom}`
+# per recursive return and then checked its length.)
+
+function _gen_det(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname::Base.Symbol)
     if g isa GUnify
         (g.lhs isa IRVariable) || return nothing
         r = _atomexpr(g.rhs, vars); r === nothing && return nothing
@@ -104,9 +278,6 @@ function _gen_goal(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, fname
     elseif g isa GCall
         (g.out isa IRVariable) || return nothing
         if g.head === selfname
-            # 🔴 SELF-RECURSION IS A DIRECT JULIA CALL — the whole point. `fib` calling `fib` does
-            # NOT re-enter the seam, the interpreter, or an equation lookup; it is one Julia call
-            # into the same generated function. This is what a >=10x result would come from.
             as = Any[]
             for a in g.args
                 v = _atomexpr(a, vars); v === nothing && return nothing
@@ -114,83 +285,152 @@ function _gen_goal(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, fname
             end
             push!(vars, (g.out::IRVariable).name)
             r = Base.Symbol("r_", (g.out::IRVariable).name)
+            # 🔴 ONE JULIA CALL. No seam, no interpreter, no equation lookup, no sink.
             return quote
-                $r = $fname(Atom[$(as...)])
-                length($r) == 1 || return Atom[]
-                $(_local(g.out)) = $r[1]
+                $r = $dname(Atom[$(as...)])
+                $r === nothing && return nothing
+                $(_local(g.out)) = $r::Atom
             end
         end
-        op = get(TOKEN_REGISTRY, String(g.head), nothing)
-        (op isa Grounded && op.value isa Operation) || return nothing   # not grounded ⇒ decline
-        as = Any[]
-        for a in g.args
-            v = _atomexpr(a, vars); v === nothing && return nothing
-            push!(as, v)
-        end
+        p = _gcall_parts(g, vars); p === nothing && return nothing
+        (fn, as, arv, rsv, opname) = p
         push!(vars, (g.out::IRVariable).name)
-        r = Base.Symbol("r_", (g.out::IRVariable).name)
+        lv = _local(g.out)
         # 🔴 THE COMPILED CALL: the EXISTING grounded Operation's own function, spliced as a constant
-        # and invoked directly. No `metta_instr`, no frame machine, no equation lookup, no binding
-        # merge — and every semantic the op carries (⊥ propagation, NotReducible on non-numbers) is
-        # preserved because it IS the op.
+        # and invoked directly. Every semantic the op carries (⊥ propagation, NotReducible on
+        # non-numbers) is preserved because it IS the op — see the NO-OP-TABLE note above.
         return quote
-            $r = $(op.value.fn)(Atom[$(as...)])
-            $r isa ExecOk && length($r.results) == 1 || return nothing
-            $(_local(g.out)) = $r.results[1]
+            $arv = Atom[$(as...)]
+            $rsv = $(fn)($arv)
+            if $rsv isa ExecOk
+                length($rsv.results) == 1 || return nothing   # excluded statically by _NONDET_OPS
+                $lv = $rsv.results[1]
+            elseif $rsv isa ExecNoReduce
+                $lv = Expression(Atom[Sym($opname), $arv...])  # NotReducible IS the answer
+            else
+                return nothing
+            end
         end
     elseif g isa GBranch
         (g.out isa IRVariable) || return nothing
-        # 🔴 THE SEMANTICS, read from `EmitIL._instr(::GBranch)` after guessing them wrong:
-        #   "`cond` carries the REAL test (a GUnify). Its success continuation is the then-arm and
-        #    its FAILURE continuation is the else-arm."
-        # So `condval` is the PATTERN matched against (`True`, then `False`), NOT the scrutinee, and
-        # a `GUnify` means TWO DIFFERENT THINGS BY POSITION: a TEST inside `cond`, an ASSIGNMENT
-        # inside an arm. Treating both as assignments made the then-arm always win — `fib(16)`
-        # returned 16, instantly, which timing alone would have reported as a 4,000,000x speedup.
-        test = _gen_test(g.cond, vars)
-        test === nothing && return nothing
+        test = _gen_test(g.cond, vars); test === nothing && return nothing
         tv = copy(vars); ev = copy(vars)
         ts = Expr[]
         for t in g.then
-            x = _gen_goal(t, tv, selfname, fname); x === nothing && return nothing
+            x = _gen_det(t, tv, selfname, dname); x === nothing && return nothing
             push!(ts, x)
         end
         es = Expr[]
         for e in g.els
-            x = _gen_goal(e, ev, selfname, fname); x === nothing && return nothing
+            x = _gen_det(e, ev, selfname, dname); x === nothing && return nothing
             push!(es, x)
         end
         push!(vars, (g.out::IRVariable).name)
         o = _local(g.out)
-        # An EMPTY `els` means "no further arm" -> Empty, per EmitIL's note. Represent that as an
-        # early return of no answers rather than a bound value.
-        elsblk = isempty(g.els) ? :(return Atom[]) : Expr(:block, es..., o)
+        elsblk = isempty(g.els) ? Expr(:return, :nothing) : Expr(:block, es..., o)
         return Expr(:(=), o, Expr(:if, test, Expr(:block, ts..., o), elsblk))
     end
     nothing
 end
 
 """
+    codegen_clause(cl, selfname, dname) -> Union{Expr, Nothing}
+
+The DETERMINISTIC body for one clause, or `nothing` if it is outside scope. The block's last element
+is the clause's single answer; a runtime decline is `return nothing`. Retained under its original
+name because it is the unit the deterministic path is built from and tested through.
+"""
+function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""),
+                        dname::Base.Symbol=Base.Symbol(""))
+    cl.nested_head && return nothing
+    _is_nondet(cl.goals) && return nothing
+    vars = Set{Base.Symbol}()
+    for a in cl.head_args
+        a isa IRVariable || return nothing          # positional binding only — no unification here
+        push!(vars, a.name)
+    end
+    stmts = Expr[]
+    for g in cl.goals
+        st = _gen_det(g, vars, selfname, dname); st === nothing && return nothing
+        push!(stmts, st)
+    end
+    outx = _atomexpr(cl.out, vars); outx === nothing && return nothing
+    Expr(:block, stmts..., outx)
+end
+
+"The NONDETERMINISTIC body for one clause: `_sink` is called once per answer, then `true`."
+function _codegen_clause_sink(cl::ANClause)
+    cl.nested_head && return nothing
+    vars = Set{Base.Symbol}()
+    for a in cl.head_args
+        a isa IRVariable || return nothing
+        push!(vars, a.name)
+    end
+    seq = _gen_seq(cl.goals, 1, vars, cl.out, 1); seq === nothing && return nothing
+    Expr(:block, seq, true)
+end
+
+# `f(sink::S, _a::Vector{Atom}) where {S}` as an `Expr`, with `body` spliced in.
+_sinkfn(name::Base.Symbol, body::Expr) =
+    Expr(:function,
+         Expr(:where, Expr(:call, name, Expr(:(::), :_sink, :S), :(_a::Vector{Atom})), :S),
+         body)
+
+_bindargs(head_args) = [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) in enumerate(head_args)]
+
+"""
     codegen_head(name, clauses) -> Union{Function, Nothing}
 
-`eval` ONE closure for a head over all its clauses. All-or-nothing: any clause outside scope
-disqualifies the head, because the seam SHADOWS it and a partial registration loses answers.
+`eval` the compiled entry for a head, in the SINK CONVENTION: `f(sink, args::Vector{Atom})::Bool`,
+calling `sink` once per answer and returning `false` iff a sink asked it to stop.
+
+All-or-nothing: any clause outside scope disqualifies the head, because the seam SHADOWS it and a
+partial registration loses answers.
+
+A head with ONE clause that calls no `_NONDET_OPS` op additionally gets `f_det(args)` — the
+deterministic fast path — and `f` wraps it. 🔴 A MULTI-CLAUSE HEAD THAT SELF-RECURSES DECLINES: only
+`f_det` may be self-called, such a head has none, and compiling it anyway would keep ONE answer from
+a callee that can give several. Under multiset parity a dropped answer is exactly what the
+differential exists to catch, so this is soundness, not caution. Continuations lift the restriction
+and are `match`'s work, not this step's.
 """
 function codegen_head(name::Base.Symbol, clauses::Vector{ANClause})
+    isempty(clauses) && return nothing
     fname = Base.Symbol("_gen_", name, "_", string(hash(name), base=16)[1:6])
-    bodies = Expr[]
-    arity = -1
+    arity = length(clauses[1].head_args)
     for cl in clauses
-        b = codegen_clause(cl, name, fname); b === nothing && return nothing
-        arity < 0 && (arity = length(cl.head_args))
         length(cl.head_args) == arity || return nothing     # mixed arity ⇒ out of scope
-        args = [_local(a::IRVariable) for a in cl.head_args]
-        push!(bodies, Expr(:block, [:($(args[i]) = _a[$i]) for i in 1:arity]..., b))
     end
-    isempty(bodies) && return nothing
-    fn = Expr(:function, Expr(:call, fname, :(_a::Vector{Atom})),
-              Expr(:block, :(Atom[$(bodies...)])))
-    Base.eval(@__MODULE__, fn)                              # world-age paid ONCE, at registration
+
+    if length(clauses) == 1 && !_is_nondet(clauses[1].goals)
+        dname = Base.Symbol(fname, "_det")
+        b = codegen_clause(clauses[1], name, dname)
+        b === nothing && return nothing
+        Base.eval(@__MODULE__,
+            Expr(:function, Expr(:call, dname, :(_a::Vector{Atom})),
+                 Expr(:block, _bindargs(clauses[1].head_args)..., b)))
+        wrap = Expr(:block,
+            Expr(:(=), :_r, Expr(:call, dname, :_a)),
+            Expr(:if, Expr(:call, :(===), :_r, :nothing),
+                 true,
+                 Expr(:(::), Expr(:call, :_sink, :_r), :Bool)))
+        return Base.eval(@__MODULE__, _sinkfn(fname, wrap))  # world-age paid ONCE, at registration
+    end
+
+    parts = Base.Symbol[]
+    for (i, cl) in enumerate(clauses)
+        _selfrec(cl.goals, name) && return nothing          # see the docstring — soundness guard
+        b = _codegen_clause_sink(cl); b === nothing && return nothing
+        cn = Base.Symbol(fname, "_c", i)
+        Base.eval(@__MODULE__, _sinkfn(cn, Expr(:block, _bindargs(cl.head_args)..., b)))
+        push!(parts, cn)
+    end
+    comb = Expr(:block)
+    for cn in parts
+        push!(comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a), Expr(:return, false)))
+    end
+    push!(comb.args, true)
+    Base.eval(@__MODULE__, _sinkfn(fname, comb))
 end
 
 end # module

@@ -305,6 +305,9 @@ Main.@suite("compiler/test_call_staging.jl")
 Main.@suite("compiler/test_emit_substitution.jl")
 Main.@suite("compiler/test_emit_il.jl")
 Main.@suite("compiler/test_emit_julia.jl")   # stage 4c: registration path (milestone 1a)          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
+Main.@suite("compiler/test_codegen_multi_result.jl")  # the NATIVE lane's calling convention —
+                                                     # f(sink, args) once per answer. Until now
+                                                     # NOTHING in test/ touched codegen_head.
 Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
 Main.@suite("compiler/test_frozen_call_decline.jl")  # a head the space DEFINES must never compile as DATA —
 Main.@suite("compiler/test_var_headed_kill_switch.jl")  # `(= ($f $x) …)` fires on ANY head — nothing

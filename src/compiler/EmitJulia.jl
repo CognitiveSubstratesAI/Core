@@ -326,8 +326,14 @@ end
 """
     _codegen_seam_fn(head, fn) -> Function
 
-Adapt a generated closure `(args::Vector{Atom}) -> Vector{Atom}` to the seam's signature
-`(call::Atom, space) -> CompiledOk | ExecNoReduce`.
+Adapt a generated closure in the SINK CONVENTION — `(sink, args::Vector{Atom}) -> Bool`, calling
+`sink` once per answer — to the seam's signature `(call::Atom, space) -> CompiledOk | ExecNoReduce`.
+
+⚠️ ZERO ANSWERS BECOMES `ExecNoReduce`, i.e. NotReducible: the call returns ITSELF. That is right for
+"no equation matched" and WRONG for "an equation matched and produced nothing", which must be
+`Empty`. The sink convention makes the two distinguishable for the first time; this adapter
+deliberately keeps the OLD behaviour so the interpreter differential stays a like-for-like
+comparison. Fixing it belongs with `match`, which is where a genuine zero-answer arises.
 
 ⚠️ ARGS ARE TAKEN FROM `call`, WHICH MAY HAVE NONE. `compiled_head` passes `to_eval` ITSELF and says
 why: a zero-arg call `(d)` has no children past the head, and a closure that rebuilds the call from
@@ -347,7 +353,13 @@ function _codegen_seam_fn(head::Base.Symbol, fn::Function)
     function (call::Atom, space)
         args = (call isa Expression && length(call.children) > 1) ?
                Atom[call.children[i] for i in 2:length(call.children)] : Atom[]
-        rs = Base.invokelatest(fn, args)::Vector{Atom}
+        # THE SINK CONVENTION (`CompilerEmitJuliaCode`): `fn(sink, args)` calls `sink` once per
+        # answer. Collecting into a vector here is not a loss of the convention's generality — the
+        # SEAM's own contract is `CompiledOk(results, bindings)`, a collect-all shape, so the
+        # boundary is where streaming ends. `sink` is passed POSITIONALLY to a `where {S}` method,
+        # so Julia specialises on this closure rather than boxing it.
+        rs = Atom[]
+        Base.invokelatest(fn, r -> (push!(rs, r); true), args)
         isempty(rs) && return ExecNoReduce()
         CompiledOk(rs, Bindings[Bindings() for _ in rs])
     end
