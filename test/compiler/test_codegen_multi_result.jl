@@ -98,7 +98,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test fn !== nothing
 
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, r -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)]) == true
         @test sort!(string.(got)) == ["2", "tagged"]
 
         # 🔴 `NotReducible` IS AN ANSWER. `+` cannot reduce `(+ foo 1)`, and MeTTa's answer for that
@@ -108,7 +108,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # interpreter on its first run and that is what corrected it. The old shape was worse than
         # either: `return nothing` from a function the seam annotated `::Vector{Atom}`, a TypeError.
         got2 = _CGV.Atom[]
-        @test Base.invokelatest(fn, r -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")]) == true
         @test sort!(string.(got2)) == ["(+ foo 1)", "tagged"]
     end
 
@@ -116,7 +116,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
         got = _CGV.Atom[]
         # `false` on the FIRST answer: the producer must not run the second clause.
-        @test Base.invokelatest(fn, r -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)]) == false
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)]) == false
         @test length(got) == 1
     end
 
@@ -135,11 +135,11 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:inc, cls)
         @test fn !== nothing
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, r -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)]) == true
         @test string.(got) == ["42"]
         # The det path must residualise too, not answer zero times — same rule as above.
         res = _CGV.Atom[]
-        @test Base.invokelatest(fn, r -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")]) == true
         @test string.(res) == ["(+ foo 1)"]
     end
 
@@ -164,7 +164,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:countdown, cls)
         @test fn !== nothing
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, r -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)]) == true
         @test string.(got) == ["done"]               # 200 recursive calls, one answer
         # and the same answer through the interpreter, which is the only authority on what it is
         @test _cg_interp(prog, "!(countdown 200)\n") == ["done"]
@@ -180,8 +180,34 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             @test_broken false   # records that the form is not yet reaching codegen, with the reason visible
         else
             got = _CGV.Atom[]
-            @test Base.invokelatest(fn, r -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)]) == true
+            @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)]) == true
             @test sort!(string.(got)) == ["5", "7", "9"]
+        end
+    end
+
+    @testset "🔴 SINK TAKES BINDINGS — the parameter exists before anything produces them" begin
+        # ORACLE, 2026-09-25: `(= (p (S $x)) (got $x))` then `!(let $r (p $y) ($y $r))` gives
+        #   hyperon [((S $x#38) (got $x#38))] · CeTTa [((S $x#1) (got $x#1))] · Core same shape.
+        # `$y` TOOK THE VALUE `(S $x)`: a binding made inside the callee reaches the caller, and the
+        # same variable appears in both positions. A sink that receives only the answer atom cannot
+        # carry that. Nothing produces bindings YET — head args are bound positionally — so the
+        # generators pass `nothing`; the signature is widened now because head-argument PATTERNS is
+        # what starts producing them, and widening afterwards means rewriting every call site.
+        fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
+        seen = Any[]
+        @test Base.invokelatest(fn, (r, b) -> (push!(seen, (r, b)); true),
+                                _CGV.Atom[_CGV.Grounded(1)]) == true
+        @test length(seen) == 2
+        @test all(x -> x[2] === nothing, seen)      # today: positional binding, so no bindings
+
+        # and the SEAM turns that `nothing` into a real empty `Bindings`, one per answer, because
+        # `CompiledOk` is what `rule_results` substitutes through.
+        was = _CGE.CODEGEN_ENABLED[]; _CGE.CODEGEN_ENABLED[] = true
+        try
+            heads = _CGE.emit_julia_program(_cg_clauses(Eval.Space(), _CG_TWO))
+            @test haskey(heads, :g)
+        finally
+            _CGE.CODEGEN_ENABLED[] = was
         end
     end
 

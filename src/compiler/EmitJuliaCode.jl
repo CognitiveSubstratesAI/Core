@@ -59,11 +59,23 @@ end
 # answer zero times and could not answer twice, so `superpose` and EVERY MULTI-EQUATION FUNCTION
 # declined, and the interpreter stayed the only lane that runs.
 #
-# THE CONVENTION. A compiled head is `f(sink, args::Vector{Atom})::Bool`. It calls `sink(answer)`
-# ONCE PER ANSWER: zero calls = no answer, N calls = N answers, so MULTIPLICITY IS PRESERVED BY
-# CONSTRUCTION and order is left unspecified (multiset parity). `sink` returns `false` to ask the
-# producer to stop, and `f` returns `false` iff it stopped early — that is what `once` needs. NO
-# CHOICE POINTS, NO TRAIL: the locked decision against Prolog backtracking machinery holds.
+# THE CONVENTION. A compiled head is `f(sink, args::Vector{Atom})::Bool`. It calls
+# `sink(answer, bindings)` ONCE PER ANSWER: zero calls = no answer, N calls = N answers, so
+# MULTIPLICITY IS PRESERVED BY CONSTRUCTION and order is left unspecified. `sink` returns `false` to
+# ask the producer to stop, and `f` returns `false` iff it stopped early — that is what `once` needs.
+# NO CHOICE POINTS, NO TRAIL: the decision against Prolog backtracking machinery holds.
+#
+# 🔴 WHY `sink` TAKES BINDINGS, THOUGH NOTHING PRODUCES THEM YET. An argument may hold an UNBOUND
+# VARIABLE, and a binding the callee makes MUST REACH THE CALLER. ORACLE, 2026-09-25, on
+# `(= (p (S $x)) (got $x))` then `!(let $r (p $y) ($y $r))`:
+#     hyperon  [((S $x#38) (got $x#38))]      CeTTa  [((S $x#1) (got $x#1))]
+#     PeTTa    ((S $_0) (got $_0))            Core   ((S $x#19872) (got $x#19872))
+# `$y` took the value `(S $x)` and the SAME variable appears in both positions. Today every compiled
+# head binds its arguments POSITIONALLY (head args must be distinct variables), so no binding is ever
+# produced and the generators pass `nothing`. The parameter is here NOW because head-argument
+# PATTERNS — the next increment — is exactly what starts producing them, and widening the signature
+# afterwards would mean rewriting every generator and every call site built on it. `nothing` means
+# "no bindings" and costs no allocation on the deterministic path.
 #
 # ⚠️ `sink` IS A TYPE PARAMETER, NOT A `Function` FIELD. `f(sink::S, …) where {S}` makes Julia
 # specialise and inline the call. Boxing it as `::Function` costs an allocation and a dynamic
@@ -192,7 +204,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         ox = _atomexpr(out_ir, vars); ox === nothing && return nothing
         # `||` and not `&&`: a sink answering `false` means STOP, and it must propagate out of every
         # enclosing loop rather than merely ending this iteration.
-        return Expr(:(||), Expr(:(::), Expr(:call, :_sink, ox), :Bool), Expr(:return, false))
+        return Expr(:(||), Expr(:(::), Expr(:call, :_sink, ox, :nothing), :Bool), Expr(:return, false))
     end
     g = goals[k]
     if g isa GUnify
@@ -382,7 +394,9 @@ _bindargs(head_args) = [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) 
     codegen_head(name, clauses) -> Union{Function, Nothing}
 
 `eval` the compiled entry for a head, in the SINK CONVENTION: `f(sink, args::Vector{Atom})::Bool`,
-calling `sink` once per answer and returning `false` iff a sink asked it to stop.
+calling `sink(answer, bindings)` once per answer and returning `false` iff a sink asked it to stop.
+`bindings` is `nothing` while head arguments are bound positionally — see the header for the oracle
+that says the parameter must exist before head patterns do.
 
 All-or-nothing: any clause outside scope disqualifies the head, because the seam SHADOWS it and a
 partial registration loses answers.
@@ -413,7 +427,7 @@ function codegen_head(name::Base.Symbol, clauses::Vector{ANClause})
             Expr(:(=), :_r, Expr(:call, dname, :_a)),
             Expr(:if, Expr(:call, :(===), :_r, :nothing),
                  true,
-                 Expr(:(::), Expr(:call, :_sink, :_r), :Bool)))
+                 Expr(:(::), Expr(:call, :_sink, :_r, :nothing), :Bool)))
         return Base.eval(@__MODULE__, _sinkfn(fname, wrap))  # world-age paid ONCE, at registration
     end
 

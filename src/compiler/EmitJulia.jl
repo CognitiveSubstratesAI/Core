@@ -327,7 +327,7 @@ end
     _codegen_seam_fn(head, fn) -> Function
 
 Adapt a generated closure in the SINK CONVENTION — `(sink, args::Vector{Atom}) -> Bool`, calling
-`sink` once per answer — to the seam's signature `(call::Atom, space) -> CompiledOk | ExecNoReduce`.
+`sink(answer, bindings)` once per answer, where `bindings` is `nothing` when the head produced none — to the seam's signature `(call::Atom, space) -> CompiledOk | ExecNoReduce`.
 
 ⚠️ ZERO ANSWERS BECOMES `ExecNoReduce`, i.e. NotReducible: the call returns ITSELF. That is right for
 "no equation matched" and WRONG for "an equation matched and produced nothing", which must be
@@ -358,10 +358,11 @@ function _codegen_seam_fn(head::Base.Symbol, fn::Function)
         # SEAM's own contract is `CompiledOk(results, bindings)`, a collect-all shape, so the
         # boundary is where streaming ends. `sink` is passed POSITIONALLY to a `where {S}` method,
         # so Julia specialises on this closure rather than boxing it.
-        rs = Atom[]
-        Base.invokelatest(fn, r -> (push!(rs, r); true), args)
+        rs = Atom[]; bs = Bindings[]
+        Base.invokelatest(fn, (r, b) -> (push!(rs, r);
+                                         push!(bs, b === nothing ? Bindings() : b); true), args)
         isempty(rs) && return ExecNoReduce()
-        CompiledOk(rs, Bindings[Bindings() for _ in rs])
+        CompiledOk(rs, bs)
     end
 end
 
