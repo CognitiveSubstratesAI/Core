@@ -930,25 +930,10 @@ mutable struct VectorStore <: AbstractStore
     # wrong answer, and rebuilding is O(bucket) on the next query that wants one.
     arg_index::Dict{Tuple{Symbol, Int}, ArgIndex}
     arg_tried::Set{Tuple{Symbol, Int}}
-    # Control accel #4 — the OUTER-HEAD bucket, maintained (2026-09-20). `index` keys on a PAIR and
-    # `index_candidates` had no intermediate: when the pair index did not apply it returned the WHOLE
-    # STORE. MEASURED on the depth-8 backward chainer with junk facts under a DIFFERENT outer head so
-    # the test discriminates: +8000 irrelevant atoms 12.6 ms -> 68.4 ms (5.4x), and the CPU profile
-    # showed `_match_pat` growing 7.8x while total grew 3.6x. Computing the bucket per query instead
-    # (a comprehension over `store_atoms`) narrows the CANDIDATES but keeps the O(N) walk — measured,
-    # and the end-to-end time did not move at all. So it must be MAINTAINED, not derived.
-    #
-    # 🔴 DISJOINT FROM `wildcard` BY CONSTRUCTION, and that is a correctness property, not tidiness.
-    # It buckets exactly the atoms that already enter `index` (those with a concrete `_index_key`),
-    # keyed by `k[1]` — the outer head. An atom in BOTH would be matched TWICE, and MeTTa spaces are
-    # MULTISETS, so a duplicate candidate is a duplicate ANSWER. The existing `index`/`wildcard` split
-    # is already exclusive; this reuses it rather than inventing a second partition.
-    head_index::Dict{Symbol, Vector{Atom}}
     VectorStore(atoms, lib_count, index, wildcard) =
         new(atoms, lib_count, index, wildcard,
             Dict{Tuple{Symbol, Symbol}, Tuple{_TNode, IdDict{Atom, Int}}}(),
-            Dict{Tuple{Symbol, Int}, ArgIndex}(), Set{Tuple{Symbol, Int}}(),
-            Dict{Symbol, Vector{Atom}}())
+            Dict{Tuple{Symbol, Int}, ArgIndex}(), Set{Tuple{Symbol, Int}}())
 end
 VectorStore() = VectorStore(Atom[], 0, Dict{Tuple{Symbol, Symbol}, Vector{Atom}}(), Atom[])
 
@@ -998,7 +983,6 @@ function add_atom!(s::Space, a::Atom)
         push!(s.store.wildcard, a)
     else
         push!(get!(() -> Atom[], s.store.index, k), a)
-        push!(get!(() -> Atom[], s.store.head_index, k[1]), a)            # outer-head bucket (disjoint from wildcard)
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
         isempty(s.store.arg_index) || empty!(s.store.arg_index)           # …and every JIT argument index
         isempty(s.store.arg_tried) || empty!(s.store.arg_tried)
@@ -1016,8 +1000,6 @@ function remove_atom!(s::Space, a::Atom)
     else
         b = get(s.store.index, k, nothing)
         b !== nothing && filter!(x -> x != a, b)
-        hb = get(s.store.head_index, k[1], nothing)
-        hb !== nothing && filter!(x -> x != a, hb)                        # keep the outer-head bucket in sync
         isempty(s.store.bucket_trie) || delete!(s.store.bucket_trie, k)   # invalidate the bucket's discrimination trie
         isempty(s.store.arg_index) || empty!(s.store.arg_index)           # …and every JIT argument index
         isempty(s.store.arg_tried) || empty!(s.store.arg_tried)
@@ -2644,8 +2626,7 @@ function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     # 🔑 THE JIT ARGUMENT INDEX (pl-index.c bestHash) — `match` used to scan `all_atoms`
     # UNCONDITIONALLY. `index_candidates` returns the full store whenever no index applies, so the
     # unindexed behaviour is bit-identical and this is safe on the hot path.
-    cands = index_candidates(all_atoms(space), space.store.arg_index, space.store.arg_tried, p,
-                             space.store.wildcard, space.store.head_index)  # maintained buckets
+    cands = index_candidates(all_atoms(space), space.store.arg_index, space.store.arg_tried, p)
     for atom in cands, mb in match_atoms(p, rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))
     end

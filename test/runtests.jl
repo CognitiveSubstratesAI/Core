@@ -96,6 +96,7 @@ Main.@suite("test_debruijn_storage_gate.jl")
 # form of BLOCKER 3, which passed both its controls while broken).
 Main.@suite("test_term_canon.jl")
 Main.@suite("test_jit_head_op.jl")
+Main.@suite("test_match_template_reduced.jl")
 Main.@suite("test_variable_identity_pins.jl")
 Main.@suite("test_atom_encoding_correspondence.jl")
 Main.@suite("test_core_match_differential.jl")
