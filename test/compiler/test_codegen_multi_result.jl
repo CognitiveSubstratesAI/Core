@@ -272,9 +272,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         prog = "(= (down \$n) (if (== \$n 0) done (down (- \$n 1))))\n(= (down \$n) tag)\n"
         fn = _CGC.codegen_head(:down, _cg_head(prog, :down))
         @test fn !== nothing
-        was = _CGC._MAX_DEPTH[]
+        was = _CGC._MAX_CALL_DEPTH[]
         try
-            _CGC._MAX_DEPTH[] = 50
+            _CGC._MAX_CALL_DEPTH[] = 50
             @test_throws _CGC.CompiledDepthExceeded Base.invokelatest(
                 fn, (r, b) -> true, _CGV.Atom[_CGV.Grounded(200)], 0)
             # and BELOW the budget it still answers normally — ANTI-VACUITY: the guard is not
@@ -284,7 +284,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
                                     _CGV.Atom[_CGV.Grounded(5)], 0) == true
             @test n[] == 7
         finally
-            _CGC._MAX_DEPTH[] = was
+            _CGC._MAX_CALL_DEPTH[] = was
         end
     end
 

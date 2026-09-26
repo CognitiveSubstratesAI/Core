@@ -290,13 +290,29 @@ end
 """
 Switch for stage 4d. `false` ⇒ every head gets `_seam_fn`, exactly as before this flag existed.
 
-🔴 WHY A FLAG AND NOT A REPLACEMENT. `_seam_fn` handles EVERY clause `emit_julia_clause` accepts;
-`codegen_head` is deliberately NARROW (head args all distinct variables; goals arithmetic/comparison
-GCall, GUnify of a variable, or GBranch — the shape of `fib`). Turning codegen on must never LOSE a
-head: out of scope ⇒ `codegen_head` returns `nothing` ⇒ that head keeps the plan-walking closure.
-Per-head, not per-program, so one unsupported head does not disable the lane.
+🔴 WHY A FLAG AND NOT A REPLACEMENT. `_seam_fn` handles clauses `codegen_head` does not. Turning
+codegen on must never LOSE a head: out of scope ⇒ `codegen_head` returns `nothing` ⇒ that head keeps
+the plan-walking closure. Per-head, not per-program, so one unsupported head does not disable the
+lane. ⚠️ The two lanes' scopes OVERLAP but neither contains the other — `emit_julia_program` asks
+each independently and keeps a head if EITHER accepts, which is a defect this file once had the
+other way round.
+
+🟢 **DEFAULT FLIPPED TO `true`, 2026-09-26.** The compiler is the primary lane; the interpreter is
+the fallback. What had to be true first, and now is:
+  * SCOPE. 228 of 768 `Core/lib` heads compile natively, 251 take the plan lane, 289 neither — up
+    from 115 native, measured THROUGH this function rather than by calling `codegen_head` directly.
+  * CORRECTNESS. A differential against the interpreter on MULTISETS, plus the reference engines:
+    `!(outer 20)` through a cross-head call agrees 6/6 with hyperon; `!(down 2)` agrees on the
+    multiset `{done, tag, tag, tag}` with hyperon, CeTTa, JeTTa and PeTTa (Core's ORDER differs,
+    which is within spec — result order is unspecified).
+  * NO COMPILE-TIME BLOWUP. The sink is `@nospecialize`d: 2 specialisations at any recursion depth,
+    where it was one per level.
+  * A BOUNDED FAILURE. Recursion past the depth budget raises `CompiledDepthExceeded`, which the
+    seam turns into a MeTTa error atom naming the head — not a corrupted process.
+  * RE-RUN SAFETY. Impure ops are out of the lane (cost: one head).
+Set it to `false` to get the previous behaviour; every head then takes `_seam_fn` as before.
 """
-const CODEGEN_ENABLED = Ref(false)
+const CODEGEN_ENABLED = Ref(true)
 
 "How many heads the LAST `emit_julia_program` compiled to native code. The lane's own coverage number."
 const CODEGEN_NATIVE_HEADS = Ref(0)
@@ -398,9 +414,12 @@ function _codegen_seam_fn(head::Base.Symbol, fn::Function)
             for fr in stacktrace(catch_backtrace())[1:min(6, end)]
                 @debug "  at" fr
             end
+            # `StackOverflow` is CeTTa's interned reason symbol for this (`eval.c:241`); leading
+            # with it keeps the name upstream's. CeTTa treats the fault as RETRYABLE rather than
+            # terminal — see `_MAX_CALL_DEPTH`'s note; we have no decline-to-interpreter channel yet.
             return CompiledOk(Atom[Eval.error_atom(call, string(
-                        "compiled head `", e.head, "` exceeded the depth budget (", e.depth,
-                        "); recursion too deep for the compiled lane"))],
+                        "StackOverflow: compiled head `", e.head,
+                        "` exceeded the call-depth budget (", e.depth, ")"))],
                       Bindings[Bindings()])
         end
         isempty(rs) && return ExecNoReduce()

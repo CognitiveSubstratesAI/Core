@@ -26,7 +26,7 @@ import ..CompilerIR: IRAtom, IRVariable, IRSymbol, IRGrounded, IRExpression
 # so a missing import fails at codegen time, not at load. (First run: UndefVarError.)
 import ..Eval: TOKEN_REGISTRY, Operation, ExecOk, ExecNoReduce, freshvar
 
-export codegen_clause, codegen_head, head_compilable, CompiledDepthExceeded, _MAX_DEPTH
+export codegen_clause, codegen_head, head_compilable, CompiledDepthExceeded, _MAX_CALL_DEPTH
 
 # 🔴 NO OP TABLE HERE, DELIBERATELY. A first draft of this file defined
 # `_J_ARITH = Dict(:+ => :+, …)` and generated `Grounded(x.value + 1)` — reinventing arithmetic the
@@ -180,10 +180,32 @@ const _IMPURE_OPS = Set(["println!", "trace!", "table!", "change-state!",
 # soft limit raising an ordinary error — only the reachable depth is far smaller, because 1Gb of
 # heap stack buys far more frames than 8MB of C stack.
 #
+# 🟢 CeTTa DOES BOTH, WHICH CORROBORATES THE SHAPE AND NAMES THE ERROR (cross-checked 2026-09-26):
+#   * an explicit evaluator stack with continuations (`CETTA_PRIME_EVAL_STACK`,
+#     `prime_eval_stack_continuation_generation`/`_bind_enter`/`_bind_leave`), AND
+#   * a plain depth cap passed as an explicit parameter, exactly like `_d` here —
+#     `PETTA_LAMBDA_ELABORATION_MAX_DEPTH 2048u`, `depth > MAX && return NULL` (`eval.c:6747`).
+#     2,048 against our 4,000: the same order, arrived at independently.
+#   * and the failure is a MeTTa ERROR REASON, interned as the symbol **`StackOverflow`**
+#     (`eval.c:241`) — so that is the upstream name and this lane uses it.
+# 🔴 CeTTa ALSO CLASSIFIES IT AS RETRYABLE, AND WE DO NOT YET. `prime_need_fault_is_completed`
+# (`eval.c:15930`): "Evaluator-control failures are different: a blackhole, concurrent demand,
+# EXHAUSTED NATIVE STACK, or failed internal transition did not complete the suspended computation
+# and MUST REMAIN RETRYABLE." Depth exhaustion is a CONTROL failure, not a semantic verdict — the
+# right end-state is to re-run the call in the interpreter, which walks a heap plan and goes far
+# deeper. That is now SOUND, because impure ops are out of this lane; what is missing is a
+# decline-to-interpreter channel at the seam, which returns `CompiledOk`/`ExecNoReduce` and has no
+# third outcome. Until it exists the error atom is terminal, and that is a KNOWN divergence.
+#
+# ⚠️ NOT `_MAX_ATOM_DEPTH` (`Eval.jl:147`, 10,000). That guards how deep an ATOM may nest while a
+# walker recurses over structure; this guards how many CALLS deep compiled code may go. Same
+# technique — "StackOverflowError CANNOT be caught in Julia … so it must be PREVENTED", as that
+# comment already says — applied to a different axis.
+#
 # Writable, for the same reason SWI's is: a caller who knows their workload may raise it.
-const _MAX_DEPTH = Ref(4_000)
+const _MAX_CALL_DEPTH = Ref(4_000)
 
-"Raised by generated code when its own depth budget is spent — see `_MAX_DEPTH`."
+"Raised by generated code when its own depth budget is spent — see `_MAX_CALL_DEPTH`."
 struct CompiledDepthExceeded <: Exception
     head::Base.Symbol
     depth::Int
@@ -598,9 +620,9 @@ _sinkfn(name::Base.Symbol, body::Expr) =
               :(_a::Vector{Atom}), :(_d::Int)),
          body)
 
-"`_d > _MAX_DEPTH && throw(...)` — the budget check generated code opens with."
+"`_d > _MAX_CALL_DEPTH && throw(...)` — the budget check generated code opens with."
 _depthguard(name::Base.Symbol) =
-    Expr(:(&&), :(_d > _MAX_DEPTH[]),
+    Expr(:(&&), :(_d > _MAX_CALL_DEPTH[]),
          Expr(:call, :throw, Expr(:call, :CompiledDepthExceeded, QuoteNode(name), :_d)))
 
 _bindargs(head_args) = [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) in enumerate(head_args)]
