@@ -26,7 +26,7 @@ import ..CompilerIR: IRAtom, IRVariable, IRSymbol, IRGrounded, IRExpression
 # so a missing import fails at codegen time, not at load. (First run: UndefVarError.)
 import ..Eval: TOKEN_REGISTRY, Operation, ExecOk, ExecNoReduce
 
-export codegen_clause, codegen_head
+export codegen_clause, codegen_head, head_compilable
 
 # 🔴 NO OP TABLE HERE, DELIBERATELY. A first draft of this file defined
 # `_J_ARITH = Dict(:+ => :+, …)` and generated `Grounded(x.value + 1)` — reinventing arithmetic the
@@ -45,11 +45,30 @@ export codegen_clause, codegen_head
 
 _local(v::IRVariable) = Base.Symbol("v_", v.name)
 
-"IR operand -> a Julia expression producing an ATOM (for results that leave the clause)."
+"""
+IR operand -> a Julia expression producing an ATOM (for results that leave the clause).
+
+🔴 A STRUCTURED OPERAND WAS THE SINGLE LARGEST DECLINE CAUSE, AND IT WAS INVISIBLE. Returning
+`nothing` for `IRExpression` meant any clause whose OUTPUT or whose goal ARGUMENTS were a built term
+— `(= (f \$x) (Cons \$x nil))`, the ordinary shape of anything constructing data — declined the
+head. MEASURED across `Core/lib` 2026-09-25: it blocked 435 of 768 heads, more than any other cause,
+and a first-match classifier had filed all of them under "other" so it never appeared in a priority
+list. Building the `Expression` is recursive and the head is its FIRST CHILD, which is why
+`IRExpression` carries `head` as its own field rather than as `args[1]` (see the struct's docstring).
+"""
 function _atomexpr(a::IRAtom, vars::Set{Base.Symbol})
     a isa IRVariable && return _local(a)
     a isa IRGrounded && return :(Grounded($(a.value)))
     a isa IRSymbol   && return :(Sym($(String(a.name))))
+    if a isa IRExpression
+        h = _atomexpr(a.head, vars); h === nothing && return nothing
+        kids = Any[]
+        for x in a.args
+            v = _atomexpr(x, vars); v === nothing && return nothing
+            push!(kids, v)
+        end
+        return :(Expression(Atom[$h, $(kids...)]))
+    end
     nothing
 end
 
@@ -130,20 +149,33 @@ function _all_goals(gs::Vector{Goal})
     out
 end
 
-"Does this clause call `selfname`? Guards the multi-clause decline in `codegen_head`."
-_selfrec(gs::Vector{Goal}, selfname::Base.Symbol) =
-    any(g -> g isa GCall && g.head === selfname, _all_goals(gs))
+"The generated entry name for a head. DETERMINISTIC, so a caller can name a callee not yet built."
+_genname(sym::Base.Symbol) = Base.Symbol("_gen_", sym, "_", string(hash(sym), base=16)[1:6])
+
+"A call to another MeTTa head rather than to a grounded op or to this clause's own head."
+function _is_user_call(g::Goal, selfname::Base.Symbol)
+    g isa GCall || return false
+    g.head === selfname && return false
+    op = get(TOKEN_REGISTRY, String(g.head), nothing)
+    !(op isa Grounded && op.value isa Operation)
+end
 
 """
 Can this clause answer other than exactly once? Then it has no deterministic entry and must take the
-loop path. Two sources, and MISSING THE FIRST IS WHAT MADE `superpose` DECLINE: a `GDisj` or
+loop path. Three sources, and MISSING THE FIRST IS WHAT MADE `superpose` DECLINE: a `GDisj` or
 `GFindall` NODE is nondeterministic IN ITSELF, and `superpose`'s branches contain no call to
 `superpose` — A-normal has already turned it into a disjunction of plain bindings. Checking only for
 a nondeterministic OP therefore answered `false`, routed the head down the DETERMINISTIC path, whose
 generator has no `GDisj` case, and the head declined with the loop path never consulted.
+
+A CALL TO ANOTHER HEAD is the third: the callee may answer zero times or many, so the caller cannot
+be deterministic. A call to THIS head is excluded — a one-clause head that only recurses into itself
+is deterministic by induction, which is what keeps `fib` on the fast path.
 """
-_is_nondet(gs::Vector{Goal}) =
-    any(g -> g isa GDisj || g isa GFindall || (g isa GCall && String(g.head) in _NONDET_OPS),
+_is_nondet(gs::Vector{Goal}, selfname::Base.Symbol) =
+    any(g -> g isa GDisj || g isa GFindall ||
+             (g isa GCall && String(g.head) in _NONDET_OPS) ||
+             _is_user_call(g, selfname),
         _all_goals(gs))
 
 # ⚠️ THE REST OF THE CLAUSE IS GENERATED INSIDE EACH ARM OR BRANCH, so it is DUPLICATED per arm and
@@ -199,7 +231,8 @@ Generate goals `k..end` with the clause's answer delivered to `_sink` inside eve
 Returns `nothing` if anything is out of scope. `vars` is MUTATED along a path and COPIED into each
 `GBranch` arm, because the arms bind different names.
 """
-function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::IRAtom, dup::Int)
+function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::IRAtom, dup::Int,
+                  selfname::Base.Symbol, fname::Base.Symbol, compilable::Set{Base.Symbol})
     if k > length(goals)
         ox = _atomexpr(out_ir, vars); ox === nothing && return nothing
         # `||` and not `&&`: a sink answering `false` means STOP, and it must propagate out of every
@@ -211,13 +244,41 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         (g.lhs isa IRVariable) || return nothing
         r = _atomexpr(g.rhs, vars); r === nothing && return nothing
         push!(vars, (g.lhs::IRVariable).name)
-        rest = _gen_seq(goals, k + 1, vars, out_ir, dup); rest === nothing && return nothing
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable); rest === nothing && return nothing
         return Expr(:block, Expr(:(=), _local(g.lhs), r), rest)
     elseif g isa GCall
-        p = _gcall_parts(g, vars); p === nothing && return nothing
+        p = _gcall_parts(g, vars)
+        if p === nothing
+            # 🔴 A CALL TO ANOTHER COMPILED HEAD. This is what the sink convention was FOR: the
+            # callee answers zero-to-N times, and "the rest of this clause" is handed to it AS the
+            # sink, so each of its answers continues the caller. No collect, no intermediate vector.
+            # `return false` inside the closure returns from the CLOSURE, which is exactly the stop
+            # signal the callee reads; the callee then returns `false` and the `||` propagates it out
+            # of the caller too, so an early stop crosses call boundaries intact.
+            # A SELF-CALL LANDS HERE TOO in the loop path, targeting the head's own ENTRY (`fname`)
+            # rather than a per-clause function — which is why a multi-clause head may now recurse.
+            (g.out isa IRVariable) || return nothing
+            callee = g.head === selfname ? fname :
+                     (g.head in compilable ? _genname(g.head) : return nothing)
+            as = Any[]
+            for a in g.args
+                v = _atomexpr(a, vars); v === nothing && return nothing
+                push!(as, v)
+            end
+            push!(vars, (g.out::IRVariable).name)
+            rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable)
+            rest === nothing && return nothing
+            lv = _local(g.out)
+            # ⚠️ `_b` is the callee's bindings and is DISCARDED here. Sound only while head args are
+            # bound POSITIONALLY, so no callee can produce one. Head-argument patterns must merge it.
+            closure = Expr(:->, Expr(:tuple, :_r, :_b),
+                           Expr(:block, Expr(:(=), lv, :_r), rest, true))
+            return Expr(:(||), Expr(:call, callee, closure, Expr(:ref, :Atom, as...)),
+                        Expr(:return, false))
+        end
         (fn, as, arv, rsv, opname) = p
         push!(vars, (g.out::IRVariable).name)
-        rest = _gen_seq(goals, k + 1, vars, out_ir, dup); rest === nothing && return nothing
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable); rest === nothing && return nothing
         lv = _local(g.out)
         return quote
             $arv = Atom[$(as...)]
@@ -242,12 +303,12 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         # returned 16, instantly, which timing alone would have reported as a 4,000,000x speedup.
         test = _gen_test(g.cond, vars); test === nothing && return nothing
         rest = goals[k+1:end]
-        tb = _gen_seq(vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2)
+        tb = _gen_seq(vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable)
         tb === nothing && return nothing
         # An EMPTY `els` means "no further arm": this PATH yields nothing, which in the sink
         # convention is simply not calling `_sink` — no early return, the other clauses still run.
         eb = isempty(g.els) ? :(nothing) :
-             _gen_seq(vcat(g.els, rest), 1, copy(vars), out_ir, dup * 2)
+             _gen_seq(vcat(g.els, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable)
         eb === nothing && return nothing
         return Expr(:if, test, tb, eb)
     elseif g isa GDisj
@@ -265,7 +326,8 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         rest = goals[k+1:end]
         blk = Expr(:block)
         for br in g.branches
-            bb = _gen_seq(vcat(br, rest), 1, copy(vars), out_ir, dup * length(g.branches))
+            bb = _gen_seq(vcat(br, rest), 1, copy(vars), out_ir, dup * length(g.branches),
+                          selfname, fname, compilable)
             bb === nothing && return nothing
             push!(blk.args, bb)
         end
@@ -355,7 +417,7 @@ name because it is the unit the deterministic path is built from and tested thro
 function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""),
                         dname::Base.Symbol=Base.Symbol(""))
     cl.nested_head && return nothing
-    _is_nondet(cl.goals) && return nothing
+    _is_nondet(cl.goals, selfname) && return nothing
     vars = Set{Base.Symbol}()
     for a in cl.head_args
         a isa IRVariable || return nothing          # positional binding only — no unification here
@@ -371,14 +433,16 @@ function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""),
 end
 
 "The NONDETERMINISTIC body for one clause: `_sink` is called once per answer, then `true`."
-function _codegen_clause_sink(cl::ANClause)
+function _codegen_clause_sink(cl::ANClause, selfname::Base.Symbol, fname::Base.Symbol,
+                              compilable::Set{Base.Symbol})
     cl.nested_head && return nothing
     vars = Set{Base.Symbol}()
     for a in cl.head_args
         a isa IRVariable || return nothing
         push!(vars, a.name)
     end
-    seq = _gen_seq(cl.goals, 1, vars, cl.out, 1); seq === nothing && return nothing
+    seq = _gen_seq(cl.goals, 1, vars, cl.out, 1, selfname, fname, compilable)
+    seq === nothing && return nothing
     Expr(:block, seq, true)
 end
 
@@ -391,52 +455,45 @@ _sinkfn(name::Base.Symbol, body::Expr) =
 _bindargs(head_args) = [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) in enumerate(head_args)]
 
 """
-    codegen_head(name, clauses) -> Union{Function, Nothing}
+    _build_head(name, clauses, compilable) -> Union{Vector{Expr}, Nothing}
 
-`eval` the compiled entry for a head, in the SINK CONVENTION: `f(sink, args::Vector{Atom})::Bool`,
-calling `sink(answer, bindings)` once per answer and returning `false` iff a sink asked it to stop.
-`bindings` is `nothing` while head arguments are bound positionally — see the header for the oracle
-that says the parameter must exist before head patterns do.
+Build the functions for a head WITHOUT evaluating them, or `nothing` if it is out of scope. The last
+element is the entry.
 
-All-or-nothing: any clause outside scope disqualifies the head, because the seam SHADOWS it and a
-partial registration loses answers.
-
-A head with ONE clause that calls no `_NONDET_OPS` op additionally gets `f_det(args)` — the
-deterministic fast path — and `f` wraps it. 🔴 A MULTI-CLAUSE HEAD THAT SELF-RECURSES DECLINES: only
-`f_det` may be self-called, such a head has none, and compiling it anyway would keep ONE answer from
-a callee that can give several. Under multiset parity a dropped answer is exactly what the
-differential exists to catch, so this is soundness, not caution. Continuations lift the restriction
-and are `match`'s work, not this step's.
+🔴 BUILDING IS SEPARATE FROM `eval` BECAUSE CALLS BETWEEN HEADS NEED A FIXPOINT. A head compiles only
+if every head it calls also compiles, and that is not knowable one head at a time: `emit_julia_program`
+starts with all heads as candidates and drops them until the set is stable. A build that evaluated as
+it went would leave half-registered functions behind on every dropped candidate.
 """
-function codegen_head(name::Base.Symbol, clauses::Vector{ANClause})
+function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol})
     isempty(clauses) && return nothing
-    fname = Base.Symbol("_gen_", name, "_", string(hash(name), base=16)[1:6])
+    fname = _genname(name)
     arity = length(clauses[1].head_args)
     for cl in clauses
         length(cl.head_args) == arity || return nothing     # mixed arity ⇒ out of scope
     end
 
-    if length(clauses) == 1 && !_is_nondet(clauses[1].goals)
+    if length(clauses) == 1 && !_is_nondet(clauses[1].goals, name)
         dname = Base.Symbol(fname, "_det")
         b = codegen_clause(clauses[1], name, dname)
         b === nothing && return nothing
-        Base.eval(@__MODULE__,
-            Expr(:function, Expr(:call, dname, :(_a::Vector{Atom})),
-                 Expr(:block, _bindargs(clauses[1].head_args)..., b)))
+        det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom})),
+                   Expr(:block, _bindargs(clauses[1].head_args)..., b))
         wrap = Expr(:block,
             Expr(:(=), :_r, Expr(:call, dname, :_a)),
             Expr(:if, Expr(:call, :(===), :_r, :nothing),
                  true,
                  Expr(:(::), Expr(:call, :_sink, :_r, :nothing), :Bool)))
-        return Base.eval(@__MODULE__, _sinkfn(fname, wrap))  # world-age paid ONCE, at registration
+        return Expr[det, _sinkfn(fname, wrap)]
     end
 
+    out = Expr[]
     parts = Base.Symbol[]
     for (i, cl) in enumerate(clauses)
-        _selfrec(cl.goals, name) && return nothing          # see the docstring — soundness guard
-        b = _codegen_clause_sink(cl); b === nothing && return nothing
+        b = _codegen_clause_sink(cl, name, fname, compilable)
+        b === nothing && return nothing
         cn = Base.Symbol(fname, "_c", i)
-        Base.eval(@__MODULE__, _sinkfn(cn, Expr(:block, _bindargs(cl.head_args)..., b)))
+        push!(out, _sinkfn(cn, Expr(:block, _bindargs(cl.head_args)..., b)))
         push!(parts, cn)
     end
     comb = Expr(:block)
@@ -444,7 +501,44 @@ function codegen_head(name::Base.Symbol, clauses::Vector{ANClause})
         push!(comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a), Expr(:return, false)))
     end
     push!(comb.args, true)
-    Base.eval(@__MODULE__, _sinkfn(fname, comb))
+    push!(out, _sinkfn(fname, comb))
+    out
+end
+
+"True if this head would compile given `compilable` as the set of heads that do. No `eval`."
+head_compilable(name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}) =
+    _build_head(name, clauses, compilable) !== nothing
+
+"""
+    codegen_head(name, clauses, compilable) -> Union{Function, Nothing}
+
+`eval` the compiled entry for a head, in the SINK CONVENTION: `f(sink, args::Vector{Atom})::Bool`,
+calling `sink(answer, bindings)` once per answer and returning `false` iff a sink asked it to stop.
+`bindings` is `nothing` while head arguments are bound positionally — see the header for the oracle
+that says the parameter must exist before head patterns do.
+
+`compilable` is the set of OTHER heads that will also be registered; a call to a head outside it
+declines, because the generated code names the callee's entry directly. Callers that compile a head
+in isolation may pass the default and get no cross-head calls.
+
+All-or-nothing per head: any clause outside scope disqualifies the head, because the seam SHADOWS it
+and a partial registration loses answers.
+
+A head with ONE clause that is deterministic throughout additionally gets `f_det(args)` — the
+deterministic fast path, which self-recursion calls directly, and which is why `fib` allocates no
+sink in its hot loop. A MULTI-CLAUSE head may now recurse: in the loop path a self-call is an
+ordinary call to the head's own ENTRY, which answers zero-to-N times through the sink, so the answer
+that the old guard was protecting can no longer be dropped.
+"""
+function codegen_head(name::Base.Symbol, clauses::Vector{ANClause},
+                      compilable::Set{Base.Symbol}=Set{Base.Symbol}())
+    fns = _build_head(name, clauses, compilable)
+    fns === nothing && return nothing
+    local last
+    for f in fns
+        last = Base.eval(@__MODULE__, f)     # world-age paid ONCE per head, at registration
+    end
+    last
 end
 
 end # module

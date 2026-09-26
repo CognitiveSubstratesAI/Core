@@ -46,7 +46,7 @@ import ..CompilerEmitIL: _atom_of
 # 🔴 IMPORTED EXPLICITLY, NOT ASSUMED. First run died on `UndefVarError: freshvar` — the guessed-name
 # class again. These five live in TWO modules: `match_atoms`/`is_present` in Atoms.jl (StandardMeTTa),
 # `rename_fresh`/`freshvar`/`subst` in Eval.jl. Located before importing, not after failing.
-import ..CompilerEmitJuliaCode: codegen_head
+import ..CompilerEmitJuliaCode: codegen_head, head_compilable
 import ..CompilerFrontend
 import ..CompilerANormal
 import ..Eval          # the MODULE, not only its names — `jit_head!` reaches Eval.all_atoms / _JIT_HEAD_HOOK
@@ -249,15 +249,40 @@ function emit_julia_program(clauses::Vector{ANClause})
         delete!(by_head, h)
     end
     CODEGEN_NATIVE_HEADS[] = 0
+    # 🔴 WHICH HEADS COMPILE IS A FIXPOINT, NOT A PER-HEAD TEST. Once generated code can CALL another
+    # compiled head it names that head's entry directly, so `f` compiles only if every head it calls
+    # also compiles — and dropping one callee can disqualify its callers transitively. Start with
+    # every head a candidate and shrink until stable. `head_compilable` builds without evaluating,
+    # so a candidate that is later dropped leaves no half-registered functions behind.
+    # 🔴 AND THE CANDIDATE SET IS `an_by_head`, NOT `by_head` — MEASURED 2026-09-26. Building it
+    # from `by_head` GATES THE NATIVE LANE BEHIND THE PLAN LANE: a head one clause of which
+    # `emit_julia_clause` declines is deleted above, so codegen never sees it even when codegen
+    # compiles it perfectly well. `(= (down $n) (if …))` + `(= (down $n) tag)` was exactly that —
+    # `codegen_head` returned a function, `emit_julia_program` registered NOTHING, and the call came
+    # back unreduced. The two lanes have different, overlapping scopes; neither is a subset of the
+    # other, so each must be asked independently and a head kept if EITHER accepts it.
+    compilable = Set{Base.Symbol}()
+    if CODEGEN_ENABLED[]
+        union!(compilable, keys(an_by_head))
+        while true
+            drop = Base.Symbol[]
+            for h in compilable
+                haskey(an_by_head, h) || (push!(drop, h); continue)
+                head_compilable(h, an_by_head[h], compilable) || push!(drop, h)
+            end
+            isempty(drop) && break
+            setdiff!(compilable, drop)
+        end
+    end
     out = Dict{Base.Symbol, Function}()
-    for (h, rules) in by_head
-        fn = CODEGEN_ENABLED[] ? codegen_head(h, an_by_head[h]) : nothing
-        if fn === nothing
-            out[h] = _seam_fn(h, rules)          # the PLAN-WALKING closure — an A-normal interpreter
-        else
+    for h in keys(an_by_head)
+        fn = h in compilable ? codegen_head(h, an_by_head[h], compilable) : nothing
+        if fn !== nothing
             CODEGEN_NATIVE_HEADS[] += 1
             out[h] = _codegen_seam_fn(h, fn)     # GENERATED JULIA -> LLVM -> native
-        end
+        elseif haskey(by_head, h)
+            out[h] = _seam_fn(h, by_head[h])     # the PLAN-WALKING closure — an A-normal interpreter
+        end                                      # neither lane ⇒ not registered, interpreter handles it
     end
     out
 end

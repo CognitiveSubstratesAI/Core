@@ -120,13 +120,47 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test length(got) == 1
     end
 
-    @testset "🔴 a multi-clause head that SELF-RECURSES declines — soundness, not caution" begin
-        # Only the deterministic entry may be self-called, and a multi-clause head has none: its
-        # callee can answer twice and the det call site keeps one. Compiling it would DROP an answer
-        # silently, which under multiset parity is precisely the defect the differential hunts.
-        cls = _cg_head("(= (h \$x) (h \$x))\n(= (h \$x) done)\n", :h)
+    @testset "🔴 a multi-clause head MAY now recurse — the old decline was lifted, not forgotten" begin
+        # It used to decline, and the reason was sound AT THE TIME: only `f_det` could be
+        # self-called, a multi-clause head has none, so a callee answering twice would have had one
+        # answer kept and the other dropped. What lifted it is the user-call case: in the loop path
+        # a self-call is an ordinary call to the head's own ENTRY, which delivers every answer
+        # through the sink. The differential is what makes that claim checkable rather than asserted.
+        prog = "(= (down \$n) (if (== \$n 0) done (down (- \$n 1))))\n(= (down \$n) tag)\n"
+        cls = _cg_head(prog, :down)
         @test length(cls) == 2
-        @test _CGC.codegen_head(:h, cls) === nothing
+        @test _CGC.codegen_head(:down, cls) !== nothing
+        compiled, native = _cg_ask(prog, "!(down 2)\n")
+        interp = _cg_interp(prog, "!(down 2)\n")
+        @test native > 0                          # ANTI-VACUITY: the NATIVE lane took it
+        @test length(interp) > 1                  # ANTI-VACUITY: more than one answer to lose
+        @test compiled == interp                  # sorted ⇒ multiset
+    end
+
+    @testset "🔴 A CALL TO ANOTHER HEAD — the capability the sink convention was built for" begin
+        # Before this, a compiled head could call grounded ops and itself, nothing else. That single
+        # restriction blocked 162 heads in `Core/lib` outright. The callee is named directly in the
+        # generated code, so which heads compile is a FIXPOINT — `emit_julia_program` shrinks the
+        # candidate set until stable, and a callee that drops takes its callers with it.
+        prog = "(= (inner \$x) (+ \$x 1))\n(= (outer \$y) (inner (* \$y 2)))\n"
+        # In ISOLATION `outer` must decline: nothing promises `inner` will be registered.
+        @test _CGC.codegen_head(:outer, _cg_head(prog, :outer)) === nothing
+        # Told that `inner` compiles, it must take it.
+        @test _CGC.codegen_head(:outer, _cg_head(prog, :outer),
+                                Set([:inner])) !== nothing
+        compiled, native = _cg_ask(prog, "!(outer 20)\n")
+        interp = _cg_interp(prog, "!(outer 20)\n")
+        @test native >= 2                         # BOTH heads native, not just the leaf
+        @test interp == ["41"]                    # ANTI-VACUITY: the query is not vacuous
+        @test compiled == interp
+    end
+
+    @testset "a callee that CANNOT compile disqualifies its caller — the fixpoint shrinks" begin
+        # `mid` calls `leaf`, and `leaf` has a pattern head arg, so `leaf` declines. `mid` must then
+        # decline too rather than name an entry that was never registered — a MethodError at runtime.
+        prog = "(= (leaf 0) zero)\n(= (mid \$x) (leaf \$x))\n"
+        @test _CGC.codegen_head(:leaf, _cg_head(prog, :leaf)) === nothing
+        @test _CGC.codegen_head(:mid, _cg_head(prog, :mid), Set{Symbol}()) === nothing
     end
 
     @testset "the deterministic path is preserved — one clause still emits `_det`" begin
