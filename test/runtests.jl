@@ -270,7 +270,7 @@ Main.@suite("standard/tabling/upstream/test_xsb_delay_corpus.jl")
 # with argument positions, not an ATOM in a store. The formula ports exactly; the plumbing does not.
 Main.@suite("standard/test_index.jl")
 Main.@suite("standard/test_index_jit_oracle.jl")  # the ANSWER-SET half of swipl tests/db/test_jit.pl —
-                                                 # indexed must equal unindexed exactly, duplicates and var-clauses included
+# indexed must equal unindexed exactly, duplicates and var-clauses included
 Main.@suite("standard/test_grounded_payloads.jl")
 # How a WFS bottom travels through the INTERPRETER: constructors and control forms must not
 # absorb one (a rule that ignores its argument must still fire), while strict ops must, and
@@ -306,13 +306,13 @@ Main.@suite("compiler/test_emit_substitution.jl")
 Main.@suite("compiler/test_emit_il.jl")
 Main.@suite("compiler/test_emit_julia.jl")   # stage 4c: registration path (milestone 1a)          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
 Main.@suite("compiler/test_codegen_multi_result.jl")  # the NATIVE lane's calling convention —
-                                                     # f(sink, args) once per answer. Until now
-                                                     # NOTHING in test/ touched codegen_head.
+# f(sink, args) once per answer. Until now
+# NOTHING in test/ touched codegen_head.
 Main.@suite("compiler/test_compile_lane.jl")     # compiler-PRIMARY execution, differential vs interpreter
 Main.@suite("compiler/test_frozen_call_decline.jl")  # a head the space DEFINES must never compile as DATA —
 Main.@suite("compiler/test_var_headed_kill_switch.jl")  # `(= ($f $x) …)` fires on ANY head — nothing
-                                                        # compiled is trustworthy while one is loaded
-                                                    # the miscompile answered `((+ upto 1) 1 6)` with every status field green
+# compiled is trustworthy while one is loaded
+# the miscompile answered `((+ upto 1) 1 6)` with every status field green
 Main.@suite("compiler/test_compile_lane_corpus.jl")  # the REAL corpora: 26 hyperon scripts + LeaTTa PROVED
 Main.@suite("compiler/test_compile_lane_fuzz.jl")    # GENERATED programs — 26 scripts is a thin corpus
 Main.@suite("compiler/test_il_roundtrip.jl")    # IL goes out as TEXT: which values survive parse(show(v))

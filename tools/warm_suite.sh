@@ -35,7 +35,9 @@
 #
 #   tools/warm_suite.sh start            # boot the daemon (idempotent)
 #   tools/warm_suite.sh run              # full suite, REAL exit code — WARM: 147 s vs 466 s cold
-#   tools/warm_suite.sh run 1/4          # one shard (CORE_SUITE_SHARD)
+#   tools/warm_suite.sh run 1/4          # one shard (CORE_SUITE_SHARD) — NOT evidence
+#   tools/warm_suite.sh run-sharded [N]  # ALL N shards, fresh process each, ONE marker if every
+#                                        #   shard passes AND the tree is unchanged throughout
 #   tools/warm_suite.sh run-cold         # the old always-restart behaviour; the arbiter when a
 #                                        #   `run` failure looks implausible
 #   tools/warm_suite.sh run-warm         # diagnostic: a second pass in the SAME process, to find
@@ -337,6 +339,48 @@ case "${1:-run}" in
      #    "$CORE/home/shivaji1012/..." and a SystemError that read like a missing file.
      case "$2" in /*) tgt="$2" ;; *) tgt="$CORE/$2" ;; esac
      _run_driver "include(raw\"$tgt\")" ;;
+  run-sharded)
+     # 🔴 A FULL RUN THAT FITS IN MEMORY, AND THE ONLY SHARDED FORM THAT IS EVIDENCE.
+     # `run 1/4` deliberately writes no marker: one shard passing says nothing about the rest. But
+     # MEASURED 2026-09-26, a single-process full run cannot finish on this box — one file
+     # (`standard/tabling/test_answer_substitution_cyclic.jl`) costs 824 MB alone and 6.6 GB+ when
+     # it runs after the tabling block, and the process was killed at 21.8 GB of 23 GB. A gate that
+     # cannot complete gates nothing, so the suite runs as N shards in FRESH processes.
+     #
+     # ⚠️ EVIDENCE IS WRITTEN ONLY IF EVERY SHARD PASSED **AND** THE TREE DID NOT CHANGE UNDER THEM.
+     # Without the second condition this is a hole, not a gate: shards run minutes apart, and a
+     # marker covering four shards of three different trees attests to a tree that never existed.
+     N="${2:-4}"
+     _use_lane "$SUITE_PORT"
+     . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/workflows/test_marker.sh"
+     _fp0="$(tree_fingerprint "$CORE")"
+     echo "  warm_suite: sharded full run, $N shards, fresh process each"
+     echo "  warm_suite: tree $_fp0"
+     _allok=1
+     for _i in $(seq 1 "$N"); do
+         echo "  ── shard $_i/$N ──"
+         CORE_WARM_SUITE_PORT="$SUITE_PORT" "$0" restart >/dev/null 2>&1 || true
+         if CORE_WARM_SUITE_PORT="$SUITE_PORT" "$0" run "$_i/$N"; then
+             echo "  shard $_i/$N PASS"
+         else
+             echo "  shard $_i/$N FAIL"; _allok=0
+         fi
+     done
+     CORE_WARM_SUITE_PORT="$SUITE_PORT" "$0" stop-gate >/dev/null 2>&1 || true
+     _fp1="$(tree_fingerprint "$CORE")"
+     if [ "$_fp0" != "$_fp1" ]; then
+         echo "  warm_suite: NOT evidence — the tree CHANGED between shards ($_fp0 -> $_fp1)"
+         rm -f "$(marker_path "$CORE")"
+         exit 1
+     fi
+     if [ "$_allok" = "1" ]; then
+         echo "  warm_suite: all $N shards passed on one tree"
+         write_marker "$CORE" 0 "warm_suite run-sharded $N"
+         exit 0
+     fi
+     echo "  warm_suite: sharded run FAILED"
+     write_marker "$CORE" 1 "warm_suite run-sharded $N"
+     exit 1 ;;
   run)
      _use_lane "$SUITE_PORT"
      MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
