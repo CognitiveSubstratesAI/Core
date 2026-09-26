@@ -46,7 +46,7 @@ import ..CompilerEmitIL: _atom_of
 # 🔴 IMPORTED EXPLICITLY, NOT ASSUMED. First run died on `UndefVarError: freshvar` — the guessed-name
 # class again. These five live in TWO modules: `match_atoms`/`is_present` in Atoms.jl (StandardMeTTa),
 # `rename_fresh`/`freshvar`/`subst` in Eval.jl. Located before importing, not after failing.
-import ..CompilerEmitJuliaCode: codegen_head, head_compilable
+import ..CompilerEmitJuliaCode: codegen_head, head_compilable, CompiledDepthExceeded
 import ..CompilerFrontend
 import ..CompilerANormal
 import ..Eval          # the MODULE, not only its names — `jit_head!` reaches Eval.all_atoms / _JIT_HEAD_HOOK
@@ -384,8 +384,25 @@ function _codegen_seam_fn(head::Base.Symbol, fn::Function)
         # boundary is where streaming ends. `sink` is passed POSITIONALLY to a `where {S}` method,
         # so Julia specialises on this closure rather than boxing it.
         rs = Atom[]; bs = Bindings[]
-        Base.invokelatest(fn, (r, b) -> (push!(rs, r);
-                                         push!(bs, b === nothing ? Bindings() : b); true), args)
+        try
+            Base.invokelatest(fn, (r, b) -> (push!(rs, r);
+                                             push!(bs, b === nothing ? Bindings() : b); true),
+                              args, 0)
+        catch e
+            # 🔴 THE DEPTH BUDGET FIRED. Generated code raises this BEFORE the stack runs out,
+            # because a `StackOverflowError` is not catchable in any way code may depend on — Julia
+            # itself says "program state may be corrupted". The backtrace is recorded rather than
+            # swallowed: a silent fallback is the invisible-decline class this tree keeps hitting.
+            e isa CompiledDepthExceeded || rethrow()
+            @warn "compiled lane declined a call at its depth budget" head=e.head depth=e.depth
+            for fr in stacktrace(catch_backtrace())[1:min(6, end)]
+                @debug "  at" fr
+            end
+            return CompiledOk(Atom[Eval.error_atom(call, string(
+                        "compiled head `", e.head, "` exceeded the depth budget (", e.depth,
+                        "); recursion too deep for the compiled lane"))],
+                      Bindings[Bindings()])
+        end
         isempty(rs) && return ExecNoReduce()
         CompiledOk(rs, bs)
     end

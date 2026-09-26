@@ -98,7 +98,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test fn !== nothing
 
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)], 0) == true
         @test sort!(string.(got)) == ["2", "tagged"]
 
         # 🔴 `NotReducible` IS AN ANSWER. `+` cannot reduce `(+ foo 1)`, and MeTTa's answer for that
@@ -108,7 +108,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # interpreter on its first run and that is what corrected it. The old shape was worse than
         # either: `return nothing` from a function the seam annotated `::Vector{Atom}`, a TypeError.
         got2 = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")], 0) == true
         @test sort!(string.(got2)) == ["(+ foo 1)", "tagged"]
     end
 
@@ -116,7 +116,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
         got = _CGV.Atom[]
         # `false` on the FIRST answer: the producer must not run the second clause.
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)]) == false
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)], 0) == false
         @test length(got) == 1
     end
 
@@ -169,11 +169,11 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:inc, cls)
         @test fn !== nothing
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)], 0) == true
         @test string.(got) == ["42"]
         # The det path must residualise too, not answer zero times — same rule as above.
         res = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")], 0) == true
         @test string.(res) == ["(+ foo 1)"]
     end
 
@@ -198,7 +198,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:countdown, cls)
         @test fn !== nothing
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)]) == true
+        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)], 0) == true
         @test string.(got) == ["done"]               # 200 recursive calls, one answer
         # and the same answer through the interpreter, which is the only authority on what it is
         @test _cg_interp(prog, "!(countdown 200)\n") == ["done"]
@@ -214,7 +214,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             @test_broken false   # records that the form is not yet reaching codegen, with the reason visible
         else
             got = _CGV.Atom[]
-            @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)]) == true
+            @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)], 0) == true
             @test sort!(string.(got)) == ["5", "7", "9"]
         end
     end
@@ -230,7 +230,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
         seen = Any[]
         @test Base.invokelatest(fn, (r, b) -> (push!(seen, (r, b)); true),
-                                _CGV.Atom[_CGV.Grounded(1)]) == true
+                                _CGV.Atom[_CGV.Grounded(1)], 0) == true
         @test length(seen) == 2
         @test all(x -> x[2] === nothing, seen)      # today: positional binding, so no bindings
 
@@ -243,6 +243,64 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         finally
             _CGE.CODEGEN_ENABLED[] = was
         end
+    end
+
+    @testset "🔴 A FREE VARIABLE IS MINTED PER CALL — it used to throw UndefVarError" begin
+        # `_atomexpr` maps every variable to a Julia local; for one the clause never BINDS, no local
+        # was ever assigned, so `(= (mk) (pair $x $x))` COMPILED and then threw on the call.
+        # ORACLE 2026-09-26 (hyperon; CeTTa and PeTTa agree, JeTTa is the outlier):
+        #     !(mk)             -> (pair $x#13 $x#13)
+        #     !(pair (mk) (mk)) -> (pair (pair $x#57 $x#57) (pair $x#92 $x#92))
+        # One fresh variable per CALL, shared by every occurrence inside that call.
+        fn = _CGC.codegen_head(:mk, _cg_head("(= (mk) (pair \$x \$x))\n", :mk))
+        @test fn !== nothing
+        got = _CGV.Atom[]
+        for _ in 1:2
+            Base.invokelatest(fn, (a, b) -> (push!(got, a); true), _CGV.Atom[], 0)
+        end
+        @test length(got) == 2
+        c1 = got[1]::_CGV.Expression
+        @test c1.children[2] == c1.children[3]     # SAME variable in both positions
+        @test got[1] != got[2]                     # and a DIFFERENT one on the next call
+    end
+
+    @testset "🔴 THE DEPTH BUDGET FIRES, and the failure is a MeTTa error not a dead process" begin
+        # A `StackOverflowError` is not catchable in any way code may depend on — Julia itself
+        # warns "program state may be corrupted". MEASURED overflow: main thread survived 10,000,
+        # a Task survived 16,000, both dead by 20,000. So generated code counts its own depth and
+        # throws an ORDINARY exception first, at a point it controls.
+        prog = "(= (down \$n) (if (== \$n 0) done (down (- \$n 1))))\n(= (down \$n) tag)\n"
+        fn = _CGC.codegen_head(:down, _cg_head(prog, :down))
+        @test fn !== nothing
+        was = _CGC._MAX_DEPTH[]
+        try
+            _CGC._MAX_DEPTH[] = 50
+            @test_throws _CGC.CompiledDepthExceeded Base.invokelatest(
+                fn, (r, b) -> true, _CGV.Atom[_CGV.Grounded(200)], 0)
+            # and BELOW the budget it still answers normally — ANTI-VACUITY: the guard is not
+            # simply refusing everything
+            n = Ref(0)
+            @test Base.invokelatest(fn, (r, b) -> (n[] += 1; true),
+                                    _CGV.Atom[_CGV.Grounded(5)], 0) == true
+            @test n[] == 7
+        finally
+            _CGC._MAX_DEPTH[] = was
+        end
+    end
+
+    @testset "an UNBOUND argument into a compiled callee — the discarded `_b` must be harmless" begin
+        # The user-call case DISCARDS the callee's bindings. The soundness argument is that head
+        # args bind POSITIONALLY, so no callee can bind a caller's variable. Tested rather than
+        # trusted: pass a variable in and check nothing is silently lost.
+        prog = "(= (inner \$x) (+ \$x 1))\n(= (outer \$y) (inner \$y))\n"
+        fn = _CGC.codegen_head(:outer, _cg_head(prog, :outer), Set([:inner]))
+        @test fn !== nothing
+        got = _CGV.Atom[]; binds = Any[]
+        @test Base.invokelatest(fn, (r, b) -> (push!(got, r); push!(binds, b); true),
+                                _CGV.Atom[Eval.freshvar("q")], 0) == true
+        @test length(got) == 1
+        @test occursin("+", string(got[1]))        # NotReducible ⇒ the residual term, not a crash
+        @test all(b -> b === nothing, binds)       # and no binding was produced to lose
     end
 
     @testset "🔴 CENSUS GATE — no op outside `_NONDET_OPS` may answer with != 1 result" begin

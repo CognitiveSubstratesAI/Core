@@ -24,9 +24,9 @@ import ..CompilerANormal: Goal, GUnify, GCall, GBranch, GDisj, GFindall, GResidu
 import ..CompilerIR: IRAtom, IRVariable, IRSymbol, IRGrounded, IRExpression
 # Imported EXPLICITLY and located first — `Operation`/`ExecOk` are used inside the GENERATED code,
 # so a missing import fails at codegen time, not at load. (First run: UndefVarError.)
-import ..Eval: TOKEN_REGISTRY, Operation, ExecOk, ExecNoReduce
+import ..Eval: TOKEN_REGISTRY, Operation, ExecOk, ExecNoReduce, freshvar
 
-export codegen_clause, codegen_head, head_compilable
+export codegen_clause, codegen_head, head_compilable, CompiledDepthExceeded, _MAX_DEPTH
 
 # 🔴 NO OP TABLE HERE, DELIBERATELY. A first draft of this file defined
 # `_J_ARITH = Dict(:+ => :+, …)` and generated `Grounded(x.value + 1)` — reinventing arithmetic the
@@ -96,9 +96,28 @@ end
 # afterwards would mean rewriting every generator and every call site built on it. `nothing` means
 # "no bindings" and costs no allocation on the deterministic path.
 #
-# ⚠️ `sink` IS A TYPE PARAMETER, NOT A `Function` FIELD. `f(sink::S, …) where {S}` makes Julia
-# specialise and inline the call. Boxing it as `::Function` costs an allocation and a dynamic
-# dispatch PER ANSWER — `[[reference_rust_closures_are_free_julia_closures_allocate]]`.
+# 🔴 `sink` IS `@nospecialize`d, AND THE FIRST VERSION OF THIS FILE GOT THAT EXACTLY BACKWARDS.
+# It said: "`sink` IS A TYPE PARAMETER, NOT A `Function` FIELD. `f(sink::S, …) where {S}` makes Julia
+# specialise and inline the call." That is true for ONE call and catastrophic for a CHAIN. A call to
+# another compiled head passes a closure that CAPTURES the caller's sink, so its type is
+# `Closure{S}`; the next level is `Closure{Closure{S}}`, and the type GROWS WITHOUT BOUND. Julia then
+# compiles a FRESH SPECIALISATION AT EVERY RECURSION LEVEL.
+#
+# MEASURED 2026-09-26 on the generated code itself, `(= (down $n) (if (== $n 0) done (down (- $n
+# 1))))` + `(= (down $n) tag)`:
+#     depth   2   specialisations  7   0.57 s
+#     depth   8                   13   0.75 s
+#     depth  16                   21   1.53 s
+#     depth  32                   37   3.85 s
+# Exactly one new specialisation per level, ~0.12 s of compilation each. Depth 500 is a minute of
+# pure inference; depth 10,000 is twenty minutes. The recursion this file advertises was unusable.
+#
+# `@nospecialize` fixes it at the root: the method is compiled ONCE, `_sink` is `Any` inside, so the
+# closure that captures it has a FIXED type and the nesting stops. The price is one dynamic call per
+# ANSWER, which is why `f_det` — which takes no sink at all — still exists and why `fib` is
+# untouched by any of this. `[[reference_rust_closures_are_free_julia_closures_allocate]]` is about
+# the cost of a closure CALL; it says nothing about specialising on closure TYPES, and reading it as
+# if it did is what produced the original comment.
 #
 # ─── NONDETERMINISM IS NESTED `for` LOOPS, NOT CONTINUATIONS ────────────────────────────────────
 # A goal that can answer N times becomes a loop over its answers, with the REST OF THE CLAUSE
@@ -120,6 +139,58 @@ end
 # rather than a comment that rots. It is NOT an op table in the sense this file forbids above: it
 # says nothing about what an op COMPUTES, only whether it is deterministic.
 const _NONDET_OPS = Set(["superpose"])
+
+# ─── IMPURE OPS ARE OUT OF THE COMPILED LANE, SO A FALLBACK MAY RE-RUN A CALL ───────────────────
+# These are `Operation`s, so `_gcall_parts` ACCEPTED them and compiled code could call them. That
+# makes any "re-run this call in the interpreter" fallback unsound: the side effect already
+# happened. MEASURED 2026-09-26 across `Core/lib` — of the heads codegen accepts, exactly ONE calls
+# an impure op (`println!`), 0.3%. So the exclusion costs one head and buys a re-runnable lane.
+# `add-atom`, `remove-atom`, `bind!`, `import!` and `auto-table!` are `SpaceOp`s and already decline.
+const _IMPURE_OPS = Set(["println!", "trace!", "table!", "change-state!",
+                         "new-space", "fork-space", "new-mork-space"])
+
+# ─── THE DEPTH BUDGET, AND WHY IT IS NOT A `try`/`catch` ON `StackOverflowError` ────────────────
+# 🔴 A STACK OVERFLOW IS NOT CATCHABLE IN ANY WAY CODE MAY DEPEND ON. Julia prints "detected a stack
+# overflow; program state may be corrupted, so further execution might be unreliable" and a core
+# developer's answer to "can you rely on catching it" is a flat no (Julia issue #52291,
+# asynchronous exceptions). So the generated code counts its own depth and raises an ORDINARY
+# exception at a point it controls, BEFORE the stack runs out.
+#
+# MEASURED 2026-09-26, isolated process, the multi-clause recursive shape:
+#     main thread   survived 10,000   overflowed by 20,000
+#     inside a Task survived 16,000   overflowed at 20,000
+# The frame named in the trace is the generated sink closure. 4,000 leaves a 4x margin on the
+# smaller measurement, and the margin matters because frame size grows with clause complexity —
+# this was a two-goal clause.
+#
+# 🔴 THIS IS A GUARD, NOT THE RESOLUTION, AND EVERY REFERENCE IMPLEMENTATION SAYS SO. Cross-checked
+# 2026-09-26: NOBODY PUTS UNBOUNDED RECURSION ON THE HOST CALL STACK.
+#   * SWI-Prolog keeps call frames on its OWN heap-allocated LOCAL (environment) STACK, not the C
+#     stack — "except for available memory, there is no hard limit for the sizes of the stacks",
+#     with a SOFT limit (`stack_limit` flag / `--stack-limit`, default 1Gb per thread)
+#     (`man/overview.plx` §Limits on memory areas).
+#   * PathMap's zipper carries the descent path as DATA — `ReadZipperCore{ …,
+#     ancestors: Vec<(TaggedNodeRef, IterToken, usize)> }` (`src/zipper.rs:1806`), so trie traversal
+#     is iterative over an explicit stack.
+#   * OUR OWN INTERPRETER already does this: `Eval.jl:1655-1658`, "a deep MeTTa recursion grows the
+#     HEAP PLAN, not the Julia stack", with tail recursion anchored at `_collapse_anchor`.
+# The compiled lane is the only thing here recursing on the native stack. The real fix is an
+# explicit continuation stack; until it exists this budget is what keeps the failure a catchable
+# MeTTa error instead of a corrupted process. The SHAPE is right — SWI's answer is a configurable
+# soft limit raising an ordinary error — only the reachable depth is far smaller, because 1Gb of
+# heap stack buys far more frames than 8MB of C stack.
+#
+# Writable, for the same reason SWI's is: a caller who knows their workload may raise it.
+const _MAX_DEPTH = Ref(4_000)
+
+"Raised by generated code when its own depth budget is spent — see `_MAX_DEPTH`."
+struct CompiledDepthExceeded <: Exception
+    head::Base.Symbol
+    depth::Int
+end
+Base.showerror(io::IO, e::CompiledDepthExceeded) =
+    print(io, "compiled head `", e.head, "` exceeded the depth budget (", e.depth,
+              "); the compiled lane declines this call rather than risking a stack overflow")
 
 # ─── `NotReducible` IS AN ANSWER, AND GETTING THAT WRONG LOSES ONE ──────────────────────────────
 # 🔴 MEASURED by this file's own differential, on its first run. `(= (g $x) (+ $x 1))` applied to a
@@ -149,6 +220,67 @@ function _all_goals(gs::Vector{Goal})
     out
 end
 
+# ─── A FREE VARIABLE IN A BUILT TERM IS MINTED PER CALL ─────────────────────────────────────────
+# 🔴 WITHOUT THIS THE GENERATED CODE THREW `UndefVarError`. `_atomexpr` maps any `IRVariable` to the
+# Julia local `v_<name>`, and for a variable the clause never BINDS — `(= (mk) (pair $x $x))` — no
+# such local was ever assigned. MEASURED 2026-09-26: `codegen -> compiled`, then the call threw.
+#
+# ORACLE, same day, for what it must answer instead:
+#     hyperon  !(mk)             -> (pair $x#13 $x#13)
+#              !(pair (mk) (mk)) -> (pair (pair $x#57 $x#57) (pair $x#92 $x#92))
+#     CeTTa and PeTTa agree; JeTTa prints `$x` both times and is the outlier.
+# So ONE fresh variable per CALL, shared by every occurrence within that call — `#57` and `#92`
+# differ across the two calls, and within each call both positions hold the same one. Emitting
+# `v_x = freshvar("x")` INSIDE the generated body (not at codegen time) is exactly that.
+
+"Variables a clause USES but never BINDS. Head args and goal outputs are the binders."
+function _free_vars(cl::ANClause)
+    bound = Set{Base.Symbol}()
+    for a in cl.head_args
+        a isa IRVariable && push!(bound, (a::IRVariable).name)
+    end
+    for g in _all_goals(cl.goals)
+        o = g isa GCall    ? g.out :
+            g isa GBranch  ? g.out :
+            g isa GDisj    ? g.out :
+            g isa GFindall ? g.out :
+            g isa GUnify   ? g.lhs : nothing
+        o isa IRVariable && push!(bound, (o::IRVariable).name)
+    end
+    used = Set{Base.Symbol}()
+    _uses!(used, cl.out)
+    for g in _all_goals(cl.goals)
+        if g isa GCall
+            for a in g.args; _uses!(used, a); end
+        elseif g isa GUnify
+            _uses!(used, g.rhs)
+        elseif g isa GFindall
+            _uses!(used, g.template)
+        end
+    end
+    setdiff(used, bound)
+end
+
+"Every variable name occurring in an operand, expressions included."
+function _uses!(acc::Set{Base.Symbol}, a::IRAtom)
+    a isa IRVariable && (push!(acc, (a::IRVariable).name); return acc)
+    if a isa IRExpression
+        _uses!(acc, (a::IRExpression).head)
+        for x in (a::IRExpression).args; _uses!(acc, x); end
+    end
+    acc
+end
+
+"`v_x = freshvar(\"x\")` for each free variable, and record them as bound for `_atomexpr`."
+function _freshbinds!(vars::Set{Base.Symbol}, cl::ANClause)
+    out = Expr[]
+    for n in sort!(collect(_free_vars(cl)))
+        push!(vars, n)
+        push!(out, Expr(:(=), Base.Symbol("v_", n), :(freshvar($(String(n))))))
+    end
+    out
+end
+
 "The generated entry name for a head. DETERMINISTIC, so a caller can name a callee not yet built."
 _genname(sym::Base.Symbol) = Base.Symbol("_gen_", sym, "_", string(hash(sym), base=16)[1:6])
 
@@ -159,6 +291,10 @@ function _is_user_call(g::Goal, selfname::Base.Symbol)
     op = get(TOKEN_REGISTRY, String(g.head), nothing)
     !(op isa Grounded && op.value isa Operation)
 end
+
+"Does this clause call an op with a SIDE EFFECT? Then re-running it is not safe, so it declines."
+_calls_impure(gs::Vector{Goal}) =
+    any(g -> g isa GCall && String(g.head) in _IMPURE_OPS, _all_goals(gs))
 
 """
 Can this clause answer other than exactly once? Then it has no deterministic entry and must take the
@@ -273,7 +409,9 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
             # bound POSITIONALLY, so no callee can produce one. Head-argument patterns must merge it.
             closure = Expr(:->, Expr(:tuple, :_r, :_b),
                            Expr(:block, Expr(:(=), lv, :_r), rest, true))
-            return Expr(:(||), Expr(:call, callee, closure, Expr(:ref, :Atom, as...)),
+            return Expr(:(||),
+                        Expr(:call, callee, closure, Expr(:ref, :Atom, as...),
+                             Expr(:call, :+, :_d, 1)),
                         Expr(:return, false))
         end
         (fn, as, arv, rsv, opname) = p
@@ -361,7 +499,7 @@ function _gen_det(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname:
             r = Base.Symbol("r_", (g.out::IRVariable).name)
             # 🔴 ONE JULIA CALL. No seam, no interpreter, no equation lookup, no sink.
             return quote
-                $r = $dname(Atom[$(as...)])
+                $r = $dname(Atom[$(as...)], _d + 1)
                 $r === nothing && return nothing
                 $(_local(g.out)) = $r::Atom
             end
@@ -417,13 +555,14 @@ name because it is the unit the deterministic path is built from and tested thro
 function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""),
                         dname::Base.Symbol=Base.Symbol(""))
     cl.nested_head && return nothing
+    _calls_impure(cl.goals) && return nothing      # a re-runnable lane — see `_IMPURE_OPS`
     _is_nondet(cl.goals, selfname) && return nothing
     vars = Set{Base.Symbol}()
     for a in cl.head_args
         a isa IRVariable || return nothing          # positional binding only — no unification here
         push!(vars, a.name)
     end
-    stmts = Expr[]
+    stmts = _freshbinds!(vars, cl)          # free variables are minted PER CALL — see above
     for g in cl.goals
         st = _gen_det(g, vars, selfname, dname); st === nothing && return nothing
         push!(stmts, st)
@@ -436,21 +575,33 @@ end
 function _codegen_clause_sink(cl::ANClause, selfname::Base.Symbol, fname::Base.Symbol,
                               compilable::Set{Base.Symbol})
     cl.nested_head && return nothing
+    _calls_impure(cl.goals) && return nothing      # a re-runnable lane — see `_IMPURE_OPS`
     vars = Set{Base.Symbol}()
     for a in cl.head_args
         a isa IRVariable || return nothing
         push!(vars, a.name)
     end
+    fresh = _freshbinds!(vars, cl)          # free variables are minted PER CALL — see above
     seq = _gen_seq(cl.goals, 1, vars, cl.out, 1, selfname, fname, compilable)
     seq === nothing && return nothing
-    Expr(:block, seq, true)
+    Expr(:block, fresh..., seq, true)
 end
 
-# `f(sink::S, _a::Vector{Atom}) where {S}` as an `Expr`, with `body` spliced in.
+# `f(@nospecialize(_sink), _a::Vector{Atom})` as an `Expr`, with `body` spliced in.
+# See the header: a type-parameter sink grows its type once per recursion level and recompiles the
+# method each time. `::Any` is NOT enough — Julia still specialises an `Any`-annotated argument when
+# it judges it profitable; `@nospecialize` is the documented way to stop it.
 _sinkfn(name::Base.Symbol, body::Expr) =
     Expr(:function,
-         Expr(:where, Expr(:call, name, Expr(:(::), :_sink, :S), :(_a::Vector{Atom})), :S),
+         Expr(:call, name,
+              Expr(:macrocall, Base.Symbol("@nospecialize"), LineNumberNode(0, :generated), :_sink),
+              :(_a::Vector{Atom}), :(_d::Int)),
          body)
+
+"`_d > _MAX_DEPTH && throw(...)` — the budget check generated code opens with."
+_depthguard(name::Base.Symbol) =
+    Expr(:(&&), :(_d > _MAX_DEPTH[]),
+         Expr(:call, :throw, Expr(:call, :CompiledDepthExceeded, QuoteNode(name), :_d)))
 
 _bindargs(head_args) = [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) in enumerate(head_args)]
 
@@ -477,10 +628,11 @@ function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::S
         dname = Base.Symbol(fname, "_det")
         b = codegen_clause(clauses[1], name, dname)
         b === nothing && return nothing
-        det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom})),
-                   Expr(:block, _bindargs(clauses[1].head_args)..., b))
+        det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom}), :(_d::Int)),
+                   Expr(:block, _depthguard(name),
+                        _bindargs(clauses[1].head_args)..., b))
         wrap = Expr(:block,
-            Expr(:(=), :_r, Expr(:call, dname, :_a)),
+            Expr(:(=), :_r, Expr(:call, dname, :_a, :_d)),
             Expr(:if, Expr(:call, :(===), :_r, :nothing),
                  true,
                  Expr(:(::), Expr(:call, :_sink, :_r, :nothing), :Bool)))
@@ -498,9 +650,10 @@ function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::S
     end
     comb = Expr(:block)
     for cn in parts
-        push!(comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a), Expr(:return, false)))
+        push!(comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a, :_d), Expr(:return, false)))
     end
     push!(comb.args, true)
+    pushfirst!(comb.args, _depthguard(name))
     push!(out, _sinkfn(fname, comb))
     out
 end
