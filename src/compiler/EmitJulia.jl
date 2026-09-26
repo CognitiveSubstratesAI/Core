@@ -51,8 +51,8 @@ import ..CompilerFrontend
 import ..CompilerANormal
 import ..Eval          # the MODULE, not only its names — `jit_head!` reaches Eval.all_atoms / _JIT_HEAD_HOOK
 import ..Eval: rename_fresh, freshvar, subst, CompiledOk, ExecNoReduce,
-                TOKEN_REGISTRY, is_executable, execute, ExecOk, Bindings, add_var_binding,
-                interpret, _metta, UNDEF
+    TOKEN_REGISTRY, is_executable, execute, ExecOk, Bindings, add_var_binding,
+    interpret, _metta, UNDEF
 
 export emit_julia_clause, emit_julia_program
 
@@ -85,10 +85,12 @@ function emit_julia_clause(cl::ANClause)
     plan === nothing && return nothing
     parts = Atom[Sym(String(cl.name))]
     for a in cl.head_args                        # operand position ⇒ NO specials (two-builder split)
-        v = _atom_of(a, false); v === nothing && return nothing
+        v = _atom_of(a, false)
+        v === nothing && return nothing
         push!(parts, v)
     end
-    out = _atom_of(cl.out, false); out === nothing && return nothing
+    out = _atom_of(cl.out, false)
+    out === nothing && return nothing
     rule = Expression(Atom[Sym("="), Expression(parts), out])
     # 🔴 PACK RULE + PLAN INTO ONE ATOM. `rename_fresh` is applied PER CALL so a clause's variables
     # do not capture across calls — but it renames ONE ATOM. The plan's atoms are built HERE, at
@@ -104,8 +106,11 @@ end
 function _pack(rule::Atom, plan)
     items = Atom[rule]
     for st in plan
-        st[1] === :unify ? (push!(items, st[2]); push!(items, st[3])) :
-                           (append!(items, st[3]); push!(items, st[4]))
+        if st[1] === :unify
+            (push!(items, st[2]); push!(items, st[3]))
+        else
+            (append!(items, st[3]); push!(items, st[4]))
+        end
     end
     Expression(items)
 end
@@ -113,14 +118,17 @@ end
 "Unpack a renamed container back into (rule, plan) with the SAME fresh variables throughout."
 function _unpack(packed::Atom, plan)
     ch = (packed::Expression).children
-    rule = ch[1]; k = 2
+    rule = ch[1]
+    k = 2
     out = Any[]
     for st in plan
         if st[1] === :unify
-            push!(out, (:unify, ch[k], ch[k+1])); k += 2
+            push!(out, (:unify, ch[k], ch[k + 1]))
+            k += 2
         else
             n = length(st[3])
-            push!(out, (:gcall, st[2], Atom[ch[k+i-1] for i in 1:n], ch[k+n])); k += n + 1
+            push!(out, (:gcall, st[2], Atom[ch[k + i - 1] for i in 1:n], ch[k + n]))
+            k += n + 1
         end
     end
     (rule, out)
@@ -145,16 +153,20 @@ function _plan_goals(goals::Vector{Goal})
     plan = Any[]
     for g in goals
         if g isa GUnify
-            l = _atom_of(g.lhs, false); l === nothing && return nothing
-            r = _atom_of(g.rhs, false); r === nothing && return nothing
+            l = _atom_of(g.lhs, false)
+            l === nothing && return nothing
+            r = _atom_of(g.rhs, false)
+            r === nothing && return nothing
             push!(plan, (:unify, l, r))
         elseif g isa GCall
             as = Atom[]
             for a in g.args
-                v = _atom_of(a, false); v === nothing && return nothing
+                v = _atom_of(a, false)
+                v === nothing && return nothing
                 push!(as, v)
             end
-            o = _atom_of(g.out, false); o === nothing && return nothing
+            o = _atom_of(g.out, false)
+            o === nothing && return nothing
             op = get(TOKEN_REGISTRY, String(g.head), nothing)
             if op !== nothing && is_executable(op)
                 push!(plan, (:gcall_native, op, as, o))       # DIRECT execute — compiled
@@ -297,8 +309,19 @@ lane. ⚠️ The two lanes' scopes OVERLAP but neither contains the other — `e
 each independently and keeps a head if EITHER accepts, which is a defect this file once had the
 other way round.
 
-🟢 **DEFAULT FLIPPED TO `true`, 2026-09-26.** The compiler is the primary lane; the interpreter is
-the fallback. What had to be true first, and now is:
+🟢 **DEFAULT FLIPPED TO `true`, 2026-09-26** — and read the next paragraph before quoting that.
+
+🔴 **WHAT THE FLAG DOES NOT DO: IT DOES NOT MAKE ANYTHING COMPILE.** The ONLY production trigger for
+this whole path is the explicit MeTTa op `(compile-head <name>)` — `Eval.jl:2450` is the single
+caller of `_JIT_HEAD_HOOK`, and `jit_head!` is the only thing that reaches `emit_julia_program`. So
+`true` means "when a head IS compiled, generate native Julia instead of a plan-walking closure"; it
+does not mean heads compile by themselves, and an ordinary MeTTa program still runs interpreted
+unless it asks. The commit that flipped this said "the compiler is the primary lane; the interpreter
+is the fallback" — THAT WAS WRONG, and it is the same never-wired class `test_jit_head_op.jl`'s
+header records: a flag was flipped and called a finish line without checking what invokes the path.
+Making compilation automatic is a separate, unwritten step.
+
+What the flip DID have to earn, and did:
   * SCOPE. 228 of 768 `Core/lib` heads compile natively, 251 take the plan lane, 289 neither — up
     from 115 native, measured THROUGH this function rather than by calling `codegen_head` directly.
   * CORRECTNESS. A differential against the interpreter on MULTISETS, plus the reference engines:
@@ -307,8 +330,11 @@ the fallback. What had to be true first, and now is:
     which is within spec — result order is unspecified).
   * NO COMPILE-TIME BLOWUP. The sink is `@nospecialize`d: 2 specialisations at any recursion depth,
     where it was one per level.
-  * A BOUNDED FAILURE. Recursion past the depth budget raises `CompiledDepthExceeded`, which the
-    seam turns into a MeTTa error atom naming the head — not a corrupted process.
+  * A BOUNDED FAILURE THAT COSTS NO ANSWERS. Past the depth budget the seam returns `nothing`, so
+    `rule_results` runs its ordinary `(= …)` query and the call still answers — measured at depth
+    4,500 with a 4,000 budget: 4,502 answers, identical to the interpreter, no error atom. The head
+    is marked `Eval.COMPILED_INTERPRET_ONLY` for the rest of the call tree, or the retry re-faults
+    at every level (depth x budget of wasted work).
   * RE-RUN SAFETY. Impure ops are out of the lane (cost: one head).
 Set it to `false` to get the previous behaviour; every head then takes `_seam_fn` as before.
 """
@@ -360,7 +386,7 @@ function jit_head!(name::Base.Symbol, space)::Bool
     heads = emit_julia_program(mine)
     fn = get(heads, name, nothing)
     fn === nothing && return false                      # every clause must emit — all-or-nothing
-    Eval.compile_head!(name, fn, key)
+    Eval.compile_head!(name, fn, key, space)   # 4-arg: arms the staleness check (see compile_head!)
     true
 end
 
@@ -392,35 +418,50 @@ shape where a missing substitution would show.
 """
 function _codegen_seam_fn(head::Base.Symbol, fn::Function)
     function (call::Atom, space)
-        args = (call isa Expression && length(call.children) > 1) ?
-               Atom[call.children[i] for i in 2:length(call.children)] : Atom[]
+        args = if (call isa Expression && length(call.children) > 1)
+            Atom[call.children[i] for i in 2:length(call.children)]
+        else
+            Atom[]
+        end
         # THE SINK CONVENTION (`CompilerEmitJuliaCode`): `fn(sink, args)` calls `sink` once per
         # answer. Collecting into a vector here is not a loss of the convention's generality — the
         # SEAM's own contract is `CompiledOk(results, bindings)`, a collect-all shape, so the
         # boundary is where streaming ends. `sink` is passed POSITIONALLY to a `where {S}` method,
         # so Julia specialises on this closure rather than boxing it.
-        rs = Atom[]; bs = Bindings[]
+        rs = Atom[]
+        bs = Bindings[]
         try
-            Base.invokelatest(fn, (r, b) -> (push!(rs, r);
-                                             push!(bs, b === nothing ? Bindings() : b); true),
-                              args, 0)
+            Base.invokelatest(fn,
+                (r, b) -> (push!(rs, r);
+                    push!(bs, b === nothing ? Bindings() : b); true),
+                args, 0)
         catch e
             # 🔴 THE DEPTH BUDGET FIRED. Generated code raises this BEFORE the stack runs out,
             # because a `StackOverflowError` is not catchable in any way code may depend on — Julia
             # itself says "program state may be corrupted". The backtrace is recorded rather than
             # swallowed: a silent fallback is the invisible-decline class this tree keeps hitting.
             e isa CompiledDepthExceeded || rethrow()
-            @warn "compiled lane declined a call at its depth budget" head=e.head depth=e.depth
+            # 🔴 RETURN `nothing` — HAND THE CALL BACK TO THE INTERPRETER. `compiled_head`'s own
+            # contract is `Union{CompiledOk, ExecNoReduce, Nothing}` with "`nothing` = no compiled
+            # implementation, so the caller runs its ordinary `(= …)` query" (`Eval.jl:748`), and
+            # `rule_results:714` falls through on it. An earlier version of this comment claimed the
+            # seam had "no third outcome" and returned a terminal error atom instead — which turned
+            # a call that used to ANSWER in the interpreter into an error the moment the lane went
+            # on by default. That was a regression introduced by the default flip, not a limitation.
+            # This is CeTTa's classification: an exhausted stack is a RETRYABLE control failure, not
+            # a semantic verdict (`eval.c:15930`). Sound to re-run because impure ops are excluded.
+            @warn "compiled lane hit its call-depth budget — interpreting this head instead" head=e.head depth=e.depth
             for fr in stacktrace(catch_backtrace())[1:min(6, end)]
                 @debug "  at" fr
             end
-            # `StackOverflow` is CeTTa's interned reason symbol for this (`eval.c:241`); leading
-            # with it keeps the name upstream's. CeTTa treats the fault as RETRYABLE rather than
-            # terminal — see `_MAX_CALL_DEPTH`'s note; we have no decline-to-interpreter channel yet.
-            return CompiledOk(Atom[Eval.error_atom(call, string(
-                        "StackOverflow: compiled head `", e.head,
-                        "` exceeded the call-depth budget (", e.depth, ")"))],
-                      Bindings[Bindings()])
+            # SESSION-SCOPED, and counted rather than silent — see `Eval.COMPILED_INTERPRET_ONLY`.
+            # Per-evaluation scoping is unsound because `metta_run` is RE-ENTERED at
+            # `_REDUCE_DEPTH == 0` from inside an evaluation, which drops a live mark and lets the
+            # fault repeat down the whole tree. (An earlier note here blamed a suite memory runaway
+            # for this; that attribution was refuted — see `COMPILED_INTERPRET_ONLY`.)
+            Eval.COMPILED_FALLBACK_DEPTH[] += 1
+            push!(Eval.COMPILED_INTERPRET_ONLY, e.head)
+            return nothing
         end
         isempty(rs) && return ExecNoReduce()
         CompiledOk(rs, bs)

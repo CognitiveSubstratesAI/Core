@@ -36,9 +36,12 @@ const _CGC = MeTTaCore.CompilerEmitJuliaCode
 
 "Parse → lower → A-normalise."
 function _cg_clauses(sp, text::AbstractString)
-    toks = Eval.tokenize(text); i = Ref(1); atoms = _CGV.Atom[]
+    toks = Eval.tokenize(text)
+    i = Ref(1)
+    atoms = _CGV.Atom[]
     while i[] <= length(toks)
-        toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+        toks[i[]] == "!" && (i[] += 1)
+        i[] > length(toks) && break
         push!(atoms, Eval.parse_from(toks, i, sp.tokens))
     end
     _CGA.translate_program(_CGF.lower_program(atoms))
@@ -46,24 +49,27 @@ end
 
 "A-normal clauses for ONE head, in source order."
 function _cg_head(text::AbstractString, name::Base.Symbol)
-    sp = Eval.Space(); load_core_stdlib!(sp)
+    sp = Eval.Space()
+    load_core_stdlib!(sp)
     [c for c in _cg_clauses(sp, text) if c.name === name]
 end
 
 "Answers for `q` from COMPILED code only — rules are never loaded into the query space."
 function _cg_ask(prog::AbstractString, q::AbstractString)
-    sp = Eval.Space(); load_core_stdlib!(sp)
+    sp = Eval.Space()
+    load_core_stdlib!(sp)
     was = _CGE.CODEGEN_ENABLED[]
     _CGE.CODEGEN_ENABLED[] = true
     local heads, native
     try
-        heads  = _CGE.emit_julia_program(_cg_clauses(sp, prog))
+        heads = _CGE.emit_julia_program(_cg_clauses(sp, prog))
         native = _CGE.CODEGEN_NATIVE_HEADS[]
     finally
         _CGE.CODEGEN_ENABLED[] = was
     end
     Eval.uncompile_all!()
-    s2 = Eval.Space(); load_core_stdlib!(s2)          # ← rules deliberately NOT loaded
+    s2 = Eval.Space()
+    load_core_stdlib!(s2)          # ← rules deliberately NOT loaded
     for (h, fn) in heads
         Eval.compile_head!(h, fn, UInt64(1))
     end
@@ -75,7 +81,8 @@ end
 "The same query through the INTERPRETER, rules loaded normally."
 function _cg_interp(prog::AbstractString, q::AbstractString)
     Eval.uncompile_all!()
-    s = Eval.Space(); load_core_stdlib!(s)
+    s = Eval.Space()
+    load_core_stdlib!(s)
     load_metta!(s, prog)
     res = load_metta!(s, q)
     sort!([string(x) for y in res for x in (y isa AbstractVector ? y : [y])])
@@ -86,6 +93,11 @@ end
 const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
 
 @testset "native codegen — the multi-result calling convention" begin
+
+    # This file asserts that compiled heads FIRE. `COMPILED_INTERPRET_ONLY` is a session-scoped
+    # veto that silently sends a head to the interpreter instead, so an entry left by any earlier
+    # file would turn these tests into false failures. Start from a known state.
+    empty!(Eval.COMPILED_INTERPRET_ONLY)
 
     @testset "🔴 a two-equation head COMPILES (it declined entirely before)" begin
         cls = _cg_head(_CG_TWO, :g)
@@ -98,7 +110,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test fn !== nothing
 
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)], 0) == true
+        @test Base.invokelatest(
+            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)], 0
+        ) == true
         @test sort!(string.(got)) == ["2", "tagged"]
 
         # 🔴 `NotReducible` IS AN ANSWER. `+` cannot reduce `(+ foo 1)`, and MeTTa's answer for that
@@ -108,7 +122,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # interpreter on its first run and that is what corrected it. The old shape was worse than
         # either: `return nothing` from a function the seam annotated `::Vector{Atom}`, a TypeError.
         got2 = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")], 0) == true
+        @test Base.invokelatest(
+            fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")], 0
+        ) == true
         @test sort!(string.(got2)) == ["(+ foo 1)", "tagged"]
     end
 
@@ -116,7 +132,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
         got = _CGV.Atom[]
         # `false` on the FIRST answer: the producer must not run the second clause.
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)], 0) == false
+        @test Base.invokelatest(
+            fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)], 0
+        ) == false
         @test length(got) == 1
     end
 
@@ -147,7 +165,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test _CGC.codegen_head(:outer, _cg_head(prog, :outer)) === nothing
         # Told that `inner` compiles, it must take it.
         @test _CGC.codegen_head(:outer, _cg_head(prog, :outer),
-                                Set([:inner])) !== nothing
+            Set([:inner])) !== nothing
         compiled, native = _cg_ask(prog, "!(outer 20)\n")
         interp = _cg_interp(prog, "!(outer 20)\n")
         @test native >= 2                         # BOTH heads native, not just the leaf
@@ -169,11 +187,15 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:inc, cls)
         @test fn !== nothing
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)], 0) == true
+        @test Base.invokelatest(
+            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)], 0
+        ) == true
         @test string.(got) == ["42"]
         # The det path must residualise too, not answer zero times — same rule as above.
         res = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")], 0) == true
+        @test Base.invokelatest(
+            fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")], 0
+        ) == true
         @test string.(res) == ["(+ foo 1)"]
     end
 
@@ -198,7 +220,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:countdown, cls)
         @test fn !== nothing
         got = _CGV.Atom[]
-        @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)], 0) == true
+        @test Base.invokelatest(
+            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)], 0
+        ) == true
         @test string.(got) == ["done"]               # 200 recursive calls, one answer
         # and the same answer through the interpreter, which is the only authority on what it is
         @test _cg_interp(prog, "!(countdown 200)\n") == ["done"]
@@ -214,7 +238,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             @test_broken false   # records that the form is not yet reaching codegen, with the reason visible
         else
             got = _CGV.Atom[]
-            @test Base.invokelatest(fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)], 0) == true
+            @test Base.invokelatest(
+                fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)], 0
+            ) == true
             @test sort!(string.(got)) == ["5", "7", "9"]
         end
     end
@@ -230,13 +256,14 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
         seen = Any[]
         @test Base.invokelatest(fn, (r, b) -> (push!(seen, (r, b)); true),
-                                _CGV.Atom[_CGV.Grounded(1)], 0) == true
+            _CGV.Atom[_CGV.Grounded(1)], 0) == true
         @test length(seen) == 2
         @test all(x -> x[2] === nothing, seen)      # today: positional binding, so no bindings
 
         # and the SEAM turns that `nothing` into a real empty `Bindings`, one per answer, because
         # `CompiledOk` is what `rule_results` substitutes through.
-        was = _CGE.CODEGEN_ENABLED[]; _CGE.CODEGEN_ENABLED[] = true
+        was = _CGE.CODEGEN_ENABLED[]
+        _CGE.CODEGEN_ENABLED[] = true
         try
             heads = _CGE.emit_julia_program(_cg_clauses(Eval.Space(), _CG_TWO))
             @test haskey(heads, :g)
@@ -281,9 +308,17 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             # simply refusing everything
             n = Ref(0)
             @test Base.invokelatest(fn, (r, b) -> (n[] += 1; true),
-                                    _CGV.Atom[_CGV.Grounded(5)], 0) == true
+                _CGV.Atom[_CGV.Grounded(5)], 0) == true
             @test n[] == 7
         finally
+            # 🔴 `COMPILED_INTERPRET_ONLY` IS SESSION-SCOPED AND THE BUDGET FAULT WRITES TO IT.
+            # MEASURED 2026-09-26: after this file ran once in a warm daemon the set still held
+            # `Set([:down])`, and a SECOND run in the same process failed two assertions here
+            # (`fired(:down) == 0`) because the seam now refuses the head before ever reaching it.
+            # A fresh-process shard never sees it, which is why a sharded run stays green — but the
+            # set is global for the whole run, so leaving `:down` in it silently demotes ANY later
+            # file's `down` head to the interpreter. Whoever poisons it clears it.
+            empty!(Eval.COMPILED_INTERPRET_ONLY)
             _CGC._MAX_CALL_DEPTH[] = was
         end
     end
@@ -295,12 +330,58 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         prog = "(= (inner \$x) (+ \$x 1))\n(= (outer \$y) (inner \$y))\n"
         fn = _CGC.codegen_head(:outer, _cg_head(prog, :outer), Set([:inner]))
         @test fn !== nothing
-        got = _CGV.Atom[]; binds = Any[]
+        got = _CGV.Atom[]
+        binds = Any[]
         @test Base.invokelatest(fn, (r, b) -> (push!(got, r); push!(binds, b); true),
-                                _CGV.Atom[Eval.freshvar("q")], 0) == true
+            _CGV.Atom[Eval.freshvar("q")], 0) == true
         @test length(got) == 1
         @test occursin("+", string(got[1]))        # NotReducible ⇒ the residual term, not a crash
         @test all(b -> b === nothing, binds)       # and no binding was produced to lose
+    end
+
+    @testset "🔴 PAST THE BUDGET THE CALL STILL ANSWERS — the fault hands back to the interpreter" begin
+        # THE DEFAULT FLIP INTRODUCED THIS REGRESSION AND THIS TEST IS THE GATE ON IT. When the
+        # seam returned a terminal error atom, a call that used to ANSWER in the interpreter began
+        # returning `StackOverflow` the moment it went past the budget. `compiled_head`'s contract
+        # always had the channel — `Union{CompiledOk, ExecNoReduce, Nothing}`, "`nothing` = no
+        # compiled implementation, so the caller runs its ordinary `(= …)` query" (`Eval.jl:748`),
+        # and `rule_results:714` falls through on it. That is CeTTa's classification too: an
+        # exhausted stack is a RETRYABLE control failure, not a semantic verdict (`eval.c:15930`).
+        #
+        # 🔴 DRIVEN THROUGH `(compile-head …)`, WHICH IS THE ONLY PRODUCTION TRIGGER (`Eval.jl:2450`
+        # is the single caller of the JIT hook). An earlier version of this test set
+        # `CODEGEN_ENABLED` and called the head directly; `CODEGEN_NATIVE_HEADS` was 0 throughout
+        # and the whole thing was VACUOUS — the lane never engaged.
+        prog = "(= (down \$n) (if (== \$n 0) done (down (- \$n 1))))\n(= (down \$n) tag)\n"
+        was = _CGC._MAX_CALL_DEPTH[]
+        steps = Eval.interpret_max_steps!(0)     # the STEP budget is a separate, pre-existing limit
+        try
+            _CGC._MAX_CALL_DEPTH[] = 25          # tiny, so the fault is GUARANTEED to fire
+            Eval.uncompile_all!()
+            s1 = Eval.Space()
+            load_core_stdlib!(s1)
+            load_metta!(s1, prog)
+            @test occursin("True", string(load_metta!(s1, "!(compile-head down)\n")))
+            @test Eval.is_compiled(:down)        # ANTI-VACUITY: the lane really took the head
+            on = load_metta!(s1, "!(down 300)\n")
+            @test Eval.fired(:down) > 0          # ANTI-VACUITY: and it really ran
+            ons = sort!([string(x) for y in on for x in (y isa AbstractVector ? y : [y])])
+
+            Eval.uncompile_all!()
+            s2 = Eval.Space()
+            load_core_stdlib!(s2)
+            load_metta!(s2, prog)
+            off = load_metta!(s2, "!(down 300)\n")
+            offs = sort!([string(x) for y in off for x in (y isa AbstractVector ? y : [y])])
+
+            @test length(offs) == 302            # ANTI-VACUITY: 302 answers to lose, not 1
+            @test ons == offs                    # the fault cost NO answers
+            @test !any(x -> occursin("Error", x), ons)   # and produced NO error atom
+        finally
+            empty!(Eval.COMPILED_INTERPRET_ONLY)   # see the note above — session-scoped, must be cleared
+            _CGC._MAX_CALL_DEPTH[] = was
+            Eval.interpret_max_steps!(steps)
+        end
     end
 
     @testset "🔴 CENSUS GATE — no op outside `_NONDET_OPS` may answer with != 1 result" begin
@@ -309,15 +390,19 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # multi-valued op registered later would make `_det` drop answers SILENTLY. So the census is
         # re-run here rather than recorded in a comment that rots:
         # `[[feedback_enforcement_works_prose_memory_does_not]]`.
-        G(x) = _CGV.Grounded(x); Sy(x) = _CGV.Sym(x)
+        G(x) = _CGV.Grounded(x)
+        Sy(x) = _CGV.Sym(x)
         E(xs...) = _CGV.Expression(_CGV.Atom[xs...])
-        probes = [_CGV.Atom[], _CGV.Atom[G(1)], _CGV.Atom[G(1), G(2)], _CGV.Atom[G(1), G(2), G(3)],
-                  _CGV.Atom[E(G(1), G(2), G(3))], _CGV.Atom[E(G(1), G(2)), E(G(2), G(3))],
-                  _CGV.Atom[Sy("a")], _CGV.Atom[Sy("a"), Sy("b")],
-                  _CGV.Atom[E(Sy("a"), Sy("b")), Sy("a")], _CGV.Atom[G(1), E(G(1), G(2))]]
-        skip = Set(["println!", "trace!", "table!", "change-state!", "new-space", "fork-space",
-                    "new-mork-space"])
-        checked = 0; offenders = String[]
+        probes = [_CGV.Atom[], _CGV.Atom[G(1)], _CGV.Atom[G(1), G(2)],
+            _CGV.Atom[G(1), G(2), G(3)],
+            _CGV.Atom[E(G(1), G(2), G(3))], _CGV.Atom[E(G(1), G(2)), E(G(2), G(3))],
+            _CGV.Atom[Sy("a")], _CGV.Atom[Sy("a"), Sy("b")],
+            _CGV.Atom[E(Sy("a"), Sy("b")), Sy("a")], _CGV.Atom[G(1), E(G(1), G(2))]]
+        skip = Set(["println!", "trace!", "table!", "change-state!", "new-space",
+            "fork-space",
+            "new-mork-space"])
+        checked = 0
+        offenders = String[]
         for (k, v) in Eval.TOKEN_REGISTRY
             (v isa _CGV.Grounded && v.value isa Eval.Operation) || continue
             k in skip && continue
@@ -325,13 +410,107 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             for a in probes
                 try
                     r = v.value.fn(a)
-                    if r isa Eval.ExecOk && length(r.results) != 1 && !(k in _CGC._NONDET_OPS)
+                    if r isa Eval.ExecOk && length(r.results) != 1 &&
+                        !(k in _CGC._NONDET_OPS)
                         push!(offenders, string(k, " -> ", length(r.results)))
                     end
-                catch; end
+                catch
+                end
             end
         end
         @test checked > 50                      # ANTI-VACUITY: a census that found nothing passes
         @test unique!(offenders) == String[]
+    end
+
+    # ─── THE REGISTRY'S STALENESS GATE ──────────────────────────────────────────────────────────
+    # MEASURED 2026-09-26 by grepping all of `test/`: **NOTHING referenced `COMPILED_FALLBACK_STALE`
+    # or registered a head through the 4-arg `compile_head!`.** The gate that decides whether a
+    # compiled closure may answer AT ALL had no test, so the three cases below are its first.
+    #
+    # Every other test in this file registers with the 3-arg form, which stamps `revision = -1`
+    # ("provenance unknown") and SKIPS the gate entirely — they cannot exercise it even by accident.
+
+    # Emit `prog`'s heads natively; returns the (head, fn) pairs.
+    function _cg_emit(prog::AbstractString)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
+        was = _CGE.CODEGEN_ENABLED[]
+        _CGE.CODEGEN_ENABLED[] = true
+        try
+            return _CGE.emit_julia_program(_cg_clauses(sp, prog))
+        finally
+            _CGE.CODEGEN_ENABLED[] = was
+        end
+    end
+
+    function _cg_lookup(heads, name)
+        for (h, fn) in heads
+            h === name && return fn
+        end
+        nothing
+    end
+
+    # A fresh space with the stdlib AND `prog` loaded — the shape production registers against.
+    function _cg_loaded(prog::AbstractString)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
+        load_metta!(sp, prog)
+        sp
+    end
+
+    _cg_answers(sp, q) =
+        sort!([string(x) for y in load_metta!(sp, q) for x in (y isa AbstractVector ? y : [y])])
+
+    _CG_FA = "(= (f \$x) (+ \$x 1))\n"
+    _CG_FB = "(= (f \$x) (+ \$x 100))\n"
+
+    @testset "POSITIVE CONTROL — in its OWN space the gated head still answers, from compiled code" begin
+        Eval.uncompile_all!()
+        fn = _cg_lookup(_cg_emit(_CG_FA), :f)
+        @test fn !== nothing                         # ANTI-VACUITY: `f` really did compile natively
+        sp = _cg_loaded(_CG_FA)
+        Eval.compile_head!(:f, fn, Eval._head_clause_hash(sp, :f), sp)
+        ans = _cg_answers(sp, "!(f 1)")
+        @test ans == ["2"]
+        # 🔴 THE DISCRIMINATOR. `sp` holds the rule too, so the INTERPRETER would also answer "2".
+        # Only `fired` distinguishes "the compiled lane ran" from "the gate rejected it and the
+        # interpreter quietly covered for it" — without this the two tests below prove nothing,
+        # because a gate that rejects EVERYTHING passes them both.
+        @test Eval.fired(:f) > 0
+        Eval.uncompile_all!()
+    end
+
+    @testset "🔴 ANOTHER SPACE'S HEAD — a closure compiled for A must not answer B" begin
+        Eval.uncompile_all!()
+        fn = _cg_lookup(_cg_emit(_CG_FA), :f)
+        spA = _cg_loaded(_CG_FA)
+        Eval.compile_head!(:f, fn, Eval._head_clause_hash(spA, :f), spA)
+        # B carries a DIFFERENT `f` and an extra atom, so its revision differs and the hash check runs.
+        spB = _cg_loaded(_CG_FB * "(= (marker) 1)\n")
+        @test spA.revision != spB.revision           # ANTI-VACUITY: this is the differing-revision path
+        before = Eval.COMPILED_FALLBACK_STALE[]
+        @test _cg_answers(spB, "!(f 1)") == ["101"]  # B's OWN rule, not A's "2"
+        @test Eval.COMPILED_FALLBACK_STALE[] > before
+        Eval.uncompile_all!()
+    end
+
+    @testset "🔴 EQUAL REVISIONS, DIFFERENT SPACES — identity is the stamp, the counter is not" begin
+        # THE BUG THIS EXISTS FOR. `revision` is a per-space counter and every space starts it at the
+        # same value, so two spaces with equally many writes hold EQUAL revisions. Gating on the
+        # counter alone read that as "nothing changed", skipped the hash, and answered B with A's
+        # compiled code — reintroducing the very cross-space leak the gate was added to close.
+        Eval.uncompile_all!()
+        fn = _cg_lookup(_cg_emit(_CG_FA), :f)
+        spA = _cg_loaded(_CG_FA)
+        spB = _cg_loaded(_CG_FB)                     # same write count, different `f`
+        # 🔴 WITHOUT THIS THE TEST IS A ZERO CASE: if the revisions happened to differ, the plain
+        # hash path above would catch the leak and this test would pass without ever reaching the
+        # identity check it is named for.
+        @test spA.revision == spB.revision
+        Eval.compile_head!(:f, fn, Eval._head_clause_hash(spA, :f), spA)
+        before = Eval.COMPILED_FALLBACK_STALE[]
+        @test _cg_answers(spB, "!(f 1)") == ["101"]  # was ["2"] — A's closure answering B
+        @test Eval.COMPILED_FALLBACK_STALE[] > before
+        Eval.uncompile_all!()
     end
 end

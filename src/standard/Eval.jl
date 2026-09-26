@@ -621,11 +621,33 @@ mutable struct CompiledHead
     fn::Function              # (args::Vector{Atom}, space) -> Union{CompiledOk, ExecNoReduce}
     clause_hash::UInt64
     fired::Int
+    # 🔴 THE SPACE'S `revision` AT REGISTRATION, OR -1 FOR "PROVENANCE UNKNOWN".
+    # `clause_hash` alone cannot be CHECKED at lookup without rescanning the space, and doing that
+    # per call put an O(all_atoms) walk on the hot path (see `compiled_head`). The revision is the
+    # cheap gate: unchanged revision ⇒ the clause set CANNOT have changed ⇒ no rescan needed.
+    # -1 means the caller registered without naming a space, so there is nothing to compare against
+    # and the check is skipped — that is the hand-registration path used by tests.
+    revision::Int
+    # 🔴 WHICH SPACE THAT `revision` COUNTS. A REVISION ALONE IS NOT AN IDENTITY: it is a per-space
+    # counter that every space starts at the same value, so two DIFFERENT spaces with the same
+    # number of writes carry EQUAL revisions. Gating on the revision alone therefore reopens the
+    # very cross-space hole the gate exists to close — a head compiled for space A, called from a
+    # same-aged space B, compares "unchanged", skips the hash, and answers B with A's code.
+    # Identity + revision together is the same stamp `Tabling._ANSWER_STAMP` already uses.
+    #
+    # WeakRef, not `objectid`: `objectid` of a mutable object is its ADDRESS, which Julia may reuse
+    # after a collection, so a fresh space could inherit a dead one's id AND its revision. A WeakRef
+    # compares the object itself (`=== space` cannot lie) and, being weak, never keeps a dead space
+    # alive through the registry. A collected space reads back as `nothing`, matches nothing, and
+    # falls through to the hash check — the safe direction.
+    space::WeakRef
 end
-CompiledHead(fn::Function, h::UInt64) = CompiledHead(fn, h, 0)
+CompiledHead(fn::Function, h::UInt64, rev::Int = -1, space = nothing) =
+    CompiledHead(fn, h, 0, rev, WeakRef(space))
 
 "How many times head `name`'s closure has been INVOKED. 0 ⇒ the seam never reached it."
-fired(name::Base.Symbol) = (ch = get(_COMPILED_HEADS, name, nothing); ch === nothing ? 0 : ch.fired)
+fired(name::Base.Symbol) =
+    (ch=get(_COMPILED_HEADS, name, nothing); ch === nothing ? 0 : ch.fired)
 
 # head NAME -> its compiled closure. Keyed by the head's clause-set hash, NOT by `space.revision`:
 # a closure never inlines `match` results (every `match` inside it runs LIVE), so adding a FACT
@@ -654,9 +676,18 @@ const _JIT_DECLINED = Ref(0)
 jit_declined() = _JIT_DECLINED[]
 reset_jit_declined!() = (_JIT_DECLINED[] = 0)
 
-"Register `fn` as the compiled implementation of head `name`, valid while its clause set hashes to `h`."
+"""
+Register `fn` as the compiled implementation of head `name`, valid while its clause set hashes to `h`.
+
+`space` is optional ONLY because tests hand-register a closure for a head whose rules are
+deliberately absent from the query space — there is no clause set to hash, so there is nothing to
+validate and `compiled_head` skips the check. Every production caller (`jit_head!`) passes it, and
+passing it is what arms the staleness check.
+"""
 compile_head!(name::Base.Symbol, fn::Function, h::UInt64) =
-    (_COMPILED_HEADS[name] = CompiledHead(fn, h); nothing)
+    (_COMPILED_HEADS[name]=CompiledHead(fn, h, -1); nothing)
+compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space) =
+    (_COMPILED_HEADS[name]=CompiledHead(fn, h, space.revision, space); nothing)
 uncompile_head!(name::Base.Symbol) = (delete!(_COMPILED_HEADS, name); nothing)
 uncompile_all!() = (empty!(_COMPILED_HEADS); nothing)
 is_compiled(name::Base.Symbol) = haskey(_COMPILED_HEADS, name)
@@ -731,7 +762,8 @@ function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindin
     end
     space === nothing && return out
     X = freshvar("X")
-    for qb in query(space::Space, Expression(Sym("="), call, X)), mb in merge_bindings(b, qb)
+    for qb in query(space::Space, Expression(Sym("="), call, X)),
+        mb in merge_bindings(b, qb)
         # resolve-filter (hyperon interpreter.rs query:619): drop a match whose rewrite-RHS X is
         # TRULY unbound — a bare variable space atom binds itself to the `(= …)` query and would
         # leak as a spurious `$X`. `is_present` NOT `resolve===nothing`: X equated to another var
@@ -740,6 +772,64 @@ function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindin
         push!(out, (subst(X, mb), mb))
     end
     out
+end
+
+# 🔴 HEADS WHOSE COMPILED LANE FAULTED ON ITS CALL-DEPTH BUDGET. **SESSION-SCOPED, DELIBERATELY.**
+# Without a mark the retry is quadratic: the interpreter takes the outer level, every INNER call
+# reaches the compiled lane again with its depth reset to 0, recurses another budget's worth and
+# faults again — depth x budget of wasted work.
+#
+# 🔴 IT WAS PER-EVALUATION FIRST, AND THAT IS UNSOUND FOR A REASON VISIBLE IN THE CODE: the clear
+# sat in `metta_run` behind `_REDUCE_DEPTH == 0`, but `metta_run` IS RE-ENTERED at depth 0 from
+# inside an evaluation (a grounded op calling it, e.g. `Eval.jl`'s `metta_run(xs[1], space)`). A
+# re-entry therefore DROPS A LIVE MARK mid-tree and lets the fault repeat at every level below it —
+# the quadratic retry the mark exists to prevent. Session scope removes the question entirely.
+#
+# ⚠️ AN EARLIER VERSION OF THIS COMMENT BLAMED A SUITE MEMORY RUNAWAY (21.8 GB of 23 GB) ON THE
+# PER-EVALUATION SCOPING. THAT ATTRIBUTION WAS REFUTED and is recorded here so it is not revived:
+# the runaway reproduces with `CODEGEN_ENABLED = false`, where no head is compiled, no depth fault
+# can fire and no retry exists. Its real shape is one test file whose WORK is history-dependent
+# (`test_answer_substitution_cyclic.jl`: 824 MB alone, 6.6 GB+ after the tabling block, with
+# retention across the preceding files measured FLAT). Five causes were asserted and refuted on that
+# question before a controlled run settled it — see COMPILER_PLAN CHUNK-010. The argument for
+# session scope is the re-entry above, which needs no appeal to that incident at all.
+#
+# THE COST IS REAL AND IS COUNTED, NOT HIDDEN: a head that faults once is interpreted for the rest
+# of the session. `COMPILED_FALLBACK_DEPTH` is how often that happened, so the loss shows up in a
+# number instead of silently. The structural fix is an explicit continuation stack for compiled
+# code — SWI, CeTTa and our own interpreter all keep recursion off the host stack — after which
+# neither the budget nor this mark is needed.
+const COMPILED_INTERPRET_ONLY = Set{Symbol}()
+
+"How many times a compiled head gave up at its call-depth budget and handed the call back."
+const COMPILED_FALLBACK_DEPTH = Ref(0)
+"How many times a lookup found a STALE compilation (clause set changed under it)."
+const COMPILED_FALLBACK_STALE = Ref(0)
+
+"Clear the session's compiled-lane fallback state. For tests and benchmarks."
+function reset_compiled_fallbacks!()
+    empty!(COMPILED_INTERPRET_ONLY)
+    COMPILED_FALLBACK_DEPTH[] = 0
+    COMPILED_FALLBACK_STALE[] = 0
+    nothing
+end
+
+"""
+The hash `jit_head!` stores: taken over the head's OWN rule atoms, in `all_atoms` order, so an
+unrelated `add-atom` does not disturb it. Must stay byte-for-byte the same computation as
+`EmitJulia.jit_head!`'s `key = hash(rules)` or every lookup reads as stale.
+"""
+function _head_clause_hash(space, name::Symbol)::UInt64
+    rules = Atom[]
+    for a in all_atoms(space)
+        a isa Expression && length(a.children) == 3 || continue
+        h = a.children[1]
+        (h isa Sym && String(h.name) == "=") || continue
+        lhs = a.children[2]
+        hd = lhs isa Expression && !isempty(lhs.children) ? lhs.children[1] : lhs
+        (hd isa Sym && Symbol(hd.name) === name) && push!(rules, a)
+    end
+    hash(rules)
 end
 
 """
@@ -757,8 +847,43 @@ function compiled_head(to_eval::Atom, space)
     (to_eval isa Expression && !isempty(to_eval.children)) || return nothing
     h = to_eval.children[1]
     h isa Sym || return nothing
-    ch = get(_COMPILED_HEADS, Base.Symbol(h.name), nothing)
+    hn = Base.Symbol(h.name)
+    # the compiled lane already gave up on this head in this evaluation — see COMPILED_INTERPRET_ONLY
+    (!isempty(COMPILED_INTERPRET_ONLY) && hn in COMPILED_INTERPRET_ONLY) && return nothing
+    ch = get(_COMPILED_HEADS, hn, nothing)
     ch === nothing && return nothing
+    # 🔴 THE STORED CLAUSE HASH IS CHECKED, BUT **GATED ON `revision`**, AND THE GATE IS THE POINT.
+    # `CompiledHead.clause_hash` always existed and the comment above `_COMPILED_HEADS` always said
+    # the registry is "keyed by the head's clause-set hash" — yet the lookup only matched the NAME,
+    # so the field was documentation, not enforcement. A head compiled for one program could answer
+    # a same-named head in another space.
+    #
+    # ⚠️ THE FIRST FIX FOR THAT WAS WORSE THAN THE BUG: it called `_head_clause_hash` on EVERY
+    # lookup, which walks `all_atoms(space)` — an O(atoms) scan on the hot path of every MeTTa
+    # evaluation, directly under the comment at the top of this function saying this "must cost
+    # nothing until one exists". It also broke every hand-registration (5 call sites, 3 suite files).
+    #
+    # `space.revision` is a monotonic counter bumped on EVERY add/remove, so WITHIN ONE SPACE an
+    # unchanged revision PROVES the clause set is unchanged: skip the scan entirely, at the cost of
+    # one Int compare. Only when it moves do we pay the hash — and on a match we re-stamp, so the
+    # next call is cheap again. This keeps the precise invalidation the registry's own comment
+    # argues for (a revision KEY would recompile on every unrelated `add-atom`; a GATE does not).
+    #
+    # 🔴 "WITHIN ONE SPACE" IS LOAD-BEARING, AND GATING ON THE REVISION ALONE GOT IT WRONG. Every
+    # space starts its counter at the same value, so two DIFFERENT spaces with equally many writes
+    # have EQUAL revisions — and the equality then read as "nothing changed" and skipped the hash,
+    # letting space A's compiled code answer space B's head. That is the exact bug the gate was
+    # added to fix, reintroduced by the fix. Identity must be part of the stamp: a DIFFERENT space
+    # always pays the hash once, whatever its revision says (see `CompiledHead.space`).
+    if ch.revision >= 0 && !(ch.space.value === space && ch.revision == space.revision)
+        if ch.clause_hash != _head_clause_hash(space, hn)
+            COMPILED_FALLBACK_STALE[] += 1
+            return nothing
+        end
+        # identical clauses ⇒ the closure IS valid here: adopt this space so later calls skip the scan
+        ch.revision = space.revision
+        ch.space    = WeakRef(space)
+    end
     ch.fired += 1                      # anti-vacuity: see CompiledHead's docstring
     # 🔴 PASS `to_eval` ITSELF, NOT `children[2:end]`. Handing the closure only the ARGS forces it to
     # REBUILD the call, and the rebuild loses shape: a ZERO-ARG call `(d)` has no children past the
@@ -987,7 +1112,7 @@ function add_atom!(s::Space, a::Atom)
         isempty(s.store.arg_index) || empty!(s.store.arg_index)           # …and every JIT argument index
         isempty(s.store.arg_tried) || empty!(s.store.arg_tried)
     end
-    dyn_changed!(k; head = head_name(a), atom = a)         # §7.7: invalidate the tables that READ this bucket
+    dyn_changed!(k; head=head_name(a), atom=a)         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)      # invalidate the arg_actual_types memo for this space
     s
 end
@@ -1004,7 +1129,7 @@ function remove_atom!(s::Space, a::Atom)
         isempty(s.store.arg_index) || empty!(s.store.arg_index)           # …and every JIT argument index
         isempty(s.store.arg_tried) || empty!(s.store.arg_tried)
     end
-    dyn_changed!(k; head = head_name(a), atom = a)         # §7.7: invalidate the tables that READ this bucket
+    dyn_changed!(k; head=head_name(a), atom=a)         # §7.7: invalidate the tables that READ this bucket
     _is_type_decl(a) && (s.type_epoch += 1)
     s
 end
@@ -2626,7 +2751,9 @@ function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     # 🔑 THE JIT ARGUMENT INDEX (pl-index.c bestHash) — `match` used to scan `all_atoms`
     # UNCONDITIONALLY. `index_candidates` returns the full store whenever no index applies, so the
     # unindexed behaviour is bit-identical and this is safe on the hot path.
-    cands = index_candidates(all_atoms(space), space.store.arg_index, space.store.arg_tried, p)
+    cands = index_candidates(
+        all_atoms(space), space.store.arg_index, space.store.arg_tried, p
+    )
     for atom in cands, mb in match_atoms(p, rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))
     end

@@ -59,12 +59,14 @@ list. Building the `Expression` is recursive and the head is its FIRST CHILD, wh
 function _atomexpr(a::IRAtom, vars::Set{Base.Symbol})
     a isa IRVariable && return _local(a)
     a isa IRGrounded && return :(Grounded($(a.value)))
-    a isa IRSymbol   && return :(Sym($(String(a.name))))
+    a isa IRSymbol && return :(Sym($(String(a.name))))
     if a isa IRExpression
-        h = _atomexpr(a.head, vars); h === nothing && return nothing
+        h = _atomexpr(a.head, vars)
+        h === nothing && return nothing
         kids = Any[]
         for x in a.args
-            v = _atomexpr(x, vars); v === nothing && return nothing
+            v = _atomexpr(x, vars)
+            v === nothing && return nothing
             push!(kids, v)
         end
         return :(Expression(Atom[$h, $(kids...)]))
@@ -147,7 +149,7 @@ const _NONDET_OPS = Set(["superpose"])
 # an impure op (`println!`), 0.3%. So the exclusion costs one head and buys a re-runnable lane.
 # `add-atom`, `remove-atom`, `bind!`, `import!` and `auto-table!` are `SpaceOp`s and already decline.
 const _IMPURE_OPS = Set(["println!", "trace!", "table!", "change-state!",
-                         "new-space", "fork-space", "new-mork-space"])
+    "new-space", "fork-space", "new-mork-space"])
 
 # ─── THE DEPTH BUDGET, AND WHY IT IS NOT A `try`/`catch` ON `StackOverflowError` ────────────────
 # 🔴 A STACK OVERFLOW IS NOT CATCHABLE IN ANY WAY CODE MAY DEPEND ON. Julia prints "detected a stack
@@ -212,7 +214,7 @@ struct CompiledDepthExceeded <: Exception
 end
 Base.showerror(io::IO, e::CompiledDepthExceeded) =
     print(io, "compiled head `", e.head, "` exceeded the depth budget (", e.depth,
-              "); the compiled lane declines this call rather than risking a stack overflow")
+        "); the compiled lane declines this call rather than risking a stack overflow")
 
 # ─── `NotReducible` IS AN ANSWER, AND GETTING THAT WRONG LOSES ONE ──────────────────────────────
 # 🔴 MEASURED by this file's own differential, on its first run. `(= (g $x) (+ $x 1))` applied to a
@@ -231,10 +233,13 @@ function _all_goals(gs::Vector{Goal})
     for g in gs
         push!(out, g)
         if g isa GBranch
-            append!(out, _all_goals(g.cond)); append!(out, _all_goals(g.then))
+            append!(out, _all_goals(g.cond))
+            append!(out, _all_goals(g.then))
             append!(out, _all_goals(g.els))
         elseif g isa GDisj
-            for br in g.branches; append!(out, _all_goals(br)); end
+            for br in g.branches
+                append!(out, _all_goals(br))
+            end
         elseif g isa GFindall
             append!(out, _all_goals(g.body))
         end
@@ -262,18 +267,28 @@ function _free_vars(cl::ANClause)
         a isa IRVariable && push!(bound, (a::IRVariable).name)
     end
     for g in _all_goals(cl.goals)
-        o = g isa GCall    ? g.out :
-            g isa GBranch  ? g.out :
-            g isa GDisj    ? g.out :
-            g isa GFindall ? g.out :
-            g isa GUnify   ? g.lhs : nothing
+        o = if g isa GCall
+            g.out
+        elseif g isa GBranch
+            g.out
+        elseif g isa GDisj
+            g.out
+        elseif g isa GFindall
+            g.out
+        elseif g isa GUnify
+            g.lhs
+        else
+            nothing
+        end
         o isa IRVariable && push!(bound, (o::IRVariable).name)
     end
     used = Set{Base.Symbol}()
     _uses!(used, cl.out)
     for g in _all_goals(cl.goals)
         if g isa GCall
-            for a in g.args; _uses!(used, a); end
+            for a in g.args
+                _uses!(used, a)
+            end
         elseif g isa GUnify
             _uses!(used, g.rhs)
         elseif g isa GFindall
@@ -288,7 +303,9 @@ function _uses!(acc::Set{Base.Symbol}, a::IRAtom)
     a isa IRVariable && (push!(acc, (a::IRVariable).name); return acc)
     if a isa IRExpression
         _uses!(acc, (a::IRExpression).head)
-        for x in (a::IRExpression).args; _uses!(acc, x); end
+        for x in (a::IRExpression).args
+            _uses!(acc, x)
+        end
     end
     acc
 end
@@ -304,7 +321,7 @@ function _freshbinds!(vars::Set{Base.Symbol}, cl::ANClause)
 end
 
 "The generated entry name for a head. DETERMINISTIC, so a caller can name a callee not yet built."
-_genname(sym::Base.Symbol) = Base.Symbol("_gen_", sym, "_", string(hash(sym), base=16)[1:6])
+_genname(sym::Base.Symbol) = Base.Symbol("_gen_", sym, "_", string(hash(sym); base=16)[1:6])
 
 "A call to another MeTTa head rather than to a grounded op or to this clause's own head."
 function _is_user_call(g::Goal, selfname::Base.Symbol)
@@ -331,9 +348,11 @@ be deterministic. A call to THIS head is excluded — a one-clause head that onl
 is deterministic by induction, which is what keeps `fib` on the fast path.
 """
 _is_nondet(gs::Vector{Goal}, selfname::Base.Symbol) =
-    any(g -> g isa GDisj || g isa GFindall ||
-             (g isa GCall && String(g.head) in _NONDET_OPS) ||
-             _is_user_call(g, selfname),
+    any(
+        g ->
+            g isa GDisj || g isa GFindall ||
+            (g isa GCall && String(g.head) in _NONDET_OPS) ||
+            _is_user_call(g, selfname),
         _all_goals(gs))
 
 # ⚠️ THE REST OF THE CLAUSE IS GENERATED INSIDE EACH ARM OR BRANCH, so it is DUPLICATED per arm and
@@ -353,7 +372,8 @@ function _gen_test(cond::Vector{Goal}, vars::Set{Base.Symbol})
     ex = nothing
     for c in cond
         c isa GUnify || return nothing
-        l = _atomexpr(c.lhs, vars); r = _atomexpr(c.rhs, vars)
+        l = _atomexpr(c.lhs, vars)
+        r = _atomexpr(c.rhs, vars)
         (l === nothing || r === nothing) && return nothing
         t = :($l == $r)
         ex = ex === nothing ? t : :($ex && $t)
@@ -372,7 +392,8 @@ function _gcall_parts(g::GCall, vars::Set{Base.Symbol})
     (op isa Grounded && op.value isa Operation) || return nothing   # not grounded ⇒ decline
     as = Any[]
     for a in g.args
-        v = _atomexpr(a, vars); v === nothing && return nothing
+        v = _atomexpr(a, vars)
+        v === nothing && return nothing
         push!(as, v)
     end
     n = string(g.head, "_", length(vars))
@@ -389,20 +410,28 @@ Generate goals `k..end` with the clause's answer delivered to `_sink` inside eve
 Returns `nothing` if anything is out of scope. `vars` is MUTATED along a path and COPIED into each
 `GBranch` arm, because the arms bind different names.
 """
-function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::IRAtom, dup::Int,
-                  selfname::Base.Symbol, fname::Base.Symbol, compilable::Set{Base.Symbol})
+function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::IRAtom,
+    dup::Int,
+    selfname::Base.Symbol, fname::Base.Symbol, compilable::Set{Base.Symbol})
     if k > length(goals)
-        ox = _atomexpr(out_ir, vars); ox === nothing && return nothing
+        ox = _atomexpr(out_ir, vars)
+        ox === nothing && return nothing
         # `||` and not `&&`: a sink answering `false` means STOP, and it must propagate out of every
         # enclosing loop rather than merely ending this iteration.
-        return Expr(:(||), Expr(:(::), Expr(:call, :_sink, ox, :nothing), :Bool), Expr(:return, false))
+        return Expr(
+            :(||),
+            Expr(:(::), Expr(:call, :_sink, ox, :nothing), :Bool),
+            Expr(:return, false)
+        )
     end
     g = goals[k]
     if g isa GUnify
         (g.lhs isa IRVariable) || return nothing
-        r = _atomexpr(g.rhs, vars); r === nothing && return nothing
+        r = _atomexpr(g.rhs, vars)
+        r === nothing && return nothing
         push!(vars, (g.lhs::IRVariable).name)
-        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable); rest === nothing && return nothing
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable)
+        rest === nothing && return nothing
         return Expr(:block, Expr(:(=), _local(g.lhs), r), rest)
     elseif g isa GCall
         p = _gcall_parts(g, vars)
@@ -416,11 +445,15 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
             # A SELF-CALL LANDS HERE TOO in the loop path, targeting the head's own ENTRY (`fname`)
             # rather than a per-clause function — which is why a multi-clause head may now recurse.
             (g.out isa IRVariable) || return nothing
-            callee = g.head === selfname ? fname :
-                     (g.head in compilable ? _genname(g.head) : return nothing)
+            callee = if g.head === selfname
+                fname
+            else
+                (g.head in compilable ? _genname(g.head) : return nothing)
+            end
             as = Any[]
             for a in g.args
-                v = _atomexpr(a, vars); v === nothing && return nothing
+                v = _atomexpr(a, vars)
+                v === nothing && return nothing
                 push!(as, v)
             end
             push!(vars, (g.out::IRVariable).name)
@@ -430,23 +463,28 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
             # ⚠️ `_b` is the callee's bindings and is DISCARDED here. Sound only while head args are
             # bound POSITIONALLY, so no callee can produce one. Head-argument patterns must merge it.
             closure = Expr(:->, Expr(:tuple, :_r, :_b),
-                           Expr(:block, Expr(:(=), lv, :_r), rest, true))
+                Expr(:block, Expr(:(=), lv, :_r), rest, true))
             return Expr(:(||),
-                        Expr(:call, callee, closure, Expr(:ref, :Atom, as...),
-                             Expr(:call, :+, :_d, 1)),
-                        Expr(:return, false))
+                Expr(:call, callee, closure, Expr(:ref, :Atom, as...),
+                    Expr(:call, :+, :_d, 1)),
+                Expr(:return, false))
         end
         (fn, as, arv, rsv, opname) = p
         push!(vars, (g.out::IRVariable).name)
-        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable); rest === nothing && return nothing
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable)
+        rest === nothing && return nothing
         lv = _local(g.out)
         return quote
             $arv = Atom[$(as...)]
             local $rsv::Vector{Atom}
             let _r = $(fn)($arv)
-                $rsv = _r isa ExecOk        ? _r.results :
-                       _r isa ExecNoReduce  ? Atom[Expression(Atom[Sym($opname), $arv...])] :
-                                              Atom[]
+                $rsv = if _r isa ExecOk
+                    _r.results
+                elseif _r isa ExecNoReduce
+                    Atom[Expression(Atom[Sym($opname), $arv...])]
+                else
+                    Atom[]
+                end
             end
             for $lv in $rsv
                 $rest
@@ -461,14 +499,29 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         # So a `GUnify` means TWO DIFFERENT THINGS BY POSITION: a TEST inside `cond`, an ASSIGNMENT
         # inside an arm. Treating both as assignments made the then-arm always win — `fib(16)`
         # returned 16, instantly, which timing alone would have reported as a 4,000,000x speedup.
-        test = _gen_test(g.cond, vars); test === nothing && return nothing
-        rest = goals[k+1:end]
-        tb = _gen_seq(vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable)
+        test = _gen_test(g.cond, vars)
+        test === nothing && return nothing
+        rest = goals[(k + 1):end]
+        tb = _gen_seq(
+            vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable
+        )
         tb === nothing && return nothing
         # An EMPTY `els` means "no further arm": this PATH yields nothing, which in the sink
         # convention is simply not calling `_sink` — no early return, the other clauses still run.
-        eb = isempty(g.els) ? :(nothing) :
-             _gen_seq(vcat(g.els, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable)
+        eb = if isempty(g.els)
+            :(nothing)
+        else
+            _gen_seq(
+            vcat(g.els, rest),
+            1,
+            copy(vars),
+            out_ir,
+            dup * 2,
+            selfname,
+            fname,
+            compilable
+        )
+        end
         eb === nothing && return nothing
         return Expr(:if, test, tb, eb)
     elseif g isa GDisj
@@ -483,11 +536,11 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         (g.out isa IRVariable) || return nothing
         isempty(g.branches) && return :(nothing)          # no branches ⇒ no answers, not an error
         dup * length(g.branches) > _MAX_DUP && return nothing
-        rest = goals[k+1:end]
+        rest = goals[(k + 1):end]
         blk = Expr(:block)
         for br in g.branches
             bb = _gen_seq(vcat(br, rest), 1, copy(vars), out_ir, dup * length(g.branches),
-                          selfname, fname, compilable)
+                selfname, fname, compilable)
             bb === nothing && return nothing
             push!(blk.args, bb)
         end
@@ -503,10 +556,13 @@ end
 # measurement is not at risk. (It is cheaper than the old shape, which allocated a `Vector{Atom}`
 # per recursive return and then checked its length.)
 
-function _gen_det(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname::Base.Symbol)
+function _gen_det(
+    g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname::Base.Symbol
+)
     if g isa GUnify
         (g.lhs isa IRVariable) || return nothing
-        r = _atomexpr(g.rhs, vars); r === nothing && return nothing
+        r = _atomexpr(g.rhs, vars)
+        r === nothing && return nothing
         push!(vars, (g.lhs::IRVariable).name)
         return :($(_local(g.lhs)) = $r)             # a `let` binding becomes a Julia assignment
     elseif g isa GCall
@@ -514,7 +570,8 @@ function _gen_det(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname:
         if g.head === selfname
             as = Any[]
             for a in g.args
-                v = _atomexpr(a, vars); v === nothing && return nothing
+                v = _atomexpr(a, vars)
+                v === nothing && return nothing
                 push!(as, v)
             end
             push!(vars, (g.out::IRVariable).name)
@@ -526,7 +583,8 @@ function _gen_det(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname:
                 $(_local(g.out)) = $r::Atom
             end
         end
-        p = _gcall_parts(g, vars); p === nothing && return nothing
+        p = _gcall_parts(g, vars)
+        p === nothing && return nothing
         (fn, as, arv, rsv, opname) = p
         push!(vars, (g.out::IRVariable).name)
         lv = _local(g.out)
@@ -547,16 +605,20 @@ function _gen_det(g::Goal, vars::Set{Base.Symbol}, selfname::Base.Symbol, dname:
         end
     elseif g isa GBranch
         (g.out isa IRVariable) || return nothing
-        test = _gen_test(g.cond, vars); test === nothing && return nothing
-        tv = copy(vars); ev = copy(vars)
+        test = _gen_test(g.cond, vars)
+        test === nothing && return nothing
+        tv = copy(vars)
+        ev = copy(vars)
         ts = Expr[]
         for t in g.then
-            x = _gen_det(t, tv, selfname, dname); x === nothing && return nothing
+            x = _gen_det(t, tv, selfname, dname)
+            x === nothing && return nothing
             push!(ts, x)
         end
         es = Expr[]
         for e in g.els
-            x = _gen_det(e, ev, selfname, dname); x === nothing && return nothing
+            x = _gen_det(e, ev, selfname, dname)
+            x === nothing && return nothing
             push!(es, x)
         end
         push!(vars, (g.out::IRVariable).name)
@@ -575,7 +637,7 @@ is the clause's single answer; a runtime decline is `return nothing`. Retained u
 name because it is the unit the deterministic path is built from and tested through.
 """
 function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""),
-                        dname::Base.Symbol=Base.Symbol(""))
+    dname::Base.Symbol=Base.Symbol(""))
     cl.nested_head && return nothing
     _calls_impure(cl.goals) && return nothing      # a re-runnable lane — see `_IMPURE_OPS`
     _is_nondet(cl.goals, selfname) && return nothing
@@ -586,16 +648,18 @@ function codegen_clause(cl::ANClause, selfname::Base.Symbol=Base.Symbol(""),
     end
     stmts = _freshbinds!(vars, cl)          # free variables are minted PER CALL — see above
     for g in cl.goals
-        st = _gen_det(g, vars, selfname, dname); st === nothing && return nothing
+        st = _gen_det(g, vars, selfname, dname)
+        st === nothing && return nothing
         push!(stmts, st)
     end
-    outx = _atomexpr(cl.out, vars); outx === nothing && return nothing
+    outx = _atomexpr(cl.out, vars)
+    outx === nothing && return nothing
     Expr(:block, stmts..., outx)
 end
 
 "The NONDETERMINISTIC body for one clause: `_sink` is called once per answer, then `true`."
 function _codegen_clause_sink(cl::ANClause, selfname::Base.Symbol, fname::Base.Symbol,
-                              compilable::Set{Base.Symbol})
+    compilable::Set{Base.Symbol})
     cl.nested_head && return nothing
     _calls_impure(cl.goals) && return nothing      # a re-runnable lane — see `_IMPURE_OPS`
     vars = Set{Base.Symbol}()
@@ -615,17 +679,23 @@ end
 # it judges it profitable; `@nospecialize` is the documented way to stop it.
 _sinkfn(name::Base.Symbol, body::Expr) =
     Expr(:function,
-         Expr(:call, name,
-              Expr(:macrocall, Base.Symbol("@nospecialize"), LineNumberNode(0, :generated), :_sink),
-              :(_a::Vector{Atom}), :(_d::Int)),
-         body)
+        Expr(:call, name,
+            Expr(
+                :macrocall,
+                Base.Symbol("@nospecialize"),
+                LineNumberNode(0, :generated),
+                :_sink
+            ),
+            :(_a::Vector{Atom}), :(_d::Int)),
+        body)
 
 "`_d > _MAX_CALL_DEPTH && throw(...)` — the budget check generated code opens with."
 _depthguard(name::Base.Symbol) =
     Expr(:(&&), :(_d > _MAX_CALL_DEPTH[]),
-         Expr(:call, :throw, Expr(:call, :CompiledDepthExceeded, QuoteNode(name), :_d)))
+        Expr(:call, :throw, Expr(:call, :CompiledDepthExceeded, QuoteNode(name), :_d)))
 
-_bindargs(head_args) = [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) in enumerate(head_args)]
+_bindargs(head_args) =
+    [Expr(:(=), _local(a::IRVariable), :(_a[$i])) for (i, a) in enumerate(head_args)]
 
 """
     _build_head(name, clauses, compilable) -> Union{Vector{Expr}, Nothing}
@@ -638,7 +708,9 @@ if every head it calls also compiles, and that is not knowable one head at a tim
 starts with all heads as candidates and drops them until the set is stable. A build that evaluated as
 it went would leave half-registered functions behind on every dropped candidate.
 """
-function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol})
+function _build_head(
+    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}
+)
     isempty(clauses) && return nothing
     fname = _genname(name)
     arity = length(clauses[1].head_args)
@@ -651,13 +723,13 @@ function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::S
         b = codegen_clause(clauses[1], name, dname)
         b === nothing && return nothing
         det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom}), :(_d::Int)),
-                   Expr(:block, _depthguard(name),
-                        _bindargs(clauses[1].head_args)..., b))
+            Expr(:block, _depthguard(name),
+                _bindargs(clauses[1].head_args)..., b))
         wrap = Expr(:block,
             Expr(:(=), :_r, Expr(:call, dname, :_a, :_d)),
             Expr(:if, Expr(:call, :(===), :_r, :nothing),
-                 true,
-                 Expr(:(::), Expr(:call, :_sink, :_r, :nothing), :Bool)))
+                true,
+                Expr(:(::), Expr(:call, :_sink, :_r, :nothing), :Bool)))
         return Expr[det, _sinkfn(fname, wrap)]
     end
 
@@ -672,7 +744,9 @@ function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::S
     end
     comb = Expr(:block)
     for cn in parts
-        push!(comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a, :_d), Expr(:return, false)))
+        push!(
+            comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a, :_d), Expr(:return, false))
+        )
     end
     push!(comb.args, true)
     pushfirst!(comb.args, _depthguard(name))
@@ -681,7 +755,9 @@ function _build_head(name::Base.Symbol, clauses::Vector{ANClause}, compilable::S
 end
 
 "True if this head would compile given `compilable` as the set of heads that do. No `eval`."
-head_compilable(name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}) =
+head_compilable(
+    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}
+) =
     _build_head(name, clauses, compilable) !== nothing
 
 """
@@ -706,14 +782,18 @@ ordinary call to the head's own ENTRY, which answers zero-to-N times through the
 that the old guard was protecting can no longer be dropped.
 """
 function codegen_head(name::Base.Symbol, clauses::Vector{ANClause},
-                      compilable::Set{Base.Symbol}=Set{Base.Symbol}())
+    compilable::Set{Base.Symbol}=Set{Base.Symbol}())
     fns = _build_head(name, clauses, compilable)
     fns === nothing && return nothing
-    local last
+    # ⚠️ INITIALISED, NOT `local`-DECLARED. JET: "local variable `last` may be undefined" — an empty
+    # `fns` returned an unassigned local. `_build_head` never returns one today, but that is an
+    # invariant of ITS body, not something this function's types promise. The name was also `last`,
+    # shadowing `Base.last` — [[feedback_local_name_shadows_a_generic_function]].
+    entry = nothing
     for f in fns
-        last = Base.eval(@__MODULE__, f)     # world-age paid ONCE per head, at registration
+        entry = Base.eval(@__MODULE__, f)    # world-age paid ONCE per head, at registration
     end
-    last
+    entry
 end
 
 end # module
