@@ -254,7 +254,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # generators pass `nothing`; the signature is widened now because head-argument PATTERNS is
         # what starts producing them, and widening afterwards means rewriting every call site.
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
-        seen = Any[]
+        seen = Tuple{_CGV.Atom, Union{Nothing, _CGV.Bindings}}[]   # the sink's (answer, bindings)
         @test Base.invokelatest(fn, (r, b) -> (push!(seen, (r, b)); true),
             _CGV.Atom[_CGV.Grounded(1)], 0) == true
         @test length(seen) == 2
@@ -331,7 +331,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:outer, _cg_head(prog, :outer), Set([:inner]))
         @test fn !== nothing
         got = _CGV.Atom[]
-        binds = Any[]
+        binds = Union{Nothing, _CGV.Bindings}[]   # the sink passes `nothing` until a producer binds
         @test Base.invokelatest(fn, (r, b) -> (push!(got, r); push!(binds, b); true),
             _CGV.Atom[Eval.freshvar("q")], 0) == true
         @test length(got) == 1

@@ -63,6 +63,10 @@ function _atomexpr(a::IRAtom, vars::Set{Base.Symbol})
     if a isa IRExpression
         h = _atomexpr(a.head, vars)
         h === nothing && return nothing
+        # allow-any: Julia AST under construction — these feed straight into `Expr(...)`, whose own
+        # `args` field IS `Vector{Any}`. Narrowing here would fight the host API and buy nothing:
+        # the elements are Symbols, Exprs and literals by Julia's own design, and this runs at
+        # CODEGEN time, once per clause, never in a compiled call.
         kids = Any[]
         for x in a.args
             v = _atomexpr(x, vars)
@@ -390,6 +394,7 @@ function _gcall_parts(g::GCall, vars::Set{Base.Symbol})
     (g.out isa IRVariable) || return nothing
     op = get(TOKEN_REGISTRY, String(g.head), nothing)
     (op isa Grounded && op.value isa Operation) || return nothing   # not grounded ⇒ decline
+    # allow-any: Julia AST args — see the note above `kids`.
     as = Any[]
     for a in g.args
         v = _atomexpr(a, vars)
@@ -450,7 +455,8 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
             else
                 (g.head in compilable ? _genname(g.head) : return nothing)
             end
-            as = Any[]
+            # allow-any: Julia AST args — see the note above `kids`.
+    as = Any[]
             for a in g.args
                 v = _atomexpr(a, vars)
                 v === nothing && return nothing
@@ -568,7 +574,8 @@ function _gen_det(
     elseif g isa GCall
         (g.out isa IRVariable) || return nothing
         if g.head === selfname
-            as = Any[]
+            # allow-any: Julia AST args — see the note above `kids`.
+    as = Any[]
             for a in g.args
                 v = _atomexpr(a, vars)
                 v === nothing && return nothing

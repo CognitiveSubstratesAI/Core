@@ -120,6 +120,10 @@ function _unpack(packed::Atom, plan)
     ch = (packed::Expression).children
     rule = ch[1]
     k = 2
+    # allow-any: tagged plan steps of MIXED ARITY — `(:unify, l, r)` and a 4-element GCall
+    # form, discriminated by `st[1]`. A `Vector{Tuple}` would still be abstract; the real fix
+    # is a PlanStep struct per goal kind, which is a refactor of `_plan_goals`, not a type
+    # annotation. Not a hot path: built once per clause at COMPILE time, never per call.
     out = Any[]
     for st in plan
         if st[1] === :unify
@@ -150,6 +154,7 @@ running substitution.
 head calling another COMPILED head is the natural next step and is not this increment.
 """
 function _plan_goals(goals::Vector{Goal})
+    # allow-any: same tagged mixed-arity plan steps as `out` above — see that note.
     plan = Any[]
     for g in goals
         if g isa GUnify
@@ -236,7 +241,9 @@ function _bind_step!(acc::Vector{Bindings}, step, sigma::Bindings)
 end
 
 "The space the running closure was called with — `_bind_step!` needs it for seam re-entrancy."
-const _CUR_SPACE = Ref{Any}(nothing)
+# A SPACE OR NOTHING — `_CUR_SPACE[] = space` at :504 is its only writer. `Ref{Any}` named
+# neither, so every read boxed and inference gave up at the `interpret` call on :228.
+const _CUR_SPACE = Ref{Union{Nothing, Eval.Space}}(nothing)
 
 """
     emit_julia_program(clauses) -> Dict{Symbol, Function}
@@ -249,13 +256,19 @@ sees the rules the closure does not carry. A head is registered only if EVERY on
 emitted. (`docs/architecture/COMPILED_HEAD_SEAM.md`, "the unit is the HEAD".)
 """
 function emit_julia_program(clauses::Vector{ANClause})
-    by_head = Dict{Base.Symbol, Vector{Any}}()
+    # TYPED, like `an_by_head` below. `emit_julia_clause` returns `(rule, plan, packed)` — NOT a
+    # bare Atom; an earlier attempt typed this `Vector{Atom}` from the `_pack` helper's return and a
+    # comment, and 3 suite files failed with
+    #   `MethodError: Cannot convert Tuple{Expression, Vector{Any}, Expression} to Atom`.
+    # Read the function's own return, not a neighbour's. `plan` stays a bare `Vector` (mixed-arity
+    # tagged steps — see `_plan_goals`), which is abstract but is NOT `Any`.
+    by_head = Dict{Base.Symbol, Vector{Tuple{Expression, Vector, Expression}}}()
     an_by_head = Dict{Base.Symbol, Vector{ANClause}}()
     declined = Set{Base.Symbol}()
     for cl in clauses
         push!(get!(an_by_head, cl.name, ANClause[]), cl)
         r = emit_julia_clause(cl)
-        r === nothing ? push!(declined, cl.name) : push!(get!(by_head, cl.name, Any[]), r)
+        r === nothing ? push!(declined, cl.name) : push!(get!(by_head, cl.name, Tuple{Expression, Vector, Expression}[]), r)
     end
     for h in declined                            # any declined clause disqualifies the whole head
         delete!(by_head, h)
@@ -478,7 +491,7 @@ already had, and a nested or unusual head could differ from what `compiled_head`
 
 `nothing` from the matcher ⇒ `ExecNoReduce` ⇒ NotReducible: the call returns ITSELF, never `Empty`.
 """
-function _seam_fn(head::Base.Symbol, rules::Vector)
+function _seam_fn(head::Base.Symbol, rules::Vector{Tuple{Expression, Vector, Expression}})
     inner = _head_closure(rules)
     function (call::Atom, space)
         r = inner(call, space)

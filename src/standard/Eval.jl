@@ -668,7 +668,8 @@ const _COMPILED_HEADS = Dict{Base.Symbol, CompiledHead}()
 #
 # `Eval` is included before every compiler module, so the op below cannot call the emitter directly.
 # The compiler installs itself here at load time instead.
-const _JIT_HEAD_HOOK = Ref{Any}(nothing)
+# A FUNCTION OR NOTHING — the two things this ever holds. `Ref{Any}` named neither.
+const _JIT_HEAD_HOOK = Ref{Union{Nothing, Function}}(nothing)
 
 "How many heads `compile-head` DECLINED (out of the emitter's scope). The honest denominator: a
 speedup on the heads that compiled says nothing about what fraction of hot heads were in scope."

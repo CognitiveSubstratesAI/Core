@@ -558,6 +558,10 @@ Main.@suite("test_no_dangling_ops.jl")
 # SWI's `$tbl_*` C predicates and MeTTa's `$variables`. Registered HERE as well as in bin/health,
 # matching the other two structural lints — the reachability gate caught the omission.
 Main.@suite("test_no_docstring_interpolation.jl")
+# The rule the user has given ~50 times, as a GATE. The PreToolUse hook for it is correct and
+# has been installed for months; it reads `file_path`, and Bash-heredoc edits carry none, so
+# 17 `Any` containers reached src/ past a working hook. A test sees the RESULT, any tool.
+Main.@suite("test_no_any_containers.jl")
 
 # Type-system conformance — Core vs the metta-lang.dev types_basics tutorials,
 # grounded in hyperon-experimental's b5_types_prelim/d4_type_prop scripts: gradual
