@@ -1916,7 +1916,10 @@ const _METTA_STEPS = Ref(0)
 # Core-specific divergence from upstream — see cross-check, project_pln_layer1_build.)
 const _METTA_MAX = Ref(0)
 "Set the reduce-chain step cap; 0 = unlimited (default). Mirrors hyperon `set_max_stack_depth` semantics."
-metta_max_steps!(n::Int=0) = (_METTA_MAX[] = n)
+# Same contract, same bug, same fix — see `interpret_max_steps!`. This one had no measured victim
+# yet, but it is the identical shape and `test_lib_differential.jl` already uses the save/restore
+# idiom against it.
+metta_max_steps!(n::Int=0) = (old = _METTA_MAX[]; _METTA_MAX[] = n; old)
 # Step cap for the MINIMAL machine's `interpret` loop (~line 724) — the iterative driver's runaway guard.
 # Was hard-coded 512K; now configurable (same pattern as _METTA_MAX) so heavy-but-finite workloads can
 # raise it. Default 512K (bounded-generous over measured need); 0 = unlimited (mirrors hyperon/CeTTa).
@@ -1924,7 +1927,20 @@ metta_max_steps!(n::Int=0) = (_METTA_MAX[] = n)
 # per-step-cost optimization, NOT a reason to keep the default permanently high.
 const _INTERPRET_MAX = Ref(512_000)
 "Set the minimal-machine `interpret` step cap; 0 = unlimited. Default 512_000."
-interpret_max_steps!(n::Int=512_000) = (_INTERPRET_MAX[] = n)
+# 🔴 RETURNS THE **PREVIOUS** VALUE, and that is the whole contract. Until 2026-09-27 this was
+# `(_INTERPRET_MAX[] = n)` — and in Julia an assignment EXPRESSION evaluates to the ASSIGNED value,
+# so the setter returned the NEW budget. Every caller using the save/restore idiom therefore saved
+# the value it was about to install and "restored" that:
+#     steps = interpret_max_steps!(0)   # steps := 0, NOT 512_000
+#     interpret_max_steps!(steps)       # leaves the budget at 0 = UNLIMITED, process-wide
+# MEASURED, by intervention on `test_answer_substitution_cyclic.jl` after the file that does this:
+#     budget intact            11.2 s,  559 MB, exit 0
+#     budget left at 0         KILLED at the memory ceiling (exit 137)
+#     same file, budget restored 8.9 s,  683 MB, exit 0
+# That single leak is why a single-process suite ran 25+ minutes and 10+ GB, why CI could not finish,
+# and why SHARDING appeared to "fix memory" — the poisoning file is entry 60 (shard 4) and the victim
+# entry 70 (shard 2), so four processes simply kept them apart. Sharding masked a one-line bug.
+interpret_max_steps!(n::Int=512_000) = (old = _INTERPRET_MAX[]; _INTERPRET_MAX[] = n; old)
 const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
 metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)

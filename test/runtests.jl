@@ -52,6 +52,79 @@ SUITE_SHARD === nothing || printstyled(
     "\n  ⚠️  SHARDED RUN: shard $(SUITE_SHARD[1]) of $(SUITE_SHARD[2]) — this is NOT the full suite\n";
     color=:yellow, bold=true)
 
+# 🔴 PER-FILE TIME AND RESIDENT MEMORY, PRINTED AS EACH FILE FINISHES.
+# Same principle as the failure message below: record evidence AT THE MOMENT IT EXISTS, never in an
+# end-of-run summary a killed job never reaches. MEASURED 2026-09-27: a single-process run stalled
+# for >6 minutes consuming ~2 GB while completing ZERO testsets, and NOTHING in the output said
+# which file was responsible — the file had to be inferred from `runtests.jl` ordering. One run with
+# this logging names the file directly, locally AND in CI.
+# `Sys.maxrss()` is the high-water mark, not the current size, so it cannot show a file RELEASING
+# memory; /proc/self/statm field 2 is resident pages, which can go down as well as up.
+# 🔴 PER-FILE GLOBAL-STATE DELTA — which module-level global grew, and during WHICH file.
+# MEASURED 2026-09-27: `compiler/test_compile_lane_corpus.jl` takes the process from 865 MB to >9 GB
+# after 80 preceding files, while running in 2.3 s STANDING ALONE. So the cause is state left by
+# earlier files, and the question "which global, set by whom" is the whole investigation. Printing a
+# DELTA per file answers it in ONE run; three previous attributions were guesses from a buffered log
+# and an ordering, and two of them were wrong.
+# Sizes only — the CONTENTS of an answer table are unbounded and would drown the log.
+# ⚠️ GROUP C IS IN HERE DELIBERATELY. The CHUNK-017 sweep classed these "program-independent, stays
+# global" — but that describes the DESIGN, not whether tests mutate them. MEASURED 2026-09-27: of the
+# 14 name-keyed globals, only `_TABLE_OPTIONS` leaked (0→6→7, never reset), and it is NOT the cause —
+# the corpus scripts define ZERO heads named d/e/p/q/depth/zz, so there is no name collision. The
+# cause therefore lies outside that group, and these are where the corpus file is most exposed:
+# 26 hyperon scripts + the LeaTTa corpus is precisely the workload that re-parses and re-types.
+# 🔴 THE MEMOS ARE KEYED BY `objectid`, WHICH IS AN ADDRESS AND IS REUSED AFTER COLLECTION — the same
+# hazard that made the compiled-head registry use a `WeakRef`. After 80 files of allocate-and-collect,
+# a stale memo entry can classify an unrelated atom, changing the evaluation path.
+const _SUITE_GLOBALS = (:_COMPILED_HEADS, :COMPILED_INTERPRET_ONLY, :_TABLED_HEADS,
+                        :_NOREDUCE_HEADS, :_ANSWER_TABLE, :_ANSWER_TRIES, :_IDG,
+                        :_WORKLISTS, :_DEPS, :_NO_RULE, :_INCREMENTAL_HEADS,
+                        :_TABLE_OPTIONS, :_SUBSUMPTIVE, :_MAX_ANSWERS,
+                        # group C — "stays global" by design, mutated in practice
+                        :TOKEN_REGISTRY, :_CLOSED_RULE_MEMO, :_ATOM_TYPE_MEMO,
+                        :_DECL_TYPE_MEMO, :_GROUNDED_OP_TYPE_CACHE, :_GROUNDED_OP_TYPES,
+                        :_LANGDEF_LIVE)
+# 🔴 GLOBAL **SETTINGS** MUST BE UNCHANGED BY A TEST FILE — and this check is here because a leaked
+# one cost two days. `interpret_max_steps!` returned the ASSIGNED value, so the save/restore idiom
+# `steps = interpret_max_steps!(0); …; interpret_max_steps!(steps)` left the interpreter UNLIMITED
+# for the rest of the process. MEASURED: `test_answer_substitution_cyclic.jl` runs in 11.2 s with the
+# budget intact and is KILLED at the memory ceiling without it. The suite needed sharding only
+# because the poisoner (entry 60, shard 4) and the victim (entry 70, shard 2) landed in different
+# processes. A per-file check names the file that leaks, on the day it is written — instead of a
+# blowup ten files later in a file that has nothing to do with it.
+# Sizes cannot see this: a `Ref` holding a number never changes any dictionary's length.
+_suite_settings() =
+    try
+        local E = MeTTaCore.Eval
+        local C = MeTTaCore.CompilerEmitJuliaCode
+        Dict{Symbol, Any}(
+            :interpret_max => E._INTERPRET_MAX[],
+            :metta_max     => E._METTA_MAX[],
+            :max_depth     => C._MAX_CALL_DEPTH[],
+            :codegen       => MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
+        )
+    catch
+        Dict{Symbol, Any}()
+    end
+
+_suite_state() =
+    try
+        local E = MeTTaCore.Eval
+        Dict(n => length(getfield(E, n)) for n in _SUITE_GLOBALS if isdefined(E, n))
+    catch
+        Dict{Symbol, Int}()
+    end
+_suite_state_delta(a, b) =
+    join([string(k, " ", get(a, k, 0), "→", v)
+          for (k, v) in sort(collect(b)) if get(a, k, 0) != v], "  ")
+
+_suite_rss_mb() =
+    try
+        parse(Int, split(read("/proc/self/statm", String))[2]) * Sys.PAGESIZE ÷ 2^20
+    catch
+        -1                    # non-Linux or unreadable: report -1 rather than fail the suite
+    end
+
 macro suite(path)
     quote
         local p = $(esc(path))
@@ -61,13 +134,48 @@ macro suite(path)
             push!(Main.SUITE_SKIPPED, p)
         else
             push!(Main.SUITE_RAN, p)
+            local _t0 = time()
+            local _r0 = Main._suite_rss_mb()
+            local _s0 = Main._suite_state()
+            local _g0 = Main._suite_settings()
             try
                 $(esc(:include))(p)
+                local _dt = time() - _t0
+                local _r1 = Main._suite_rss_mb()
+                # Loud only when it MATTERS: a slow file or one that grows the process materially.
+                # Everything else stays one quiet line, so the signal is not buried.
+                local _sd = Main._suite_state_delta(_s0, Main._suite_state())
+                # a LEAKED SETTING is a failure of this file, named here and now
+                local _g1 = Main._suite_settings()
+                local _leaked = [string(k, " ", _g0[k], "→", v)
+                                 for (k, v) in sort(collect(_g1)) if get(_g0, k, v) != v]
+                if !isempty(_leaked)
+                    push!(Main.SUITE_FAILED, (p, "LEAKED GLOBAL SETTING: " * join(_leaked, ", ")))
+                    printstyled("\n  ✗ LEAKED GLOBAL SETTING (this file must restore it): ", p,
+                                "\n      ", join(_leaked, "  "), "\n"; color=:red, bold=true)
+                end
+                if _dt >= 10.0 || (_r1 - _r0) >= 200
+                    printstyled("  ⏱  ", p, "  ", round(_dt, digits=1), "s  rss ", _r1,
+                        " MB (", (_r1 - _r0) >= 0 ? "+" : "", _r1 - _r0, ")",
+                        isempty(_sd) ? "" : string("  [", _sd, "]"), "\n"; color=:yellow)
+                else
+                    println("  ·  ", p, "  ", round(_dt, digits=1), "s  rss ", _r1, " MB",
+                        isempty(_sd) ? "" : string("  [", _sd, "]"))
+                end
             catch e
-                push!(Main.SUITE_FAILED,
-                    (p, first(replace(sprint(showerror, e), '\n' => ' '), 200)))
+                local msg = first(replace(sprint(showerror, e), '\n' => ' '), 200)
+                push!(Main.SUITE_FAILED, (p, msg))
+                # 🔴 PRINT THE MESSAGE HERE, NOT ONLY IN THE END-OF-RUN SUMMARY.
+                # MEASURED 2026-09-27: CI failed `compiler/test_compile_lane_fuzz.jl`, and the job was
+                # KILLED later in the same run — so the summary never printed and the ONLY diagnostic
+                # was captured into `SUITE_FAILED` and then lost with the process. All that survived
+                # was "SUITE FILE FAILED", which names the file and nothing about why. A run that dies
+                # is exactly when you need the reason most, and a summary is the one place guaranteed
+                # not to be reached. Same shape as `test_commit_hook.sh`'s `_run` sending the hook's
+                # stderr to /dev/null: the evidence existed and was discarded at the moment of failure.
                 printstyled(
-                    "\n  ✗ SUITE FILE FAILED (continuing): ", p, "\n"; color=:red, bold=true
+                    "\n  ✗ SUITE FILE FAILED (continuing): ", p, "\n      ", msg, "\n";
+                    color=:red, bold=true
                 )
             end
         end

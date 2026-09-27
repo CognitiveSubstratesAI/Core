@@ -129,3 +129,41 @@ end
         end
     end
 end
+
+# ─── THE STEP-BUDGET SETTERS RETURN THE **PREVIOUS** VALUE ───────────────────────────────────────
+# 🔴 THE BUG THIS PINS COST TWO DAYS. `interpret_max_steps!(n) = (_INTERPRET_MAX[] = n)` — and in
+# Julia an assignment EXPRESSION evaluates to the ASSIGNED value, so the setter returned the NEW
+# budget. The save/restore idiom in `test_codegen_multi_result.jl` therefore captured the value it
+# was about to install and "restored" THAT, leaving the interpreter UNLIMITED process-wide:
+#     steps = interpret_max_steps!(0)   # steps := 0, NOT 512_000
+#     interpret_max_steps!(steps)       # restores 0 = unlimited
+# MEASURED by intervention on `test_answer_substitution_cyclic.jl`, the victim 10 files later:
+#     budget intact                      11.2 s · 559 MB · exit 0
+#     budget left at 0                   KILLED at the memory ceiling · exit 137
+#     same poisoner, budget restored      8.9 s · 683 MB · exit 0
+#     same poisoner, WITH this fix        9.6 s · 676 MB · exit 0
+# It is also why the suite appeared to need SHARDING: the poisoner is entry 60 (shard 4) and the
+# victim entry 70 (shard 2), so four processes merely kept them apart.
+@testset "step-budget setters return the PREVIOUS value (save/restore contract)" begin
+    for (setter, ref, a, b) in (
+        (Eval.interpret_max_steps!, Eval._INTERPRET_MAX, 512_000, 4_321),
+        (Eval.metta_max_steps!,     Eval._METTA_MAX,     0,       1_234),
+    )
+        was = ref[]
+        try
+            setter(a)
+            # THE CONTRACT: setting b returns a — the value that was there before, never b.
+            @test setter(b) == a
+            @test ref[] == b
+            # ANTI-VACUITY: a setter returning the NEW value would also satisfy `== a` if a == b,
+            # so the two values must differ, and they do (512_000 vs 4_321, 0 vs 1_234).
+            @test a != b
+            # and the idiom itself must round-trip
+            prev = setter(a)
+            setter(prev)
+            @test ref[] == b
+        finally
+            ref[] = was
+        end
+    end
+end
