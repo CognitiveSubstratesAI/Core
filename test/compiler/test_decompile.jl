@@ -167,7 +167,22 @@ end
     # which is what makes this assertion valid; an optimization that moves work would make a mismatch
     # EXPECTED, and this gate would then need re-reading, not silencing.
     sp = MeTTaCore.Eval.Space()
-    roots = filter(isdir, ["test/oracle/leatta/corpus", "test/standard/conformance"])
+    # 🔴 ANCHOR ON `@__DIR__`, NOT ON THE PROCESS CWD. These were bare package-root-relative paths
+    # ("test/oracle/leatta/corpus"), which resolve only when the runner has cd'd to the package
+    # root — which `tools/run_tests.sh` and `warm_suite.sh` both do. CI runs `Pkg.test()`, whose
+    # working directory is NOT the package root, so `filter(isdir, …)` matched NOTHING and the
+    # corpus loop never executed. MEASURED 2026-09-27 on CI run #464: `cand > 100` evaluated as
+    # `0 > 100`. The corpus is fully tracked (23 + 26 .metta files) — only the PATHS were wrong.
+    # This file was the ONLY one of 44 corpus-reading tests using bare relative paths; the other 43
+    # already anchor on `@__DIR__`, including `test_compile_lane_corpus.jl`, which reads these very
+    # two directories. It passed locally for as long as CI was dead and could not contradict it.
+    _roots_tried = [joinpath(@__DIR__, "..", "oracle", "leatta", "corpus"),
+                    joinpath(@__DIR__, "..", "standard", "conformance")]
+    roots = filter(isdir, _roots_tried)
+    # ⚠️ AND FAIL LOUDLY ON AN EMPTY CORPUS. `cand > 100` below is the anti-vacuity floor and it DID
+    # fire — but it reports "0 > 100", which names neither the cause nor the paths. Say them.
+    @test !isempty(roots) || error("decompile corpus: no corpus directory found; tried " *
+                                   join(_roots_tried, ", ") * " (pwd = " * pwd() * ")")
     rt = 0; cand = 0; mism = String[]
     for dir in roots, f in sort(readdir(dir))
         endswith(f, ".metta") || continue

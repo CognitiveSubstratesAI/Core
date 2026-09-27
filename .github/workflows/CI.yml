@@ -32,7 +32,7 @@ jobs:
       # instruction. Its live remote is `CognitiveSubstratesAI/MorkSupercompiler` — READ FROM
       # THE REMOTE, not assumed. The rename changed BOTH owner AND repo name (it was
       # `Supercompiler`), so a redirect may or may not have covered it: exactly the silent CI
-      # breakage a stale clone URL produces. HPC is STILL on sivaji1012.
+      # breakage a stale clone URL produces. HPC migrated to the org and made PUBLIC 2026-09-27 — all sibling clones are anonymous now.
       - name: Clone path [sources] dependencies as siblings
         run: |
           git clone --depth 1 https://github.com/CognitiveSubstratesAI/PathMap.git ../PathMap
