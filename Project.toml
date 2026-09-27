@@ -19,11 +19,21 @@ MORK = "0.1"
 MorkSupercompiler = "0.1"
 PathMaps = "0.4"
 PrecompileTools = "1.3.4"
+Random = "1"        # stdlib, but a TEST dep must still be declared — see [extras] below
 Test = "1"          # declared in [extras]; Aqua requires a matching [compat] bound
 julia = "1.12"
 
 [extras]
+# 🔴 `Random` IS A TEST DEPENDENCY AND WAS NEVER DECLARED. `test_compile_lane_fuzz.jl` and
+# `test_il_wire_roundtrip.jl` both `using Random`, and it resolved locally from the ambient
+# environment — so every local run passed. CI instantiates ONLY what Project.toml declares:
+#   ArgumentError: Package Random not found in current path
+# Those two files failed in CI and nowhere else. Hours went into theorising about that fuzz
+# failure — leaked compiled heads, tabled f/g/h, RNG ordering, a missing work budget — and the
+# cause was a missing `[extras]` line. It only became visible once `runtests.jl` printed the
+# failure AT the failure instead of in an end-of-run summary a killed run never reached.
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Random", "Test"]
