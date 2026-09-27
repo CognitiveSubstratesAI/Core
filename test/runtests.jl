@@ -93,19 +93,61 @@ const _SUITE_GLOBALS = (:_COMPILED_HEADS, :COMPILED_INTERPRET_ONLY, :_TABLED_HEA
 # processes. A per-file check names the file that leaks, on the day it is written — instead of a
 # blowup ten files later in a file that has nothing to do with it.
 # Sizes cannot see this: a `Ref` holding a number never changes any dictionary's length.
-_suite_settings() =
-    try
-        local E = MeTTaCore.Eval
-        local C = MeTTaCore.CompilerEmitJuliaCode
-        Dict{Symbol, Any}(
-            :interpret_max => E._INTERPRET_MAX[],
-            :metta_max     => E._METTA_MAX[],
-            :max_depth     => C._MAX_CALL_DEPTH[],
-            :codegen       => MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
-        )
-    catch
-        Dict{Symbol, Any}()
+# 🔴 A TYPED RECORD, NOT `Dict{Symbol, Any}`. The first version used an `Any`-valued Dict and that
+# ONE choice caused BOTH failures of this guard: `sort(collect(dict))` orders `Pair`s, and with
+# heterogeneous values the comparison reached them — `MethodError: isless(::Bool, ::Vector{Symbol})`,
+# 120 files red. A struct makes every field's type a guarantee rather than a convention, and the
+# comparison below cannot compare a Bool against a Vector because the fields line up by name.
+struct SuiteSettings
+    interpret_max::Int
+    metta_max::Int
+    max_depth::Int
+    codegen::Bool
+    # NAME-KEYED SETS: process-global and keyed by BARE HEAD NAME, so a leftover entry silently
+    # changes how a LATER file's same-named head behaves. CONTENTS, not counts — a file that
+    # untables one head and tables a different one keeps the count identical.
+    interpret_only::Vector{Symbol}
+    tabled_heads::Vector{Symbol}
+    table_options::Vector{Symbol}
+end
+
+_suite_settings() = SuiteSettings(
+    MeTTaCore.Eval._INTERPRET_MAX[],
+    MeTTaCore.Eval._METTA_MAX[],
+    MeTTaCore.CompilerEmitJuliaCode._MAX_CALL_DEPTH[],
+    MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
+    sort(collect(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY)),
+    sort(collect(MeTTaCore.Eval._TABLED_HEADS)),
+    sort(collect(keys(MeTTaCore.Eval._TABLE_OPTIONS))),
+)
+
+"Fields that differ, as `name before→after`. Empty means the file left global settings alone."
+_settings_delta(a::SuiteSettings, b::SuiteSettings) =
+    [string(f, " ", getfield(a, f), "→", getfield(b, f))
+     for f in fieldnames(SuiteSettings) if getfield(a, f) != getfield(b, f)]
+
+# Put a snapshot BACK. Flagging alone is not enough: a file's own cleanup is skipped when an error
+# escapes its testsets, so one leaking file would contaminate EVERY file after it and turn a single
+# failure into a cascade of misleading ones. Detection keeps the discipline; restoration keeps the
+# blast radius to the file that caused it — the in-process equivalent of PeTTa's process-per-test.
+function _suite_restore!(g::SuiteSettings)
+    MeTTaCore.Eval._INTERPRET_MAX[] = g.interpret_max
+    MeTTaCore.Eval._METTA_MAX[] = g.metta_max
+    MeTTaCore.CompilerEmitJuliaCode._MAX_CALL_DEPTH[] = g.max_depth
+    MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[] = g.codegen
+    empty!(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY)
+    union!(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY, g.interpret_only)
+    empty!(MeTTaCore.Eval._TABLED_HEADS)
+    union!(MeTTaCore.Eval._TABLED_HEADS, g.tabled_heads)
+    # `_TABLE_OPTIONS` maps head → an options record and only its KEYS are snapshotted, so a key the
+    # file ADDED is dropped rather than fabricating an options value we never captured.
+    let keep = Set(g.table_options)
+        for k in collect(keys(MeTTaCore.Eval._TABLE_OPTIONS))
+            k in keep || delete!(MeTTaCore.Eval._TABLE_OPTIONS, k)
+        end
     end
+    nothing
+end
 
 _suite_state() =
     try
@@ -147,13 +189,13 @@ macro suite(path)
                 local _sd = Main._suite_state_delta(_s0, Main._suite_state())
                 # a LEAKED SETTING is a failure of this file, named here and now
                 local _g1 = Main._suite_settings()
-                local _leaked = [string(k, " ", _g0[k], "→", v)
-                                 for (k, v) in sort(collect(_g1)) if get(_g0, k, v) != v]
+                local _leaked = Main._settings_delta(_g0, Main._suite_settings())
                 if !isempty(_leaked)
                     push!(Main.SUITE_FAILED, (p, "LEAKED GLOBAL SETTING: " * join(_leaked, ", ")))
                     printstyled("\n  ✗ LEAKED GLOBAL SETTING (this file must restore it): ", p,
                                 "\n      ", join(_leaked, "  "), "\n"; color=:red, bold=true)
                 end
+                Main._suite_restore!(_g0)   # flagged above; now leave the next file a clean slate
                 if _dt >= 10.0 || (_r1 - _r0) >= 200
                     printstyled("  ⏱  ", p, "  ", round(_dt, digits=1), "s  rss ", _r1,
                         " MB (", (_r1 - _r0) >= 0 ? "+" : "", _r1 - _r0, ")",

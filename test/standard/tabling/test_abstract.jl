@@ -464,8 +464,16 @@ end
 
 # the two flags this section needs, saved/restored so a failure cannot leak into the §7.11.1 block
 _aa_answer_action!(a) = _AB.set_max_table_answer_size_action!(a)
+# 🔴 `clear_all_table_options!()` ADDED 2026-09-27. This helper reset five things and left
+# `_TABLE_OPTIONS`, so `table_as!(:d)`, `table_as!(:depth)`, `table_as!(:e)` and the
+# `answer_abstract!` heads survived the file — MEASURED as a monotonic 0→6 in the per-file state
+# delta, the ONLY tracked global that never returned to its default. It is keyed by BARE HEAD NAME,
+# so a later file defining a head called `d` or `e` silently inherits this file's tabling options.
+# Nothing has been bitten yet (the corpus scripts happen to use none of those names), which is
+# exactly why it survived: a name-keyed leak is invisible until the names collide.
 _aa_reset!() = (_AB.clear_answer_abstract!(); _AB.clear_answer_delays!();
     _AB.clear_all_restraints!(); _AB.clear_answer_count_restraints!();
+    _AB.clear_all_table_options!();
     _AB.set_max_table_answer_size!(-1);
     _AB.set_max_table_answer_size_action!(_AB.TW_ERROR))
 

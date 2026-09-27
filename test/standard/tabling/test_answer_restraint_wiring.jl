@@ -82,5 +82,8 @@ end
         # each test).
         _AR.set_max_table_answer_size_action!(_AR.TW_ERROR)
         _AR.reset_execution_flags!()
+        # `_TABLE_OPTIONS` is keyed by bare head name and is NOT execution state, so
+        # `reset_execution_flags!` does not touch it — measured leaking 6→7 across this file.
+        _AR.clear_all_table_options!()
     end
 end

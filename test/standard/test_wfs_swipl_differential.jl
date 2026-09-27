@@ -145,3 +145,11 @@ end
         @test "undefined" in vals
     end
 end
+
+# 🔴 LEAVE `_TABLED_HEADS` AS THIS FILE FOUND IT. The helper above resets at the START of each case,
+# so the LAST case leaves its head tabled for the rest of the process. `_TABLED_HEADS` is
+# process-global and keyed by BARE HEAD NAME, so a later file defining a head with the same name
+# silently gets tabling it never asked for. MEASURED 2026-09-27 by the per-file leaked-setting check
+# in `runtests.jl`: this file leaked `tabled_heads 0→1`, and a later file's own reset cleared it —
+# which is why it never showed up as a failure, only as two files mutating global state in sequence.
+Eval.untable_all!()

@@ -1213,7 +1213,7 @@ end
 # (fib's body). Gated behind `_FAST_MATCH[]` (default false) so the 234-conformance path is byte-identical
 # by construction until the harness proves the fast path equivalent.
 const _FAST_MATCH = Ref(false)
-fast_match!(on::Bool=true) = (_FAST_MATCH[] = on)
+fast_match!(on::Bool=true) = (old = _FAST_MATCH[]; _FAST_MATCH[] = on; old)   # returns the PREVIOUS value — see interpret_max_steps!
 const _CLOSED_RULE_MEMO = Dict{UInt, Bool}()      # objectid(stored) → vars(RHS)⊆vars(LHS); rules are stable objects
 _is_eq_rule(a::Atom) =
     a isa Expression && length(a.children) == 3 &&
@@ -1744,7 +1744,7 @@ end
 const _TAIL_COLLAPSE = Ref(true)
 const EXPRESSION_SYM = Sym("Expression")   # metatype tag of any function/chain expression (the lazy-return type)
 "Enable/disable tail-call frame-collapse (TCO) at the metta reduce-again seam. Default ON. `false` = exact pre-TCO behavior (for oracle A/B / bisimulation)."
-tail_collapse!(on::Bool=true) = (_TAIL_COLLAPSE[] = on)
+tail_collapse!(on::Bool=true) = (old = _TAIL_COLLAPSE[]; _TAIL_COLLAPSE[] = on; old)   # returns the PREVIOUS value — see interpret_max_steps!
 
 # A driver-generated metta reduce continuation: `(chain (metta-call …) $r $r)` with an IDENTITY templ. The
 # `fr.tco` PROVENANCE flag is the GUARANTEE (set only by the driver's reduce-prog push, unforgeable from atom
@@ -1943,7 +1943,7 @@ const _INTERPRET_MAX = Ref(512_000)
 interpret_max_steps!(n::Int=512_000) = (old = _INTERPRET_MAX[]; _INTERPRET_MAX[] = n; old)
 const _METTA_DEBUG = Ref(false)
 "Toggle metta reduction tracing — prints each metta_call (use to detect where evaluation goes wrong)."
-metta_debug!(on::Bool=true) = (_METTA_DEBUG[] = on)
+metta_debug!(on::Bool=true) = (old = _METTA_DEBUG[]; _METTA_DEBUG[] = on; old)   # returns the PREVIOUS value — see interpret_max_steps!
 
 # Intrinsic types of grounded ops (hyperon: the op's `type_()` method, NOT a stdlib atom). Kept OUT of
 # the space so they never appear in `match &self` — e.g. d4's type-reasoning rule matches every
