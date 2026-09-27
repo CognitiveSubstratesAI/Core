@@ -87,8 +87,8 @@ function main(args::Vector{String})
     for r in roots
         if isdir(r)
             append!(
-            files, sort([joinpath(r, f) for f in readdir(r) if endswith(f, ".metta")])
-        )
+                files, sort([joinpath(r, f) for f in readdir(r) if endswith(f, ".metta")])
+            )
         else
             (isfile(r) && push!(files, r))
         end
