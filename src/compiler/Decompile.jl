@@ -144,7 +144,8 @@ function _decompile_if(u::Atom, env::Env)::Union{DecompileResult, Nothing}
         iu = fc[2]
         iu isa Expression || return nothing
         ic = (iu::Expression).children
-        (length(ic) == 5 && _is(ic[1], "unify") && _is(ic[3], "False")) || return nothing
+        (length(ic) == 5 && _is(ic[1], "unify") && _is(ic[3], "False")) ||
+            return nothing
         decompile_body(ic[4], env)
     end
     declined(ev) && return ev
@@ -179,7 +180,8 @@ function decompile_body(a::Atom, env::Env=Env())::DecompileResult
         p = ch[2]
         if p isa Expression
             pc = (p::Expression).children
-            if length(pc) == 4 && _is(pc[1], "metta") && _is(pc[3], "%Undefined%") && _is(pc[4], "&self")
+            if length(pc) == 4 && _is(pc[1], "metta") && _is(pc[3], "%Undefined%") &&
+                _is(pc[4], "&self")
                 v = ch[3]
                 v isa Var || return _no("chain binder is not a variable: " * string(ch[3]))
                 env2 = copy(env)
@@ -189,7 +191,8 @@ function decompile_body(a::Atom, env::Env=Env())::DecompileResult
             # `(chain (function (unify …)) …)` is `_instr(::GBranch)` — an `if`. Named, not guessed.
             if length(pc) == 2 && _is(pc[1], "function")
                 r = _decompile_if(pc[2], env)
-                r === nothing && return _no("chain over `(function …)` that is not a GBranch `if`")
+                r === nothing &&
+                    return _no("chain over `(function …)` that is not a GBranch `if`")
                 rr = r::DecompileResult
                 declined(rr) && return rr
                 v = ch[3]
@@ -213,7 +216,9 @@ function decompile_body(a::Atom, env::Env=Env())::DecompileResult
                 if inner isa Expression
                     ic = (inner::Expression).children
                     !isempty(ic) && _named(ic[1], "foldl-atom") &&
-                        return _no("`(eval (foldl-atom …))` — GFindall's collapse fold, not a residual")
+                        return _no(
+                            "`(eval (foldl-atom …))` — GFindall's collapse fold, not a residual"
+                        )
                 end
                 v = ch[3]
                 v isa Var || return _no("chain binder is not a variable: " * string(ch[3]))
@@ -236,13 +241,15 @@ function decompile_body(a::Atom, env::Env=Env())::DecompileResult
         if thn isa Expression
             tc = (thn::Expression).children
             if length(tc) == 2 && _is(tc[1], "return") && lhs isa Var && tc[2] isa Var &&
-               (tc[2]::Var).name == (lhs::Var).name
+                (tc[2]::Var).name == (lhs::Var).name
                 return _ok(_subst(rhs, env))
             end
         end
         b = decompile_body(thn, env)
         declined(b) && return b
-        return _ok(Expression(Atom[Sym("let"), _subst(lhs, env), _subst(rhs, env), b.atom::Atom]))
+        return _ok(
+            Expression(Atom[Sym("let"), _subst(lhs, env), _subst(rhs, env), b.atom::Atom])
+        )
     end
 
     _no("unrecognised IL form: " * string(a))

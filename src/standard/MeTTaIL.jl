@@ -257,7 +257,9 @@ function _normalize_subterm(rules::Vector{MORK.Expr}, te::MORK.Expr)::MORK.Expr
             i += length(span)
         end
         if changed                                     # rebuild only when a child actually reduced
-            oz = MORK.ExprZipper(MORK.Expr(Vector{UInt8}(undef, max(length(te.buf) * 2, 64))), 1)
+            oz = MORK.ExprZipper(
+                MORK.Expr(Vector{UInt8}(undef, max(length(te.buf) * 2, 64))), 1
+            )
             MORK.ez_write_arity!(oz, UInt8(n))
             for k in 1:n
                 MORK.ez_write_move!(oz, kids[k].buf)
@@ -297,7 +299,11 @@ function metta_il_normalize(program::AbstractString, term::AbstractString)::Stri
     # Parse ONCE at the entry, serialise ONCE at the edge — `expr_serialize2`, the re-readable
     # renderer (`$a`/`$b` from the level table, binder and back-references sharing a name), never the
     # lossy `expr_serialize`, whose `$`/`_N` output is not re-parseable as the same term.
-    strip(MORK.expr_serialize2(_normalize_subterm(rules, MORK.sexpr_to_expr(String(strip(term)))).buf))
+    strip(
+        MORK.expr_serialize2(
+            _normalize_subterm(rules, MORK.sexpr_to_expr(String(strip(term)))).buf
+        )
+    )
 end
 
 # --- def/match/emit pipeline surface (scalable-infra §9.1, lowered to MM2 per §9.2) ------------------

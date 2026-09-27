@@ -30,18 +30,18 @@ P(s) = EV.parse_program(s)[1][2]
 
     @testset "AGREEMENT on the corpus that broke things this week" begin
         cases = [
-            ("plain match",                P("(f \$x \$y)"),          P("(f a b)")),
-            ("repeated var in PATTERN",    P("(f \$x \$x)"),          P("(f a a)")),
-            ("repeated var, MISMATCH",     P("(f \$x \$x)"),          P("(f a b)")),
-            ("repeated var in DATA too",   P("(f \$x \$x)"),          P("(f \$y \$y)")),
-            ("RHS-only var (BLOCKER 3)",   P("(= (f \$x) (g \$y))"),  P("(= (f a) (g b))")),
-            ("var bound to a TERM",        P("(f \$x)"),              P("(f (g a))")),
-            ("bound to a term WITH a var", P("(f \$x)"),              P("(f (g \$y))")),
-            ("ground, equal",              P("(f a)"),                P("(f a)")),
-            ("ground, unequal",            P("(f a)"),                P("(f b)")),
-            ("arity mismatch",             P("(f a)"),                P("(f a b)")),
-            ("nested, shared across args", P("(h (k \$a) (k \$a))"),  P("(h (k 1) (k 1))")),
-            ("nested, shared MISMATCH",    P("(h (k \$a) (k \$a))"),  P("(h (k 1) (k 2))")),
+            ("plain match", P("(f \$x \$y)"), P("(f a b)")),
+            ("repeated var in PATTERN", P("(f \$x \$x)"), P("(f a a)")),
+            ("repeated var, MISMATCH", P("(f \$x \$x)"), P("(f a b)")),
+            ("repeated var in DATA too", P("(f \$x \$x)"), P("(f \$y \$y)")),
+            ("RHS-only var (BLOCKER 3)", P("(= (f \$x) (g \$y))"), P("(= (f a) (g b))")),
+            ("var bound to a TERM", P("(f \$x)"), P("(f (g a))")),
+            ("bound to a term WITH a var", P("(f \$x)"), P("(f (g \$y))")),
+            ("ground, equal", P("(f a)"), P("(f a)")),
+            ("ground, unequal", P("(f a)"), P("(f b)")),
+            ("arity mismatch", P("(f a)"), P("(f a b)")),
+            ("nested, shared across args", P("(h (k \$a) (k \$a))"), P("(h (k 1) (k 1))")),
+            ("nested, shared MISMATCH", P("(h (k \$a) (k \$a))"), P("(h (k 1) (k 2))"))
         ]
         for (why, p, d) in cases
             r = MC.core_match_differential(p, d)
@@ -72,7 +72,7 @@ P(s) = EV.parse_program(s)[1][2]
         # SILENTLY DISCARDING the `:fail` the new check returned.
         for (why, p, d) in [
             ("alias, bind-then-equate", P("(f \$x \$x)"), P("(f \$y (g \$y))")),
-            ("alias, equate-then-bind", P("(f \$x \$x)"), P("(f (g \$y) \$y)")),
+            ("alias, equate-then-bind", P("(f \$x \$x)"), P("(f (g \$y) \$y)"))
         ]
             @test isempty(AT.match_atoms(p, d))          # rejects the cycle, as hyperon does
             @test isempty(MC.core_match(p, d))           # and so does core_match
@@ -81,7 +81,7 @@ P(s) = EV.parse_program(s)[1][2]
         # 🔴 CONTROLS — without these a matcher that rejected EVERYTHING would pass the loop above.
         for (why, p, d) in [
             ("same shape, NO cycle", P("(f \$x \$x)"), P("(f \$y \$y)")),
-            ("plain bind to a term", P("(k \$x)"),     P("(k (g \$y))")),
+            ("plain bind to a term", P("(k \$x)"), P("(k (g \$y))"))
         ]
             @test !isempty(AT.match_atoms(p, d))
             @test !isempty(MC.core_match(p, d))
@@ -204,8 +204,10 @@ P(s) = EV.parse_program(s)[1][2]
         # `\$v\$i`, i.e. ONE variable — so the first draft of this case had 2 distinct variables, never
         # reached the 64-variable guard, and asserted a decline that could not happen. The same
         # "does the data actually exercise the case" failure the flat-arity confound produced.
-        nested = P("(f (g " * join(["\$v$(i)" for i in 1:30], " ") * ") (g " *
-                   join(["\$w$(i)" for i in 1:30], " ") * ") (g \$p1 \$p2 \$p3 \$p4 \$p5))")
+        nested = P(
+            "(f (g " * join(["\$v$(i)" for i in 1:30], " ") * ") (g " *
+            join(["\$w$(i)" for i in 1:30], " ") * ") (g \$p1 \$p2 \$p3 \$p4 \$p5))"
+        )
         @test length(MC.collect_vars(nested)) == 65          # the case IS reached
         @test all(c -> !(c isa AT.Expression) || length(c.children) <= 31, nested.children)
         @test MC.core_match(nested, nested) === nothing
@@ -234,7 +236,10 @@ P(s) = EV.parse_program(s)[1][2]
             @test MC.core_match_differential(p, d).agree
             # prove the byte path really would have lost it, for the four lossy types
             if v isa Bool || v isa AbstractString || v isa Symbol
-                @test !((MC.expr_to_atom(MC.atom_to_expr(d).expr)::AT.Expression).children[2] isa AT.Grounded)
+                @test !(
+                    (MC.expr_to_atom(MC.atom_to_expr(d).expr)::AT.Expression).children[2] isa
+                    AT.Grounded
+                )
             end
         end
     end

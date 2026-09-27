@@ -11,7 +11,9 @@ using MeTTaCore
 using MeTTaCore.Eval
 using Test
 
-const _CHS_EVAL_SRC = read(joinpath(dirname(pathof(MeTTaCore)), "standard", "Eval.jl"), String)
+const _CHS_EVAL_SRC = read(
+    joinpath(dirname(pathof(MeTTaCore)), "standard", "Eval.jl"), String
+)
 
 "Body of a top-level `function <name>(` … matching `end`, located BY SYMBOL."
 function _chs_fn_body(src::AbstractString, name::AbstractString)
@@ -33,8 +35,11 @@ function _chs_hc(call::_V.Atom, space)
     # ⚠️ TAKES THE CALL ATOM, not a Vector of args. The seam passes `to_eval` itself since
     # 2026-09-03: rebuilding a call from (head, args) LOSES SHAPE — a zero-arg call `(d)` has no
     # children past the head, so a reconstruction yields the bare symbol and matches nothing.
-    args = (call isa _V.Expression && length(call.children) > 1) ?
-           _V.Atom[call.children[2:end]...] : _V.Atom[]
+    args = if (call isa _V.Expression && length(call.children) > 1)
+        _V.Atom[call.children[2:end]...]
+    else
+        _V.Atom[]
+    end
     length(args) == 1 || return Eval.ExecNoReduce()
     u = args[1]
     u isa _V.Var || return Eval.ExecNoReduce()      # ground/mismatched call ⇒ no clause matched
@@ -45,7 +50,8 @@ end
 
 function _chs_ask(q::AbstractString; defs::AbstractString="", compile::Bool=true)
     Eval.uncompile_all!()
-    sp = Eval.Space(); load_core_stdlib!(sp)
+    sp = Eval.Space()
+    load_core_stdlib!(sp)
     isempty(defs) || load_metta!(sp, defs)
     compile && Eval.compile_head!(:hc, _chs_hc, UInt64(1))
     r = load_metta!(sp, q)
@@ -159,13 +165,15 @@ end
         # and this test is what keeps it honest.
         Eval.untable_all!()
         Eval.uncompile_all!()
-        sp = Eval.Space(); load_core_stdlib!(sp)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
         Eval.compile_head!(:hc, _chs_hc, UInt64(1))
         Eval.table!(:hc)
         r = load_metta!(sp, "!(hc \$z)\n")
         got = sort!([string(x) for y in r for x in (y isa AbstractVector ? y : [y])])
         nf = Eval.fired(:hc)
-        Eval.untable_all!(); Eval.uncompile_all!()
+        Eval.untable_all!()
+        Eval.uncompile_all!()
 
         @test nf > 0                                    # ANTI-VACUITY: the closure ran UNDER tabling
         @test got == ["schiphol"]                       # …and gave the compiled answer
@@ -180,16 +188,22 @@ end
         # while the query branch hands on `subst(X, mb)`. Same defect family as the tabling
         # substitution bug, now on the compiled side of the same seam.
         Eval.uncompile_all!()
-        sp = Eval.Space(); load_core_stdlib!(sp)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
         # closure for `f`: `(f $x)` reduces to `(g $x)` — the OUT is NOT ground.
         function f_nonground(call::_V.Atom, space)
-            args = (call isa _V.Expression && length(call.children) > 1) ?
-                   _V.Atom[call.children[2:end]...] : _V.Atom[]
+            args = if (call isa _V.Expression && length(call.children) > 1)
+                _V.Atom[call.children[2:end]...]
+            else
+                _V.Atom[]
+            end
             length(args) == 1 || return Eval.ExecNoReduce()
             u = args[1]
             bs = _V.add_var_binding(_V.Bindings(), _V.Var("x"), u)
             isempty(bs) && return Eval.ExecNoReduce()
-            Eval.CompiledOk(_V.Atom[_V.Expression(_V.Atom[_V.Sym("g"), _V.Var("x")])], [bs[1]])
+            Eval.CompiledOk(
+                _V.Atom[_V.Expression(_V.Atom[_V.Sym("g"), _V.Var("x")])], [bs[1]]
+            )
         end
         Eval.compile_head!(:f, f_nonground, UInt64(1))
         r = load_metta!(sp, "!(f a)\n")

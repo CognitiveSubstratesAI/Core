@@ -268,7 +268,11 @@ function emit_julia_program(clauses::Vector{ANClause})
     for cl in clauses
         push!(get!(an_by_head, cl.name, ANClause[]), cl)
         r = emit_julia_clause(cl)
-        r === nothing ? push!(declined, cl.name) : push!(get!(by_head, cl.name, Tuple{Expression, Vector, Expression}[]), r)
+        if r === nothing
+            push!(declined, cl.name)
+        else
+            push!(get!(by_head, cl.name, Tuple{Expression, Vector, Expression}[]), r)
+        end
     end
     for h in declined                            # any declined clause disqualifies the whole head
         delete!(by_head, h)

@@ -22,7 +22,8 @@ using MeTTaCore.Eval
 using Test
 
 # Program from test_tabling_swipl_differential.jl:123-128, with the template returning the NODE.
-const _CY_PROG = "(edge amsterdam schiphol)\n(edge schiphol leiden)\n" *
+const _CY_PROG =
+    "(edge amsterdam schiphol)\n(edge schiphol leiden)\n" *
     raw"(= (reach $x $y) (match &self (edge $x $y) $y))" * "\n" *
     raw"(= (reach $x $y) (reach $y $x))" * "\n"
 # Carries the CALL VARIABLE into the answer — without this the loss is invisible, because `!`-queries
@@ -34,14 +35,17 @@ function _cy_bfs(from::String)
     edges = [("amsterdam", "schiphol"), ("schiphol", "leiden")]
     sym = Set{Tuple{String, String}}()
     for (a, b) in edges
-        push!(sym, (a, b)); push!(sym, (b, a))
+        push!(sym, (a, b))
+        push!(sym, (b, a))
     end
     sort([b for (a, b) in sym if a == from])
 end
 
 function _cy_ask(q::AbstractString, heads::Vector{Symbol}; defs::AbstractString)
     Eval.untable_all!()
-    s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, defs)
+    s = Eval.Space()
+    load_core_stdlib!(s)
+    load_metta!(s, defs)
     for h in heads
         Eval.table!(h)
     end
@@ -66,9 +70,10 @@ end
         #     UNTABLED  ->  (pair schiphol schiphol)     binding PROPAGATES
         #     TABLED    ->  (pair $w schiphol)           binding LOST
         # => the interpreter propagates it; TABLING drops it. Attribution SHOWN, not inherited.
-        ac = "(edge amsterdam schiphol)\n(edge schiphol leiden)\n" *
-             raw"(= (reach $x $y) (match &self (edge $x $y) $y))" * "\n" *
-             raw"(= (m $u) (pair $u (reach amsterdam $u)))" * "\n"
+        ac =
+            "(edge amsterdam schiphol)\n(edge schiphol leiden)\n" *
+            raw"(= (reach $x $y) (match &self (edge $x $y) $y))" * "\n" *
+            raw"(= (m $u) (pair $u (reach amsterdam $u)))" * "\n"
 
         (u, tbu) = _cy_ask("!(m \$w)\n", Symbol[]; defs=ac)
         @test isempty(tbu)                                  # the untabled arm really is untabled
@@ -90,13 +95,15 @@ end
     @testset "the untabled arm CANNOT be the oracle (it does not terminate)" begin
         # Asserted, not asserted-in-prose: this is why the oracles below are external.
         Eval.untable_all!()
-        s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, _CY_PROG)
+        s = Eval.Space()
+        load_core_stdlib!(s)
+        load_metta!(s, _CY_PROG)
         @test_throws Exception load_metta!(s, "!(reach amsterdam \$y)\n")
         Eval.untable_all!()
     end
 
     @testset "tabled agrees with the BFS oracle — ground AND variable calls" begin
-        (g, tb)  = _cy_ask("!(reach amsterdam schiphol)\n", [:reach]; defs=_CY_PROG)
+        (g, tb) = _cy_ask("!(reach amsterdam schiphol)\n", [:reach]; defs=_CY_PROG)
         @test tb == [:reach]                       # ANTI-VACUITY, first, always
         @test g == ["schiphol"]                    # the SWI-oracled ground shape
 

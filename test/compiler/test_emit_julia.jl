@@ -28,9 +28,12 @@ const _EJE = MeTTaCore.CompilerEmitJulia
 
 "Parse → lower → A-normalise, mirroring the ratchet's front half."
 function _ej_clauses(sp, text::AbstractString)
-    toks = Eval.tokenize(text); i = Ref(1); atoms = _EJV.Atom[]
+    toks = Eval.tokenize(text)
+    i = Ref(1)
+    atoms = _EJV.Atom[]
     while i[] <= length(toks)
-        toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+        toks[i[]] == "!" && (i[] += 1)
+        i[] > length(toks) && break
         push!(atoms, Eval.parse_from(toks, i, sp.tokens))
     end
     _EJA.translate_program(_EJF.lower_program(atoms))
@@ -38,17 +41,23 @@ end
 
 "Register every emitted head, then ask `q` against a space holding ONLY the stdlib."
 function _ej_ask(prog::AbstractString, q::AbstractString)
-    sp = Eval.Space(); load_core_stdlib!(sp)
+    sp = Eval.Space()
+    load_core_stdlib!(sp)
     heads = _EJE.emit_julia_program(_ej_clauses(sp, prog))
     Eval.uncompile_all!()
-    s2 = Eval.Space(); load_core_stdlib!(s2)          # ← rules deliberately NOT loaded
+    s2 = Eval.Space()
+    load_core_stdlib!(s2)          # ← rules deliberately NOT loaded
     for (h, fn) in heads
         Eval.compile_head!(h, fn, UInt64(1))
     end
     res = load_metta!(s2, q)
     fired = Dict(h => Eval.fired(h) for h in keys(heads))
     Eval.uncompile_all!()
-    (sort!([string(x) for y in res for x in (y isa AbstractVector ? y : [y])]), heads, fired)
+    (
+        sort!([string(x) for y in res for x in (y isa AbstractVector ? y : [y])]),
+        heads,
+        fired
+    )
 end
 
 const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
@@ -56,7 +65,8 @@ const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
 @testset "EmitJulia — stage 4c registration path (1a facts + 1b goals)" begin
 
     @testset "emits per HEAD, not per clause" begin
-        sp = Eval.Space(); load_core_stdlib!(sp)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
         heads = _EJE.emit_julia_program(_ej_clauses(sp, _EJ_PROG))
         @test sort(String.(collect(keys(heads)))) == ["col", "idf"]
         @test length(heads) == 2                     # `col`'s TWO clauses became ONE closure
@@ -95,7 +105,8 @@ const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
         # `if` lowers to GBranch, which is MILESTONE 2. Stable until that lands, and when it does
         # THIS TEST GOES RED — which is correct: the probe must then move again.
         prog = "(= (mix a) T)\n(= (mix \$x) (if (> \$x 0) yes no))\n"
-        sp = Eval.Space(); load_core_stdlib!(sp)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
         heads = _EJE.emit_julia_program(_ej_clauses(sp, prog))
         @test !haskey(heads, :mix)                   # partially-emittable ⇒ NOT registered
     end
@@ -113,7 +124,9 @@ const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
     @testset "🔑 GUnify binds — `let` lowered to unification, FREE on Eval and absent from MM2" begin
         # `Emit.jl` records GUnify+GFindall as 73 of 279 blocked paths on ECAN+PLN, "FREE on Eval
         # and ABSENT from MM2 BY CONSTRUCTION". This is that class working.
-        (got, _, fired) = _ej_ask(raw"(= (dup $x) (let $y $x (pair $y $y)))" * "\n", "!(dup 7)\n")
+        (got, _, fired) = _ej_ask(
+            raw"(= (dup $x) (let $y $x (pair $y $y)))" * "\n", "!(dup 7)\n"
+        )
         @test fired[:dup] > 0
         @test got == ["(pair 7 7)"]
         @test !any(a -> occursin("#", a), got)   # no renamed variable leaked into the answer
@@ -127,7 +140,9 @@ const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
         # `(dup 7)` answered `(pair $y#1097 $y#1097)`; `(inc 41)` returned the call itself.
         # Two calls in a row is what catches a rename that only works once.
         for _ in 1:2
-            (got, _, fired) = _ej_ask(raw"(= (dup $x) (let $y $x (pair $y $y)))" * "\n", "!(dup 7)\n")
+            (got, _, fired) = _ej_ask(
+                raw"(= (dup $x) (let $y $x (pair $y $y)))" * "\n", "!(dup 7)\n"
+            )
             @test fired[:dup] > 0
             @test got == ["(pair 7 7)"]
         end
@@ -138,7 +153,8 @@ const _EJ_PROG = "(= (col red) T)\n(= (col blue) T)\n(= (idf \$x) \$x)\n"
         # stays as DATA, so it is a fact clause and legitimately emits. A real non-grounded GCall
         # needs a head that IS a known function but NOT in TOKEN_REGISTRY — i.e. a call to another
         # user-defined function, which is what `_plan_goals` declines.
-        sp = Eval.Space(); load_core_stdlib!(sp)
+        sp = Eval.Space()
+        load_core_stdlib!(sp)
         prog = raw"(= (a $x) (+ $x 1))" * "\n" * raw"(= (b $x) (a $x))" * "\n"
         heads = _EJE.emit_julia_program(_ej_clauses(sp, prog))
         @test haskey(heads, :a)                  # grounded call ⇒ emits

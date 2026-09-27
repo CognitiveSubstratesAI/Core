@@ -241,7 +241,9 @@ end
 # under-invalidation looks exactly like precision if you never test the relevant case.
 # Over-invalidation is sound. Under-invalidation is the one failure an IDG must not have.
 @testset "§7.7 precision — unrelated mutations do NOT invalidate, relevant ones DO" begin
-    _DG.clear_dyn_deps!(); _DG.untable_all!(); _DG.abolish_all_tables!()
+    _DG.clear_dyn_deps!()
+    _DG.untable_all!()
+    _DG.abolish_all_tables!()
     saved = _DG._IDG_RECORD[]
     _DG._IDG_RECORD[] = true
     try
@@ -264,6 +266,8 @@ end
         @test any(o -> _DG.idg_is_invalid(o), owners)      # ⇒ MUST invalidate
     finally
         _DG._IDG_RECORD[] = saved
-        _DG.clear_dyn_deps!(); _DG.untable_all!(); _DG.abolish_all_tables!()
+        _DG.clear_dyn_deps!()
+        _DG.untable_all!()
+        _DG.abolish_all_tables!()
     end
 end

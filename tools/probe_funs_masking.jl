@@ -27,12 +27,16 @@ const ND_NUM = "(= (ndn) 1)\n(= (ndn) 2)\n"      # nondeterministic, numeric
 "Interpreter answers for `program`, sorted, flattened."
 function interp(program::AbstractString)::Vector{String}
     E = MeTTaCore.Eval
-    sp = E.Space(); E.load_core_stdlib!(sp)
+    sp = E.Space()
+    E.load_core_stdlib!(sp)
     out = String[]
     for (bang, f) in MeTTaCore.mm2_split_forms(program)
         res = E.load_metta!(sp, bang ? "!" * f : f)
-        bang && append!(out, String[string(x) for y in res
-                                   for x in (y isa AbstractVector ? y : [y])])
+        bang && append!(
+            out,
+            String[string(x) for y in res
+                   for x in (y isa AbstractVector ? y : [y])]
+        )
     end
     sort(out)
 end
@@ -45,16 +49,23 @@ compiled head, so a head that IS compiled cannot also answer from the space (no 
 harness itself; verified 2026-09-03)."
 function closure(program::AbstractString)
     E = MeTTaCore.Eval
-    sp = E.Space(); E.load_core_stdlib!(sp)
-    toks = E.tokenize(program); i = Ref(1); atoms = MeTTaCore.StandardMeTTa.Atom[]
+    sp = E.Space()
+    E.load_core_stdlib!(sp)
+    toks = E.tokenize(program)
+    i = Ref(1)
+    atoms = MeTTaCore.StandardMeTTa.Atom[]
     while i[] <= length(toks)
-        toks[i[]] == "!" && (i[] += 1); i[] > length(toks) && break
+        toks[i[]] == "!" && (i[] += 1)
+        i[] > length(toks) && break
         push!(atoms, E.parse_from(toks, i, sp.tokens))
     end
-    cls = MeTTaCore.CompilerANormal.translate_program(MeTTaCore.CompilerFrontend.lower_program(atoms))
+    cls = MeTTaCore.CompilerANormal.translate_program(
+        MeTTaCore.CompilerFrontend.lower_program(atoms)
+    )
     heads = MeTTaCore.CompilerEmitJulia.emit_julia_program(cls)
     E.uncompile_all!()
-    s2 = E.Space(); E.load_core_stdlib!(s2)
+    s2 = E.Space()
+    E.load_core_stdlib!(s2)
     out = String[]
     for (bang, f) in MeTTaCore.mm2_split_forms(program)
         bang || E.load_metta!(s2, f)              # rules in the space: declines still answer
@@ -65,7 +76,10 @@ function closure(program::AbstractString)
     for (bang, f) in MeTTaCore.mm2_split_forms(program)
         if bang
             res = E.load_metta!(s2, "!" * f)
-            append!(out, String[string(x) for y in res for x in (y isa AbstractVector ? y : [y])])
+            append!(
+                out,
+                String[string(x) for y in res for x in (y isa AbstractVector ? y : [y])]
+            )
         end
     end
     # 🔴 THE HEAD UNDER TEST IS `w`, AND ONLY ITS STATUS MEANS ANYTHING. An earlier version of this
@@ -81,7 +95,7 @@ end
 
 "Compiled answers for `program`, sorted, plus the decline count."
 function compiled(program::AbstractString)
-    r = MeTTaCore.compile_run(program; max_steps = 512_000)
+    r = MeTTaCore.compile_run(program; max_steps=512_000)
     (sort(String[string(a) for (_, ans) in r.answers for a in ans]),
         r.compiled, r.fell_back)
 end
@@ -89,23 +103,31 @@ end
 # Each case puts a NONDETERMINISTIC call in one syntactic position. If widening `funs` makes that
 # call BOTH a hoisted goal and a re-rendered term, the answers double and this catches it.
 const CASES = [
-    ("chain           (CONTROL: _KEEP_WHOLE)", ND_SYM * "(= (w) (chain (nd) \$v \$v))\n",            "!(w)"),
-    ("eval            (known-unsafe)",         ND_SYM * "(= (w) (eval (nd)))\n",                     "!(w)"),
-    ("function/return (known-unsafe)",         ND_SYM * "(= (w) (function (return (nd))))\n",        "!(w)"),
-    ("return          (bare)",                 ND_SYM * "(= (w) (function (return (nd))))\n",        "!(w)"),
-    ("let  VALUE",                             ND_SYM * "(= (w) (let \$v (nd) \$v))\n",              "!(w)"),
-    ("let* VALUE",                             ND_SYM * "(= (w) (let* ((\$v (nd))) \$v))\n",         "!(w)"),
-    ("if   THEN-ARM",                          ND_SYM * "(= (w) (if (== 1 1) (nd) z))\n",            "!(w)"),
-    ("if   CONDITION",                         ND_NUM * "(= (w) (if (== (ndn) 1) yes no))\n",        "!(w)"),
-    ("case SCRUTINEE",                         ND_SYM * "(= (w) (case (nd) ((a A) (b B))))\n",       "!(w)"),
-    ("superpose ARG",                          ND_SYM * "(= (w) (superpose ((nd) z)))\n",            "!(w)"),
-    ("collapse  ARG",                          ND_SYM * "(= (w) (collapse (nd)))\n",                 "!(w)"),
-    ("quote     ARG",                          ND_SYM * "(= (w) (quote (nd)))\n",                    "!(w)"),
-    ("match     PATTERN",                      ND_SYM * "(= (w) (match &self (nd) matched))\n",      "!(w)"),
-    ("grounded  ARG (cons-atom)",              ND_SYM * "(= (w) (cons-atom (nd) ()))\n",             "!(w)"),
-    ("grounded  ARG (arith)",                  ND_NUM * "(= (w) (+ (ndn) 10))\n",                    "!(w)"),
-    ("nested CALL ARG",                        ND_SYM * "(= (id \$x) \$x)\n(= (w) (id (nd)))\n",     "!(w)"),
-    ("TWO nd in one body",                     ND_NUM * "(= (w) (+ (ndn) (ndn)))\n",                 "!(w)"),
+    (
+        "chain           (CONTROL: _KEEP_WHOLE)",
+        ND_SYM * "(= (w) (chain (nd) \$v \$v))\n",
+        "!(w)"
+    ),
+    ("eval            (known-unsafe)", ND_SYM * "(= (w) (eval (nd)))\n", "!(w)"),
+    (
+        "function/return (known-unsafe)",
+        ND_SYM * "(= (w) (function (return (nd))))\n",
+        "!(w)"
+    ),
+    ("return          (bare)", ND_SYM * "(= (w) (function (return (nd))))\n", "!(w)"),
+    ("let  VALUE", ND_SYM * "(= (w) (let \$v (nd) \$v))\n", "!(w)"),
+    ("let* VALUE", ND_SYM * "(= (w) (let* ((\$v (nd))) \$v))\n", "!(w)"),
+    ("if   THEN-ARM", ND_SYM * "(= (w) (if (== 1 1) (nd) z))\n", "!(w)"),
+    ("if   CONDITION", ND_NUM * "(= (w) (if (== (ndn) 1) yes no))\n", "!(w)"),
+    ("case SCRUTINEE", ND_SYM * "(= (w) (case (nd) ((a A) (b B))))\n", "!(w)"),
+    ("superpose ARG", ND_SYM * "(= (w) (superpose ((nd) z)))\n", "!(w)"),
+    ("collapse  ARG", ND_SYM * "(= (w) (collapse (nd)))\n", "!(w)"),
+    ("quote     ARG", ND_SYM * "(= (w) (quote (nd)))\n", "!(w)"),
+    ("match     PATTERN", ND_SYM * "(= (w) (match &self (nd) matched))\n", "!(w)"),
+    ("grounded  ARG (cons-atom)", ND_SYM * "(= (w) (cons-atom (nd) ()))\n", "!(w)"),
+    ("grounded  ARG (arith)", ND_NUM * "(= (w) (+ (ndn) 10))\n", "!(w)"),
+    ("nested CALL ARG", ND_SYM * "(= (id \$x) \$x)\n(= (w) (id (nd)))\n", "!(w)"),
+    ("TWO nd in one body", ND_NUM * "(= (w) (+ (ndn) (ndn)))\n", "!(w)")
 ]
 
 function main()
@@ -133,8 +155,10 @@ function main()
         same = c == i
         samecl = cl == i
         doubled = !same && sort(unique(c)) == sort(unique(i)) && length(c) > length(i)
-        same || (ndiff += 1); doubled && (ndoubled += 1)
-        same || push!(il_bad, name); samecl || push!(cl_bad, name)
+        same || (ndiff += 1)
+        doubled && (ndoubled += 1)
+        same || push!(il_bad, name)
+        samecl || push!(cl_bad, name)
         iltag = same ? "ok" : (doubled ? "✗ DOUBLED" : "✗ " * string(c))
         # "ok" only counts when the head UNDER TEST compiled and fired. Otherwise the answer came
         # from the space and the row says nothing about this lane.
@@ -157,9 +181,15 @@ function main()
     println("   ", isempty(cl_unproven) ? "none" : join(cl_unproven, ", "))
     println()
     println("🔑 THE READING THAT DECIDES THE ARCHITECTURE QUESTION:")
-    println("   red in IL, GREEN in closure  ⇒ the goal-list IR's SHAPE is the cause; the lane matters.")
-    println("   red in BOTH                  ⇒ the seam is NOT the IR's shape. A rewrite buys nothing,")
-    println("                                  and the boundary itself is what has to be fixed.")
+    println(
+        "   red in IL, GREEN in closure  ⇒ the goal-list IR's SHAPE is the cause; the lane matters."
+    )
+    println(
+        "   red in BOTH                  ⇒ the seam is NOT the IR's shape. A rewrite buys nothing,"
+    )
+    println(
+        "                                  and the boundary itself is what has to be fixed."
+    )
 end
 
 main()

@@ -50,7 +50,7 @@ using Test
         indoc = false
         for (i, raw) in enumerate(lines)
             n = count(_ -> true, findall("\"\"\"", raw))
-            isodd(n) && (indoc = !indoc; continue)
+            isodd(n) && (indoc=(!indoc); continue)
             indoc && continue
             code = replace(raw, r"#.*$" => "")
             startswith(strip(raw), "#") && continue
@@ -59,17 +59,21 @@ using Test
             # enforces, and the first version flagged it. A gate whose failures are noise gets
             # switched off, so the detector must not trip on prose ABOUT `Any`.
             startswith(strip(raw), "\"") && continue
-            hit = occursin(r"(^|[^A-Za-z0-9_.])Any\[", code) ||
-                  occursin(r"\b(Vector|Array|Ref)\{Any[,}]", code) ||
-                  occursin(r"\bDict\{[^}]*,\s*Any\}", code) ||
-                  occursin(r"^\s*[A-Za-z_][A-Za-z0-9_!]*\s*::\s*Any\s*$", code)
+            hit =
+                occursin(r"(^|[^A-Za-z0-9_.])Any\[", code) ||
+                occursin(r"\b(Vector|Array|Ref)\{Any[,}]", code) ||
+                occursin(r"\bDict\{[^}]*,\s*Any\}", code) ||
+                occursin(r"^\s*[A-Za-z_][A-Za-z0-9_!]*\s*::\s*Any\s*$", code)
             hit || continue
             # the escape may sit on this line or in the comment block immediately above it
             lo = max(1, i - 6)
             if any(l -> occursin(r"#\s*allow-any:\s*\S", l), lines[lo:i])
                 allowed += 1
             else
-                push!(offenders, string(relpath(path, root), ":", i, "  ", strip(raw)[1:min(end, 90)]))
+                push!(
+                    offenders,
+                    string(relpath(path, root), ":", i, "  ", strip(raw)[1:min(end, 90)])
+                )
             end
         end
     end
@@ -81,6 +85,6 @@ using Test
     @test allowed > 0
 
     isempty(offenders) || printstyled("\n  unannotated Any containers:\n    ",
-                                      join(offenders, "\n    "), "\n"; color=:red)
+        join(offenders, "\n    "), "\n"; color=:red)
     @test offenders == String[]
 end

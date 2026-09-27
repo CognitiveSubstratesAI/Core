@@ -60,13 +60,19 @@ enc(src) = MC.atom_to_expr(EV.parse_program(src)[1][2])
     end
 
     @testset "offsets are STRICTLY INCREASING node boundaries — pinned, not assumed" begin
-        for src in ("(f a b)", "(f \$x \$x)", "(f (g \$x) (h \$x \$y))", "(f \$x (g \$y (h \$x \$y)))")
+        for src in (
+            "(f a b)",
+            "(f \$x \$x)",
+            "(f (g \$x) (h \$x \$y))",
+            "(f \$x (g \$y (h \$x \$y)))"
+        )
             e = enc(src)
             @test length(e.offsets) == length(e.nodes)
             @test issorted(e.offsets)
             @test length(unique(e.offsets)) == length(e.offsets)   # strict, not merely sorted
             @test e.offsets[1] == 0                                # the root starts at byte 0
-            @test e.nodes[1] === EV.parse_program(src)[1][2] || e.nodes[1] == EV.parse_program(src)[1][2]
+            @test e.nodes[1] === EV.parse_program(src)[1][2] ||
+                e.nodes[1] == EV.parse_program(src)[1][2]
             @test all(o -> o < length(e.expr.buf), e.offsets)      # every offset is INSIDE the buffer
         end
     end
@@ -87,7 +93,9 @@ enc(src) = MC.atom_to_expr(EV.parse_program(src)[1][2])
         # PAYLOAD bytes are not tags, and `byte_item` on one throws ("reserved byte: 0x66" — `'f'`).
         # A first draft of this line scanned `e.expr.buf` whole and did exactly that; it is the same
         # defect a probe in this arc hit on 2026-09-18. `offsets` is the boundary list, so use it.
-        newvars = count(o -> MORK.byte_item(e.expr.buf[Int(o) + 1]) isa MORK.ExprNewVar, e.offsets)
+        newvars = count(
+            o -> MORK.byte_item(e.expr.buf[Int(o) + 1]) isa MORK.ExprNewVar, e.offsets
+        )
         @test newvars == length(e.vars)
     end
 

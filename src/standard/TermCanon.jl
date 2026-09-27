@@ -75,7 +75,9 @@ variable across every term walked with that map. That is:
 
 If you are producing a key, do not share. If you are comparing, sharing is the point.
 """
-function canon_rename(a::Atom, policy::CanonPolicy, seen::Dict{Var, Var}=Dict{Var, Var}())::Atom
+function canon_rename(
+    a::Atom, policy::CanonPolicy, seen::Dict{Var, Var}=Dict{Var, Var}()
+)::Atom
     if a isa Var
         # `get!(f, d, k)` evaluates `f` BEFORE inserting, so `length(seen)` is the pre-insertion count
         # — which is what makes `first_ordinal + length` reproduce both callers' numbering exactly.

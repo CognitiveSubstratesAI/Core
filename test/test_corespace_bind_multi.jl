@@ -28,7 +28,7 @@ _bm_v(n) = Symbol("\$" * n)
         @test length(r) == 2
         @test _bm_norm(r) == Set([
             [("\$x", "a"), ("\$y", "b"), ("\$z", "c")],
-            [("\$x", "b"), ("\$y", "c"), ("\$z", "d")],
+            [("\$x", "b"), ("\$y", "c"), ("\$z", "d")]
         ])
     end
 
@@ -38,11 +38,12 @@ _bm_v(n) = Symbol("\$" * n)
     # `_bind_walk!` starts mid-atom and binds plausible-looking garbage rather than erroring.
     @testset "2. unequal-arity factors — the span split must be exact" begin
         r = _BM.core_match_bind_multi(
-            sp, [[:edge, _bm_v("x"), _bm_v("y")], [:label, _bm_v("y"), _bm_v("p"), _bm_v("q")]])
+            sp,
+            [[:edge, _bm_v("x"), _bm_v("y")], [:label, _bm_v("y"), _bm_v("p"), _bm_v("q")]])
         @test length(r) == 2
         @test _bm_norm(r) == Set([
             [("\$p", "some"), ("\$q", "thing"), ("\$x", "a"), ("\$y", "b")],
-            [("\$p", "other"), ("\$q", "stuff"), ("\$x", "b"), ("\$y", "c")],
+            [("\$p", "other"), ("\$q", "stuff"), ("\$x", "b"), ("\$y", "c")]
         ])
     end
 
@@ -94,8 +95,10 @@ _bm_v(n) = Symbol("\$" * n)
         caps = _BM.space_caps(:mork)
         @test caps.conjunction == true
         # ...and it is true because the operation WORKS, not because someone typed `true`:
-        @test !isempty(_BM.core_match_bind_multi(
-            sp, [[:edge, _bm_v("x"), _bm_v("y")], [:edge, _bm_v("y"), _bm_v("z")]]))
+        @test !isempty(
+            _BM.core_match_bind_multi(
+                sp, [[:edge, _bm_v("x"), _bm_v("y")], [:edge, _bm_v("y"), _bm_v("z")]])
+        )
     end
 
     @testset "5. boundary tolerance, matching core_match_bind" begin
@@ -103,6 +106,7 @@ _bm_v(n) = Symbol("\$" * n)
         @test isempty(_BM.core_match_bind_multi(sp, [[]]))
         # a single factor through the multi path agrees with the single-pattern entry point
         one = _BM.core_match_bind_multi(sp, [[:edge, _bm_v("x"), _bm_v("y")]])
-        @test _bm_norm(one) == _bm_norm(_BM.core_match_bind(sp, [:edge, _bm_v("x"), _bm_v("y")]))
+        @test _bm_norm(one) ==
+            _bm_norm(_BM.core_match_bind(sp, [:edge, _bm_v("x"), _bm_v("y")]))
     end
 end

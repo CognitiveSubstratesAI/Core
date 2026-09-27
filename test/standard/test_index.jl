@@ -28,7 +28,7 @@ _fx(args...) = Expression(Atom[Sym("f"), args...])
 @testset "adaptive index — the pl-index.c speedup formula" begin
     @testset "all distinct, no vars ⇒ speedup == #clauses" begin
         atoms = Atom[_fx(Sym("a"), Sym("1")), _fx(Sym("b"), Sym("2")),
-                     _fx(Sym("c"), Sym("3")), _fx(Sym("d"), Sym("4"))]
+            _fx(Sym("c"), Sym("3")), _fx(Sym("d"), Sym("4"))]
         a = _IX._assess_argument(atoms, 2)
         @test a.distinct == 4
         @test a.nvar == 0
@@ -44,7 +44,7 @@ _fx(args...) = Expression(Atom[Sym("f"), args...])
 
     @testset "vars at the position DILUTE the gain — they land in every bucket" begin
         atoms = Atom[_fx(Sym("a"), Sym("1")), _fx(Sym("b"), Sym("2")),
-                     _fx(Var("x"), Sym("3")), _fx(Var("y"), Sym("4"))]
+            _fx(Var("x"), Sym("3")), _fx(Var("y"), Sym("4"))]
         a = _IX._assess_argument(atoms, 2)
         @test a.distinct == 2
         @test a.nvar == 2
@@ -72,7 +72,7 @@ end
 
 @testset "adaptive index — argument SELECTION (bestHash)" begin
     atoms = Atom[_fx(Sym("a"), Sym("p")), _fx(Sym("b"), Sym("q")),
-                 _fx(Sym("c"), Sym("r")), _fx(Sym("d"), Sym("s"))]
+        _fx(Sym("c"), Sym("r")), _fx(Sym("d"), Sym("s"))]
 
     # 🔑 THE POINT OF THE WHOLE PORT: our FIXED `_index_key` needs child 2 concrete and gives up
     # otherwise. The adaptive layer indexes on whatever the CALL instantiated instead.
@@ -115,7 +115,8 @@ end
 # returns FEWER answers — so this compares the indexed result against the same query run with the
 # index disabled, rather than against a hand-written expectation.
 @testset "JIT argument index does not change answers" begin
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     for k in 1:60
         load_metta!(s, "(belief k$(k) s$(k) c$(k))\n")
     end
@@ -128,8 +129,11 @@ end
     @test length(ground) == 3                          # k7's two atoms + the open-var atom
 
     # …and the same query with the index dropped must agree exactly.
-    empty!(s.store.arg_index); empty!(s.store.arg_tried)
-    unindexed = sort(string.(load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")))
+    empty!(s.store.arg_index)
+    empty!(s.store.arg_tried)
+    unindexed = sort(
+        string.(load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n"))
+    )
     @test ground == unindexed
 
     # a key with no atoms yields nothing, not everything
@@ -152,7 +156,8 @@ end
 # Found by comparing against JeTTa's global discrimination trie, which has no such failure mode
 # because it never chooses a position at all.
 @testset "a second query on a DIFFERENT argument still gets an index" begin
-    s = Space(); load_core_stdlib!(s)
+    s = Space()
+    load_core_stdlib!(s)
     for k in 1:80
         load_metta!(s, "(belief k$(k) s$(k) c$(k))\n")
     end
@@ -164,7 +169,9 @@ end
     # query 2 instantiates position 3 ONLY — the fixed key cannot help here at all
     pat2 = Expression(Atom[Sym("belief"), Var("k"), Sym("s7"), Var("c")])
     @test Eval._index_key(pat2) === nothing            # …confirming the fixed index is out
-    cands = Eval.index_candidates(Eval.all_atoms(s), s.store.arg_index, s.store.arg_tried, pat2)
+    cands = Eval.index_candidates(
+        Eval.all_atoms(s), s.store.arg_index, s.store.arg_tried, pat2
+    )
     @test length(cands) < length(Eval.all_atoms(s))    # 🔑 it MUST narrow, not fall back
     a2 = load_metta!(s, raw"!(match &self (belief $k s7 $c) $k)" * "\n")
     @test length(a2) == 1                              # …and still answer correctly

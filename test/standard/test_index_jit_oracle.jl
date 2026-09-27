@@ -118,7 +118,8 @@ _jx_unindex!(s) = (empty!(s.store.index); empty!(s.store.arg_index);
         # Upstream runs the same fixture over strings/bignums/floats to exercise the hashed-key path.
         # Ours keys a Grounded by the 64-bit hash of its value; a collision may only WIDEN the
         # candidate set, never drop a match, because `match_atoms` stays authoritative.
-        for (label, mk) in ("string" => (i -> "\"s$(i)\""), "float" => (i -> string(i) * ".5"))
+        for (label, mk) in
+            ("string" => (i -> "\"s$(i)\""), "float" => (i -> string(i) * ".5"))
             s = _JX.Space()
             _JX.load_core_stdlib!(s)
             for i in 1:60

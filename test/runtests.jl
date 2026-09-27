@@ -77,13 +77,13 @@ SUITE_SHARD === nothing || printstyled(
 # hazard that made the compiled-head registry use a `WeakRef`. After 80 files of allocate-and-collect,
 # a stale memo entry can classify an unrelated atom, changing the evaluation path.
 const _SUITE_GLOBALS = (:_COMPILED_HEADS, :COMPILED_INTERPRET_ONLY, :_TABLED_HEADS,
-                        :_NOREDUCE_HEADS, :_ANSWER_TABLE, :_ANSWER_TRIES, :_IDG,
-                        :_WORKLISTS, :_DEPS, :_NO_RULE, :_INCREMENTAL_HEADS,
-                        :_TABLE_OPTIONS, :_SUBSUMPTIVE, :_MAX_ANSWERS,
-                        # group C — "stays global" by design, mutated in practice
-                        :TOKEN_REGISTRY, :_CLOSED_RULE_MEMO, :_ATOM_TYPE_MEMO,
-                        :_DECL_TYPE_MEMO, :_GROUNDED_OP_TYPE_CACHE, :_GROUNDED_OP_TYPES,
-                        :_LANGDEF_LIVE)
+    :_NOREDUCE_HEADS, :_ANSWER_TABLE, :_ANSWER_TRIES, :_IDG,
+    :_WORKLISTS, :_DEPS, :_NO_RULE, :_INCREMENTAL_HEADS,
+    :_TABLE_OPTIONS, :_SUBSUMPTIVE, :_MAX_ANSWERS,
+    # group C — "stays global" by design, mutated in practice
+    :TOKEN_REGISTRY, :_CLOSED_RULE_MEMO, :_ATOM_TYPE_MEMO,
+    :_DECL_TYPE_MEMO, :_GROUNDED_OP_TYPE_CACHE, :_GROUNDED_OP_TYPES,
+    :_LANGDEF_LIVE)
 # 🔴 GLOBAL **SETTINGS** MUST BE UNCHANGED BY A TEST FILE — and this check is here because a leaked
 # one cost two days. `interpret_max_steps!` returned the ASSIGNED value, so the save/restore idiom
 # `steps = interpret_max_steps!(0); …; interpret_max_steps!(steps)` left the interpreter UNLIMITED
@@ -118,13 +118,15 @@ _suite_settings() = SuiteSettings(
     MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
     sort(collect(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY)),
     sort(collect(MeTTaCore.Eval._TABLED_HEADS)),
-    sort(collect(keys(MeTTaCore.Eval._TABLE_OPTIONS))),
+    sort(collect(keys(MeTTaCore.Eval._TABLE_OPTIONS)))
 )
 
 "Fields that differ, as `name before→after`. Empty means the file left global settings alone."
 _settings_delta(a::SuiteSettings, b::SuiteSettings) =
-    [string(f, " ", getfield(a, f), "→", getfield(b, f))
-     for f in fieldnames(SuiteSettings) if getfield(a, f) != getfield(b, f)]
+    [
+        string(f, " ", getfield(a, f), "→", getfield(b, f))
+        for f in fieldnames(SuiteSettings) if getfield(a, f) != getfield(b, f)
+    ]
 
 # Put a snapshot BACK. Flagging alone is not enough: a file's own cleanup is skipped when an error
 # escapes its testsets, so one leaking file would contaminate EVERY file after it and turn a single
@@ -157,8 +159,11 @@ _suite_state() =
         Dict{Symbol, Int}()
     end
 _suite_state_delta(a, b) =
-    join([string(k, " ", get(a, k, 0), "→", v)
-          for (k, v) in sort(collect(b)) if get(a, k, 0) != v], "  ")
+    join(
+        [
+            string(k, " ", get(a, k, 0), "→", v)
+            for (k, v) in sort(collect(b)) if get(a, k, 0) != v
+        ], "  ")
 
 _suite_rss_mb() =
     try
@@ -191,9 +196,13 @@ macro suite(path)
                 local _g1 = Main._suite_settings()
                 local _leaked = Main._settings_delta(_g0, Main._suite_settings())
                 if !isempty(_leaked)
-                    push!(Main.SUITE_FAILED, (p, "LEAKED GLOBAL SETTING: " * join(_leaked, ", ")))
-                    printstyled("\n  ✗ LEAKED GLOBAL SETTING (this file must restore it): ", p,
-                                "\n      ", join(_leaked, "  "), "\n"; color=:red, bold=true)
+                    push!(
+                        Main.SUITE_FAILED,
+                        (p, "LEAKED GLOBAL SETTING: " * join(_leaked, ", "))
+                    )
+                    printstyled("\n  ✗ LEAKED GLOBAL SETTING (this file must restore it): ",
+                        p,
+                        "\n      ", join(_leaked, "  "), "\n"; color=:red, bold=true)
                 end
                 Main._suite_restore!(_g0)   # flagged above; now leave the next file a clean slate
                 if _dt >= 10.0 || (_r1 - _r0) >= 200

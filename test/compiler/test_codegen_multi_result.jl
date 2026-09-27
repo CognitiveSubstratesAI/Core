@@ -459,7 +459,9 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
     end
 
     _cg_answers(sp, q) =
-        sort!([string(x) for y in load_metta!(sp, q) for x in (y isa AbstractVector ? y : [y])])
+        sort!([
+            string(x) for y in load_metta!(sp, q) for x in (y isa AbstractVector ? y : [y])
+        ])
 
     _CG_FA = "(= (f \$x) (+ \$x 1))\n"
     _CG_FB = "(= (f \$x) (+ \$x 100))\n"

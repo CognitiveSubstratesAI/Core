@@ -391,8 +391,11 @@ function _build_arg_index(atoms::Vector{Atom}, best::ArgAssessment)::ArgIndex
     buckets = Dict{Symbol, Vector{Atom}}()
     wild = Atom[]
     for a in atoms
-        h = (a isa Expression && length(a.children) >= best.argpos) ?
-            _idx_head(a.children[best.argpos]) : nothing
+        h = if (a isa Expression && length(a.children) >= best.argpos)
+            _idx_head(a.children[best.argpos])
+        else
+            nothing
+        end
         h === nothing ? push!(wild, a) : push!(get!(() -> Atom[], buckets, h), a)
     end
     # A var at this position matches ANY key, so it must appear under every one — this is exactly the
@@ -445,8 +448,10 @@ function index_candidates(
         push!(tried, (head, pos))
     end
 
-    same_head = Atom[a for a in store_atoms
-                     if a isa Expression && !isempty(a.children) && _idx_head(a) === head]
+    same_head = Atom[
+        a for a in store_atoms
+        if a isa Expression && !isempty(a.children) && _idx_head(a) === head
+    ]
     length(same_head) <= _TRIE_MIN_BUCKET && return store_atoms   # too small to be worth an index
     best = best_index_argument(same_head, inst)
     best === nothing && return store_atoms

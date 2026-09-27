@@ -456,7 +456,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
                 (g.head in compilable ? _genname(g.head) : return nothing)
             end
             # allow-any: Julia AST args — see the note above `kids`.
-    as = Any[]
+            as = Any[]
             for a in g.args
                 v = _atomexpr(a, vars)
                 v === nothing && return nothing
@@ -518,15 +518,15 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
             :(nothing)
         else
             _gen_seq(
-            vcat(g.els, rest),
-            1,
-            copy(vars),
-            out_ir,
-            dup * 2,
-            selfname,
-            fname,
-            compilable
-        )
+                vcat(g.els, rest),
+                1,
+                copy(vars),
+                out_ir,
+                dup * 2,
+                selfname,
+                fname,
+                compilable
+            )
         end
         eb === nothing && return nothing
         return Expr(:if, test, tb, eb)
@@ -575,7 +575,7 @@ function _gen_det(
         (g.out isa IRVariable) || return nothing
         if g.head === selfname
             # allow-any: Julia AST args — see the note above `kids`.
-    as = Any[]
+            as = Any[]
             for a in g.args
                 v = _atomexpr(a, vars)
                 v === nothing && return nothing

@@ -36,7 +36,11 @@ end
 
 "Compile one source form and return its single emitted clause, or `nothing` if the lane declined."
 function _dc_compile1(sp, src::String)
-    r = try MeTTaCore.compile_definition(sp, src) catch; nothing end
+    r = try
+        MeTTaCore.compile_definition(sp, src)
+    catch
+        nothing
+    end
     (r === nothing || length(r.atoms) != 1) && return nothing
     r.atoms[1]
 end
@@ -76,7 +80,9 @@ end
     # (foldl-atom …)) …)`; that is the collapse FOLD, not a residual, and inverting it would return
     # the fold in place of the source `collapse`. Unreachable today (its outer `collapse-bind`
     # declines first) — asserted directly so it stays refused if that ever changes.
-    fold = _dc_parse1("(chain (eval (foldl-atom \$c () \$r \$i (f \$r \$i))) \$o (return \$o))")
+    fold = _dc_parse1(
+        "(chain (eval (foldl-atom \$c () \$r \$i (f \$r \$i))) \$o (return \$o))"
+    )
     @test _DC.declined(_DC.decompile_body(fold))
     @test occursin("foldl-atom", _DC.decompile_body(fold).reason)
 end
@@ -177,36 +183,56 @@ end
     # already anchor on `@__DIR__`, including `test_compile_lane_corpus.jl`, which reads these very
     # two directories. It passed locally for as long as CI was dead and could not contradict it.
     _roots_tried = [joinpath(@__DIR__, "..", "oracle", "leatta", "corpus"),
-                    joinpath(@__DIR__, "..", "standard", "conformance")]
+        joinpath(@__DIR__, "..", "standard", "conformance")]
     roots = filter(isdir, _roots_tried)
     # ⚠️ AND FAIL LOUDLY ON AN EMPTY CORPUS. `cand > 100` below is the anti-vacuity floor and it DID
     # fire — but it reports "0 > 100", which names neither the cause nor the paths. Say them.
-    @test !isempty(roots) || error("decompile corpus: no corpus directory found; tried " *
-                                   join(_roots_tried, ", ") * " (pwd = " * pwd() * ")")
-    rt = 0; cand = 0; mism = String[]
+    @test !isempty(roots) || error(
+        "decompile corpus: no corpus directory found; tried " *
+        join(_roots_tried, ", ") * " (pwd = " * pwd() * ")"
+    )
+    rt = 0
+    cand = 0
+    mism = String[]
     for dir in roots, f in sort(readdir(dir))
         endswith(f, ".metta") || continue
-        text = try read(joinpath(dir, f), String) catch; continue end
-        forms = try MeTTaCore.Eval.parse_program(text) catch; continue end
+        text = try
+            read(joinpath(dir, f), String)
+        catch
+            continue
+        end
+        forms = try
+            MeTTaCore.Eval.parse_program(text)
+        catch
+            continue
+        end
         for (is_exec, a) in forms
             is_exec && continue
             a isa MeTTaCore.StandardMeTTa.Expression || continue
             ch = (a::MeTTaCore.StandardMeTTa.Expression).children
-            (length(ch) == 3 && ch[1] isa MeTTaCore.StandardMeTTa.Sym &&
-             (ch[1]::MeTTaCore.StandardMeTTa.Sym).name === :(=)) || continue
+            (
+                length(ch) == 3 && ch[1] isa MeTTaCore.StandardMeTTa.Sym &&
+                (ch[1]::MeTTaCore.StandardMeTTa.Sym).name === :(=)
+            ) || continue
             src = string(a)
             c = _dc_compile1(sp, src)
             c === nothing && continue
             cand += 1
             d = _DC.decompile_clause(c)
             _DC.declined(d) && continue
-            if string(d.atom) == src || MeTTaCore.Eval.variant_eq(d.atom::MeTTaCore.StandardMeTTa.Atom, a)
+            if string(d.atom) == src ||
+                MeTTaCore.Eval.variant_eq(d.atom::MeTTaCore.StandardMeTTa.Atom, a)
                 rt += 1
             else
                 # FIXPOINT — canonical, not wrong, iff re-compiling yields identical IL.
                 got = string(d.atom)
-                r2 = try MeTTaCore.compile_definition(sp, got) catch; nothing end
-                if r2 !== nothing && length(r2.atoms) == 1 && string(r2.atoms[1]) == string(c)
+                r2 = try
+                    MeTTaCore.compile_definition(sp, got)
+                catch
+                    nothing
+                end
+                if r2 !== nothing && length(r2.atoms) == 1 &&
+                    string(r2.atoms[1]) == string(c)
                     rt += 1
                 else
                     push!(mism, src * "  ⟶  " * got)

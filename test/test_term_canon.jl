@@ -54,11 +54,14 @@ _old_alpha1(a::AT.Atom) = _old_alpha_canon(a, Dict{AT.Var, Int}())
         @test string(_old_variant_rename(P("(f \$x \$y)"))) == "(f \$_v#1 \$_v#2)"
         @test occursin("α", string(_old_alpha1(P("(f \$x \$y)"))))
         # 1-based vs 0-based, the ONLY thing the two ever disagreed about
-        vs = AT.Var[]; walk(a) = a isa AT.Var ? push!(vs, a) :
-             (a isa AT.Expression && foreach(walk, a.children))
+        vs = AT.Var[]
+        walk(a) =
+            a isa AT.Var ? push!(vs, a) :
+            (a isa AT.Expression && foreach(walk, a.children))
         walk(_old_variant_rename(P("(f \$x \$y)")))
         @test [v.id for v in vs] == [UInt64(1), UInt64(2)]
-        empty!(vs); walk(_old_alpha1(P("(f \$x \$y)")))
+        empty!(vs)
+        walk(_old_alpha1(P("(f \$x \$y)")))
         @test [v.id for v in vs] == [UInt64(0), UInt64(1)]
     end
 
@@ -73,9 +76,12 @@ _old_alpha1(a::AT.Atom) = _old_alpha_canon(a, Dict{AT.Var, Int}())
         P("(f)"),                              # empty expression
         P("\$x"),                              # a bare variable at the root
         P("(= (f \$x) (g \$x \$y))"),          # a rule
-        P("(f \$x (g \$y (h \$z (k \$x))))"),  # deep, with a re-encounter at the bottom
+        P("(f \$x (g \$y (h \$z (k \$x))))")  # deep, with a re-encounter at the bottom
     ]
-    stdlib = let s = Space(); EV.load_core_stdlib!(s); EV.all_atoms(s) end
+    stdlib = let s = Space()
+        EV.load_core_stdlib!(s)
+        EV.all_atoms(s)
+    end
     corpus = vcat(shapes, stdlib)
 
     @testset "the corpus contains what it claims to" begin
@@ -111,10 +117,12 @@ _old_alpha1(a::AT.Atom) = _old_alpha_canon(a, Dict{AT.Var, Int}())
 
     @testset "the relation is preserved — alpha-equivalent in, equal out" begin
         @test MC.Eval._alpha1(P("(f \$x \$y)")) == MC.Eval._alpha1(P("(f \$a \$b)"))
-        @test MC.Eval._variant_rename(P("(f \$x \$y)")) == MC.Eval._variant_rename(P("(f \$a \$b)"))
+        @test MC.Eval._variant_rename(P("(f \$x \$y)")) ==
+            MC.Eval._variant_rename(P("(f \$a \$b)"))
         # 🔴 NEGATIVE CONTROL — non-equivalent terms must NOT collapse, or the two above are vacuous
         @test MC.Eval._alpha1(P("(f \$x \$x)")) != MC.Eval._alpha1(P("(f \$a \$b)"))
-        @test MC.Eval._variant_rename(P("(f \$x \$x)")) != MC.Eval._variant_rename(P("(f \$a \$b)"))
+        @test MC.Eval._variant_rename(P("(f \$x \$x)")) !=
+            MC.Eval._variant_rename(P("(f \$a \$b)"))
     end
 
     @testset "a shared `seen` canonicalises several terms in ONE namespace" begin

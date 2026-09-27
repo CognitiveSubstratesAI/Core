@@ -31,8 +31,10 @@ const AT = MeTTaCore.StandardMeTTa   # `Atom`/`Sym`/`Grounded` are NOT in Main a
     end
 
     @testset "🔴 A HEAD ACTUALLY DISPATCHES COMPILED — answers preserved, seam FIRED" begin
-        EV.uncompile_all!(); EV.reset_jit_declined!()
-        s = Space(); EV.load_core_stdlib!(s)
+        EV.uncompile_all!()
+        EV.reset_jit_declined!()
+        s = Space()
+        EV.load_core_stdlib!(s)
         EV.load_metta!(s, "(= (inc \$x) (+ \$x 1))\n")
         @test !EV.is_compiled(:inc)
         before = EV.load_metta!(s, "!(inc 41)\n")
@@ -49,8 +51,10 @@ const AT = MeTTaCore.StandardMeTTa   # `Atom`/`Sym`/`Grounded` are NOT in Main a
     @testset "a DECLINE is a normal outcome, counted, not an error" begin
         # Out-of-scope heads keep the interpreter. The COUNT is the honest denominator: a speedup on
         # the heads that compiled says nothing about what fraction of hot heads were in scope.
-        EV.uncompile_all!(); EV.reset_jit_declined!()
-        s = Space(); EV.load_core_stdlib!(s)
+        EV.uncompile_all!()
+        EV.reset_jit_declined!()
+        s = Space()
+        EV.load_core_stdlib!(s)
         EV.load_metta!(s, "(edge a b)\n(= (q \$x) (match &self (edge \$x \$y) \$y))\n")
         @test occursin("False", string(EV.load_metta!(s, "!(compile-head q)\n")))
         @test !EV.is_compiled(:q)
@@ -61,7 +65,8 @@ const AT = MeTTaCore.StandardMeTTa   # `Atom`/`Sym`/`Grounded` are NOT in Main a
 
     @testset "an unknown head declines cleanly rather than throwing" begin
         EV.uncompile_all!()
-        s = Space(); EV.load_core_stdlib!(s)
+        s = Space()
+        EV.load_core_stdlib!(s)
         @test occursin("False", string(EV.load_metta!(s, "!(compile-head nosuchhead)\n")))
         EV.uncompile_all!()
     end
@@ -73,7 +78,8 @@ const AT = MeTTaCore.StandardMeTTa   # `Atom`/`Sym`/`Grounded` are NOT in Main a
         # turning a memoised evaluation back into an exponential one while a benchmark still happily
         # reported "compiled". Asserted here rather than left to the reading of two call sites.
         EV.uncompile_all!()
-        s = Space(); EV.load_core_stdlib!(s)
+        s = Space()
+        EV.load_core_stdlib!(s)
         EV.load_metta!(s, "(= (inc \$x) (+ \$x 1))\n")
         EV.load_metta!(s, "!(compile-head inc)\n")
         @test EV.is_compiled(:inc)

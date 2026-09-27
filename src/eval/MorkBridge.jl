@@ -38,7 +38,7 @@ Hygienically substitute `bindings` into the source-0 template sub-expression at 
 `offset` within `base`, via MORK's `expr_apply` (de-Bruijn renaming + cycle handling). Returns the
 result as an owned `Expr`.
 """
-function mork_apply(base::MORK.Expr, offset::Integer, bindings, var_base::Integer = 0)
+function mork_apply(base::MORK.Expr, offset::Integer, bindings, var_base::Integer=0)
     out = MORK.Expr(Vector{UInt8}(undef, max(length(base.buf) * 4, 64)))
     oz = MORK.ExprZipper(out, 1)
     # 🔴 `var_base` IS `original_intros`, AND DEFAULTING IT TO 0 WAS A WRONG-ANSWER BUG.

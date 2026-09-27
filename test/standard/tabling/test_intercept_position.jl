@@ -37,7 +37,9 @@ using MeTTaCore
 using MeTTaCore.Eval
 using Test
 
-const _IP_CORPUS = joinpath(@__DIR__, "..", "..", "oracle", "leatta", "corpus", "b5_types_prelim.metta")
+const _IP_CORPUS = joinpath(
+    @__DIR__, "..", "..", "oracle", "leatta", "corpus", "b5_types_prelim.metta"
+)
 
 "Definitions only (no `!` directives) from a corpus file."
 function _ip_defs(path::AbstractString)
@@ -48,7 +50,9 @@ end
 "Answer `q` against `defs`, with auto-tabling ON."
 function _ip_tabled(defs::AbstractString, q::AbstractString)
     Eval.untable_all!()
-    s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, defs)
+    s = Eval.Space()
+    load_core_stdlib!(s)
+    load_metta!(s, defs)
     Eval.auto_table!(s)
     r = load_metta!(s, q)
     Eval.untable_all!()
@@ -102,32 +106,37 @@ end
 end
 
 @testset "_reduced_goal: two defects, minimal repros (no corpus needed)" begin
-  try
-    # Both need an EXPLICIT `table!` to reach `_reduced_goal`: the auto-table gate refuses these
-    # heads for unrelated reasons (`got`/`held` are undefined ⇒ impure). A future reader must not
-    # conclude from a green auto_table! run that these paths are unreachable.
-    #
-    # DEFECT A — `rs[1]` keeps only the FIRST answer, so a multivalued ARGUMENT is truncated at the
-    # tabling boundary.
-    Eval.untable_all!()
-    s = Eval.Space(); load_core_stdlib!(s)
-    load_metta!(s, "(= (bin) A)\n(= (bin) B)\n(= (wrap \$x) (got \$x))\n")
-    Eval.table!(:wrap)
-    @test_broken length(load_metta!(s, "!(wrap (bin))\n")) == 2      # untabled gives [(got B), (got A)]
-    Eval.untable_all!()
+    try
+        # Both need an EXPLICIT `table!` to reach `_reduced_goal`: the auto-table gate refuses these
+        # heads for unrelated reasons (`got`/`held` are undefined ⇒ impure). A future reader must not
+        # conclude from a green auto_table! run that these paths are unreachable.
+        #
+        # DEFECT A — `rs[1]` keeps only the FIRST answer, so a multivalued ARGUMENT is truncated at the
+        # tabling boundary.
+        Eval.untable_all!()
+        s = Eval.Space()
+        load_core_stdlib!(s)
+        load_metta!(s, "(= (bin) A)\n(= (bin) B)\n(= (wrap \$x) (got \$x))\n")
+        Eval.table!(:wrap)
+        @test_broken length(load_metta!(s, "!(wrap (bin))\n")) == 2      # untabled gives [(got B), (got A)]
+        Eval.untable_all!()
 
-    # DEFECT B — an `Atom`-typed parameter is LAZY, but `_reduced_goal` reduces every non-Var
-    # argument unconditionally. Produces a WRONG ANSWER, not a lost one.
-    s2 = Eval.Space(); load_core_stdlib!(s2)
-    load_metta!(s2, "(: keep (-> Atom Atom))\n(= (keep \$x) (held \$x))\n(= (bin) A)\n(= (bin) B)\n")
-    Eval.table!(:keep)
-    @test occursin("(held B)", string(load_metta!(s2, "!(keep (bin))\n")))   # today: evaluated AND truncated
-    @test_broken occursin("(held (bin))", string(load_metta!(s2, "!(keep (bin))\n")))
-  finally
-    # `_TABLED_HEADS` is PROCESS-GLOBAL. A throw above would leak :wrap/:keep into every file that
-    # runs after this one in the same process — the leak `reset_execution_flags!` exists to prevent.
-    Eval.untable_all!()
-  end
+        # DEFECT B — an `Atom`-typed parameter is LAZY, but `_reduced_goal` reduces every non-Var
+        # argument unconditionally. Produces a WRONG ANSWER, not a lost one.
+        s2 = Eval.Space()
+        load_core_stdlib!(s2)
+        load_metta!(
+            s2,
+            "(: keep (-> Atom Atom))\n(= (keep \$x) (held \$x))\n(= (bin) A)\n(= (bin) B)\n"
+        )
+        Eval.table!(:keep)
+        @test occursin("(held B)", string(load_metta!(s2, "!(keep (bin))\n")))   # today: evaluated AND truncated
+        @test_broken occursin("(held (bin))", string(load_metta!(s2, "!(keep (bin))\n")))
+    finally
+        # `_TABLED_HEADS` is PROCESS-GLOBAL. A throw above would leak :wrap/:keep into every file that
+        # runs after this one in the same process — the leak `reset_execution_flags!` exists to prevent.
+        Eval.untable_all!()
+    end
 end
 
 @testset "hoist guard: POLYMORPHIC DISPATCH must survive the type-check hoist" begin
@@ -148,7 +157,9 @@ end
     # Symbol ACCEPTS. Without it both overloads pass, `errs` stays empty, and the case does not
     # exercise the trap at all — which is how the first version of this test was wrong.
     ov = "(: foo Symbol)\n(: h (-> Number Number))\n(: h (-> Symbol Symbol))\n(= (h \$x) (wrapped \$x))\n"
-    s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, ov)
+    s = Eval.Space()
+    load_core_stdlib!(s)
+    load_metta!(s, ov)
     got = string(load_metta!(s, "!(h foo)\n"))
     @test occursin("(wrapped foo)", got)          # the accepting overload applied
     @test !occursin("BadArgType", got)            # the rejecting one did NOT short-circuit it
@@ -182,7 +193,9 @@ end
     Eval.untable_all!()
     try
         defs = "(: foo Symbol)\n(: kk (-> Number Number))\n(= (kk \$x) (+ \$x 1))\n"
-        s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, defs)
+        s = Eval.Space()
+        load_core_stdlib!(s)
+        load_metta!(s, defs)
         Eval.auto_table!(s)
         got = string(load_metta!(s, "!(kk foo)\n"))
         @test occursin("BadArgType", got)                 # the check DOES fire — not a b5-style miss

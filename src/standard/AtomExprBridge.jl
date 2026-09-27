@@ -243,7 +243,8 @@ _var_key(v)::Tuple{String, UInt64} = (v.name, v.id)
 # The single pre-order pass. `nvars` is threaded because levels are ABSOLUTE (see above).
 # Returns `nothing` on success or the decline reason.
 function _atom_bytes!(
-    out::Vector{UInt8}, a, seen::Dict{Tuple{String, UInt64}, UInt8}, nvars::Base.RefValue{UInt8},
+    out::Vector{UInt8}, a, seen::Dict{Tuple{String, UInt64}, UInt8},
+    nvars::Base.RefValue{UInt8},
     vars::Vector{_MM2_ATOM.Var}, offsets::Vector{UInt32}, nodes::Vector{_MM2_ATOM.Atom}
 )::Union{Nothing, String}
     # Record BEFORE emitting: `length(out)` is this node's first byte. Pre-order over the buffer we
@@ -263,8 +264,9 @@ function _atom_bytes!(
     elseif a isa _MM2_ATOM.Var
         k = get(seen, _var_key(a), nothing)
         if k === nothing
-            nvars[] < 64 || return "more than 64 distinct variables — not a STORABLE expression " *
-                                   "(Data-in-MORK: the limit is on storage, not on computation)"
+            nvars[] < 64 ||
+                return "more than 64 distinct variables — not a STORABLE expression " *
+                       "(Data-in-MORK: the limit is on storage, not on computation)"
             seen[_var_key(a)] = nvars[]
             push!(vars, a)          # level nvars[] ⇒ vars[nvars[]+1]; `vars` IS the inverse of `seen`
             push!(out, MORK.item_byte(MORK.ExprNewVar()))
@@ -319,11 +321,16 @@ function atom_to_expr(a)::AtomEncoding
     vars = _MM2_ATOM.Var[]
     offsets = UInt32[]
     nodes = _MM2_ATOM.Atom[]
-    r = _atom_bytes!(out, a, Dict{Tuple{String, UInt64}, UInt8}(), Ref(UInt8(0)), vars, offsets, nodes)
+    r = _atom_bytes!(
+        out, a, Dict{Tuple{String, UInt64}, UInt8}(), Ref(UInt8(0)), vars, offsets, nodes
+    )
     # ⚠️ A DECLINE RETURNS EMPTY MAPS, not the partial ones. They would describe bytes no caller ever
     # receives, and a half-filled correspondence is worse than none: it looks usable.
-    r === nothing ? AtomEncoding(MORK.Expr(out), nothing, vars, offsets, nodes) :
-                    AtomEncoding(nothing, r, _MM2_ATOM.Var[], UInt32[], _MM2_ATOM.Atom[])
+    if r === nothing
+        AtomEncoding(MORK.Expr(out), nothing, vars, offsets, nodes)
+    else
+        AtomEncoding(nothing, r, _MM2_ATOM.Var[], UInt32[], _MM2_ATOM.Atom[])
+    end
 end
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════════

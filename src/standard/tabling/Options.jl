@@ -63,7 +63,8 @@ const _REFUSED_OPTIONS = Dict{Symbol, Tuple{String, String}}(
     #    exists. What is actually missing is the WRAPPER SIDE: upstream's `'$set_table_wrappers'`
     #    (boot/tabling.pl:1544) installs `wrap_monotonic` on the DYNAMIC predicate, and we have no
     #    monotonic equivalent of `_INCREMENTAL_HEADS` nor a `mon_assert_dep` call path from add-atom.
-    :monotonic => ("§7.8", "Monotonic.jl exists; the `wrap_monotonic` DYNAMIC-side hook does not"),
+    :monotonic =>
+        ("§7.8", "Monotonic.jl exists; the `wrap_monotonic` DYNAMIC-side hook does not"),
     :lazy => ("§7.8", "the eager/lazy propagation split of monotonic tabling"),
     :dynamic =>
         ("§7.4", "tabling for impure/dynamic predicates — interaction rules unbuilt"),
@@ -126,13 +127,13 @@ function table_options!(o::TableOptions, spec)::TableOptions
             o.mode = :subsumptive
         elseif spec === :variant
             o.mode = :variant
-        # 🔴 BOTH FIELDS, ONE ASSIGNMENT — upstream writes the pair for EITHER option:
-        #   table_options(incremental, …) :- put_dict(#{incremental:true,  opaque:false}, …)  :1304
-        #   table_options(opaque,      …) :- put_dict(#{incremental:false, opaque:true },  …)  :1312
-        # Setting only the named field would leave a predicate both incremental and opaque, a state
-        # upstream cannot represent — and `'$set_table_wrappers'` (:1544) tests them SEPARATELY
-        # (`incremental,1` AND `\+ opaque,1`), so a stale `opaque` would silently suppress wrapping.
-        # This is the TODO written into this file's own docstring on 2026-08-17.
+            # 🔴 BOTH FIELDS, ONE ASSIGNMENT — upstream writes the pair for EITHER option:
+            #   table_options(incremental, …) :- put_dict(#{incremental:true,  opaque:false}, …)  :1304
+            #   table_options(opaque,      …) :- put_dict(#{incremental:false, opaque:true },  …)  :1312
+            # Setting only the named field would leave a predicate both incremental and opaque, a state
+            # upstream cannot represent — and `'$set_table_wrappers'` (:1544) tests them SEPARATELY
+            # (`incremental,1` AND `\+ opaque,1`), so a stale `opaque` would silently suppress wrapping.
+            # This is the TODO written into this file's own docstring on 2026-08-17.
         elseif spec === :incremental
             o.incremental = true
             o.opaque = false

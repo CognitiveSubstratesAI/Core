@@ -65,8 +65,10 @@ nsq(src) = (r=_NS.load_metta!(_NSP, src); isempty(r) ? nothing : _nsval(r[1]))
         #     PeTTa                 12200160415121876738   UNBOUNDED (SWI host)
         #     JeTTa                    572466946           i32 — breaks around fib(46)
         # ⇒ FOUR distinct integer semantics across five engines; Core matches the conformance target.
-        let fibi = raw"(= (fibi $n $a $b) (if (< $n 1) $a (fibi (- $n 1) $b (+ $a $b))))" * "\n" *
-                   raw"(= (fib $n) (fibi $n 0 1))" * "\n"
+        let fibi =
+                raw"(= (fibi $n $a $b) (if (< $n 1) $a (fibi (- $n 1) $b (+ $a $b))))" *
+                "\n" *
+                raw"(= (fib $n) (fibi $n 0 1))" * "\n"
             _NS.load_metta!(_NSP, fibi)
             @test nsq("!(fib 92)") == 7540113804746346429      # last value that fits
             @test nsq("!(fib 93)") == -6246583658587674878     # wraps, matching hyperon

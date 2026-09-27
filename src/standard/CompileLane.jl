@@ -166,7 +166,8 @@ function region_defined_arities(sp, defs)::Set{Tuple{Base.Symbol, Int}}
             a isa StandardMeTTa.Expression || continue
             ch = (a::StandardMeTTa.Expression).children
             length(ch) == 3 || continue
-            (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) || continue
+            (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) ||
+                continue
             lhs = ch[2]
             lhs isa StandardMeTTa.Expression || continue
             lc = (lhs::StandardMeTTa.Expression).children
@@ -208,7 +209,8 @@ function _defs_have_var_headed_rule(sp, defs)::Bool
             a isa StandardMeTTa.Expression || continue
             ch = (a::StandardMeTTa.Expression).children
             length(ch) == 3 || continue
-            (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) || continue
+            (ch[1] isa StandardMeTTa.Sym && (ch[1]::StandardMeTTa.Sym).name === EQ) ||
+                continue
             lhs = ch[2]
             lhs isa StandardMeTTa.Expression || continue
             lc = (lhs::StandardMeTTa.Expression).children
@@ -345,7 +347,8 @@ function _frozen_cross_head_call(sp, cls,
                 # SPACE **or** REGION TEXT. The space knows what is PAST; a callee defined LATER
                 # in this region is invisible to it, and that gap shipped a wrong answer — see
                 # `region_defined_arities`.
-                ((nm, ar) in region_heads || _space_defines_rule(sp, nm, ar)) && return (nm, ar)
+                ((nm, ar) in region_heads || _space_defines_rule(sp, nm, ar)) &&
+                    return (nm, ar)
             end
         end
     end
@@ -913,59 +916,67 @@ function _compile_run_inner(program::AbstractString, fallback::Bool, backend::Sy
     prev_tabled = auto_table ? copy(Eval._TABLED_HEADS) : nothing
     prev_noreduce = auto_table ? copy(Eval._NOREDUCE_HEADS) : nothing
     try
-    for r in split_program_regions(program, purity_may_mutate(program))
-        # 🔴 REGION-LEVEL KILL SWITCH. A variable-headed rule anywhere in this region can fire on a
-        # call to ANY head, so nothing in it may compile — and the check must read the region's TEXT,
-        # because definitions are compiled AS THEY ARE ADDED and a later one is not yet in the space.
-        vheaded = _defs_have_var_headed_rule(sp, r.defs) || _space_has_var_headed_rule(sp)
-        # The heads this region DEFINES, computed once. Used ONLY by the decline guard — never fed
-        # to `is_fun`, which is the reverted change. See `region_defined_arities`.
-        rheads = introspects ? Set{Tuple{Base.Symbol, Int}}() : region_defined_arities(sp, r.defs)
-        for d in r.defs
-            il = (introspects || vheaded) ? nothing :
-                 compile_definition(sp, d; region_heads=rheads)
-            if il === nothing
-                fallback ||
-                    error("compile_run: declined and fallback=false — $(first(d, 80))")
-                Eval.load_metta!(sp, d)
-                nfallback += 1
+        for r in split_program_regions(program, purity_may_mutate(program))
+            # 🔴 REGION-LEVEL KILL SWITCH. A variable-headed rule anywhere in this region can fire on a
+            # call to ANY head, so nothing in it may compile — and the check must read the region's TEXT,
+            # because definitions are compiled AS THEY ARE ADDED and a later one is not yet in the space.
+            vheaded =
+                _defs_have_var_headed_rule(sp, r.defs) || _space_has_var_headed_rule(sp)
+            # The heads this region DEFINES, computed once. Used ONLY by the decline guard — never fed
+            # to `is_fun`, which is the reverted change. See `region_defined_arities`.
+            rheads = if introspects
+                Set{Tuple{Base.Symbol, Int}}()
             else
-                # ATOMS, not text. `load_metta!` on a non-directive form is exactly
-                # `add_atom!(space, parse(form))` (Eval.jl:2649), so this is the same operation with
-                # the round-trip removed — and the round-trip is where `Space`, `StateCell` and
-                # grounded strings were being corrupted.
-                for a in il.atoms
-                    Eval.add_atom!(sp, _resolve_tokens(a, sp))
+                region_defined_arities(sp, r.defs)
+            end
+            for d in r.defs
+                il = if (introspects || vheaded)
+                    nothing
+                else
+                    compile_definition(sp, d; region_heads=rheads)
                 end
-                ncompiled += 1
+                if il === nothing
+                    fallback ||
+                        error("compile_run: declined and fallback=false — $(first(d, 80))")
+                    Eval.load_metta!(sp, d)
+                    nfallback += 1
+                else
+                    # ATOMS, not text. `load_metta!` on a non-directive form is exactly
+                    # `add_atom!(space, parse(form))` (Eval.jl:2649), so this is the same operation with
+                    # the round-trip removed — and the round-trip is where `Space`, `StateCell` and
+                    # grounded strings were being corrupted.
+                    for a in il.atoms
+                        Eval.add_atom!(sp, _resolve_tokens(a, sp))
+                    end
+                    ncompiled += 1
+                end
+            end
+            # Per REGION, not once: `prog_r` is cumulative in definitions, so a later region sees
+            # heads the earlier ones defined and must have them tabled too.
+            auto_table && Eval.auto_table!(sp)
+            for q in r.queries
+                res = try
+                    Eval.load_metta!(sp, "!" * q)
+                catch e
+                    # The step limit throws. Record WHICH query exhausted the budget and keep going —
+                    # a bounded run that reports its overruns beats an unbounded one that hangs, and
+                    # beats a bounded one that quietly returns nothing.
+                    if e isa ErrorException && occursin("step limit", e.msg)
+                        push!(exhausted, String(q))
+                        push!(answers, (String(q), String[]))
+                        continue
+                    end
+                    rethrow()
+                end
+                push!(
+                    answers,
+                    (String(q),
+                        String[
+                            string(x) for y in res for x in (y isa AbstractVector ? y : [y])
+                        ])
+                )
             end
         end
-        # Per REGION, not once: `prog_r` is cumulative in definitions, so a later region sees
-        # heads the earlier ones defined and must have them tabled too.
-        auto_table && Eval.auto_table!(sp)
-        for q in r.queries
-            res = try
-                Eval.load_metta!(sp, "!" * q)
-            catch e
-                # The step limit throws. Record WHICH query exhausted the budget and keep going —
-                # a bounded run that reports its overruns beats an unbounded one that hangs, and
-                # beats a bounded one that quietly returns nothing.
-                if e isa ErrorException && occursin("step limit", e.msg)
-                    push!(exhausted, String(q))
-                    push!(answers, (String(q), String[]))
-                    continue
-                end
-                rethrow()
-            end
-            push!(
-                answers,
-                (String(q),
-                    String[
-                        string(x) for y in res for x in (y isa AbstractVector ? y : [y])
-                    ])
-            )
-        end
-    end
     finally
         if prev_tabled !== nothing
             empty!(Eval._TABLED_HEADS)

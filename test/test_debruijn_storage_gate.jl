@@ -30,7 +30,7 @@ const MC = MeTTaCore
 @testset "de Bruijn storage migration — the gate (Stage 0b)" begin
     _v(s) = Symbol("\$" * s)
     _dump(cs) = strip(MC.space_dump_all_sexpr(cs.inner))
-    _natoms(cs) = (d = _dump(cs); isempty(d) ? 0 : length(split(d, '\n')))
+    _natoms(cs) = (d=_dump(cs); isempty(d) ? 0 : length(split(d, '\n')))
     _ask(cs, q) = MC.space_query_multi(cs.inner.btm, MC.sexpr_to_expr(q), (_b, _l) -> true)
 
     @testset "5.2 alpha-variants collapse to ONE stored atom" begin

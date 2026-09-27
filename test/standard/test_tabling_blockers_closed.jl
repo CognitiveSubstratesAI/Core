@@ -27,7 +27,7 @@ const _TBC_FIB = "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 
         pure_src = _TBC._pure_heads(_TBC._rules_of(_TBC.all_atoms(sp)))
         @test :fib in pure_src                       # source form was never the problem
 
-        r = MeTTaCore.compile_run(_TBC_FIB * "!(fib 10)\n"; max_steps = 512_000)
+        r = MeTTaCore.compile_run(_TBC_FIB * "!(fib 10)\n"; max_steps=512_000)
         @test r.compiled > 0                         # a VACUOUS pass if nothing compiled
         @test hasproperty(r, :space)
 
@@ -46,10 +46,12 @@ const _TBC_FIB = "(= (fib \$n) (if (< \$n 2) \$n (+ (fib (- \$n 1)) (fib (- \$n 
         before = copy(_TBC._TABLED_HEADS)
         @test isempty(before)
 
-        MeTTaCore.compile_run(_TBC_FIB * "!(fib 10)\n"; max_steps = 512_000, auto_table = true)
+        MeTTaCore.compile_run(_TBC_FIB * "!(fib 10)\n"; max_steps=512_000, auto_table=true)
         @test copy(_TBC._TABLED_HEADS) == before     # restored, not leaked
 
-        r2 = MeTTaCore.compile_run(_TBC_FIB * "!(fib 10)\n"; max_steps = 512_000, auto_table = true)
+        r2 = MeTTaCore.compile_run(
+            _TBC_FIB * "!(fib 10)\n"; max_steps=512_000, auto_table=true
+        )
         @test _TBC._TABLED_HEADS == before
         @test [string(a) for (_, ans) in r2.answers for a in ans] == ["55"]   # …and still CORRECT
     end

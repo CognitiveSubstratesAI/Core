@@ -265,7 +265,7 @@ function add_var_equality(b::Bindings, a::Var, c::Var)::Vector{Bindings}
             # left this ORDER still accepting, which is why the two probes were run in both orders.
             val0 = av !== nothing ? av : cv
             if val0 !== nothing &&
-               (_occurs_in_class(b, r1, val0, 0) || _occurs_in_class(b, r2, val0, 0))
+                (_occurs_in_class(b, r1, val0, 0) || _occurs_in_class(b, r2, val0, 0))
                 return Bindings[]
             end
             (r2.id, r2.name) < (r1.id, r1.name) && ((r1, r2) = (r2, r1))   # r1 = smaller = new root
@@ -318,7 +318,7 @@ function _extend_eq_inplace!(b::Bindings, a::Var, c::Var)::Symbol
         # same cycle-on-merge hazard as `add_var_equality` — see the note there
         val0 = av !== nothing ? av : cv
         if val0 !== nothing &&
-           (_occurs_in_class(b, r1, val0, 0) || _occurs_in_class(b, r2, val0, 0))
+            (_occurs_in_class(b, r1, val0, 0) || _occurs_in_class(b, r2, val0, 0))
             return :fail
         end
         (r2.id, r2.name) < (r1.id, r1.name) && ((r1, r2) = (r2, r1))
@@ -348,8 +348,8 @@ function merge_bindings(left::Bindings, right::Bindings)::Vector{Bindings}
             # is why making `_extend_eq_inplace!` cycle-aware changed nothing until this line did
             # too: the check fired, returned `:fail`, and the caller dropped it on the floor.
             s = _extend_eq_inplace!(left, root, v)
-            s === :fail && (ok = false; break)
-            s === :fork && (forked = true; break)
+            s === :fail && (ok=false; break)
+            s === :fork && (forked=true; break)
         end
         (forked || !ok) && break
         val = resolve(right, root)                 # assignment relation root <- val

@@ -109,7 +109,9 @@ Same reason MORK's dump comparisons sort.
 """
 function _as_ask(q::AbstractString, tab::Bool; defs::AbstractString=_AS_DEFS)
     Eval.untable_all!()
-    s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, defs)
+    s = Eval.Space()
+    load_core_stdlib!(s)
+    load_metta!(s, defs)
     info = tab ? Eval.auto_table!(s) : nothing
     answers = load_metta!(s, q)
     n = length(Eval._ANSWER_TABLE)
@@ -124,7 +126,7 @@ end
         # `want` is a Vector of per-answer strings — `_as_ask` returns sorted answers, never a
         # rendered `string(::Vector)`. See its docstring for why.
         for (q, want) in [("!(eq a b)\n", ["(eq a b)"]), ("!(eq b b)\n", ["T"]),
-                          ("!(eq a a)\n", ["T"])]
+            ("!(eq a a)\n", ["T"])]
             @test _as_ask(q, false)[1] == want
             @test _as_ask(q, true)[1] == want
         end
@@ -136,8 +138,8 @@ end
         # answer — `$w` where `b` belongs — with no conjunction machinery at all. Only `eq` is
         # tabled here (one table key), so this is also the minimal reproduction.
         d = "(= (eq \$x \$x) T)\n(= (m2 \$u) (pair \$u (eq \$u b)))\n"
-        (u, _, _)  = _as_ask("!(m2 \$w)\n", false; defs=d)
-        (t, tb, _) = _as_ask("!(m2 \$w)\n", true;  defs=d)
+        (u, _, _) = _as_ask("!(m2 \$w)\n", false; defs=d)
+        (t, tb, _) = _as_ask("!(m2 \$w)\n", true; defs=d)
         @test !isempty(tb)                          # ANTI-VACUITY
         @test u == ["(pair b T)"]                   # untabled CORRECT: (eq \$u b) binds \$u = b
         @test length(t) == 1                        # same answer COUNT — the set is not truncated…
@@ -148,7 +150,7 @@ end
 
     @testset "symptom A — replay does not BIND (constraint lost)" begin
         q = "!(, (eq \$u b) (g \$u))\n"
-        (u, _, _)  = _as_ask(q, false)
+        (u, _, _) = _as_ask(q, false)
         (t, tb, n) = _as_ask(q, true)
         @test !isempty(tb)                       # ANTI-VACUITY: tabling really engaged
         @test n == 2                             # …and the cache really was populated
@@ -164,7 +166,7 @@ end
         # miss this entirely. That is also why a count-based corpus filter would conflate this
         # defect with `_reduced_goal`'s `rs[1]` truncation. Assert on content.
         q = "!(, (g \$u) (eq \$u b))\n"
-        (u, _, _)  = _as_ask(q, false)
+        (u, _, _) = _as_ask(q, false)
         (t, tb, n) = _as_ask(q, true)
         @test !isempty(tb)
         @test n == 2
@@ -194,12 +196,12 @@ end
         # returns the variable. Bind-before-call never enters the general key, so it never applies.
         B = "(= (eq \$x \$x) T)\n"
         for (d, q, why) in [
-            (B*"(= (f \$y) (eq \$y b))\n",    "!(f a)\n",              "wrapper fn binds \$y first"),
-            (B,                                "!(let \$u a (eq \$u b))\n", "let-bound, then eq"),
-            (B*"(= (k \$y) (eq b \$y))\n",    "!(k a)\n",              "wrapper, threaded from the left"),
+            (B*"(= (f \$y) (eq \$y b))\n", "!(f a)\n", "wrapper fn binds \$y first"),
+            (B, "!(let \$u a (eq \$u b))\n", "let-bound, then eq"),
+            (B*"(= (k \$y) (eq b \$y))\n", "!(k a)\n", "wrapper, threaded from the left")
         ]
-            (u, _, _)  = _as_ask(q, false; defs=d)
-            (t, tb, _) = _as_ask(q, true;  defs=d)
+            (u, _, _) = _as_ask(q, false; defs=d)
+            (t, tb, _) = _as_ask(q, true; defs=d)
             @test !isempty(tb)          # ANTI-VACUITY — without this the comparison is untabled-vs-untabled
             @test t == u                # ground key ⇒ correct
         end
@@ -215,13 +217,15 @@ end
         # which is precisely the subsumptive lookup the current value-only design cannot express and
         # does not attempt. A fix that keeps per-ground-call keys forfeits that.
         Eval.untable_all!()
-        s = Eval.Space(); load_core_stdlib!(s); load_metta!(s, "(= (eq \$x \$x) T)\n")
+        s = Eval.Space()
+        load_core_stdlib!(s)
+        load_metta!(s, "(= (eq \$x \$x) T)\n")
         tb = Eval.auto_table!(s).tabled
         @test !isempty(tb)
         general = load_metta!(s, "!(eq \$u b)\n")          # populates (eq \$_v#1 b) -> [T]
-        ground  = load_metta!(s, "!(eq a b)\n")             # must NOT be answered from it
+        ground = load_metta!(s, "!(eq a b)\n")             # must NOT be answered from it
         @test [string(a) for a in general] == ["T"]
-        @test [string(a) for a in ground]  == ["(eq a b)"]  # correct: general key did not leak
+        @test [string(a) for a in ground] == ["(eq a b)"]  # correct: general key did not leak
         @test length(Eval._ANSWER_TABLE) == 2               # two DISTINCT keys, not one
         Eval.untable_all!()
     end

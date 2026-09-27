@@ -28,9 +28,9 @@ const _VH = MeTTaCore.Eval
 
 "Compiled-lane answers for `program`, plus the accept/decline counts."
 function _vh_compiled(program::AbstractString)
-    r = MeTTaCore.compile_run(program; max_steps = 512_000)
-    (answers = Dict(q => sort(collect(a)) for (q, a) in r.answers),
-        compiled = r.compiled, fell_back = r.fell_back, exhausted = r.exhausted)
+    r = MeTTaCore.compile_run(program; max_steps=512_000)
+    (answers=Dict(q => sort(collect(a)) for (q, a) in r.answers),
+        compiled=r.compiled, fell_back=r.fell_back, exhausted=r.exhausted)
 end
 
 "Interpreter oracle over the same forms, in order, in one Space."
@@ -40,8 +40,12 @@ function _vh_interp(program::AbstractString)
     out = Dict{String, Vector{String}}()
     for (bang, f) in MeTTaCore.mm2_split_forms(program)
         res = _VH.load_metta!(sp, bang ? "!" * f : f)
-        bang && (out[String(f)] = sort(String[string(x) for y in res
-                                              for x in (y isa AbstractVector ? y : [y])]))
+        bang && (
+            out[String(f)] = sort(
+                String[string(x) for y in res
+                       for x in (y isa AbstractVector ? y : [y])]
+            )
+        )
     end
     out
 end

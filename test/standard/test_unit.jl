@@ -147,7 +147,7 @@ end
 @testset "step-budget setters return the PREVIOUS value (save/restore contract)" begin
     for (setter, ref, a, b) in (
         (Eval.interpret_max_steps!, Eval._INTERPRET_MAX, 512_000, 4_321),
-        (Eval.metta_max_steps!,     Eval._METTA_MAX,     0,       1_234),
+        (Eval.metta_max_steps!, Eval._METTA_MAX, 0, 1_234)
     )
         was = ref[]
         try

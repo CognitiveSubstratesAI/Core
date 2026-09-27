@@ -43,20 +43,20 @@ end
 
     @testset "a bare DATA ATOM is not a CLAUSE — Prolog mode fails the goal" begin
         fact = "(s 2)\n"
-        @test _tms(fact, "!(s 2)\n"; auto = false) == String[]          # no clauses ⇒ fails
-        @test _tms(fact, "!(tnot (s 2))\n"; auto = false) == ["True"]   # …so tnot succeeds
+        @test _tms(fact, "!(s 2)\n"; auto=false) == String[]          # no clauses ⇒ fails
+        @test _tms(fact, "!(tnot (s 2))\n"; auto=false) == ["True"]   # …so tnot succeeds
     end
 
     @testset "METTA mode is ANSWER-PRESERVING — the contract auto_table! actually makes" begin
         fact = "(s 2)\n"
-        @test _tms(fact, "!(s 2)\n"; auto = true) == ["(s 2)"]          # the goal answers with ITSELF
+        @test _tms(fact, "!(s 2)\n"; auto=true) == ["(s 2)"]          # the goal answers with ITSELF
     end
 
     @testset "🔑 written as a RULE — which is what the translator emits — BOTH are correct" begin
         rule = "(= (s 2) True)\n"
-        @test _tms(rule, "!(s 2)\n"; auto = false) == ["True"]
-        @test _tms(rule, "!(tnot (s 2))\n"; auto = false) == String[]   # s(2) holds ⇒ tnot fails
-        @test _tms(rule, "!(tnot (s 9))\n"; auto = false) == ["True"]   # s(9) absent ⇒ tnot succeeds
+        @test _tms(rule, "!(s 2)\n"; auto=false) == ["True"]
+        @test _tms(rule, "!(tnot (s 2))\n"; auto=false) == String[]   # s(2) holds ⇒ tnot fails
+        @test _tms(rule, "!(tnot (s 9))\n"; auto=false) == ["True"]   # s(9) absent ⇒ tnot succeeds
     end
 end
 

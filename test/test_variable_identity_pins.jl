@@ -35,9 +35,18 @@ const AT = MeTTaCore.StandardMeTTa
                 push!(out, "Sym(" * String(e.buf[(i + 1):(i + Int(t.size))]) * ")")
                 i += 1 + Int(t.size)
             else
-                push!(out, t isa MK.ExprNewVar ? "NewVar" :
-                           t isa MK.ExprVarRef ? "VarRef$(Int(t.idx))" :
-                           t isa MK.ExprArity  ? "Arity$(Int(t.arity))" : "?")
+                push!(
+                    out,
+                    if t isa MK.ExprNewVar
+                        "NewVar"
+                    elseif t isa MK.ExprVarRef
+                        "VarRef$(Int(t.idx))"
+                    elseif t isa MK.ExprArity
+                        "Arity$(Int(t.arity))"
+                    else
+                        "?"
+                    end
+                )
                 i += 1
             end
         end
@@ -78,8 +87,10 @@ const AT = MeTTaCore.StandardMeTTa
         # dropping an entry without fixing the code fails PIN 1's first assertion instead.
         #
         # The allowlist must not rot: an entry whose file stopped calling it should be removed.
-        stale = [rel for rel in keys(ALLOWED)
-                 if !occursin(r"expr_serialize\(", read(joinpath(root, rel), String))]
+        stale = [
+            rel for rel in keys(ALLOWED)
+            if !occursin(r"expr_serialize\(", read(joinpath(root, rel), String))
+        ]
         @test stale == String[]
 
         # WILLIAM.lgg — the site the allowlist just lost, asserted on BEHAVIOUR not on the file text.
@@ -91,16 +102,18 @@ const AT = MeTTaCore.StandardMeTTa
         MC.register_core_primitives!()          # opt-in registry (MeTTaCore.jl:250-253), not auto
         lgg = MC.MORK.GROUNDED_REGISTRY["WILLIAM.lgg"]
         @test tagwalk(MK.sexpr_to_expr(String(lgg(["(g 1 2)", "(g 3 4)"])))) ==
-              ["Arity3", "Sym(g)", "NewVar", "NewVar"]
+            ["Arity3", "Sym(g)", "NewVar", "NewVar"]
         # …and co-reference that is GENUINE must survive: `(p 1 1)` vs `(p 2 2)` really is `(p $a $a)`.
         @test tagwalk(MK.sexpr_to_expr(String(lgg(["(p 1 1)", "(p 2 2)"])))) ==
-              ["Arity3", "Sym(p)", "NewVar", "VarRef0"]
+            ["Arity3", "Sym(p)", "NewVar", "VarRef0"]
     end
 
     @testset "PIN 2 — distinct Core Vars must not MERGE into one MORK variable" begin
         # `typed_atom_to_expr` carries variable identity as a PRINTED NAME (`$x#7`), and MORK's
         # frontend de-Bruijns BY NAME. So distinctness holds only while the printed names differ.
-        distinct = AT.Expression(AT.Atom[AT.Sym("f"), AT.Var("x", UInt64(7)), AT.Var("x", UInt64(9))])
+        distinct = AT.Expression(
+            AT.Atom[AT.Sym("f"), AT.Var("x", UInt64(7)), AT.Var("x", UInt64(9))]
+        )
         tg = tagwalk(MK.sexpr_to_expr(MC.typed_atom_to_expr(distinct)))
         @test tg == ["Arity3", "Sym(f)", "NewVar", "NewVar"]      # two binders, NOT a back-reference
 
@@ -123,7 +136,9 @@ const AT = MeTTaCore.StandardMeTTa
         # the base name through; `rename_fresh` calls `freshvar(v.name)`; `_variant_rename`
         # (Tabling.jl:1011) builds `Var("_v", UInt64(n))`. None can put a `#` into a name. So after
         # the guard the residual hole is EXACTLY hand-written `Var`s — not source, not renaming.
-        collide = AT.Expression(AT.Atom[AT.Sym("f"), AT.Var("x", UInt64(7)), AT.Var("x#7", UInt64(0))])
+        collide = AT.Expression(
+            AT.Atom[AT.Sym("f"), AT.Var("x", UInt64(7)), AT.Var("x#7", UInt64(0))]
+        )
 
         # ✅ HALF A — CLOSED 2026-09-18 by `_var_key` becoming a `(name, id)` TUPLE. The collision was
         # in the identity KEY (`string(name, "#", id)` made both variables `"x#7"`), not in either
@@ -182,10 +197,14 @@ const AT = MeTTaCore.StandardMeTTa
             AT.Expression(AT.Atom[AT.Sym("p"), _v("a"), _v("b"), _v("a")]),          # NewVar NewVar VarRef0
             # NESTED, and the subterm's binder is to the LEFT in a SIBLING — levels are ABSOLUTE, so
             # this is the shape that would break first if a rebase were wrong.
-            AT.Expression(AT.Atom[AT.Sym("q"), _v("z"),
-                                  AT.Expression(AT.Atom[AT.Sym("path"), _v("z"), _v("y")])]),
-            AT.Expression(AT.Atom[AT.Sym("r"), _v("a"), _v("b"),
-                                  AT.Expression(AT.Atom[AT.Sym("path"), _v("x"), _v("x")])]),
+            AT.Expression(
+                AT.Atom[AT.Sym("q"), _v("z"),
+                    AT.Expression(AT.Atom[AT.Sym("path"), _v("z"), _v("y")])]
+            ),
+            AT.Expression(
+                AT.Atom[AT.Sym("r"), _v("a"), _v("b"),
+                    AT.Expression(AT.Atom[AT.Sym("path"), _v("x"), _v("x")])]
+            )
         ]
         for a in CASES
             @test wellscoped(a)
@@ -197,7 +216,11 @@ const AT = MeTTaCore.StandardMeTTa
         MC.load_core_lib!(cs, "metamo")
         bad = Any[]
         for a in MC.core_atoms(cs)
-            enc = try MC.atom_to_expr(MC.Eval.parse_atom(MC.to_sexpr(a))) catch; nothing end
+            enc = try
+                MC.atom_to_expr(MC.Eval.parse_atom(MC.to_sexpr(a)))
+            catch
+                nothing
+            end
             enc === nothing && continue
             enc.declined === nothing && MK.expr_has_unbound(enc.expr) && push!(bad, a)
         end
@@ -215,11 +238,17 @@ const AT = MeTTaCore.StandardMeTTa
         # ARITY guard fires first and the VARIABLE limit is never reached — an earlier probe measured
         # exactly that and would have reported one guard as the other.
         function nvars(n)
-            chunks = AT.Atom[]; i = 1
+            chunks = AT.Atom[]
+            i = 1
             while i <= n
                 hi = min(i + 29, n)
-                push!(chunks, AT.Expression(AT.Atom[AT.Sym("g");
-                                                    [AT.Var("v$(k)", UInt64(k)) for k in i:hi]]))
+                push!(
+                    chunks,
+                    AT.Expression(
+                        AT.Atom[AT.Sym("g");
+                            [AT.Var("v$(k)", UInt64(k)) for k in i:hi]]
+                    )
+                )
                 i = hi + 1
             end
             AT.Expression(AT.Atom[AT.Sym("f"); chunks])
@@ -247,24 +276,27 @@ const AT = MeTTaCore.StandardMeTTa
         @test strip(MC.space_dump_all_sexpr(cs.inner)) == ""   # nothing stored — declined, not corrupted
 
         # Arity and symbol length decline the same way (the byte path guards all THREE).
-        @test MC.atom_to_expr(AT.Expression(AT.Atom[AT.Sym("f");
-              [AT.Sym("a$(i)") for i in 1:63]])).declined !== nothing      # arity 64
+        @test MC.atom_to_expr(
+            AT.Expression(AT.Atom[AT.Sym("f");
+                [AT.Sym("a$(i)") for i in 1:63]])
+        ).declined !== nothing      # arity 64
         @test MC.atom_to_expr(AT.Sym("s"^64)).declined !== nothing          # symbol 64 bytes
     end
 
     @testset "PIN 3 — a variable only on the RHS survives as a variable (the general property)" begin
-        rw(rule, data) = MC.mork_rule_rewrite(MK.sexpr_to_expr(rule), MK.sexpr_to_expr(data))
+        rw(rule, data) =
+            MC.mork_rule_rewrite(MK.sexpr_to_expr(rule), MK.sexpr_to_expr(data))
         isvar(t) = t == "NewVar" || startswith(t, "VarRef")
 
         # FAMILY: each rule has at least one rhs-only variable. Whatever else the result contains,
         # a variable MUST remain — substituting a binding for it is the BLOCKER 3 wrong answer.
         RHS_ONLY = [
-            ("(= (f \$x) (h \$y))",            "(f 5)"),
-            ("(= (f \$x) (h \$y \$x))",        "(f 5)"),
-            ("(= (f \$x) (h \$y \$y))",        "(f 5)"),
-            ("(= (f \$x) (h (g \$y)))",        "(f 5)"),      # nested
-            ("(= (f \$x \$y) (h \$z \$x))",    "(f a b)"),    # two bound, one free
-            ("(= (p \$a) (q \$b \$c))",        "(p 1)"),      # two distinct free vars
+            ("(= (f \$x) (h \$y))", "(f 5)"),
+            ("(= (f \$x) (h \$y \$x))", "(f 5)"),
+            ("(= (f \$x) (h \$y \$y))", "(f 5)"),
+            ("(= (f \$x) (h (g \$y)))", "(f 5)"),      # nested
+            ("(= (f \$x \$y) (h \$z \$x))", "(f a b)"),    # two bound, one free
+            ("(= (p \$a) (q \$b \$c))", "(p 1)")      # two distinct free vars
         ]
         for (rule, data) in RHS_ONLY
             r = rw(rule, data)
@@ -274,13 +306,17 @@ const AT = MeTTaCore.StandardMeTTa
 
         # Two distinct free variables must stay DISTINCT, not collapse to one.
         @test tagwalk(rw("(= (p \$a) (q \$b \$c))", "(p 1)")) ==
-              ["Arity3", "Sym(q)", "NewVar", "NewVar"]
+            ["Arity3", "Sym(q)", "NewVar", "NewVar"]
 
         # CONTROL FAMILY: no rhs-only variable ⇒ a fully ground result. These passed WHILE BLOCKER 3
         # WAS BROKEN, which is exactly why the property above is the test that matters.
         for (rule, data, expect) in [
-            ("(= (f \$x) (h \$x))",         "(f 5)",   ["Arity2", "Sym(h)", "Sym(5)"]),
-            ("(= (f \$x \$y) (h \$y \$x))", "(f a b)", ["Arity3", "Sym(h)", "Sym(b)", "Sym(a)"]),
+            ("(= (f \$x) (h \$x))", "(f 5)", ["Arity2", "Sym(h)", "Sym(5)"]),
+            (
+                "(= (f \$x \$y) (h \$y \$x))",
+                "(f a b)",
+                ["Arity3", "Sym(h)", "Sym(b)", "Sym(a)"]
+            )
         ]
             @test tagwalk(rw(rule, data)) == expect
         end

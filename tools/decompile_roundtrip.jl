@@ -58,38 +58,57 @@ const D = MeTTaCore.CompilerDecompile
 "Every `(= …)` definition in `path`, as parsed atoms. Non-definitions and `!` execs are skipped."
 function definitions(path::AbstractString)::Vector{M.StandardMeTTa.Atom}
     out = M.StandardMeTTa.Atom[]
-    text = try read(path, String) catch; return out end
-    forms = try M.Eval.parse_program(text) catch; return out end
+    text = try
+        read(path, String)
+    catch
+        return out
+    end
+    forms = try
+        M.Eval.parse_program(text)
+    catch
+        return out
+    end
     for (is_exec, a) in forms
         is_exec && continue
         a isa M.StandardMeTTa.Expression || continue
         ch = (a::M.StandardMeTTa.Expression).children
         length(ch) == 3 || continue
-        (ch[1] isa M.StandardMeTTa.Sym && (ch[1]::M.StandardMeTTa.Sym).name === :(=)) || continue
+        (ch[1] isa M.StandardMeTTa.Sym && (ch[1]::M.StandardMeTTa.Sym).name === :(=)) ||
+            continue
         push!(out, a)
     end
     out
 end
 
 function main(args::Vector{String})
-    roots = isempty(args) ? ["test/oracle/leatta/corpus", "test/standard/conformance"] : args
+    roots =
+        isempty(args) ? ["test/oracle/leatta/corpus", "test/standard/conformance"] : args
     files = String[]
     for r in roots
-        isdir(r) ? append!(files, sort([joinpath(r, f) for f in readdir(r) if endswith(f, ".metta")])) :
-                   (isfile(r) && push!(files, r))
+        if isdir(r)
+            append!(
+            files, sort([joinpath(r, f) for f in readdir(r) if endswith(f, ".metta")])
+        )
+        else
+            (isfile(r) && push!(files, r))
+        end
     end
 
     sp = M.Eval.Space()
     n_def = n_compiled = n_exact = n_variant = n_multi = n_canon = 0
     mismatches = Tuple{String, String, String}[]     # (file, source, got)
-    canonical  = Tuple{String, String, String}[]
+    canonical = Tuple{String, String, String}[]
     declines = Dict{String, Int}()
 
     for f in files
         for a in definitions(f)
             n_def += 1
             src = string(a)
-            r = try M.compile_definition(sp, src) catch; nothing end
+            r = try
+                M.compile_definition(sp, src)
+            catch
+                nothing
+            end
             r === nothing && continue
             n_compiled += 1
             # A source form may lower to SEVERAL clauses (`superpose` → one clause per branch). No
@@ -111,9 +130,13 @@ function main(args::Vector{String})
                 # FIXPOINT: re-compile what we decompiled. Identical IL ⇒ the difference is a
                 # canonical-form choice the lowering erased, not an error.
                 got = string(d.atom)
-                r2 = try M.compile_definition(sp, got) catch; nothing end
+                r2 = try
+                    M.compile_definition(sp, got)
+                catch
+                    nothing
+                end
                 if r2 !== nothing && length(r2.atoms) == 1 &&
-                   string(r2.atoms[1]) == string(r.atoms[1])
+                    string(r2.atoms[1]) == string(r.atoms[1])
                     n_canon += 1
                     push!(canonical, (f, src, got))
                 else
@@ -135,8 +158,16 @@ function main(args::Vector{String})
     pct = inv == 0 ? 0.0 : round(100 * good / inv; digits=1)
     println("  ✅ ROUND-TRIPPED (=@=)     : ", good, "  (", pct, "% of candidates)")
     println("       of which EXACT (==)   : ", n_exact)
-    println("       of which VARIANT only : ", n_variant, "  (upstream's contract; SWI compares =@=)")
-    println("  ≈  CANONICAL (fixpoint)    : ", n_canon, "  (differs from source, re-compiles identical)")
+    println(
+        "       of which VARIANT only : ",
+        n_variant,
+        "  (upstream's contract; SWI compares =@=)"
+    )
+    println(
+        "  ≈  CANONICAL (fixpoint)    : ",
+        n_canon,
+        "  (differs from source, re-compiles identical)"
+    )
     println("  🔴 MISMATCH                : ", length(mismatches))
 
     if !isempty(declines)
@@ -148,13 +179,17 @@ function main(args::Vector{String})
     if !isempty(canonical)
         println("\n  ≈ CANONICAL — the lowering erased a distinction; NOT defects:")
         for (f, sr, g) in canonical
-            println("    ", f); println("      src ", sr); println("      got ", g)
+            println("    ", f)
+            println("      src ", sr)
+            println("      got ", g)
         end
     end
     if !isempty(mismatches)
         println("\n  🔴 MISMATCHES (a defect in EmitIL or Decompile — NOT a coverage gap):")
         for (f, s, g) in mismatches
-            println("    ", f); println("      src ", s); println("      got ", g)
+            println("    ", f)
+            println("      src ", s)
+            println("      got ", g)
         end
     end
     println("═"^92)

@@ -76,9 +76,10 @@ many to triage by inspection:
 * `:semantic` — no shared name, so both engines are answering the SAME question and differ.
   **This is the one that must be zero**, and it is the gate on flipping the flag.
 """
-const CORE_MATCH_DISAGREEMENTS =
-    Vector{NamedTuple{(:pattern, :data, :class, :oracle, :ours),
-                      Tuple{Any, Any, Base.Symbol, Any, Any}}}()
+const CORE_MATCH_DISAGREEMENTS = Vector{
+    NamedTuple{(:pattern, :data, :class, :oracle, :ours),
+        Tuple{Any, Any, Base.Symbol, Any, Any}}
+}()
 
 """
     disagreement_class(pattern, data) -> :namespace | :semantic
@@ -120,11 +121,11 @@ The corpus gate reads SEVERAL numbers, not one list, and they mean different thi
 count means the gate passed on the pairs that ran, which is a weaker statement than it looks.
 """
 core_match_disagreement_counts() = (;
-    semantic = count(d -> d.class === :semantic, CORE_MATCH_DISAGREEMENTS),
-    namespace = count(d -> d.class === :namespace, CORE_MATCH_DISAGREEMENTS),
-    declined_semantic = CORE_MATCH_DECLINES[:semantic],
-    declined_namespace = CORE_MATCH_DECLINES[:namespace],
-    total = length(CORE_MATCH_DISAGREEMENTS),
+    semantic=count(d -> d.class === :semantic, CORE_MATCH_DISAGREEMENTS),
+    namespace=count(d -> d.class === :namespace, CORE_MATCH_DISAGREEMENTS),
+    declined_semantic=CORE_MATCH_DECLINES[:semantic],
+    declined_namespace=CORE_MATCH_DECLINES[:namespace],
+    total=length(CORE_MATCH_DISAGREEMENTS)
 )
 
 "Forget every recorded disagreement AND decline, so a corpus run measures ITSELF and not the session
@@ -204,14 +205,14 @@ function core_match_differential(pattern, data)
     if ours === nothing
         cls = disagreement_class(pattern, data)
         CORE_MATCH_DECLINES[cls] = get(CORE_MATCH_DECLINES, cls, 0) + 1
-        return (; declined = true, agree = true, class = cls, oracle, ours)
+        return (; declined=true, agree=true, class=cls, oracle, ours)
     end
     o = _subst_multiset(pattern, oracle)
     m = _subst_multiset(pattern, ours)
     agree = o == m
     cls = disagreement_class(pattern, data)
-    agree || push!(CORE_MATCH_DISAGREEMENTS, (; pattern, data, class = cls, oracle = o, ours = m))
-    (; declined = false, agree, class = cls, oracle = o, ours = m)
+    agree || push!(CORE_MATCH_DISAGREEMENTS, (; pattern, data, class=cls, oracle=o, ours=m))
+    (; declined=false, agree, class=cls, oracle=o, ours=m)
 end
 
 """
@@ -247,8 +248,10 @@ function _subst_multiset(pattern, sols)
             key = string(v.name, "#", v.id)
             if r isa _CM_ATOM.Var
                 # the CLASS: every pattern variable that resolves to the same variable as this one
-                cls = sort!([string(w.name, "#", w.id) for (w, q) in resolved
-                             if q isa _CM_ATOM.Var && q == r])
+                cls = sort!([
+                    string(w.name, "#", w.id) for (w, q) in resolved
+                    if q isa _CM_ATOM.Var && q == r
+                ])
                 push!(parts, key * "=>CLASS{" * join(cls, ",") * "}")
             else
                 push!(parts, key * "=>" * string(r))
@@ -271,7 +274,7 @@ function _resolve_for_compare(b::_CM_ATOM.Bindings, v::_CM_ATOM.Var)
 end
 
 "Every `Var` occurring in `a`, in pre-order, DEDUPLICATED by Core's own identity relation."
-function collect_vars(a, acc = _CM_ATOM.Var[])
+function collect_vars(a, acc=_CM_ATOM.Var[])
     if a isa _CM_ATOM.Var
         any(x -> x == a, acc) || push!(acc, a)
     elseif a isa _CM_ATOM.Expression

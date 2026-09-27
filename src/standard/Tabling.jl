@@ -300,7 +300,8 @@ answer_residual(a::Atom)::Atom = dnf_residual(delays_of(a))
 # with `get_residual` in `tabling/Inspect.jl`, not here.
 
 _table_reset!() =
-    (empty!(_ANSWER_TABLE); empty!(_NO_RULE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG); empty!(_PARTIAL);
+    (empty!(_ANSWER_TABLE); empty!(_NO_RULE); empty!(_ANSWER_STAMP); empty!(_TABLE_INPROG);
+        empty!(_PARTIAL);
         empty!(_PARTIAL_READ); empty!(_GEN_STACK); empty!(_COMPONENT); empty!(_NEG_BARRIER);
         _NEG_DEPTH[]=0; _NEG_TAINT[]=false; empty!(_SCC_NEG); empty!(_NEG_DELAYS);
         empty!(_DEPS);
@@ -333,7 +334,13 @@ end
 "Mark predicate `head` (a Symbol) for tabled (memoised) execution; clears the answer table."
 table!(head::Symbol) = (push!(_TABLED_HEADS, head); _table_reset!(); nothing)
 "Disable all tabling and clear the answer table."
-untable_all!() = (empty!(_TABLED_HEADS); empty!(_NOREDUCE_HEADS); empty!(_INCREMENTAL_HEADS); _table_reset!(); nothing)
+untable_all!() = (
+    empty!(_TABLED_HEADS);
+    empty!(_NOREDUCE_HEADS);
+    empty!(_INCREMENTAL_HEADS);
+    _table_reset!();
+    nothing
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROADMAP 0.3 — PER-HEAD `untable!`, so tabling state is SCOPED instead of process-global.
@@ -1139,7 +1146,8 @@ _merge_partial(
 # implementation and no space rules was reported as "no rule": `tnot` would then treat a derivable
 # goal as underivable. Routing through `rule_results` closes that by construction, because the
 # compiled-head seam lives inside it. See `Eval.rule_results`.
-_probe_no_rule(key::Atom, space::Space)::Bool = isempty(rule_results(key, space, Bindings()))
+_probe_no_rule(key::Atom, space::Space)::Bool =
+    isempty(rule_results(key, space, Bindings()))
 
 function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     out = Atom[]
@@ -1546,7 +1554,7 @@ function dyn_changed!(k::Union{Tuple{Symbol, Symbol}, Nothing};
             # blanket; a non-empty set with no match means the change provably cannot reach this table.
             pats = _dyn_patterns_transitive(tbl)
             if pats !== nothing && !isempty(pats) &&
-               !any(pat -> !isempty(match_atoms(rename_fresh(pat), atom)), pats)
+                !any(pat -> !isempty(match_atoms(rename_fresh(pat), atom)), pats)
                 continue
             end
         end
@@ -1564,7 +1572,8 @@ function drop_dyn_deps!(key::Atom)
     filter!(t -> t[2] != key, _DYN_READ_PATTERNS)
     nothing
 end
-clear_dyn_deps!() = (empty!(_DYN_DEPS); empty!(_DYN_ALL); empty!(_DYN_READ_PATTERNS); nothing)
+clear_dyn_deps!() =
+    (empty!(_DYN_DEPS); empty!(_DYN_ALL); empty!(_DYN_READ_PATTERNS); nothing)
 
 const _TRIE_READ = Ref(true)     # 🟢 DEFAULT ON — see the block above
 
@@ -2097,8 +2106,11 @@ function tabled_eval(atom::Atom, typ::Atom, space::Space, b::Bindings, prev)
         for m in comp()
             _ANSWER_TABLE[m] = _PARTIAL[m]
             _ANSWER_STAMP[m] = _stamp
-            (isempty(_PARTIAL[m]) && _probe_no_rule(m, space)) ? push!(_NO_RULE, m) :
+            if (isempty(_PARTIAL[m]) && _probe_no_rule(m, space))
+                push!(_NO_RULE, m)
+            else
                 delete!(_NO_RULE, m)
+            end
         end  # the (space, revision) it holds for
         # ── roadmap 1.0b, STEP 1: MIRROR the completed answers into the ANSWER TRIE ──────────────
         # The trie is not yet the read path — `_ANSWER_TABLE` above still is — so this changes NO

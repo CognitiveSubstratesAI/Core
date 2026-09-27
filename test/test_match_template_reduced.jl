@@ -40,8 +40,12 @@ const EV = MeTTaCore.Eval
 
 @testset "match's instantiated template is REDUCED" begin
     function fresh()
-        s = Space(); EV.load_core_stdlib!(s)
-        EV.load_metta!(s, "(: add-foo-eq (-> Atom (->)))\n(= (add-foo-eq \$x) (add-atom &self (= (foo) \$x)))\n")
+        s = Space()
+        EV.load_core_stdlib!(s)
+        EV.load_metta!(
+            s,
+            "(: add-foo-eq (-> Atom (->)))\n(= (add-foo-eq \$x) (add-atom &self (= (foo) \$x)))\n"
+        )
         EV.load_metta!(s, "!(add-foo-eq (+ 1 2))\n")
         EV.load_metta!(s, "!(add-foo-eq (+ 3 4))\n")
         s

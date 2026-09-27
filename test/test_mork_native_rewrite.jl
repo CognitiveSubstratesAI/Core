@@ -158,16 +158,26 @@ end
 # Tags, never text: `expr_serialize` prints a NewVar and a ground symbol indistinguishably.
 @testset "BLOCKER 3 — a FREE rhs variable must NOT take another variable's binding" begin
     tags(e) = begin
-        out = String[]; i = 1
+        out = String[]
+        i = 1
         while i <= length(e.buf)
             t = MK.byte_item(e.buf[i])
             if t isa MK.ExprSymbol
                 push!(out, "Sym(" * String(e.buf[(i + 1):(i + Int(t.size))]) * ")")
                 i += 1 + Int(t.size)
             else
-                push!(out, t isa MK.ExprNewVar ? "NewVar" :
-                           t isa MK.ExprVarRef ? "VarRef$(Int(t.idx))" :
-                           t isa MK.ExprArity  ? "Arity$(Int(t.arity))" : "?")
+                push!(
+                    out,
+                    if t isa MK.ExprNewVar
+                        "NewVar"
+                    elseif t isa MK.ExprVarRef
+                        "VarRef$(Int(t.idx))"
+                    elseif t isa MK.ExprArity
+                        "Arity$(Int(t.arity))"
+                    else
+                        "?"
+                    end
+                )
                 i += 1
             end
         end
@@ -187,7 +197,7 @@ end
     # CONTROLS — these passed even with the bug, which is exactly why it hid: when every rhs variable
     # also appears on the lhs, the off-by-base lookup still lands on a real binding.
     @test tags(rw("(= (f \$x \$y) (h \$y \$x))", "(f a b)")) ==
-          ["Arity3", "Sym(h)", "Sym(b)", "Sym(a)"]
+        ["Arity3", "Sym(h)", "Sym(b)", "Sym(a)"]
     @test tags(rw("(= (f \$x) (h \$x))", "(f 5)")) == ["Arity2", "Sym(h)", "Sym(5)"]
 
     # Co-reference among free variables must survive too: one binder, one back-reference.

@@ -24,8 +24,8 @@ const _AB_S = MeTTaCore.StandardMeTTa
 const _AB_M = MeTTaCore.MORK
 
 _ab_mk(xs...) = _AB_S.Expression(_AB_S.Atom[xs...])
-_ab_sym(s)    = _AB_S.Sym(Symbol(s))
-_ab_var(n, id = 0) = _AB_S.Var(n, UInt64(id))
+_ab_sym(s) = _AB_S.Sym(Symbol(s))
+_ab_var(n, id=0) = _AB_S.Var(n, UInt64(id))
 
 @testset "AtomExprBridge — atom_to_expr" begin
 
@@ -43,7 +43,7 @@ _ab_var(n, id = 0) = _AB_S.Var(n, UInt64(id))
             _ab_mk(_ab_sym("="), _ab_mk(_ab_sym("swap"), _ab_var("a"), _ab_var("b")),
                 _ab_mk(_ab_sym("pair"), _ab_var("b"), _ab_var("a"))),
             _ab_mk(_ab_sym("edge"), _ab_sym("a"), _ab_sym("b")),
-            _ab_mk(_ab_sym("f"), _ab_var("x", 7), _ab_var("x", 9)),
+            _ab_mk(_ab_sym("f"), _ab_var("x", 7), _ab_var("x", 9))
         ]
         for a in cases
             enc = MeTTaCore.atom_to_expr(a)
@@ -136,7 +136,7 @@ _ab_var(n, id = 0) = _AB_S.Var(n, UInt64(id))
             _ab_mk(_ab_sym("plus"), _ab_var("n"), _ab_var("n")))
         rb = MeTTaCore.expr_to_atom(MeTTaCore.atom_to_expr(r).expr)::_AB_S.Expression
         binder = (rb.children[2]::_AB_S.Expression).children[2]     # $n in (dbl $n)
-        body   = rb.children[3]::_AB_S.Expression                   # (plus $n $n)
+        body = rb.children[3]::_AB_S.Expression                   # (plus $n $n)
         @test binder === body.children[2]
         @test binder === body.children[3]
 

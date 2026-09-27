@@ -79,11 +79,14 @@ function _xd_load(path::AbstractString)::Vector{DelayCase}
         startswith(line, "#") && continue
         f = split(line, '\t')
         length(f) == 7 || continue
-        push!(out, DelayCase(String(f[1]),
-                             replace(String(f[3]), "\\n" => "\n") * "\n",
-                             Symbol[Symbol(t) for t in _xd_split(f[2])],
-                             _xd_split(f[4]), _xd_split(f[5]), _xd_split(f[6]),
-                             String(f[7])))
+        push!(
+            out,
+            DelayCase(String(f[1]),
+                replace(String(f[3]), "\\n" => "\n") * "\n",
+                Symbol[Symbol(t) for t in _xd_split(f[2])],
+                _xd_split(f[4]), _xd_split(f[5]), _xd_split(f[6]),
+                String(f[7]))
+        )
     end
     out
 end
