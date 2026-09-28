@@ -309,9 +309,20 @@ function emit_julia_program(clauses::Vector{ANClause})
         if fn !== nothing
             CODEGEN_NATIVE_HEADS[] += 1
             out[h] = _codegen_seam_fn(h, fn)     # GENERATED JULIA -> LLVM -> native
+            # 🔴 THE LANE IS DECIDED HERE AND NOWHERE ELSE, so it is recorded here. The seam
+            # (`Eval.rule_results`) cannot tell the two apart afterwards: both arrive as a
+            # `CompiledHead` holding an opaque `Function`. Without this, "compiled" would lump the
+            # A-normal plan interpreter in with generated code — the inflation the native-share
+            # metric exists to catch. See `Eval._HEAD_LANE`.
+            Eval._HEAD_LANE[h] = :native
         elseif haskey(by_head, h)
             out[h] = _seam_fn(h, by_head[h])     # the PLAN-WALKING closure — an A-normal interpreter
-        end                                      # neither lane ⇒ not registered, interpreter handles it
+            Eval._HEAD_LANE[h] = :plan
+        else                                     # neither lane ⇒ not registered, interpreter handles it
+            # A head that USED to compile and no longer does must not keep a stale lane, or its
+            # interpreter calls would be counted as compiled ones.
+            delete!(Eval._HEAD_LANE, h)
+        end
     end
     out
 end

@@ -1146,8 +1146,11 @@ _merge_partial(
 # implementation and no space rules was reported as "no rule": `tnot` would then treat a derivable
 # goal as underivable. Routing through `rule_results` closes that by construction, because the
 # compiled-head seam lives inside it. See `Eval.rule_results`.
+# `probe = true`: this ASKS whether a rule exists and DISCARDS the answers, so it is not a
+# reduction. Without the flag every tabling probe would land in the interpreter bucket and inflate
+# it on exactly the PLN workloads that use tabling — see `Eval._PROBE_ENTRIES`.
 _probe_no_rule(key::Atom, space::Space)::Bool =
-    isempty(rule_results(key, space, Bindings()))
+    isempty(rule_results(key, space, Bindings(); probe = true))
 
 function _leader_pass(key::Atom, typ::Atom, space::Space)::Vector{Atom}
     out = Atom[]
