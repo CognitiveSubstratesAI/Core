@@ -712,110 +712,58 @@ const _LOOKUPS = Ref(0)
 reset_lookups!() = (_LOOKUPS[] = 0)
 lookups() = _LOOKUPS[]
 
-# ── THE THREE-LANE SPLIT — what `lookups(compiled)/lookups(interpreted)` above ASKS FOR ──────────
-# 🔴 THE DOCSTRING ABOVE PRESCRIBED THIS RATIO AND IT WAS NEVER IMPLEMENTED: `_LOOKUPS` is ONE Ref,
-# so there was no compiled/interpreted split to take. Step 0's first script therefore computed
-# `fired / lookups`, which `CompiledHead`'s own docstring says is not the native share — `fired`
-# counts CLOSURE INVOCATIONS, and "a closure whose body is `interpret(…)` delegates everything and
-# is indistinguishable from the interpreter by counter".
+# ── PER-HEAD CALL COUNTS — SWI's shape, not a hand-built lane accounting ─────────────────────────
+# 🔴 THIS REPLACES A FOUR-WAY BUCKET SCHEME WITH A SUM IDENTITY, AND THE REPLACEMENT IS THE POINT.
+# That design counted native entries at the seam, native calls inside generated bodies, plan and
+# interpreter entries, and probes separately, with an assertion that they all summed to `_LOOKUPS`.
+# It was self-consistent — `balances` was TRUE on the first run — AND IT STILL ANSWERED THE WRONG
+# QUESTION: the only heads executing natively were the stdlib's `let` and `if`, so the "42.9% native
+# share" it produced described control-flow plumbing, not PLN. A balanced identity proves nothing is
+# MISCOUNTED; it cannot tell you the counted thing is the thing you meant.
 #
-# 🔴 THERE ARE THREE LANES, NOT TWO (`EmitJuliaCode` labels them itself at EmitJulia.jl:308-314):
-#     native   `_codegen_seam_fn`  — GENERATED JULIA -> LLVM
-#     plan     `_seam_fn`          — "the PLAN-WALKING closure — an A-normal interpreter"
-#     interp   not registered      — the ordinary `(= …)` query
-# Counting the PLAN lane as "compiled" inflates the share by exactly the delegation the metric
-# exists to catch, so the milestone's X applies to the NATIVE bucket ONLY.
+# WHAT THE REFERENCE IMPLEMENTATIONS ACTUALLY DO: SWI-Prolog does not thread lane counters through
+# each code path. It keeps ONE counter — inferences, bumped at the call instruction whatever reached
+# it (`statistics(inferences, N)`) — and gets per-predicate calls and time from `profile/1`.
+# Measurement belongs to the RUNTIME, not to every code path. Julia gives us the sampling half for
+# free (`Profile.@profile`), which answers "what share of TIME runs in generated code" with NO code
+# changes at all and no double-counting to reason about — a depth fallback simply shows as time in
+# both places, which is the truth.
 #
-# 🔴 TWO NATIVE COUNTERS, BECAUSE ONE CANNOT SERVE BOTH JOBS.
-#   `_NATIVE_ENTRIES` — bumped HERE, at the seam, once per native call arriving via `rule_results`.
-#   `_NATIVE_CALLS`   — bumped INSIDE THE GENERATED BODY, once per entry invocation, INCLUDING
-#                       direct compiled->compiled calls. Those never touch `rule_results` at all,
-#                       because generated code "names that head's entry directly"
-#                       (EmitJulia.jl:281) — so a seam-only counter UNDERCOUNTS native work, the
-#                       mirror of the plan-lane error and equally wrong.
-#   internal native work = `_NATIVE_CALLS - _NATIVE_ENTRIES`.
+# ⇒ SO THE ONLY THING COUNTED HERE IS WHAT THE PROFILER CANNOT GIVE: calls PER HEAD, tagged with the
+# lane that served them, which is what ranks "what to compile next". One increment at the one seam
+# every equation lookup already passes through. Interpreted heads are counted too — `fired` sees
+# only REGISTERED closures, and the heads worth compiling next are precisely the ones that are not
+# registered yet.
 #
-# ⇒ EACH NUMBER HAS ONE JOB:
-#   CONSISTENCY (entries): `_NATIVE_ENTRIES + _PLAN + _INTERP + _PROBE + _LANE_UNKNOWN == _LOOKUPS`.
-#     Everything in that sum passes through `rule_results`, so it MUST balance exactly. A run that
-#     does not sum has a miscounted lane — DO NOT REPORT ITS SHARE.
-#   SHARE (all native work): `_NATIVE_CALLS / (_NATIVE_CALLS + _PLAN + _INTERP)`.
-#     Direct calls are real reductions the compiler performed; they belong in the share even though
-#     `_LOOKUPS` cannot see them.
-#
-# ⚠️ ONLY THE NATIVE LANE NEEDS THE SPLIT. A plan clause calling a USER head does not decline — it
-# emits `:gcall_seam` and re-enters `interpret` (EmitJulia.jl:177-187), which comes back through
-# `rule_results` and is attributed to the CALLEE's lane. `:gcall_native` runs a GROUNDED op, which
-# is not an equation-level head call and is excluded from the unit by construction. So no plan-lane
-# head call bypasses this seam, and the interpreter's own recursion re-enters here too.
-#
-# ⚠️ THE UNIT IS ONE EQUATION-LEVEL HEAD CALL, AT THIS SEAM, in whichever lane serves it. Grounded
-# ops never reach `rule_results`, so they are excluded for free — no subtraction, no inference.
-#
-# ⚠️ PROBES ARE NOT REDUCTIONS and get their own bucket. `Tabling.jl:1150` asks "does any rule
-# match?" via `isempty(rule_results(...))` and DISCARDS the results; counting that as interpreted
-# work inflates the interpreter bucket on exactly the PLN workloads that use tabling.
-#
-# 🔴 OFF BY DEFAULT. `rule_results` is on the hot path of EVERY MeTTa evaluation and its own comment
-# demands the compiled-head check "cost nothing until one exists". One `Ref{Bool}` read is the whole
-# price when disabled; the measurement turns it on.
+# 🔴 OFF BY DEFAULT. `rule_results` is on the hot path of every MeTTa evaluation and its own comment
+# demands the compiled-head check "cost nothing until one exists"; disabled, the price is one
+# `Ref{Bool}` read.
 const _LANE_COUNTING = Ref(false)
-const _NATIVE_ENTRIES = Ref(0)
-const _PLAN_ENTRIES = Ref(0)
-const _INTERP_ENTRIES = Ref(0)
-const _PROBE_ENTRIES = Ref(0)
-# A closure hand-registered by a test has no lane recorded. Counted rather than dropped, so the
-# consistency identity still balances and an unexpected non-zero is visible instead of silent.
-const _LANE_UNKNOWN = Ref(0)
-# Bumped by GENERATED CODE — see `EmitJuliaCode._build_head`. Includes compiled->compiled calls.
-const _NATIVE_CALLS = Ref(0)
-# head NAME -> :native | :plan, written at registration by `EmitJulia.emit_julia_program`.
+
+# head NAME -> :native | :plan, written at registration by `EmitJulia.emit_julia_program` — the only
+# place the lane is decided. The seam cannot recover it afterwards: both lanes arrive as a
+# `CompiledHead` holding an opaque `Function`.
 const _HEAD_LANE = Dict{Base.Symbol, Base.Symbol}()
 
+# head NAME -> how many equation lookups it served, in WHATEVER lane. `:interp` for a head with no
+# compiled implementation, so the table ranks unregistered heads alongside compiled ones.
+const _HEAD_CALLS = Dict{Base.Symbol, Int}()
+
 lane_counting!(on::Bool=true) = (old = _LANE_COUNTING[]; _LANE_COUNTING[] = on; old)
+reset_head_calls!() = (empty!(_HEAD_CALLS); _LOOKUPS[] = 0; nothing)
 
-function reset_lane_counters!()
-    _LOOKUPS[] = 0
-    _NATIVE_ENTRIES[] = 0
-    _PLAN_ENTRIES[] = 0
-    _INTERP_ENTRIES[] = 0
-    _PROBE_ENTRIES[] = 0
-    _LANE_UNKNOWN[] = 0
-    _NATIVE_CALLS[] = 0
-    nothing
-end
+"Per-head `(calls, lane)`, hottest first. `lane` is `:interp` when the head has no compiled entry."
+head_call_table() =
+    sort([(h, n, get(_HEAD_LANE, h, :interp)) for (h, n) in _HEAD_CALLS]; by = r -> -r[2])
 
-"""
-    lane_counts() -> NamedTuple
-
-Every bucket, plus `balances` — whether the seam-level buckets sum to `_LOOKUPS`. 🔴 A REPORT WHOSE
-`balances` IS FALSE MUST NOT HAVE ITS SHARE QUOTED: some lane is being miscounted.
-"""
-function lane_counts()
-    seam = _NATIVE_ENTRIES[] + _PLAN_ENTRIES[] + _INTERP_ENTRIES[] +
-        _PROBE_ENTRIES[] + _LANE_UNKNOWN[]
-    denom = _NATIVE_CALLS[] + _PLAN_ENTRIES[] + _INTERP_ENTRIES[]
-    (; lookups = _LOOKUPS[], native_entries = _NATIVE_ENTRIES[], native_calls = _NATIVE_CALLS[],
-        native_internal = _NATIVE_CALLS[] - _NATIVE_ENTRIES[], plan = _PLAN_ENTRIES[],
-        interp = _INTERP_ENTRIES[], probes = _PROBE_ENTRIES[], lane_unknown = _LANE_UNKNOWN[],
-        seam_total = seam, balances = (seam == _LOOKUPS[]),
-        native_share = denom == 0 ? 0.0 : _NATIVE_CALLS[] / denom)
-end
-
-"Bucket one seam-served call by the lane its head was registered in."
-@inline function _bucket_lane!(call::Atom)
+@inline function _count_head!(call::Atom)
     if call isa Expression && !isempty(call.children)
         h = call.children[1]
-        if h isa Sym
-            lane = get(_HEAD_LANE, Base.Symbol(h.name), :unknown)
-            lane === :native && (_NATIVE_ENTRIES[] += 1; return nothing)
-            lane === :plan && (_PLAN_ENTRIES[] += 1; return nothing)
-        end
+        h isa Sym && (_HEAD_CALLS[Base.Symbol(h.name)] =
+            get(_HEAD_CALLS, Base.Symbol(h.name), 0) + 1)
     end
-    _LANE_UNKNOWN[] += 1
     nothing
 end
-
 
 """
     rule_results(call, space, b) -> Vector{Tuple{Atom, Bindings}}
@@ -844,19 +792,12 @@ exactly as an equation whose body reduces to `Empty` does. It must NOT return ze
 indistinguishable from "no clause matched" and would silently turn a match into NotReducible. There
 is deliberately NO special empty branch here; the contract is two-valued so the lanes cannot diverge.
 """
-function rule_results(
-    call::Atom, space, b::Bindings; probe::Bool = false
-)::Vector{Tuple{Atom, Bindings}}
+function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindings}}
     _LOOKUPS[] += 1
-    # `probe` marks a lookup that ASKS whether any rule matches and DISCARDS the answers — see
-    # `_PROBE_ENTRIES`. It is exclusive: a probe is bucketed as a probe and nothing else, or the
-    # consistency identity would over-count it.
-    _counting = _LANE_COUNTING[]
-    _counting && probe && (_PROBE_ENTRIES[] += 1)
+    _LANE_COUNTING[] && _count_head!(call)
     out = Tuple{Atom, Bindings}[]
     let cc = compiled_head(call, space)
         if cc !== nothing
-            _counting && !probe && _bucket_lane!(call)
             cc isa ExecNoReduce && return out          # no clause matched ⇒ caller's miss branch
             co = cc::CompiledOk
             for (j, res) in enumerate(co.results)
@@ -873,10 +814,6 @@ function rule_results(
             return out
         end
     end
-    # FALL-THROUGH = the interpreter serves this call. `compiled_head` returns `nothing` for
-    # "no compiled implementation", for a head parked in COMPILED_INTERPRET_ONLY, and for a STALE
-    # closure — all three mean the ordinary `(= …)` query runs, so all three are interpreter work.
-    _counting && !probe && (_INTERP_ENTRIES[] += 1)
     space === nothing && return out
     X = freshvar("X")
     for qb in query(space::Space, Expression(Sym("="), call, X)),

@@ -25,9 +25,6 @@ import ..CompilerIR: IRAtom, IRVariable, IRSymbol, IRGrounded, IRExpression
 # Imported EXPLICITLY and located first — `Operation`/`ExecOk` are used inside the GENERATED code,
 # so a missing import fails at codegen time, not at load. (First run: UndefVarError.)
 import ..Eval: TOKEN_REGISTRY, Operation, ExecOk, ExecNoReduce, freshvar
-# Generated bodies bump `_NATIVE_CALLS` — see `_lanecount`. Imported so the emitted code can
-# name them unqualified in this module's scope.
-import ..Eval: _LANE_COUNTING, _NATIVE_CALLS
 
 export codegen_clause, codegen_head, head_compilable, CompiledDepthExceeded, _MAX_CALL_DEPTH
 
@@ -699,30 +696,6 @@ _sinkfn(name::Base.Symbol, body::Expr) =
             :(_a::Vector{Atom}), :(_d::Int)),
         body)
 
-"""
-    _lanecount() -> Expr
-
-`_LANE_COUNTING[] && (_NATIVE_CALLS[] += 1)`, emitted INTO the generated body.
-
-🔴 IT CANNOT LIVE IN THE SEAM ADAPTER. `_codegen_seam_fn` sees only calls arriving through
-`Eval.rule_results`; once generated code can call another compiled head it "names that head's entry
-directly" (`EmitJulia.jl:281`), so compiled->compiled calls NEVER REACH THE SEAM. A seam-only
-counter therefore UNDERCOUNTS native work — the mirror of counting the plan lane as compiled, and
-equally wrong. `Eval._NATIVE_ENTRIES` is the seam-level number; this is the total.
-
-🔴 WHERE IT GOES DIFFERS BY SHAPE, AND PUTTING IT IN THE OBVIOUS PLACE DOUBLE-COUNTS:
-  * single deterministic clause — the entry wraps `f_det`, and SELF-RECURSION CALLS `f_det`
-    DIRECTLY (see `codegen_head`'s docstring), so the count goes in `f_det`. Counting in the entry
-    as well would count every seam-entered call twice.
-  * multi-clause — a self-call is "an ordinary call to the head's own ENTRY", so the count goes in
-    the entry, once per invocation, and the per-clause functions are left alone.
-Exactly one increment per head invocation in both shapes.
-
-Gated, so production pays one `Ref{Bool}` read and a branch: this sits in the hot loop the compiler
-exists to make fast.
-"""
-_lanecount() = Expr(:(&&), :(_LANE_COUNTING[]), Expr(:(+=), :(_NATIVE_CALLS[]), 1))
-
 "`_d > _MAX_CALL_DEPTH && throw(...)` — the budget check generated code opens with."
 _depthguard(name::Base.Symbol) =
     Expr(:(&&), :(_d > _MAX_CALL_DEPTH[]),
@@ -757,7 +730,7 @@ function _build_head(
         b = codegen_clause(clauses[1], name, dname)
         b === nothing && return nothing
         det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom}), :(_d::Int)),
-            Expr(:block, _depthguard(name), _lanecount(),
+            Expr(:block, _depthguard(name),
                 _bindargs(clauses[1].head_args)..., b))
         wrap = Expr(:block,
             Expr(:(=), :_r, Expr(:call, dname, :_a, :_d)),
@@ -783,7 +756,6 @@ function _build_head(
         )
     end
     push!(comb.args, true)
-    pushfirst!(comb.args, _lanecount())
     pushfirst!(comb.args, _depthguard(name))
     push!(out, _sinkfn(fname, comb))
     out
