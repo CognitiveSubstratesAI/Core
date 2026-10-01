@@ -201,13 +201,13 @@ extends sigma differently. Threading a single sigma (the first version here) sil
 branch and drops the rest — the same truncation shape as `_reduced_goal`'s `rs[1]`, which is a
 recorded wrong-answer defect in the tabling path. Empty vector = the clause contributes nothing.
 """
-function _run_plan(plan, sigma0::Bindings)::Vector{Bindings}
+function _run_plan(plan, sigma0::Bindings, space)::Vector{Bindings}
     sigmas = Bindings[sigma0]
     for step in plan
         isempty(sigmas) && return sigmas
         nxt = Bindings[]
         for sigma in sigmas
-            _bind_step!(nxt, step, sigma)
+            _bind_step!(nxt, step, sigma, space)
         end
         sigmas = nxt
     end
@@ -215,7 +215,7 @@ function _run_plan(plan, sigma0::Bindings)::Vector{Bindings}
 end
 
 "One plan step against one sigma, appending every resulting sigma to `acc`."
-function _bind_step!(acc::Vector{Bindings}, step, sigma::Bindings)
+function _bind_step!(acc::Vector{Bindings}, step, sigma::Bindings, space)
     kind = step[1]
     if kind === :unify
         for b in match_atoms(subst(step[2], sigma), subst(step[3], sigma))
@@ -230,7 +230,7 @@ function _bind_step!(acc::Vector{Bindings}, step, sigma::Bindings)
         r isa ExecOk ? r.results : Atom[]
     else                                              # :gcall_seam — re-enter via the interpreter
         call = Expression(Atom[callee, args...])
-        Atom[a for (a, _) in interpret(_metta(call, UNDEF), _CUR_SPACE[], sigma)]
+        Atom[a for (a, _) in interpret(_metta(call, UNDEF), space, sigma)]
     end
     for res in results
         for b in match_atoms(subst(o, sigma), res)
@@ -240,10 +240,18 @@ function _bind_step!(acc::Vector{Bindings}, step, sigma::Bindings)
     acc
 end
 
-"The space the running closure was called with — `_bind_step!` needs it for seam re-entrancy."
-# A SPACE OR NOTHING — `_CUR_SPACE[] = space` at :504 is its only writer. `Ref{Any}` named
-# neither, so every read boxed and inference gave up at the `interpret` call on :228.
-const _CUR_SPACE = Ref{Union{Nothing, Eval.Space}}(nothing)
+# 🔴 `_CUR_SPACE` WAS HERE AND IS GONE. It was a global `Ref{Union{Nothing, Space}}` that
+# `_head_closure` SET ON ENTRY AND NEVER RESTORED, standing in for "the space this evaluation is
+# running in" — the same defect class as the global head registry this chunk replaced: process-wide
+# mutable state impersonating per-evaluation state.
+# MEASURED 2026-10-01: it held a STRONG reference to the most recent plan-lane space, so that space
+# outlived every user reference and `_SPACE_DEFS` could not drop its table — the WeakKeyDict is not
+# an ephemeron table, and a strong ref reachable from anywhere pins the key. Gate:
+# `test/test_jit_head_op.jl`, which measures collection with a `WeakRef` rather than by the dict's
+# length (dead entries are removed LAZILY by finalizers, so a length can count an already-dead key).
+# It was also unrestored across nesting, so an evaluation that re-entered the plan lane in another
+# space would leave the outer call reading the inner one's space.
+# ⇒ the space is now an ARGUMENT, threaded `_head_closure` -> `_run_plan` -> `_bind_step!`.
 
 """
     emit_julia_program(clauses) -> Dict{Symbol, Function}
@@ -535,7 +543,6 @@ Returns `nothing` when no clause matched, which the caller turns into `ExecNoRed
 """
 function _head_closure(rules::Vector)
     function (call::Atom, space)
-        _CUR_SPACE[] = space
         out = Tuple{Atom, Bindings}[]
         for (rule0, plan0, packed) in rules
             fresh = rename_fresh(packed)          # ONE rename for rule AND plan — see `_pack`
@@ -544,7 +551,7 @@ function _head_closure(rules::Vector)
             pattern = Expression(Atom[Sym("="), call, X])
             for mb in match_atoms(pattern, rule)
                 is_present(mb, X) || continue   # resolve-filter, exactly as `query`'s consumers do
-                for sigma in (isempty(plan) ? Bindings[mb] : _run_plan(plan, mb))
+                for sigma in (isempty(plan) ? Bindings[mb] : _run_plan(plan, mb, space))
                     push!(out, (subst(X, sigma), sigma))
                 end
             end

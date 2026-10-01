@@ -115,3 +115,61 @@ const AT = MeTTaCore.StandardMeTTa   # `Atom`/`Sym`/`Grounded` are NOT in Main a
         end
     end
 end
+
+
+# ── THE WEAK-KEY CLAIM, TESTED RATHER THAN ASSERTED IN A COMMENT ─────────────────────────────────
+# `_SPACE_DEFS` is a `WeakKeyDict{Space, …}` whose comment claims a collected space "drops its WHOLE
+# table". 🔴 A `WeakKeyDict` IS NOT AN EPHEMERON TABLE: anything reachable from an entry's VALUE that
+# holds a STRONG reference to the key pins the space forever. So that claim is a property of the
+# whole system, not of the data structure, and has to be measured.
+#
+# 🔴 MEASURE COLLECTION WITH A `WeakRef`, NOT WITH `length(_SPACE_DEFS)`. Dead entries are removed
+# LAZILY — a finalizer on each key marks the dict for cleanup and finalizers run asynchronously — so
+# a length can still count an entry whose space is already dead. A first version of this test used
+# the length and was FLAKY: the same assertion passed as a probe and failed as a testset, and the
+# explanation reached for (generational promotion) was wrong, since `GC.gc()` is a full collection.
+# It was measuring "has the dict cleaned up yet", not "was the space collected".
+@testset "a collected space drops its definition table — measured with a WeakRef" begin
+    # The space is a LOCAL of this function and only its WeakRef escapes, so anything keeping it
+    # alive afterwards is the system's doing, not the test's.
+    function _mk(prog, call)
+        s = Space(); EV.load_core_stdlib!(s)
+        EV.load_metta!(s, prog)
+        ok = occursin("True", string(EV.load_metta!(s, "!(compile-head pl)\n")))
+        EV.load_metta!(s, call)                     # RUN it, so any lane state is actually set
+        (ok, get(EV._HEAD_LANE, :pl, :none), WeakRef(s))
+    end
+
+    @testset "NATIVE head" begin
+        EV.uncompile_all!(); GC.gc(); GC.gc()
+        ok, lane, wr = _mk("(= (pl \$x) (+ \$x 1))\n", "!(pl 1)\n")
+        @test ok                                    # ANTI-VACUITY: it really compiled
+        @test lane === :native                      # ANTI-VACUITY: via the lane this case is about
+        # 🔴 DO NOT DEREFERENCE THE WeakRef BEFORE COLLECTING. `@test wr.value !== nothing` was
+        # here and made BOTH cases fail: reading `.value` materialises a STRONG reference into the
+        # enclosing frame's slot, which can outlive the statement and root the very object the test
+        # is about. The anti-vacuity it provided is already covered by `ok` and `lane` above — the
+        # head compiled and ran, so the space certainly existed.
+        GC.gc(); GC.gc()
+        @test wr.value === nothing                  # ⇒ COLLECTED
+    end
+
+    @testset "PLAN-LANE head — no longer pinned by a global" begin
+        # 🔴 THIS CASE FAILED BEFORE `_CUR_SPACE` WAS DELETED. `_head_closure` set that global
+        # `Ref{Union{Nothing,Space}}` on entry and never restored it, so the most recent plan-lane
+        # space was strongly reachable and never collected — its whole definition table with it.
+        # Bounded (one space at a time), but unbounded in lifetime. The space is now an ARGUMENT
+        # threaded through `_run_plan`/`_bind_step!`, so there is no global to pin it.
+        EV.uncompile_all!(); GC.gc(); GC.gc()
+        ok, lane, wr = _mk("(= (pl (stv \$a \$b)) (* \$a \$b))\n", "!(pl (stv 2.0 3.0))\n")
+        @test ok
+        @test lane === :plan                        # ANTI-VACUITY: head patterns decline codegen
+        # 🔴 DO NOT DEREFERENCE THE WeakRef BEFORE COLLECTING. `@test wr.value !== nothing` was
+        # here and made BOTH cases fail: reading `.value` materialises a STRONG reference into the
+        # enclosing frame's slot, which can outlive the statement and root the very object the test
+        # is about. The anti-vacuity it provided is already covered by `ok` and `lane` above — the
+        # head compiled and ran, so the space certainly existed.
+        GC.gc(); GC.gc()
+        @test wr.value === nothing                  # ⇒ COLLECTED, the pin is gone
+    end
+end

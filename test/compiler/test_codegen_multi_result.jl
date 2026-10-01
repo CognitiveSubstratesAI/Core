@@ -503,7 +503,14 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # showing A's entry is LIVE and still answers A. Without that second line this testset would
         # pass even if `compile_head!` had silently done nothing.
         @test Eval.COMPILED_FALLBACK_STALE[] == before
-        @test _cg_answers(spA, "!(f 1)") == ["2"]    # ANTI-VACUITY: A's compiled entry really is there
+        # 🔴 THE ANSWER ALONE PROVES NOTHING — A's own rules give "2" whether the COMPILED entry or
+        # the INTERPRETER produced it, so a `== ["2"]` check passes even if `compile_head!`
+        # registered nothing, which is the exact case this line claims to rule out. `fired`'s own
+        # docstring is the record of this: an answer does not identify the lane that produced it.
+        # ⇒ gate on the FIRED DELTA, which only the compiled entry can move.
+        _n0 = Eval.fired(:f)
+        @test _cg_answers(spA, "!(f 1)") == ["2"]
+        @test Eval.fired(:f) > _n0                   # ANTI-VACUITY: served by A's COMPILED entry
         Eval.uncompile_all!()
     end
 
@@ -530,7 +537,14 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # because it still proves the two spaces are the same age, which is what made the old
         # counter-only gate unsound.
         @test Eval.COMPILED_FALLBACK_STALE[] == before
-        @test _cg_answers(spA, "!(f 1)") == ["2"]    # ANTI-VACUITY: A's compiled entry really is there
+        # 🔴 THE ANSWER ALONE PROVES NOTHING — A's own rules give "2" whether the COMPILED entry or
+        # the INTERPRETER produced it, so a `== ["2"]` check passes even if `compile_head!`
+        # registered nothing, which is the exact case this line claims to rule out. `fired`'s own
+        # docstring is the record of this: an answer does not identify the lane that produced it.
+        # ⇒ gate on the FIRED DELTA, which only the compiled entry can move.
+        _n0 = Eval.fired(:f)
+        @test _cg_answers(spA, "!(f 1)") == ["2"]
+        @test Eval.fired(:f) > _n0                   # ANTI-VACUITY: served by A's COMPILED entry
         Eval.uncompile_all!()
     end
 end
