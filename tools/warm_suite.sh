@@ -87,6 +87,20 @@ _alive() {
         && ss -ltn 2>/dev/null | grep -q ":$PORT "
 }
 
+# 🔴 THE DAEMON'S CODE IS NOT THE TREE'S CODE. It loaded `Core` at boot and picks up edits through
+# Revise, which CANNOT apply struct definitions or `const` TYPE changes
+# ([[reference_revise_struct_reload_limit_measured]]). MEASURED THIS WEEK, in one direction:
+# `_JIT_HEAD_HOOK`'s type changed, the warm run failed and the cold run passed, and the change was
+# nearly reverted as a regression. THE REVERSE IS JUST AS POSSIBLE AND WORSE — a warm run PASSES on
+# stale code while the tree holds a breaking change, and the launch/end fingerprints are IDENTICAL
+# because the DISK never moved. So the per-run fingerprint cannot see this; only the daemon's own
+# boot state can. `src_fingerprint` is recorded at boot and compared before any marker is written.
+# Delegates to the shared helper so the daemon's notion of "loaded code" matches the marker's:
+# `src/` of Core AND of every path dependency (MORK, PathMaps, MorkSupercompiler, HPC,
+# MORKTensorNetworks), plus `Manifest.toml`. A struct change in a SIBLING is just as unloadable by
+# Revise as one in Core's own src.
+src_fingerprint() { loaded_src_fingerprint "$CORE"; }
+
 _start() {
     if _alive; then echo "  warm_suite: already up (pid $(cat "$PIDFILE"), port $PORT)"; return 0; fi
     echo "  warm_suite: booting daemon on port $PORT (one-time JIT cost — later runs reuse it)…"
@@ -159,6 +173,9 @@ _start() {
         # then binds the socket — so a client firing between the two gets "cannot connect with
         # server" from a daemon that is perfectly healthy. Wait for the LISTENING SOCKET as well.
         if [ -f "$READYFILE" ] && ss -ltn 2>/dev/null | grep -q ":$PORT "; then
+            # ⚠️ BEFORE the `return 0`, not after — a first version put it on the next line, where
+            # it was UNREACHABLE and the staleness guard silently never fired.
+            src_fingerprint > "$RUNDIR/boot_src.fp"   # what the daemon ACTUALLY loaded
             echo "  warm_suite: up (pid $(cat "$PIDFILE")) — MeTTaCore loaded, listening on $PORT"; return 0
         fi
         kill -0 "$(cat "$PIDFILE")" 2>/dev/null || { echo "  warm_suite: daemon DIED during boot:"; tail -12 "$LOGFILE"; return 1; }
@@ -261,6 +278,26 @@ JULIA
 MARK_ON_PASS=0
 # shellcheck source=../../workflows/test_marker.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/workflows/test_marker.sh"
+# 🔴 CHECKED AT LAUNCH AND FIXED AUTOMATICALLY, NOT REFUSED AT THE END. Every gate follows an edit
+# to `src/`, so an end-of-run refusal would throw away a full suite run on nearly every gate and
+# then ask for a restart. Restarting FIRST means a warm run is either on current code or never
+# starts. The per-run launch fingerprint still covers edits made DURING the run.
+# ⚠️ A MISSING BOOT FINGERPRINT IS NOT A PASS. `[ -f … ] &&` used to skip the check silently, and
+# two of the four lanes had no such file — the "absent guard is silent" shape again. Now it restarts
+# to establish one.
+_ensure_fresh_daemon() {
+    local bf="$RUNDIR/boot_src.fp" live; live="$(src_fingerprint)"
+    if [ ! -f "$bf" ]; then
+        echo "  warm_suite: no boot fingerprint for this lane — restarting to establish one"
+    elif [ "$(cat "$bf")" != "$live" ]; then
+        echo "  warm_suite: loaded sources CHANGED since boot — restarting (Revise cannot apply"
+        echo "    struct or const-TYPE changes, so this daemon would run STALE code)"
+    else
+        return 0
+    fi
+    CORE_WARM_SUITE_PORT="$PORT" "$0" restart >/dev/null 2>&1 || true
+}
+
 _mark_verdict() {
     [ "$MARK_ON_PASS" = "1" ] || return 0
     # ⚠️ A SHARD IS NOT THE SUITE. `run 1/4` passing says nothing about the other three, so it must
@@ -269,7 +306,7 @@ _mark_verdict() {
         echo "  warm_suite: NOT evidence — sharded run ($_SHARD_ARG)"
         return 0
     fi
-    write_marker "$CORE" "$1" "warm_suite $_VERB"
+    write_marker "$CORE" "$1" "warm_suite $_VERB" "${_LAUNCH_FP:-}"
 }
 
 case "${1:-run}" in
@@ -375,15 +412,17 @@ case "${1:-run}" in
      fi
      if [ "$_allok" = "1" ]; then
          echo "  warm_suite: all $N shards passed on one tree"
-         write_marker "$CORE" 0 "warm_suite run-sharded $N"
+         write_marker "$CORE" 0 "warm_suite run-sharded $N" "$_fp0"
          exit 0
      fi
      echo "  warm_suite: sharded run FAILED"
-     write_marker "$CORE" 1 "warm_suite run-sharded $N"
+     write_marker "$CORE" 1 "warm_suite run-sharded $N" "$_fp0"
      exit 1 ;;
   run)
      _use_lane "$SUITE_PORT"
      MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
+     _ensure_fresh_daemon
+     _LAUNCH_FP="$(start_marker "$CORE")"   # per-RUN, process-local — see test_marker.sh
      # 🟢 THE SUITE LANE IS NOW WARM BY DEFAULT — 2026-08-18. It restarted on every invocation for a
      # year of sessions, and the reason was real: the suite leaked state, so a second run in one
      # process invented failures, and a harness that invents failures is worse than a slow one.
@@ -422,6 +461,8 @@ case "${1:-run}" in
   run-cold)
      _use_lane "$SUITE_PORT"
      MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
+     _ensure_fresh_daemon
+     _LAUNCH_FP="$(start_marker "$CORE")"
      # The old behaviour, kept as the arbiter. Use it to confirm a suspicious `run` failure, or when
      # you have just added a test that touches shared/global state.
      # 🔴🔴 PASS THE LANE THROUGH THE ENV — `_use_lane` SETS SHELL VARS, AND `$0` IS A SUBPROCESS.
@@ -443,7 +484,10 @@ case "${1:-run}" in
      fi ;;
   run-warm)
      _use_lane "$SUITE_PORT"
-     MARK_ON_PASS=1; _VERB="$1"; _SHARD_ARG="${2:-}"
+     # 🔴 MARK_ON_PASS DELIBERATELY NOT SET — this verb's own comment below says "NOT A GATE. Use
+     # `run` for a verdict", and it was writing commit evidence anyway. The code now agrees with the
+     # comment: `run-warm` exists to FIND state leaks, not to authorise a commit.
+     MARK_ON_PASS=0; _VERB="$1"; _SHARD_ARG="${2:-}"
      # 🔬 THE SAME SUITE, IN THE DAEMON THAT IS ALREADY UP — no restart. This is the MEASUREMENT that
      # tells us whether `run` still needs to restart: anything that fails here and passed under `run`
      # is state some file LEAKS into the next one.

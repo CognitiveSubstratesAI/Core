@@ -152,12 +152,26 @@ JL=(julia --project=. --threads="${JULIA_TEST_THREADS:-4}" --heap-size-hint="$HE
 # REMOVED on any failure, so a red suite cannot be followed by a green commit.
 # shellcheck source=../../workflows/test_marker.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/workflows/test_marker.sh"
+
+# 🔴 FINGERPRINT THE TREE *NOW*, BEFORE THE SUITE STARTS. `write_marker` recomputes at the end and
+# REFUSES to record evidence if they differ, which closes the hole where a file edited DURING a run
+# was certified as tested. MEASURED 2026-10-01: a full gate was running while a global was inserted
+# into `_head_closure` and then reverted — that run tested a MIX and would have fingerprinted the
+# reverted tree. Both failure modes are silent, which is why this is a gate and not a note.
+# ⚠️ MUST stay ABOVE the `"${JL[@]}"` invocations below, or it records the tree mid-run and protects
+# nothing.
+# ⚠️ AND IT IS HELD IN A SHELL VARIABLE, NOT A FILE. A per-repo file cannot represent a per-RUN fact:
+# `warm_suite.sh` writes a marker without starting one and runs alongside this constantly, so it
+# would consume this run's baseline; and a run killed at the memory ceiling would leave one behind
+# for the next run to inherit. Process-local state has neither problem.
+_LAUNCH_FP="$(start_marker "$(dirname "${BASH_SOURCE[0]}")/..")"
+
 _finish() {
   # ⚠️ ONLY A FULL, UNFILTERED SUITE IS EVIDENCE. `run_tests.sh <path>` runs ONE file, and the
   # commit hook's own help text advertises that form — so marking on any exit 0 would let a single
   # passing file authorise a commit. That is the same loophole `warm_suite.sh file` already avoids.
   if [ "$TARGET" = "test/runtests.jl" ] && [ -z "${CORE_SUITE_SHARD:-}" ]; then
-    write_marker "$(dirname "${BASH_SOURCE[0]}")/.." "$1" "run_tests.sh full suite"
+    write_marker "$(dirname "${BASH_SOURCE[0]}")/.." "$1" "run_tests.sh full suite" "$_LAUNCH_FP"
   else
     echo "  test_marker: NOT evidence — filtered run (TARGET=$TARGET SHARD=${CORE_SUITE_SHARD:-none})"
   fi
