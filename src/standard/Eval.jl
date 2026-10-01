@@ -1138,6 +1138,41 @@ end
 Space(atoms, tokens, imported, lib_count, index, wildcard, type_epoch=0) =
     Space(VectorStore(atoms, lib_count, index, wildcard), tokens, imported, type_epoch)
 Space() = Space(VectorStore(), Dict{String, Atom}(), Set{String}(), 0)
+
+# ── PER-SPACE IDENTITY FOR THE CODEGEN NAMESPACE ────────────────────────────────────────────────
+# 🔴 WHY THIS EXISTS. `EmitJuliaCode._genname` used to hash the head NAME ONLY, so EVERY space's
+# `inner` generated the same Julia function `_gen_inner_664621`. With heads compiled TOGETHER the
+# caller NAMES THAT ENTRY DIRECTLY (`EmitJulia.jl:281`), so program B's compilation silently
+# redefined the function program A's `outer` calls, and A answered with B's body. MEASURED
+# 2026-10-01: A answered 101 instead of 2, with `COMPILED_FALLBACK_STALE == 0` — the CHUNK-002
+# staleness gate never fired, because a DIRECT CALL NEVER REACHES THE SEAM THAT GATE LIVES ON.
+# Gate: `test/compiler/test_ab_space_collision.jl`.
+#
+# 🔴 NOT `objectid`, FOR THE REASON `CompiledHead` ALREADY RECORDS (see its `space` field):
+# `objectid` of a mutable object is its ADDRESS, which Julia MAY REUSE after a collection — so a
+# fresh space could inherit a dead one's id, and a generated name baked from it would alias the dead
+# space's code. That is the very bug class this fixes, reintroduced by the fix.
+# ⇒ A MONOTONIC COUNTER: ids are never reused, whatever the allocator does.
+#
+# ⚠️ A `WeakKeyDict`, NOT A NEW `Space` FIELD. A field would be a STRUCT CHANGE — Revise cannot
+# reload those, so every warm session would need a cold restart
+# (`[[reference_revise_struct_reload_limit_measured]]`) — and it would have to thread through the
+# positional compatibility constructor that 15 sites still use. Weak keys also mean a collected
+# space drops its entry instead of pinning it alive.
+const _SPACE_ID_COUNTER = Ref(0)
+const _SPACE_IDS = WeakKeyDict{Space, Int}()
+
+"""
+    space_id(sp::Space) -> Int
+
+A stable, never-reused id for `sp`, assigned on first use. Identifies the space in GENERATED
+FUNCTION NAMES so two spaces' same-named heads cannot share one Julia function.
+"""
+function space_id(sp::Space)::Int
+    get!(_SPACE_IDS, sp) do
+        _SPACE_ID_COUNTER[] += 1
+    end
+end
 Space(atoms::Vector{Atom}) = (
     s=Space();
     for a in atoms

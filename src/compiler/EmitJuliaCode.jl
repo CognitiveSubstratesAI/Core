@@ -324,8 +324,23 @@ function _freshbinds!(vars::Set{Base.Symbol}, cl::ANClause)
     out
 end
 
-"The generated entry name for a head. DETERMINISTIC, so a caller can name a callee not yet built."
-_genname(sym::Base.Symbol) = Base.Symbol("_gen_", sym, "_", string(hash(sym); base=16)[1:6])
+"""
+The generated entry name for a head. DETERMINISTIC, so a caller can name a callee not yet built.
+
+🔴 `sid` IS THE SPACE'S IDENTITY AND IT IS LOAD-BEARING. Without it this hashed the head NAME ONLY,
+so every space's `inner` became the SAME Julia function — and because a caller NAMES ITS CALLEE'S
+ENTRY DIRECTLY (`EmitJulia.jl:281`), compiling program B silently redefined the function program A
+was calling. MEASURED 2026-10-01: A answered 101 instead of 2, with `COMPILED_FALLBACK_STALE == 0`,
+because a direct call never reaches the seam the staleness gate lives on. Gate:
+`test/compiler/test_ab_space_collision.jl`.
+
+`sid = 0` is the UNIDENTIFIED space — the default for callers that compile a head in isolation (the
+hand-built harnesses in `test/compiler/`). Those share one namespace, exactly as before, which is
+harmless because they never register two spaces' heads at once. Every PRODUCTION caller goes through
+`emit_julia_program(clauses, space)` and passes a real `Eval.space_id`.
+"""
+_genname(sym::Base.Symbol, sid::Int=0) =
+    Base.Symbol("_gen_", sym, "_s", sid, "_", string(hash(sym); base=16)[1:6])
 
 "A call to another MeTTa head rather than to a grounded op or to this clause's own head."
 function _is_user_call(g::Goal, selfname::Base.Symbol)
@@ -417,7 +432,7 @@ Returns `nothing` if anything is out of scope. `vars` is MUTATED along a path an
 """
 function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::IRAtom,
     dup::Int,
-    selfname::Base.Symbol, fname::Base.Symbol, compilable::Set{Base.Symbol})
+    selfname::Base.Symbol, fname::Base.Symbol, compilable::Set{Base.Symbol}, sid::Int=0)
     if k > length(goals)
         ox = _atomexpr(out_ir, vars)
         ox === nothing && return nothing
@@ -435,7 +450,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         r = _atomexpr(g.rhs, vars)
         r === nothing && return nothing
         push!(vars, (g.lhs::IRVariable).name)
-        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable)
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable, sid)
         rest === nothing && return nothing
         return Expr(:block, Expr(:(=), _local(g.lhs), r), rest)
     elseif g isa GCall
@@ -453,7 +468,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
             callee = if g.head === selfname
                 fname
             else
-                (g.head in compilable ? _genname(g.head) : return nothing)
+                (g.head in compilable ? _genname(g.head, sid) : return nothing)
             end
             # allow-any: Julia AST args — see the note above `kids`.
             as = Any[]
@@ -463,7 +478,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
                 push!(as, v)
             end
             push!(vars, (g.out::IRVariable).name)
-            rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable)
+            rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable, sid)
             rest === nothing && return nothing
             lv = _local(g.out)
             # ⚠️ `_b` is the callee's bindings and is DISCARDED here. Sound only while head args are
@@ -477,7 +492,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         end
         (fn, as, arv, rsv, opname) = p
         push!(vars, (g.out::IRVariable).name)
-        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable)
+        rest = _gen_seq(goals, k + 1, vars, out_ir, dup, selfname, fname, compilable, sid)
         rest === nothing && return nothing
         lv = _local(g.out)
         return quote
@@ -509,7 +524,8 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         test === nothing && return nothing
         rest = goals[(k + 1):end]
         tb = _gen_seq(
-            vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable
+            vcat(g.then, rest), 1, copy(vars), out_ir, dup * 2, selfname, fname, compilable,
+            sid
         )
         tb === nothing && return nothing
         # An EMPTY `els` means "no further arm": this PATH yields nothing, which in the sink
@@ -525,7 +541,8 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
                 dup * 2,
                 selfname,
                 fname,
-                compilable
+                compilable,
+                sid
             )
         end
         eb === nothing && return nothing
@@ -546,7 +563,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
         blk = Expr(:block)
         for br in g.branches
             bb = _gen_seq(vcat(br, rest), 1, copy(vars), out_ir, dup * length(g.branches),
-                selfname, fname, compilable)
+                selfname, fname, compilable, sid)
             bb === nothing && return nothing
             push!(blk.args, bb)
         end
@@ -666,7 +683,7 @@ end
 
 "The NONDETERMINISTIC body for one clause: `_sink` is called once per answer, then `true`."
 function _codegen_clause_sink(cl::ANClause, selfname::Base.Symbol, fname::Base.Symbol,
-    compilable::Set{Base.Symbol})
+    compilable::Set{Base.Symbol}, sid::Int=0)
     cl.nested_head && return nothing
     _calls_impure(cl.goals) && return nothing      # a re-runnable lane — see `_IMPURE_OPS`
     vars = Set{Base.Symbol}()
@@ -675,7 +692,7 @@ function _codegen_clause_sink(cl::ANClause, selfname::Base.Symbol, fname::Base.S
         push!(vars, a.name)
     end
     fresh = _freshbinds!(vars, cl)          # free variables are minted PER CALL — see above
-    seq = _gen_seq(cl.goals, 1, vars, cl.out, 1, selfname, fname, compilable)
+    seq = _gen_seq(cl.goals, 1, vars, cl.out, 1, selfname, fname, compilable, sid)
     seq === nothing && return nothing
     Expr(:block, fresh..., seq, true)
 end
@@ -716,10 +733,10 @@ starts with all heads as candidates and drops them until the set is stable. A bu
 it went would leave half-registered functions behind on every dropped candidate.
 """
 function _build_head(
-    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}
+    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}, sid::Int=0
 )
     isempty(clauses) && return nothing
-    fname = _genname(name)
+    fname = _genname(name, sid)
     arity = length(clauses[1].head_args)
     for cl in clauses
         length(cl.head_args) == arity || return nothing     # mixed arity ⇒ out of scope
@@ -743,7 +760,7 @@ function _build_head(
     out = Expr[]
     parts = Base.Symbol[]
     for (i, cl) in enumerate(clauses)
-        b = _codegen_clause_sink(cl, name, fname, compilable)
+        b = _codegen_clause_sink(cl, name, fname, compilable, sid)
         b === nothing && return nothing
         cn = Base.Symbol(fname, "_c", i)
         push!(out, _sinkfn(cn, Expr(:block, _bindargs(cl.head_args)..., b)))
@@ -789,8 +806,8 @@ ordinary call to the head's own ENTRY, which answers zero-to-N times through the
 that the old guard was protecting can no longer be dropped.
 """
 function codegen_head(name::Base.Symbol, clauses::Vector{ANClause},
-    compilable::Set{Base.Symbol}=Set{Base.Symbol}())
-    fns = _build_head(name, clauses, compilable)
+    compilable::Set{Base.Symbol}=Set{Base.Symbol}(), sid::Int=0)
+    fns = _build_head(name, clauses, compilable, sid)
     fns === nothing && return nothing
     # ⚠️ INITIALISED, NOT `local`-DECLARED. JET: "local variable `last` may be undefined" — an empty
     # `fns` returned an unassigned local. `_build_head` never returns one today, but that is an

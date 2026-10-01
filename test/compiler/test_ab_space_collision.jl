@@ -55,7 +55,9 @@ end
 "Compile every head of `sp` TOGETHER and register them against `sp`."
 function _abc_compile_together!(sp)
     rs = _abc_rules(sp)
-    fns = EJ.emit_julia_program(AN.translate_program(F.lower_program(rs)))
+    # Pass the SPACE: its `Eval.space_id` reaches `_genname`, so A's and B's `inner` become
+    # DIFFERENT Julia functions. Production does the same via `jit_head!`.
+    fns = EJ.emit_julia_program(AN.translate_program(F.lower_program(rs)), sp)
     key = hash(rs)
     for (h, fn) in fns
         EV.compile_head!(h, fn, key, sp)

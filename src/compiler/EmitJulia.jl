@@ -255,7 +255,15 @@ registering it would DROP the fifth's answers — the seam shadows the head, so 
 sees the rules the closure does not carry. A head is registered only if EVERY one of its clauses
 emitted. (`docs/architecture/COMPILED_HEAD_SEAM.md`, "the unit is the HEAD".)
 """
-function emit_julia_program(clauses::Vector{ANClause})
+# 🔴 `space` IS OPTIONAL BUT PRODUCTION ALWAYS PASSES IT. It supplies `Eval.space_id`, which goes
+# into every GENERATED FUNCTION NAME (`EmitJuliaCode._genname`). Without it, two spaces' same-named
+# heads compile to the SAME Julia function, and because a caller names its callee's entry directly
+# (:281 below) compiling one program silently redefines the other's code — MEASURED 2026-10-01 as
+# A answering 101 instead of 2, gated by `test/compiler/test_ab_space_collision.jl`.
+# `nothing` ⇒ id 0, the unidentified namespace: correct for the isolated harnesses in
+# `test/compiler/` that compile one program at a time and never register two spaces' heads at once.
+function emit_julia_program(clauses::Vector{ANClause}, space=nothing)
+    sid = space === nothing ? 0 : Eval.space_id(space)
     # TYPED, like `an_by_head` below. `emit_julia_clause` returns `(rule, plan, packed)` — NOT a
     # bare Atom; an earlier attempt typed this `Vector{Atom}` from the `_pack` helper's return and a
     # comment, and 3 suite files failed with
@@ -305,7 +313,7 @@ function emit_julia_program(clauses::Vector{ANClause})
     end
     out = Dict{Base.Symbol, Function}()
     for h in keys(an_by_head)
-        fn = h in compilable ? codegen_head(h, an_by_head[h], compilable) : nothing
+        fn = h in compilable ? codegen_head(h, an_by_head[h], compilable, sid) : nothing
         if fn !== nothing
             CODEGEN_NATIVE_HEADS[] += 1
             out[h] = _codegen_seam_fn(h, fn)     # GENERATED JULIA -> LLVM -> native
@@ -411,7 +419,7 @@ function jit_head!(name::Base.Symbol, space)::Bool
     end
     mine = ANClause[c for c in clauses if c.name === name]
     isempty(mine) && return false
-    heads = emit_julia_program(mine)
+    heads = emit_julia_program(mine, space)   # space identity reaches _genname
     fn = get(heads, name, nothing)
     fn === nothing && return false                      # every clause must emit — all-or-nothing
     Eval.compile_head!(name, fn, key, space)   # 4-arg: arms the staleness check (see compile_head!)
