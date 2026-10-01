@@ -480,6 +480,9 @@ Main.@suite("compiler/test_emit_substitution.jl")
 Main.@suite("compiler/test_emit_il.jl")
 Main.@suite("compiler/test_emit_julia.jl")   # stage 4c: registration path (milestone 1a)          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
 Main.@suite("compiler/test_ab_space_collision.jl")  # CHUNK-017 gate: B's head must not answer A's
+Main.@suite("compiler/test_crosshead_dispatch.jl")  # a cross-head call must AGREE with the
+#   interpreter. Holds 5 `@test_broken`: the native lane answers `(+ 1 6)` where the interpreter says
+#   7, because a user-head application in an argument is never hoisted into its own A-normal goal.
 Main.@suite("compiler/test_codegen_multi_result.jl")  # the NATIVE lane's calling convention —
 # f(sink, args) once per answer. Until now
 # NOTHING in test/ touched codegen_head.
