@@ -487,7 +487,7 @@ function _gen_seq(goals::Vector{Goal}, k::Int, vars::Set{Base.Symbol}, out_ir::I
                 Expr(:block, Expr(:(=), lv, :_r), rest, true))
             return Expr(:(||),
                 Expr(:call, callee, closure, Expr(:ref, :Atom, as...),
-                    Expr(:call, :+, :_d, 1)),
+                    Expr(:call, :+, :_d, 1), :_space),
                 Expr(:return, false))
         end
         (fn, as, arv, rsv, opname) = p
@@ -602,7 +602,7 @@ function _gen_det(
             r = Base.Symbol("r_", (g.out::IRVariable).name)
             # 🔴 ONE JULIA CALL. No seam, no interpreter, no equation lookup, no sink.
             return quote
-                $r = $dname(Atom[$(as...)], _d + 1)
+                $r = $dname(Atom[$(as...)], _d + 1, _space)
                 $r === nothing && return nothing
                 $(_local(g.out)) = $r::Atom
             end
@@ -710,7 +710,12 @@ _sinkfn(name::Base.Symbol, body::Expr) =
                 LineNumberNode(0, :generated),
                 :_sink
             ),
-            :(_a::Vector{Atom}), :(_d::Int)),
+            :(_a::Vector{Atom}), :(_d::Int),
+            # 🔴 THE SPACE, AS A PARAMETER. Cross-head calls will dispatch through the CALLEE'S
+            # DEFINITION ENTRY (ORC's stub model), and that lookup is per-space. The alternative was
+            # a global "current space", which is exactly the `_CUR_SPACE` just deleted for pinning a
+            # space and being unrestored across nesting. Threaded, not ambient.
+            :_space),
         body)
 
 "`_d > _MAX_CALL_DEPTH && throw(...)` — the budget check generated code opens with."
@@ -746,11 +751,11 @@ function _build_head(
         dname = Base.Symbol(fname, "_det")
         b = codegen_clause(clauses[1], name, dname)
         b === nothing && return nothing
-        det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom}), :(_d::Int)),
+        det = Expr(:function, Expr(:call, dname, :(_a::Vector{Atom}), :(_d::Int), :_space),
             Expr(:block, _depthguard(name),
                 _bindargs(clauses[1].head_args)..., b))
         wrap = Expr(:block,
-            Expr(:(=), :_r, Expr(:call, dname, :_a, :_d)),
+            Expr(:(=), :_r, Expr(:call, dname, :_a, :_d, :_space)),
             Expr(:if, Expr(:call, :(===), :_r, :nothing),
                 true,
                 Expr(:(::), Expr(:call, :_sink, :_r, :nothing), :Bool)))
@@ -769,7 +774,8 @@ function _build_head(
     comb = Expr(:block)
     for cn in parts
         push!(
-            comb.args, Expr(:(||), Expr(:call, cn, :_sink, :_a, :_d), Expr(:return, false))
+            comb.args,
+            Expr(:(||), Expr(:call, cn, :_sink, :_a, :_d, :_space), Expr(:return, false))
         )
     end
     push!(comb.args, true)

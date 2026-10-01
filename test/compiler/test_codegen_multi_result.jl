@@ -111,7 +111,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
 
         got = _CGV.Atom[]
         @test Base.invokelatest(
-            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)], 0
+            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(1)], 0, nothing
         ) == true
         @test sort!(string.(got)) == ["2", "tagged"]
 
@@ -123,7 +123,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         # either: `return nothing` from a function the seam annotated `::Vector{Atom}`, a TypeError.
         got2 = _CGV.Atom[]
         @test Base.invokelatest(
-            fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")], 0
+            fn, (r, _b) -> (push!(got2, r); true), _CGV.Atom[_CGV.Sym("foo")], 0, nothing
         ) == true
         @test sort!(string.(got2)) == ["(+ foo 1)", "tagged"]
     end
@@ -133,7 +133,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         got = _CGV.Atom[]
         # `false` on the FIRST answer: the producer must not run the second clause.
         @test Base.invokelatest(
-            fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)], 0
+            fn, (r, _b) -> (push!(got, r); false), _CGV.Atom[_CGV.Grounded(1)], 0, nothing
         ) == false
         @test length(got) == 1
     end
@@ -188,13 +188,13 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test fn !== nothing
         got = _CGV.Atom[]
         @test Base.invokelatest(
-            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)], 0
+            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(41)], 0, nothing
         ) == true
         @test string.(got) == ["42"]
         # The det path must residualise too, not answer zero times — same rule as above.
         res = _CGV.Atom[]
         @test Base.invokelatest(
-            fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")], 0
+            fn, (r, _b) -> (push!(res, r); true), _CGV.Atom[_CGV.Sym("foo")], 0, nothing
         ) == true
         @test string.(res) == ["(+ foo 1)"]
     end
@@ -221,7 +221,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test fn !== nothing
         got = _CGV.Atom[]
         @test Base.invokelatest(
-            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)], 0
+            fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(200)], 0, nothing
         ) == true
         @test string.(got) == ["done"]               # 200 recursive calls, one answer
         # and the same answer through the interpreter, which is the only authority on what it is
@@ -239,7 +239,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         else
             got = _CGV.Atom[]
             @test Base.invokelatest(
-                fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)], 0
+                fn, (r, _b) -> (push!(got, r); true), _CGV.Atom[_CGV.Grounded(5)], 0, nothing
             ) == true
             @test sort!(string.(got)) == ["5", "7", "9"]
         end
@@ -256,7 +256,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         fn = _CGC.codegen_head(:g, _cg_head(_CG_TWO, :g))
         seen = Tuple{_CGV.Atom, Union{Nothing, _CGV.Bindings}}[]   # the sink's (answer, bindings)
         @test Base.invokelatest(fn, (r, b) -> (push!(seen, (r, b)); true),
-            _CGV.Atom[_CGV.Grounded(1)], 0) == true
+            _CGV.Atom[_CGV.Grounded(1)], 0, nothing) == true
         @test length(seen) == 2
         @test all(x -> x[2] === nothing, seen)      # today: positional binding, so no bindings
 
@@ -283,7 +283,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         @test fn !== nothing
         got = _CGV.Atom[]
         for _ in 1:2
-            Base.invokelatest(fn, (a, b) -> (push!(got, a); true), _CGV.Atom[], 0)
+            Base.invokelatest(fn, (a, b) -> (push!(got, a); true), _CGV.Atom[], 0, nothing)
         end
         @test length(got) == 2
         c1 = got[1]::_CGV.Expression
@@ -303,12 +303,12 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         try
             _CGC._MAX_CALL_DEPTH[] = 50
             @test_throws _CGC.CompiledDepthExceeded Base.invokelatest(
-                fn, (r, b) -> true, _CGV.Atom[_CGV.Grounded(200)], 0)
+                fn, (r, b) -> true, _CGV.Atom[_CGV.Grounded(200)], 0, nothing)
             # and BELOW the budget it still answers normally — ANTI-VACUITY: the guard is not
             # simply refusing everything
             n = Ref(0)
             @test Base.invokelatest(fn, (r, b) -> (n[] += 1; true),
-                _CGV.Atom[_CGV.Grounded(5)], 0) == true
+                _CGV.Atom[_CGV.Grounded(5)], 0, nothing) == true
             @test n[] == 7
         finally
             # 🔴 `COMPILED_INTERPRET_ONLY` IS SESSION-SCOPED AND THE BUDGET FAULT WRITES TO IT.
@@ -333,7 +333,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         got = _CGV.Atom[]
         binds = Union{Nothing, _CGV.Bindings}[]   # the sink passes `nothing` until a producer binds
         @test Base.invokelatest(fn, (r, b) -> (push!(got, r); push!(binds, b); true),
-            _CGV.Atom[Eval.freshvar("q")], 0) == true
+            _CGV.Atom[Eval.freshvar("q")], 0, nothing) == true
         @test length(got) == 1
         @test occursin("+", string(got[1]))        # NotReducible ⇒ the residual term, not a crash
         @test all(b -> b === nothing, binds)       # and no binding was produced to lose

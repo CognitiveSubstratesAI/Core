@@ -481,7 +481,7 @@ function _codegen_seam_fn(head::Base.Symbol, fn::Function)
             Base.invokelatest(fn,
                 (r, b) -> (push!(rs, r);
                     push!(bs, b === nothing ? Bindings() : b); true),
-                args, 0)
+                args, 0, space)
         catch e
             # 🔴 THE DEPTH BUDGET FIRED. Generated code raises this BEFORE the stack runs out,
             # because a `StackOverflowError` is not catchable in any way code may depend on — Julia
