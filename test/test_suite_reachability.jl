@@ -48,7 +48,20 @@ using Test
         # FINITE program — not by "fixing" a fixpoint that behaves as upstream's does.
         "test_dependency_firing.jl" =>
             "its program has an INFINITE tabled answer set, which does not terminate in SWI " *
-            "either (verified); needs a max_answers bound or a finite program, not an engine fix"
+            "either (verified); needs a max_answers bound or a finite program, not an engine fix",
+        # 🔴 RED BY DESIGN — THE CHUNK-017 GATE, WRITTEN BEFORE ITS FIX AND CONFIRMED FAILING.
+        # It reproduces the cross-space collision at `Evaluated: ["101"] == ["2"]`: two spaces'
+        # `inner` generate the SAME Julia function, because `_genname` hashes the head NAME ONLY, and
+        # when heads compile TOGETHER the caller names that entry directly — so the CHUNK-002
+        # staleness gate never fires (COMPILED_FALLBACK_STALE == 0). Exempted rather than softened to
+        # `@test_broken`: a test first seen passing cannot show it would have caught the bug, and
+        # this one must stay genuinely red so its later green means something.
+        # ⇒ REMOVE THIS EXEMPTION and wire the file into runtests.jl THE MOMENT STEP 1 LANDS. That
+        # is the definition of step 1 being done. Leaving it exempt once it passes recreates exactly
+        # the orphan this gate exists to catch.
+        "test_ab_space_collision.jl" =>
+            "CHUNK-017 step-1 gate, written RED before the fix (fails at [\"101\"] vs [\"2\"]); " *
+            "wire it in and delete this entry when the per-space definition record lands"
     )
 
     # THREE FILTERS, each for a FALSE POSITIVE this scan actually produced when first run:
