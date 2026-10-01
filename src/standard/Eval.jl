@@ -749,18 +749,20 @@ const _HEAD_LANE = Dict{Base.Symbol, Base.Symbol}()
 # compiled implementation, so the table ranks unregistered heads alongside compiled ones.
 const _HEAD_CALLS = Dict{Base.Symbol, Int}()
 
-lane_counting!(on::Bool=true) = (old = _LANE_COUNTING[]; _LANE_COUNTING[] = on; old)
-reset_head_calls!() = (empty!(_HEAD_CALLS); _LOOKUPS[] = 0; nothing)
+lane_counting!(on::Bool=true) = (old=_LANE_COUNTING[]; _LANE_COUNTING[]=on; old)
+reset_head_calls!() = (empty!(_HEAD_CALLS); _LOOKUPS[]=0; nothing)
 
 "Per-head `(calls, lane)`, hottest first. `lane` is `:interp` when the head has no compiled entry."
 head_call_table() =
-    sort([(h, n, get(_HEAD_LANE, h, :interp)) for (h, n) in _HEAD_CALLS]; by = r -> -r[2])
+    sort([(h, n, get(_HEAD_LANE, h, :interp)) for (h, n) in _HEAD_CALLS]; by=r -> -r[2])
 
 @inline function _count_head!(call::Atom)
     if call isa Expression && !isempty(call.children)
         h = call.children[1]
-        h isa Sym && (_HEAD_CALLS[Base.Symbol(h.name)] =
-            get(_HEAD_CALLS, Base.Symbol(h.name), 0) + 1)
+        h isa Sym && (
+            _HEAD_CALLS[Base.Symbol(h.name)] =
+                get(_HEAD_CALLS, Base.Symbol(h.name), 0) + 1
+        )
     end
     nothing
 end
