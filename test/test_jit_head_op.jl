@@ -137,7 +137,7 @@ end
         EV.load_metta!(s, prog)
         ok = occursin("True", string(EV.load_metta!(s, "!(compile-head pl)\n")))
         EV.load_metta!(s, call)                     # RUN it, so any lane state is actually set
-        (ok, get(EV._HEAD_LANE, :pl, :none), WeakRef(s))
+        (ok, EV.head_lane(:pl), WeakRef(s))
     end
 
     @testset "NATIVE head" begin

@@ -97,7 +97,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
     # This file asserts that compiled heads FIRE. `COMPILED_INTERPRET_ONLY` is a session-scoped
     # veto that silently sends a head to the interpreter instead, so an entry left by any earlier
     # file would turn these tests into false failures. Start from a known state.
-    empty!(Eval.COMPILED_INTERPRET_ONLY)
+    Eval.clear_interpret_only!()
 
     @testset "🔴 a two-equation head COMPILES (it declined entirely before)" begin
         cls = _cg_head(_CG_TWO, :g)
@@ -318,7 +318,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             # A fresh-process shard never sees it, which is why a sharded run stays green — but the
             # set is global for the whole run, so leaving `:down` in it silently demotes ANY later
             # file's `down` head to the interpreter. Whoever poisons it clears it.
-            empty!(Eval.COMPILED_INTERPRET_ONLY)
+            Eval.clear_interpret_only!()
             _CGC._MAX_CALL_DEPTH[] = was
         end
     end
@@ -378,7 +378,7 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
             @test ons == offs                    # the fault cost NO answers
             @test !any(x -> occursin("Error", x), ons)   # and produced NO error atom
         finally
-            empty!(Eval.COMPILED_INTERPRET_ONLY)   # see the note above — session-scoped, must be cleared
+            Eval.clear_interpret_only!()   # see the note above — session-scoped, must be cleared
             _CGC._MAX_CALL_DEPTH[] = was
             Eval.interpret_max_steps!(steps)
         end

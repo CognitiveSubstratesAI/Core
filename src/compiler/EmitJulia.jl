@@ -329,15 +329,15 @@ function emit_julia_program(clauses::Vector{ANClause}, space=nothing)
             # (`Eval.rule_results`) cannot tell the two apart afterwards: both arrive as a
             # `CompiledHead` holding an opaque `Function`. Without this, "compiled" would lump the
             # A-normal plan interpreter in with generated code — the inflation the native-share
-            # metric exists to catch. See `Eval._HEAD_LANE`.
-            Eval._HEAD_LANE[h] = :native
+            # metric exists to catch. See `Eval.SpaceCompileState`.
+            Eval.set_head_lane!(space, h, :native)
         elseif haskey(by_head, h)
             out[h] = _seam_fn(h, by_head[h])     # the PLAN-WALKING closure — an A-normal interpreter
-            Eval._HEAD_LANE[h] = :plan
+            Eval.set_head_lane!(space, h, :plan)
         else                                     # neither lane ⇒ not registered, interpreter handles it
             # A head that USED to compile and no longer does must not keep a stale lane, or its
             # interpreter calls would be counted as compiled ones.
-            delete!(Eval._HEAD_LANE, h)
+            Eval.clear_head_lane!(space, h)
         end
     end
     out
@@ -507,7 +507,7 @@ function _codegen_seam_fn(head::Base.Symbol, fn::Function)
             # fault repeat down the whole tree. (An earlier note here blamed a suite memory runaway
             # for this; that attribution was refuted — see `COMPILED_INTERPRET_ONLY`.)
             Eval.COMPILED_FALLBACK_DEPTH[] += 1
-            push!(Eval.COMPILED_INTERPRET_ONLY, e.head)
+            Eval.mark_interpret_only!(space, e.head)   # PER SPACE — see SpaceCompileState
             return nothing
         end
         isempty(rs) && return ExecNoReduce()

@@ -76,7 +76,7 @@ SUITE_SHARD === nothing || printstyled(
 # 🔴 THE MEMOS ARE KEYED BY `objectid`, WHICH IS AN ADDRESS AND IS REUSED AFTER COLLECTION — the same
 # hazard that made the compiled-head registry use a `WeakRef`. After 80 files of allocate-and-collect,
 # a stale memo entry can classify an unrelated atom, changing the evaluation path.
-const _SUITE_GLOBALS = (:_COMPILED_HEADS, :COMPILED_INTERPRET_ONLY, :_TABLED_HEADS,
+const _SUITE_GLOBALS = (:_TABLED_HEADS,
     :_NOREDUCE_HEADS, :_ANSWER_TABLE, :_ANSWER_TRIES, :_IDG,
     :_WORKLISTS, :_DEPS, :_NO_RULE, :_INCREMENTAL_HEADS,
     :_TABLE_OPTIONS, :_SUBSUMPTIVE, :_MAX_ANSWERS,
@@ -107,6 +107,11 @@ struct SuiteSettings
     # changes how a LATER file's same-named head behaves. CONTENTS, not counts — a file that
     # untables one head and tables a different one keeps the count identical.
     interpret_only::Vector{Symbol}
+    # The UNSCOPED definition table's keys — a hand-registered (3-arg `compile_head!`) head answers
+    # in EVERY space, so one left behind changes a later file's behaviour. Per-space definitions are
+    # deliberately NOT here: they die with their space, and a WeakKeyDict's contents depend on GC
+    # timing, which would make this delta flaky rather than informative.
+    unscoped_defs::Vector{Tuple{Symbol, Int}}
     tabled_heads::Vector{Symbol}
     table_options::Vector{Symbol}
 end
@@ -116,7 +121,10 @@ _suite_settings() = SuiteSettings(
     MeTTaCore.Eval._METTA_MAX[],
     MeTTaCore.CompilerEmitJuliaCode._MAX_CALL_DEPTH[],
     MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
-    sort(collect(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY)),
+    # ONLY the process-global record: per-space marks die with their space and cannot leak between
+    # files, and iterating the WeakKeyDict would make this delta depend on GC timing.
+    MeTTaCore.Eval.unscoped_interpret_only(),
+    MeTTaCore.Eval.unscoped_def_keys(),
     sort(collect(MeTTaCore.Eval._TABLED_HEADS)),
     sort(collect(keys(MeTTaCore.Eval._TABLE_OPTIONS)))
 )
@@ -137,8 +145,15 @@ function _suite_restore!(g::SuiteSettings)
     MeTTaCore.Eval._METTA_MAX[] = g.metta_max
     MeTTaCore.CompilerEmitJuliaCode._MAX_CALL_DEPTH[] = g.max_depth
     MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[] = g.codegen
-    empty!(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY)
-    union!(MeTTaCore.Eval.COMPILED_INTERPRET_ONLY, g.interpret_only)
+    MeTTaCore.Eval.restore_unscoped_interpret_only!(g.interpret_only)
+    # Same shape as `_TABLE_OPTIONS` below: only the KEYS were snapshotted, so a hand-registered
+    # head this file added is DROPPED rather than fabricating a `CompiledHead` we never captured.
+    # (Only the UNSCOPED table — per-space definitions die with their space.)
+    let keep = Set(g.unscoped_defs)
+        for k in collect(keys(MeTTaCore.Eval._UNSCOPED.defs))
+            k in keep || delete!(MeTTaCore.Eval._UNSCOPED.defs, k)
+        end
+    end
     empty!(MeTTaCore.Eval._TABLED_HEADS)
     union!(MeTTaCore.Eval._TABLED_HEADS, g.tabled_heads)
     # `_TABLE_OPTIONS` maps head → an options record and only its KEYS are snapshotted, so a key the

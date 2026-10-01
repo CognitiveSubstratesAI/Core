@@ -689,19 +689,24 @@ validate and `compiled_head` skips the check. Every production caller (`jit_head
 passing it is what arms the staleness check.
 """
 compile_head!(name::Base.Symbol, fn::Function, h::UInt64; arity::Int=-1) =
-    (_UNSCOPED_DEFS[(name, arity)] = CompiledHead(fn, h, -1); nothing)
+    (_UNSCOPED.defs[(name, arity)] = CompiledHead(fn, h, -1); nothing)
 compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space; arity::Int=-1) =
     (_defs!(space)[(name, arity)] = CompiledHead(fn, h, space.revision, space); nothing)
 
 function uncompile_head!(name::Base.Symbol)
-    for d in Iterators.flatten((values(_SPACE_DEFS), (_UNSCOPED_DEFS,)))
-        for k in collect(keys(d))
-            k[1] === name && delete!(d, k)
+    for s in _all_states()
+        for k in collect(keys(s.defs))
+            k[1] === name && delete!(s.defs, k)
         end
+        delete!(s.lane, name); delete!(s.interpret_only, name)
     end
     nothing
 end
-uncompile_all!() = (empty!(_SPACE_DEFS); empty!(_UNSCOPED_DEFS); nothing)
+function uncompile_all!()
+    empty!(_SPACE_STATE)
+    empty!(_UNSCOPED.defs); empty!(_UNSCOPED.lane); empty!(_UNSCOPED.interpret_only)
+    nothing
+end
 is_compiled(name::Base.Symbol) = any(k[1] === name for (k, _) in _all_defs())
 
 """
@@ -754,26 +759,41 @@ const _LANE_COUNTING = Ref(false)
 # head NAME -> :native | :plan, written at registration by `EmitJulia.emit_julia_program` — the only
 # place the lane is decided. The seam cannot recover it afterwards: both lanes arrive as a
 # `CompiledHead` holding an opaque `Function`.
-const _HEAD_LANE = Dict{Base.Symbol, Base.Symbol}()
+# PER SPACE — see `SpaceCompileState`. Added by the Step 0 work, which means measuring the global
+# registry problem introduced two more instances of it; they move with the rest rather than being
+# exempted as "only diagnostics", which is how the original registry got there.
+head_lane(h::Base.Symbol) = begin
+    for s in _all_states(); haskey(s.lane, h) && return s.lane[h]; end
+    :interp
+end
+set_head_lane!(space, h::Base.Symbol, l::Base.Symbol) = (_state!(space).lane[h] = l; nothing)
+clear_head_lane!(space, h::Base.Symbol) = (delete!(_state!(space).lane, h); nothing)
 
 # head NAME -> how many equation lookups it served, in WHATEVER lane. `:interp` for a head with no
 # compiled implementation, so the table ranks unregistered heads alongside compiled ones.
-const _HEAD_CALLS = Dict{Base.Symbol, Int}()
+
 
 lane_counting!(on::Bool=true) = (old=_LANE_COUNTING[]; _LANE_COUNTING[]=on; old)
-reset_head_calls!() = (empty!(_HEAD_CALLS); _LOOKUPS[]=0; nothing)
+reset_head_calls!() = (for s in _all_states(); empty!(s.calls); end; _LOOKUPS[]=0; nothing)
 
 "Per-head `(calls, lane)`, hottest first. `lane` is `:interp` when the head has no compiled entry."
 head_call_table() =
-    sort([(h, n, get(_HEAD_LANE, h, :interp)) for (h, n) in _HEAD_CALLS]; by=r -> -r[2])
+    begin
+        merged = Dict{Base.Symbol, Int}()
+        for s in _all_states(), (h, n) in s.calls
+            merged[h] = get(merged, h, 0) + n
+        end
+        sort([(h, n, head_lane(h)) for (h, n) in merged]; by=r -> -r[2])
+    end
 
-@inline function _count_head!(call::Atom)
+@inline function _count_head!(call::Atom, space)
     if call isa Expression && !isempty(call.children)
         h = call.children[1]
-        h isa Sym && (
-            _HEAD_CALLS[Base.Symbol(h.name)] =
-                get(_HEAD_CALLS, Base.Symbol(h.name), 0) + 1
-        )
+        if h isa Sym
+            c = _state!(space).calls
+            k = Base.Symbol(h.name)
+            c[k] = get(c, k, 0) + 1
+        end
     end
     nothing
 end
@@ -807,7 +827,7 @@ is deliberately NO special empty branch here; the contract is two-valued so the 
 """
 function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindings}}
     _LOOKUPS[] += 1
-    _LANE_COUNTING[] && _count_head!(call)
+    _LANE_COUNTING[] && _count_head!(call, space)
     out = Tuple{Atom, Bindings}[]
     let cc = compiled_head(call, space)
         if cc !== nothing
@@ -866,7 +886,32 @@ end
 # number instead of silently. The structural fix is an explicit continuation stack for compiled
 # code — SWI, CeTTa and our own interpreter all keep recursion off the host stack — after which
 # neither the budget nor this mark is needed.
-const COMPILED_INTERPRET_ONLY = Set{Symbol}()
+# 🔴 PER SPACE, NOT PROCESS-WIDE. As one global keyed by head NAME, a head whose compiled lane
+# faulted on its depth budget in space A had that lane disabled for the SAME NAME in space B — the
+# cross-space class the registry itself was just fixed for. It lives in `SpaceCompileState` now.
+# Session-scoped WITHIN a space is still right, for the re-entrancy reason recorded above.
+#
+# These accessors exist because the suite's leaked-globals tracker and three test files read it
+# directly; they merge across spaces so a by-name question still has a by-name answer.
+interpret_only(space) = (st = _state(space); st === nothing ? Symbol[] : collect(st.interpret_only))
+mark_interpret_only!(space, h::Symbol) = (push!(_state!(space).interpret_only, h); nothing)
+clear_interpret_only!() = (for s in _all_states(); empty!(s.interpret_only); end; nothing)
+
+# ── WHAT A LEAK CHECK MAY LOOK AT: THE UNSCOPED RECORD, AND NOTHING ELSE ────────────────────────
+# 🔴 DO NOT SNAPSHOT PER-SPACE STATE. `_SPACE_STATE` is a `WeakKeyDict`, so iterating it gives a
+# GC-TIMING-DEPENDENT answer: a mark belonging to a dead-but-not-yet-collected space is still
+# visible, and finalizer cleanup is lazy (measured by the `WeakRef` GC test). A per-file delta built
+# on that reports a "leaked setting" that is really just collection timing — a flaky gate.
+# ⇒ AND IT DOES NOT NEED TO. Per-space state CANNOT leak between test files, because it dies with
+# the space that owned it. That is the whole point of moving it, and it makes the leak check
+# SMALLER: it only has to watch what is still genuinely process-global.
+unscoped_interpret_only() = sort(collect(_UNSCOPED.interpret_only))
+unscoped_def_keys() = sort(collect(keys(_UNSCOPED.defs)))
+"Restore ONLY the process-global marks. ⚠️ NOT a merge of every space's: writing other spaces' marks
+into `_UNSCOPED` would make them apply to EVERY space, recreating the cross-space behaviour this
+record exists to remove — inside the test harness, where it would be hardest to see."
+restore_unscoped_interpret_only!(hs) = (empty!(_UNSCOPED.interpret_only);
+                                        union!(_UNSCOPED.interpret_only, hs); nothing)
 
 "How many times a compiled head gave up at its call-depth budget and handed the call back."
 const COMPILED_FALLBACK_DEPTH = Ref(0)
@@ -875,7 +920,7 @@ const COMPILED_FALLBACK_STALE = Ref(0)
 
 "Clear the session's compiled-lane fallback state. For tests and benchmarks."
 function reset_compiled_fallbacks!()
-    empty!(COMPILED_INTERPRET_ONLY)
+    clear_interpret_only!()
     COMPILED_FALLBACK_DEPTH[] = 0
     COMPILED_FALLBACK_STALE[] = 0
     nothing
@@ -910,13 +955,16 @@ function compiled_head(to_eval::Atom, space)
     # 🔴 FIRST LINE, DELIBERATELY. `rule_results` is on the hot path of EVERY MeTTa evaluation, and
     # every existing consumer has ZERO compiled heads — so this must cost nothing until one exists.
     # An empty-Dict check is cheaper than the `isa` chain plus a hash lookup below.
-    (isempty(_SPACE_DEFS) && isempty(_UNSCOPED_DEFS)) && return nothing
+    (isempty(_SPACE_STATE) && isempty(_UNSCOPED.defs)) && return nothing
     (to_eval isa Expression && !isempty(to_eval.children)) || return nothing
     h = to_eval.children[1]
     h isa Sym || return nothing
     hn = Base.Symbol(h.name)
     # the compiled lane already gave up on this head in this evaluation — see COMPILED_INTERPRET_ONLY
-    (!isempty(COMPILED_INTERPRET_ONLY) && hn in COMPILED_INTERPRET_ONLY) && return nothing
+    let _st = _state(space)
+        _st === nothing || (!isempty(_st.interpret_only) && hn in _st.interpret_only) && return nothing
+    end
+    (!isempty(_UNSCOPED.interpret_only) && hn in _UNSCOPED.interpret_only) && return nothing
     # ARITY comes from the CALL, so `(f 1)` and `(f 1 2)` select different definitions — SWI's
     # name/arity indexing. `_lookup_def` tries the exact arity, then the -1 (unscoped-by-arity)
     # entry a hand-registration leaves, so existing callers are unaffected.
@@ -1217,29 +1265,59 @@ end
 # tests use. They must answer in ANY space, which is exactly the old global behaviour, so those
 # tests keep passing unchanged. Production always registers WITH a space.
 const _DefTable = Dict{Tuple{Base.Symbol, Int}, CompiledHead}
-const _SPACE_DEFS = WeakKeyDict{Space, _DefTable}()
-const _UNSCOPED_DEFS = _DefTable()
+
+"""
+ALL per-space compile state, in ONE record — the definitions AND the three tables that used to be
+process-wide globals keyed by head NAME alone.
+
+🔴 WHY THEY MOVED. `COMPILED_INTERPRET_ONLY` was the one with teeth: a head whose compiled lane
+faulted on its depth budget in space A had the lane disabled for the SAME NAME in space B, which is
+the cross-space class the registry itself was just fixed for. `_HEAD_LANE` and `_HEAD_CALLS` are
+Step 0 diagnostics, and mixing two live spaces made the per-head table wrong rather than unsafe —
+but they were added BY the Step 0 work, i.e. measuring the problem added two more instances of it,
+and leaving them because they are "only diagnostics" is exactly how the original registry got there.
+
+⚠️ A NEW struct, not a field added to `Space`: Revise reloads new definitions fine and refuses
+modified ones, and a `Space` field would thread through the positional constructor 15 sites use.
+"""
+mutable struct SpaceCompileState
+    defs::_DefTable                           # (head, arity) -> compiled entry
+    lane::Dict{Base.Symbol, Base.Symbol}      # head -> :native | :plan, as registered
+    calls::Dict{Base.Symbol, Int}             # head -> seam lookups, INCLUDING interpreted ones
+    interpret_only::Set{Base.Symbol}          # heads whose compiled lane faulted on the depth budget
+end
+SpaceCompileState() = SpaceCompileState(
+    _DefTable(), Dict{Base.Symbol, Base.Symbol}(), Dict{Base.Symbol, Int}(), Set{Base.Symbol}()
+)
+
+const _SPACE_STATE = WeakKeyDict{Space, SpaceCompileState}()
+# Registrations made WITHOUT a space — the 3-arg `compile_head!` the seam tests use. They answer in
+# ANY space, which is the old global behaviour those tests rely on.
+const _UNSCOPED = SpaceCompileState()
+
+"The compile state for `space`, created on first write. `nothing` ⇒ the unscoped one."
+_state!(space) = space isa Space ? get!(SpaceCompileState, _SPACE_STATE, space) : _UNSCOPED
+_state(space) = space isa Space ? get(_SPACE_STATE, space, nothing) : _UNSCOPED
+_all_states() = Iterators.flatten((values(_SPACE_STATE), (_UNSCOPED,)))
 
 "The definition table for `space`, created on first write."
-_defs!(space::Space) = get!(() -> _DefTable(), _SPACE_DEFS, space)
+_defs!(space::Space) = _state!(space).defs
 
 "Every (key, record) pair across every space plus the unscoped table — for by-name queries."
-_all_defs() = Iterators.flatten((
-    Iterators.flatten(collect(d) for d in values(_SPACE_DEFS)), collect(_UNSCOPED_DEFS)
-))
+_all_defs() = Iterators.flatten(collect(s.defs) for s in _all_states())
 
 "Look a head up for `space`: its own table first, then the unscoped one; exact arity before -1."
 function _lookup_def(space, name::Base.Symbol, arity::Int)
     if space isa Space
-        d = get(_SPACE_DEFS, space, nothing)
-        if d !== nothing
-            ch = get(d, (name, arity), nothing)
-            ch === nothing && (ch = get(d, (name, -1), nothing))
+        st = get(_SPACE_STATE, space, nothing)
+        if st !== nothing
+            ch = get(st.defs, (name, arity), nothing)
+            ch === nothing && (ch = get(st.defs, (name, -1), nothing))
             ch === nothing || return ch
         end
     end
-    ch = get(_UNSCOPED_DEFS, (name, arity), nothing)
-    ch === nothing ? get(_UNSCOPED_DEFS, (name, -1), nothing) : ch
+    ch = get(_UNSCOPED.defs, (name, arity), nothing)
+    ch === nothing ? get(_UNSCOPED.defs, (name, -1), nothing) : ch
 end
 Space(atoms::Vector{Atom}) = (
     s=Space();
