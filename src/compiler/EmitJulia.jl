@@ -422,7 +422,10 @@ function jit_head!(name::Base.Symbol, space)::Bool
     heads = emit_julia_program(mine, space)   # space identity reaches _genname
     fn = get(heads, name, nothing)
     fn === nothing && return false                      # every clause must emit — all-or-nothing
-    Eval.compile_head!(name, fn, key, space)   # 4-arg: arms the staleness check (see compile_head!)
+    # ARITY comes from the clauses, so the definition is keyed (head, arity) — SWI's name/arity
+    # indexing. Without it every arity of `name` would share one entry, which is why a mixed-arity
+    # head declines codegen wholesale (`_build_head` rejects mixed arity).
+    Eval.compile_head!(name, fn, key, space; arity = length(mine[1].head_args))
     true
 end
 

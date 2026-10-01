@@ -491,8 +491,19 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         spB = _cg_loaded(_CG_FB * "(= (marker) 1)\n")
         @test spA.revision != spB.revision           # ANTI-VACUITY: this is the differing-revision path
         before = Eval.COMPILED_FALLBACK_STALE[]
-        @test _cg_answers(spB, "!(f 1)") == ["101"]  # B's OWN rule, not A's "2"
-        @test Eval.COMPILED_FALLBACK_STALE[] > before
+        @test _cg_answers(spB, "!(f 1)") == ["101"]  # B's OWN rule, not A's "2"  <- THE CONTRACT
+        # 🔴 THIS ASSERTION WAS `> before` AND IT ASSERTED THE MECHANISM, NOT THE CONTRACT.
+        # It was right for the old design: ONE GLOBAL registry keyed by head NAME, so B's lookup DID
+        # find A's closure, and the only thing standing between that and a wrong answer was the
+        # identity check + an O(all_atoms) clause-hash RESCAN — which `COMPILED_FALLBACK_STALE`
+        # counted. The table is now PER SPACE, so B's lookup never sees A's entry at all: there is
+        # nothing to detect and nothing to rescan. `> before` would now fail for the RIGHT reason,
+        # which is exactly the "assert the contract, not the representation" trap.
+        # ⇒ assert the NEW mechanism positively — no rescan is paid — and keep anti-vacuity by
+        # showing A's entry is LIVE and still answers A. Without that second line this testset would
+        # pass even if `compile_head!` had silently done nothing.
+        @test Eval.COMPILED_FALLBACK_STALE[] == before
+        @test _cg_answers(spA, "!(f 1)") == ["2"]    # ANTI-VACUITY: A's compiled entry really is there
         Eval.uncompile_all!()
     end
 
@@ -512,7 +523,14 @@ const _CG_TWO = "(= (g \$x) (+ \$x 1))\n(= (g \$x) tagged)\n"
         Eval.compile_head!(:f, fn, Eval._head_clause_hash(spA, :f), spA)
         before = Eval.COMPILED_FALLBACK_STALE[]
         @test _cg_answers(spB, "!(f 1)") == ["101"]  # was ["2"] — A's closure answering B
-        @test Eval.COMPILED_FALLBACK_STALE[] > before
+        # Same migration as the testset above: per-space tables mean no cross-space lookup, so no
+        # rescan is paid. ⚠️ The `spA.revision == spB.revision` anti-vacuity above is now HISTORICAL
+        # — equal revisions can no longer cause a leak because the counter is not consulted across
+        # spaces at all. It is kept because it documents the bug this testset is named for, and
+        # because it still proves the two spaces are the same age, which is what made the old
+        # counter-only gate unsound.
+        @test Eval.COMPILED_FALLBACK_STALE[] == before
+        @test _cg_answers(spA, "!(f 1)") == ["2"]    # ANTI-VACUITY: A's compiled entry really is there
         Eval.uncompile_all!()
     end
 end

@@ -645,15 +645,18 @@ end
 CompiledHead(fn::Function, h::UInt64, rev::Int=-1, space=nothing) =
     CompiledHead(fn, h, 0, rev, WeakRef(space))
 
-"How many times head `name`'s closure has been INVOKED. 0 ⇒ the seam never reached it."
+"""
+How many times head `name`'s closure has been INVOKED, summed over every space. 0 ⇒ the seam never
+reached it. Summed because the registry is now PER SPACE and the callers (tests) ask by name alone;
+they compare a before/after delta, which a sum preserves.
+"""
 fired(name::Base.Symbol) =
-    (ch=get(_COMPILED_HEADS, name, nothing); ch === nothing ? 0 : ch.fired)
+    sum(ch.fired for (k, ch) in _all_defs() if k[1] === name; init = 0)
 
-# head NAME -> its compiled closure. Keyed by the head's clause-set hash, NOT by `space.revision`:
-# a closure never inlines `match` results (every `match` inside it runs LIVE), so adding a FACT
-# invalidates nothing and only a change to this head's own RULES does. A revision key would recompile
-# on every `add-atom` and make the compiled lane slower than the interpreter on any writing program.
-const _COMPILED_HEADS = Dict{Base.Symbol, CompiledHead}()
+# The DEFINITION TABLE lives further down, immediately after `Space` is defined — a
+# `WeakKeyDict{Space, …}` is a top-level const and cannot be built before the type exists.
+# See `_SPACE_DEFS` / `_lookup_def` beside `space_id`.
+
 
 # ── THE JIT HOOK — late-bound, because the compiler loads AFTER `Eval` ───────────────────────────
 # 🔴 UNTIL 2026-09-18 NOTHING IN `src/` EVER CALLED `compile_head!`. Every stage of the compiler
@@ -685,13 +688,21 @@ deliberately absent from the query space — there is no clause set to hash, so 
 validate and `compiled_head` skips the check. Every production caller (`jit_head!`) passes it, and
 passing it is what arms the staleness check.
 """
-compile_head!(name::Base.Symbol, fn::Function, h::UInt64) =
-    (_COMPILED_HEADS[name]=CompiledHead(fn, h, -1); nothing)
-compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space) =
-    (_COMPILED_HEADS[name]=CompiledHead(fn, h, space.revision, space); nothing)
-uncompile_head!(name::Base.Symbol) = (delete!(_COMPILED_HEADS, name); nothing)
-uncompile_all!() = (empty!(_COMPILED_HEADS); nothing)
-is_compiled(name::Base.Symbol) = haskey(_COMPILED_HEADS, name)
+compile_head!(name::Base.Symbol, fn::Function, h::UInt64; arity::Int=-1) =
+    (_UNSCOPED_DEFS[(name, arity)] = CompiledHead(fn, h, -1); nothing)
+compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space; arity::Int=-1) =
+    (_defs!(space)[(name, arity)] = CompiledHead(fn, h, space.revision, space); nothing)
+
+function uncompile_head!(name::Base.Symbol)
+    for d in Iterators.flatten((values(_SPACE_DEFS), (_UNSCOPED_DEFS,)))
+        for k in collect(keys(d))
+            k[1] === name && delete!(d, k)
+        end
+    end
+    nothing
+end
+uncompile_all!() = (empty!(_SPACE_DEFS); empty!(_UNSCOPED_DEFS); nothing)
+is_compiled(name::Base.Symbol) = any(k[1] === name for (k, _) in _all_defs())
 
 """
 Equation-lookup counter — THE DISCRIMINATOR for "did the compiler do the work, or delegate?".
@@ -899,14 +910,17 @@ function compiled_head(to_eval::Atom, space)
     # 🔴 FIRST LINE, DELIBERATELY. `rule_results` is on the hot path of EVERY MeTTa evaluation, and
     # every existing consumer has ZERO compiled heads — so this must cost nothing until one exists.
     # An empty-Dict check is cheaper than the `isa` chain plus a hash lookup below.
-    isempty(_COMPILED_HEADS) && return nothing
+    (isempty(_SPACE_DEFS) && isempty(_UNSCOPED_DEFS)) && return nothing
     (to_eval isa Expression && !isempty(to_eval.children)) || return nothing
     h = to_eval.children[1]
     h isa Sym || return nothing
     hn = Base.Symbol(h.name)
     # the compiled lane already gave up on this head in this evaluation — see COMPILED_INTERPRET_ONLY
     (!isempty(COMPILED_INTERPRET_ONLY) && hn in COMPILED_INTERPRET_ONLY) && return nothing
-    ch = get(_COMPILED_HEADS, hn, nothing)
+    # ARITY comes from the CALL, so `(f 1)` and `(f 1 2)` select different definitions — SWI's
+    # name/arity indexing. `_lookup_def` tries the exact arity, then the -1 (unscoped-by-arity)
+    # entry a hand-registration leaves, so existing callers are unaffected.
+    ch = _lookup_def(space, hn, length(to_eval.children) - 1)
     ch === nothing && return nothing
     # 🔴 THE STORED CLAUSE HASH IS CHECKED, BUT **GATED ON `revision`**, AND THE GATE IS THE POINT.
     # `CompiledHead.clause_hash` always existed and the comment above `_COMPILED_HEADS` always said
@@ -1172,6 +1186,60 @@ function space_id(sp::Space)::Int
     get!(_SPACE_IDS, sp) do
         _SPACE_ID_COUNTER[] += 1
     end
+end
+
+# ── THE DEFINITION TABLE — PER SPACE, KEYED BY (head, arity) ─────────────────────────────────────
+# Replaces the global `_COMPILED_HEADS::Dict{Symbol, CompiledHead}`, which was keyed by head NAME
+# ALONE and shared by every space.
+#
+# 🔴 WHY PER SPACE. With one global table, program B registering its own `inner` OVERWROTE the entry
+# program A was using, and A's seam lookup then found B's closure. It did not answer wrongly —
+# `compiled_head` compared the stored `space` WeakRef, saw a mismatch, re-hashed A's clause set and
+# fell back to the interpreter — but that is a RESCAN on a hot path, O(all_atoms), paid on every
+# cross-space call, and it only ever recovered by GIVING UP the compiled lane. With the table keyed
+# by space, B's entry is simply not in A's table: no rescan, no fallback, and A keeps its compiled
+# lane. MEASURED on the old design as `COMPILED_FALLBACK_STALE == 1` per cross-space call.
+# ⚠️ That is the REGISTRY half only. The DIRECT-CALL half — two spaces sharing one generated Julia
+# function — is fixed separately by space identity in `EmitJuliaCode._genname`, and the seam cannot
+# see it at all (`test/compiler/test_ab_space_collision.jl`).
+#
+# 🔴 WHY (head, arity) AND NOT head. SWI indexes clauses by name/arity, and a MeTTa head can be
+# called at several arities; one entry per NAME forces a single compiled body to serve all of them,
+# which is why a mixed-arity head declines codegen wholesale today (`_build_head` rejects it).
+# `arity = -1` means UNSCOPED-BY-ARITY and is what a hand-registration without clauses records; the
+# lookup tries the exact arity first, then -1, so existing callers keep working unchanged.
+#
+# ⚠️ A `WeakKeyDict`, NOT A FIELD ON `Space` — same reasoning as `space_id`: a field is a STRUCT
+# change (Revise cannot reload those) threading through the positional constructor 15 sites use.
+# Weak keys also mean a collected space drops its WHOLE table rather than leaking entries.
+#
+# `_UNSCOPED_DEFS` holds registrations made WITHOUT a space — the 3-arg `compile_head!` the seam
+# tests use. They must answer in ANY space, which is exactly the old global behaviour, so those
+# tests keep passing unchanged. Production always registers WITH a space.
+const _DefTable = Dict{Tuple{Base.Symbol, Int}, CompiledHead}
+const _SPACE_DEFS = WeakKeyDict{Space, _DefTable}()
+const _UNSCOPED_DEFS = _DefTable()
+
+"The definition table for `space`, created on first write."
+_defs!(space::Space) = get!(() -> _DefTable(), _SPACE_DEFS, space)
+
+"Every (key, record) pair across every space plus the unscoped table — for by-name queries."
+_all_defs() = Iterators.flatten((
+    Iterators.flatten(collect(d) for d in values(_SPACE_DEFS)), collect(_UNSCOPED_DEFS)
+))
+
+"Look a head up for `space`: its own table first, then the unscoped one; exact arity before -1."
+function _lookup_def(space, name::Base.Symbol, arity::Int)
+    if space isa Space
+        d = get(_SPACE_DEFS, space, nothing)
+        if d !== nothing
+            ch = get(d, (name, arity), nothing)
+            ch === nothing && (ch = get(d, (name, -1), nothing))
+            ch === nothing || return ch
+        end
+    end
+    ch = get(_UNSCOPED_DEFS, (name, arity), nothing)
+    ch === nothing ? get(_UNSCOPED_DEFS, (name, -1), nothing) : ch
 end
 Space(atoms::Vector{Atom}) = (
     s=Space();
