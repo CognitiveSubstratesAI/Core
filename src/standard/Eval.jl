@@ -677,6 +677,26 @@ const _JIT_HEAD_HOOK = Ref{Union{Nothing, Function}}(nothing)
 "How many heads `compile-head` DECLINED (out of the emitter's scope). The honest denominator: a
 speedup on the heads that compiled says nothing about what fraction of hot heads were in scope."
 const _JIT_DECLINED = Ref(0)
+
+# ── A DECLINE AND A CRASH ARE DIFFERENT OUTCOMES, AND THEY LOOKED IDENTICAL ─────────────────────
+# 🔴 `(compile-head …)` wrapped the hook in `try … catch; false end`, so an `UndefVarError`, a
+# `MethodError` or a broken assertion INSIDE THE COMPILER was reported as an ordinary decline and
+# the head quietly ran interpreted. Today that only costs coverage. 🔴 UNDER THE HOTNESS TRIGGER IT
+# IS MUCH WORSE: a compiler crashing on every head would read as "fewer heads compiled natively",
+# with every answer still correct and the suite GREEN — the threshold-1 stress run would certify a
+# broken compiler. Same "decline vs error" distinction the seam already makes for ExecNoReduce.
+#
+# PROCESS-WIDE, like `_JIT_DECLINED` and unlike the per-space record: this is not name-keyed state.
+# ⚠️ A test that injects a throw MUST call `reset_jit_errors!` afterwards, or the count leaks into
+# the suite's per-file state check.
+const _JIT_ERRORS = Ref(0)
+# TYPED, not a formatted String: `CapturedException` keeps the exception's TYPE and its BACKTRACE,
+# which is the first thing wanted when a stress run fails ("where did it throw"), and a string loses
+# both. `Ref{Any}` would also trip the no-Any gate.
+const _JIT_FIRST_ERROR = Ref{Union{Nothing, CapturedException}}(nothing)
+jit_errors() = _JIT_ERRORS[]
+jit_first_error() = _JIT_FIRST_ERROR[]
+reset_jit_errors!() = (_JIT_ERRORS[] = 0; _JIT_FIRST_ERROR[] = nothing; nothing)
 jit_declined() = _JIT_DECLINED[]
 reset_jit_declined!() = (_JIT_DECLINED[] = 0)
 
@@ -2815,7 +2835,16 @@ const COMPILE_HEAD = Grounded(
             name = Base.Symbol((xs[1]::Sym).name)
             ok = try
                 hook(name, space)::Bool
-            catch
+            catch e
+                # NOT a decline — see `_JIT_ERRORS`. Still falls back to the interpreter so
+                # evaluation stays CORRECT; what changes is that the failure is now visible.
+                _JIT_ERRORS[] += 1
+                if _JIT_FIRST_ERROR[] === nothing
+                    _JIT_FIRST_ERROR[] = CapturedException(e, catch_backtrace())
+                    # ⚠️ ONCE, not per call: under a threshold-1 trigger this fires for every head
+                    # and would flood the log, which is how a real signal gets scrolled away.
+                    @warn "compile-head THREW — an ERROR, not a decline; head runs interpreted" head=name
+                end
                 false
             end
             ok || (_JIT_DECLINED[] += 1)
