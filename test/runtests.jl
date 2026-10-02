@@ -103,6 +103,13 @@ struct SuiteSettings
     metta_max::Int
     max_depth::Int
     codegen::Bool
+    # 🔴 BOTH ADDED 2026-10-02, BOTH NEW THAT WEEK AND IN NEITHER LIST. A file leaking either would
+    # surface as unexplained failures in some LATER file rather than as a leak here — which is the
+    # whole reason this record exists. `INDEX_ENABLED` turns every candidate narrowing off;
+    # `COMPILE_ON_FIRST_CALL` compiles every head on its first call. A test that forgets to restore
+    # one changes how everything after it behaves.
+    index_enabled::Bool
+    compile_on_first_call::Bool
     # NAME-KEYED SETS: process-global and keyed by BARE HEAD NAME, so a leftover entry silently
     # changes how a LATER file's same-named head behaves. CONTENTS, not counts — a file that
     # untables one head and tables a different one keeps the count identical.
@@ -121,6 +128,8 @@ _suite_settings() = SuiteSettings(
     MeTTaCore.Eval._METTA_MAX[],
     MeTTaCore.CompilerEmitJuliaCode._MAX_CALL_DEPTH[],
     MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
+    MeTTaCore.Eval.INDEX_ENABLED[],
+    MeTTaCore.Eval.COMPILE_ON_FIRST_CALL[],
     # ONLY the process-global record: per-space marks die with their space and cannot leak between
     # files, and iterating the WeakKeyDict would make this delta depend on GC timing.
     MeTTaCore.Eval.unscoped_interpret_only(),
