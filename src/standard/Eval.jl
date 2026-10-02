@@ -641,9 +641,26 @@ mutable struct CompiledHead
     # alive through the registry. A collected space reads back as `nothing`, matches nothing, and
     # falls through to the hash check — the safe direction.
     space::WeakRef
+    # 🔴 DOES THIS ENTRY PROPAGATE A CALLEE'S BINDINGS BACK TO ITS CALLER?
+    # `true` for a HAND-REGISTERED closure, which returns `CompiledOk(results, binds)` — that type
+    # exists BECAUSE this defect was found and fixed once ("the answer CARRIES the binding").
+    # `false` for EMITTER OUTPUT: generated code is handed `nothing` for the sink's bindings
+    # argument, so a callee that binds the caller's variable loses it. `compiled_head` refuses a
+    # NON-GROUND call to such an entry (`COMPILED_FALLBACK_NONGROUND`).
+    #
+    # ⚠️ A FIELD, NOT AN INFERENCE FROM THE LANE TABLE. The first version asked whether
+    # `set_head_lane!` had recorded a lane — true today, but a SIDE CHANNEL: any future caller of
+    # `set_head_lane!` would silently change which calls get refused, and the lane table is keyed by
+    # HEAD NAME ONLY, so a hand-registered closure could be refused because a DIFFERENT ARITY of the
+    # same name had been emitted. The property belongs on the entry it describes.
+    #
+    # 🔜 WHEN GENERATED CODE FILLS IN THE SINK'S BINDINGS ARGUMENT, THIS BECOMES `true` EVERYWHERE
+    # AND THE GUARD DELETES ITSELF. That is the proper fix; the guard is the holding pattern.
+    carries_bindings::Bool
 end
-CompiledHead(fn::Function, h::UInt64, rev::Int=-1, space=nothing) =
-    CompiledHead(fn, h, 0, rev, WeakRef(space))
+CompiledHead(fn::Function, h::UInt64, rev::Int=-1, space=nothing;
+             carries_bindings::Bool=true) =
+    CompiledHead(fn, h, 0, rev, WeakRef(space), carries_bindings)
 
 """
 How many times head `name`'s closure has been INVOKED, summed over every space. 0 ⇒ the seam never
@@ -708,10 +725,18 @@ deliberately absent from the query space — there is no clause set to hash, so 
 validate and `compiled_head` skips the check. Every production caller (`jit_head!`) passes it, and
 passing it is what arms the staleness check.
 """
-compile_head!(name::Base.Symbol, fn::Function, h::UInt64; arity::Int=-1) =
-    (_UNSCOPED.defs[(name, arity)] = CompiledHead(fn, h, -1); nothing)
-compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space; arity::Int=-1) =
-    (_defs!(space)[(name, arity)] = CompiledHead(fn, h, space.revision, space); nothing)
+# `carries_bindings` DEFAULTS TO TRUE because the hand-registration path is a caller supplying its
+# own closure, and the seam's contract for one is `CompiledOk(results, binds)` — bindings carried.
+# `jit_head!` passes `false`, because generated code is handed `nothing` for the sink's bindings.
+compile_head!(name::Base.Symbol, fn::Function, h::UInt64; arity::Int=-1,
+              carries_bindings::Bool=true) =
+    (_UNSCOPED.defs[(name, arity)] =
+        CompiledHead(fn, h, -1; carries_bindings = carries_bindings); nothing)
+compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space; arity::Int=-1,
+              carries_bindings::Bool=true) =
+    (_defs!(space)[(name, arity)] =
+        CompiledHead(fn, h, space.revision, space;
+                     carries_bindings = carries_bindings); nothing)
 
 function uncompile_head!(name::Base.Symbol)
     for s in _all_states()
@@ -984,15 +1009,6 @@ function _head_clause_hash(space, name::Symbol)::UInt64
     hash(rules)
 end
 
-"""Was this head's entry produced by OUR EMITTER, rather than hand-registered by a caller?
-
-`set_head_lane!` is called only from `emit_julia_program`, so a recorded lane is the mark of
-generated code — and generated code is what cannot carry a callee's bindings. A hand-registered
-closure returns `CompiledOk(results, binds)` and carries them correctly."""
-_emitted_entry(space, hn::Symbol)::Bool =
-    (let st = _state(space); st !== nothing && haskey(st.lane, hn); end) ||
-    haskey(_UNSCOPED.lane, hn)
-
 """Does this atom contain a variable anywhere? A call with one cannot use the compiled lane — see
 `COMPILED_FALLBACK_NONGROUND`.
 
@@ -1049,7 +1065,7 @@ function compiled_head(to_eval::Atom, space)
     # `(pair $w (hc $w))` — UNREDUCED, strictly worse than before.
     # `set_head_lane!` is called ONLY from `emit_julia_program`, so a recorded lane is exactly the
     # mark of an entry this compiler generated, which is the code with the binding limitation.
-    if _emitted_entry(space, hn)
+    if !ch.carries_bindings
         for i in 2:length(to_eval.children)
             if _has_var(to_eval.children[i])
                 COMPILED_FALLBACK_NONGROUND[] += 1

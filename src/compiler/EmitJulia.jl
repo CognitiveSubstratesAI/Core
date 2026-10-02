@@ -458,7 +458,12 @@ function jit_head!(name::Base.Symbol, space)::Bool
     # ARITY comes from the clauses, so the definition is keyed (head, arity) — SWI's name/arity
     # indexing. Without it every arity of `name` would share one entry, which is why a mixed-arity
     # head declines codegen wholesale (`_build_head` rejects mixed arity).
-    Eval.compile_head!(name, fn, key, space; arity = length(mine[1].head_args))
+    # 🔴 `carries_bindings = false` — GENERATED CODE DOES NOT PROPAGATE A CALLEE'S BINDINGS. The
+    # sink convention passes `sink(answer, bindings)` and the emitter passes `nothing` there, so a
+    # callee that binds the CALLER'S variable loses it. `compiled_head` refuses a non-ground call to
+    # this entry. When the emitter fills that argument in, this flips to `true` and the guard goes.
+    Eval.compile_head!(name, fn, key, space; arity = length(mine[1].head_args),
+                       carries_bindings = false)
     true
 end
 
