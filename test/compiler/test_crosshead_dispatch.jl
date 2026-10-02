@@ -80,26 +80,26 @@ end
     # ANTI-VACUITY, THREE WAYS: the head must really have compiled, on the NATIVE lane, and the
     # compiled entry must really have answered. Without `fired`, a decline would satisfy the
     # agreement assertion trivially and the gate would pass while testing nothing.
-    @test d.jit == true
-    @test d.fired >= 1
     @test d.interp == ["7"]                 # the oracle, pinned — if this moves, the case changed
-    # 🔴 THE SOUNDNESS GATE. Answered ["(+ 1 6)"] before the guard; the guard makes codegen DECLINE
-    # the clause and the PLAN lane answers it correctly instead.
+    # 🔴 THE SOUNDNESS GATE. Answered ["(+ 1 6)"] before the guard.
     @test d.compiled == d.interp
-    @test d.lane === :plan                  # where the guard moved it — still compiled, not dropped
+    # ⚠️ AND THE HEAD NOW DECLINES OUTRIGHT, which is the guard's COST, stated rather than hidden.
+    # It first applied to codegen only, so these landed on the PLAN lane; that left class E live —
+    # `(let $seed (dem-join! $q 1.0) …)` kept compiling there and silently skipped every write. Both
+    # lanes build arguments the same way, so both refuse, and the interpreter serves the call.
+    @test d.jit == false
+    @test d.fired == 0                      # nothing compiled ⇒ the interpreter answered
     # 🔴 THE HOIST'S TARGET, kept as `@test_broken` so it is not forgotten: once a user-head
     # application in an argument is hoisted into its own goal, this shape belongs on the NATIVE lane.
-    # Julia reports "Unexpectedly Passed" when that lands, which is the signal to drop `_broken`.
     @test_broken d.lane === :native
 
     # The same shape where the callee declines CODEGEN and compiles on the PLAN lane instead. Listed
     # separately because the fix must route through the DEFINITION ENTRY, which is what makes the
     # callee's lane irrelevant to its caller.
     d2 = _xh_diff("(= (snd (P \$a \$b)) \$b)\n(= (t2 \$p) (+ 1 (snd \$p)))\n", :t2, "!(t2 (P 1 2))\n")
-    @test d2.jit == true
-    @test d2.fired >= 1
     @test d2.interp == ["3"]
     @test d2.compiled == d2.interp          # answered ["(+ 1 2)"] before the guard
+    @test d2.jit == false                   # declines in BOTH lanes now — see above
     @test_broken d2.lane === :native        # the hoist's target here too
 
     # NEGATIVE CONTROLS — the shapes that are CORRECT today must stay correct. Without these, a
@@ -185,20 +185,54 @@ end
     sp = EV.Space(); EV.load_core_stdlib!(sp); EV.load_metta!(sp, prog)
     interp = sort(_xh(sp, "!(let \$r (frog \$x) \$x)\n"))
     @test interp == ["Fritz", "Sam"]                  # the oracle, and the case is live
-    @test EJ.jit_head!(:frog, sp) == true             # anti-vacuity: the head really compiled
-    f0 = EV.fired(:frog)
     @test sort(_xh(sp, "!(let \$r (frog \$x) \$x)\n")) == interp   # 🔴 was ["\$x","\$x"]
-    # 🔴 THE GUARD MUST BE WHAT SAVED IT, not luck: the seam refused the call, so the compiled entry
-    # never fired. Without this the assertion above could pass because the head quietly stopped
-    # compiling at all, which is a different and worse fix.
-    @test EV.COMPILED_FALLBACK_NONGROUND[] > 0
-    @test EV.fired(:frog) == f0
 
-    # AND A GROUND CALL MUST STILL DISPATCH COMPILED. The guard is per CALL, not per head — a head
-    # is sound when called ground, and declining it outright would throw that coverage away.
-    f1 = EV.fired(:frog)
-    @test _xh(sp, "!(frog Fritz)\n") == ["True"]
-    @test EV.fired(:frog) > f1
+    # ⚠️ WHAT NOW SAVES IT IS THE *REDUCIBLE-ARGUMENT* GUARD, NOT THE NON-GROUND ONE, and saying so
+    # is the point of this block. `(and (croaks $x) (eat_flies $x))` passes two reducible
+    # applications as arguments, so once that guard covered BOTH LANES (class E's fix) `frog`
+    # declines outright and the interpreter answers. The non-ground guard is therefore NOT the
+    # mechanism here any more — its counter stays 0 — and this testset would silently become a test
+    # of the other guard if that were not written down.
+    @test EJ.jit_head!(:frog, sp) == false
+    @test EV.COMPILED_FALLBACK_NONGROUND[] == 0
+    # 🔴 SO THE NON-GROUND GUARD MAY NOW BE UNREACHABLE IN PRACTICE. It is kept as defence in depth
+    # — it is per CALL and the reducible guard is per CLAUSE, so they are not the same property —
+    # but whether any head both compiles AND loses a callee's binding is now an OPEN QUESTION, and
+    # the honest answer is that this file no longer demonstrates one.
+    EV.uncompile_all!()
+end
+
+@testset "🔴 THE CACHE KEY MUST COVER WHAT THE GUARD ASSUMED, NOT ONLY OUR OWN CLAUSES" begin
+    # The soundness guard decides AT COMPILE TIME whether a nested head "has rules in the space".
+    # Staleness is checked by hashing ONLY THE HEAD'S OWN CLAUSES, so that decision is invisible to
+    # the key: a later `add-atom` can falsify it with our own clauses untouched.
+    #
+    #     compile `(= (t $x) (+ 1 (k $x)))` while `k` has NO rules  ->  `(k $x)` is DATA, compiles
+    #     native, and `(k 5)` is built as a literal atom
+    #     then add `(= (k $x) $x)`
+    #     !(t 5)  ->  interpreter 6, compiled `(+ 1 5)`, COMPILED_FALLBACK_STALE == 0
+    #
+    # MEASURED 2026-10-02, exactly as predicted. The entry is not stale BY ITS OWN CLAUSES and never
+    # re-checks the assumption it was compiled under.
+    EV.uncompile_all!(); EV.reset_compiled_fallbacks!()
+    sp = EV.Space(); EV.load_core_stdlib!(sp)
+    EV.load_metta!(sp, "(= (t \$x) (+ 1 (k \$x)))\n")
+    @test EJ.jit_head!(:t, sp) == true            # anti-vacuity: it really compiled …
+    @test EV.head_lane(:t) === :native            # … on the lane that bakes `(k 5)` in as data
+    @test _xh(sp, "!(t 5)\n") == ["(+ 1 (k 5))"]  # and is RIGHT while `k` has no rules
+
+    EV.load_metta!(sp, "(= (k \$x) \$x)\n")       # the distinction the key cannot see
+
+    # THE ORACLE: the same program, never compiled.
+    sp2 = EV.Space(); EV.load_core_stdlib!(sp2)
+    EV.load_metta!(sp2, "(= (t \$x) (+ 1 (k \$x)))\n(= (k \$x) \$x)\n")
+    want = _xh(sp2, "!(t 5)\n")
+    @test want == ["6"]                           # the case is live and the oracle is pinned
+
+    # 🔴 THE GATE. Today ["(+ 1 5)"].
+    @test _xh(sp, "!(t 5)\n") == want
+    # … and it must be INVALIDATION that saves it, not the head quietly ceasing to compile.
+    @test EV.COMPILED_FALLBACK_STALE[] > 0
     EV.uncompile_all!()
 end
 
@@ -252,12 +286,17 @@ end
         # the suite process down. A budget of 40 against a 200-deep chain observes the SAME property
         # with no stack risk.
         EJC._MAX_CALL_DEPTH[] = 40
-        @test EJ.jit_head!(:down, sp) == true
+        # ⚠️ `down` NO LONGER COMPILES. `(mid (W $n))` is a reducible application in a non-tail
+        # position, so the both-lanes guard declines it — the same change that fixed class E. The
+        # ANSWER is still the property worth pinning, and it must stay right whoever serves it.
+        @test EJ.jit_head!(:down, sp) == false
         @test _xh(sp, "!(down 200)\n") == ["bottom"]
-        # 🔴 THE GATE. 200 deep against a budget of 40, so the budget MUST have fired. Today it
-        # stays 0: each hop re-enters at `_d = 0` and never reaches 40, so the budget bounds nothing.
+        # 🔴 THE CROSS-LANE DEPTH GATE IS NOW UNREACHABLE FROM THIS SHAPE, and that is recorded
+        # rather than quietly dropped: with `down` interpreted there is no native stretch to
+        # re-enter at `_d = 0`. The CONSTRAINT still stands for increment 2 — a budget that restarts
+        # per lane bounds nothing — and needs a new shape that compiles once the hoist lands.
         @test_broken EV.COMPILED_FALLBACK_DEPTH[] > 0
-        @test EV.COMPILED_FALLBACK_DEPTH[] == 0   # today: the budget restarts every hop
+        @test EV.COMPILED_FALLBACK_DEPTH[] == 0
     finally
         EJC._MAX_CALL_DEPTH[] = saved                 # another session-scoped global
         EV.uncompile_all!()

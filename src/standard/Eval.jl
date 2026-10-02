@@ -657,10 +657,18 @@ mutable struct CompiledHead
     # 🔜 WHEN GENERATED CODE FILLS IN THE SINK'S BINDINGS ARGUMENT, THIS BECOMES `true` EVERYWHERE
     # AND THE GUARD DELETES ITSELF. That is the proper fix; the guard is the holding pattern.
     carries_bindings::Bool
+    # 🔴 HEADS THIS ENTRY WAS COMPILED ON THE ASSUMPTION THAT THEY HAVE NO RULES. The soundness
+    # guard lets a nested application through as DATA when its head has no rules, and that decision
+    # is baked into the generated code. `clause_hash` covers only OUR OWN clauses, so a later
+    # `add-atom` can falsify it with ours untouched — MEASURED: compile `(= (t $x) (+ 1 (k $x)))`
+    # while `k` has no rules, add `(= (k $x) $x)`, and `!(t 5)` answers `(+ 1 5)` against the
+    # interpreter's `6`, with `COMPILED_FALLBACK_STALE == 0`. Checked on the SAME revision-gated path
+    # as the clause hash, so it costs nothing until the space actually changes.
+    assumed_ruleless::Vector{Symbol}
 end
 CompiledHead(fn::Function, h::UInt64, rev::Int=-1, space=nothing;
-             carries_bindings::Bool=true) =
-    CompiledHead(fn, h, 0, rev, WeakRef(space), carries_bindings)
+             carries_bindings::Bool=true, assumed_ruleless::Vector{Symbol}=Symbol[]) =
+    CompiledHead(fn, h, 0, rev, WeakRef(space), carries_bindings, assumed_ruleless)
 
 """
 How many times head `name`'s closure has been INVOKED, summed over every space. 0 ⇒ the seam never
@@ -729,14 +737,16 @@ passing it is what arms the staleness check.
 # own closure, and the seam's contract for one is `CompiledOk(results, binds)` — bindings carried.
 # `jit_head!` passes `false`, because generated code is handed `nothing` for the sink's bindings.
 compile_head!(name::Base.Symbol, fn::Function, h::UInt64; arity::Int=-1,
-              carries_bindings::Bool=true) =
+              carries_bindings::Bool=true, assumed_ruleless::Vector{Symbol}=Symbol[]) =
     (_UNSCOPED.defs[(name, arity)] =
-        CompiledHead(fn, h, -1; carries_bindings = carries_bindings); nothing)
+        CompiledHead(fn, h, -1; carries_bindings = carries_bindings,
+                     assumed_ruleless = assumed_ruleless); nothing)
 compile_head!(name::Base.Symbol, fn::Function, h::UInt64, space; arity::Int=-1,
-              carries_bindings::Bool=true) =
+              carries_bindings::Bool=true, assumed_ruleless::Vector{Symbol}=Symbol[]) =
     (_defs!(space)[(name, arity)] =
         CompiledHead(fn, h, space.revision, space;
-                     carries_bindings = carries_bindings); nothing)
+                     carries_bindings = carries_bindings,
+                     assumed_ruleless = assumed_ruleless); nothing)
 
 function uncompile_head!(name::Base.Symbol)
     for s in _all_states()
@@ -998,6 +1008,21 @@ Pair every flip with `reset_compiled_fallbacks!`, and turn it off in a `finally`
 process-global state in a long-lived warm daemon."""
 const COMPILE_ON_FIRST_CALL = Ref(false)
 
+"""COMPILE ONLY THE FIRST N HEADS, in first-call order. `-1` = no limit.
+
+The MLIR debug-counter technique: when "compile everything" diverges and "compile nothing" does not,
+BINARY-SEARCH N until ONE head reproduces it. That is the class C attribution method — compiling one
+head at a time — automated, and it is the only practical way in once the failing workload compiles
+dozens of heads across several spaces.
+
+`compile_order()` names what was compiled, so the bisect reports a HEAD, not just a number."""
+const COMPILE_FIRST_N = Ref(-1)
+const _COMPILE_ORDER = Base.Symbol[]
+
+"The heads first-call compilation actually compiled, in order."
+compile_order() = copy(_COMPILE_ORDER)
+reset_compile_order!() = (empty!(_COMPILE_ORDER); nothing)
+
 "Clear the session's compiled-lane fallback state. For tests and benchmarks."
 function reset_compiled_fallbacks!()
     clear_interpret_only!()
@@ -1024,6 +1049,19 @@ function _head_clause_hash(space, name::Symbol)::UInt64
         (hd isa Sym && Symbol(hd.name) === name) && push!(rules, a)
     end
     hash(rules)
+end
+
+"Has any of `syms` acquired a rule in `space`? ONE pass, on the revision-changed path only."
+function _any_now_has_rules(space, syms::Vector{Symbol})::Bool
+    for a in all_atoms(space)
+        a isa Expression && length(a.children) == 3 || continue
+        h = a.children[1]
+        (h isa Sym && String(h.name) == "=") || continue
+        lhs = a.children[2]
+        hd = lhs isa Expression && !isempty(lhs.children) ? lhs.children[1] : lhs
+        hd isa Sym && Symbol(hd.name) in syms && return true
+    end
+    false
 end
 
 """Does this atom contain a variable anywhere? A call with one cannot use the compiled lane — see
@@ -1074,10 +1112,21 @@ function compiled_head(to_eval::Atom, space)
         _k = (hn, _ar)
         _st = _state!(space)
         if !(_k in _st.declined)
-            _hook = _JIT_HEAD_HOOK[]
-            _ok = _hook === nothing ? false : (try _hook(hn, space)::Bool catch; false end)
-            # A DECLINE IS CACHED, not merely counted — see `SpaceCompileState.declined`.
-            _ok ? (ch = _lookup_def(space, hn, _ar)) : push!(_st.declined, _k)
+            # ⚠️ THE LIMIT IS CHECKED BEFORE THE ATTEMPT, and only SUCCESSES are counted, so N
+            # means "N heads compiled" rather than "N calls tried" — otherwise a run full of
+            # declines would exhaust the budget without compiling anything and the bisect would
+            # search the wrong axis.
+            if COMPILE_FIRST_N[] < 0 || length(_COMPILE_ORDER) < COMPILE_FIRST_N[]
+                _hook = _JIT_HEAD_HOOK[]
+                _ok = _hook === nothing ? false : (try _hook(hn, space)::Bool catch; false end)
+                # A DECLINE IS CACHED, not merely counted — see `SpaceCompileState.declined`.
+                if _ok
+                    push!(_COMPILE_ORDER, hn)
+                    ch = _lookup_def(space, hn, _ar)
+                else
+                    push!(_st.declined, _k)
+                end
+            end
         end
     end
     ch === nothing && return nothing
@@ -1129,6 +1178,12 @@ function compiled_head(to_eval::Atom, space)
     # always pays the hash once, whatever its revision says (see `CompiledHead.space`).
     if ch.revision >= 0 && !(ch.space.value === space && ch.revision == space.revision)
         if ch.clause_hash != _head_clause_hash(space, hn)
+            COMPILED_FALLBACK_STALE[] += 1
+            return nothing
+        end
+        # 🔴 AND THE ASSUMPTIONS THE GUARD COMPILED UNDER — see `CompiledHead.assumed_ruleless`.
+        # Our own clauses being unchanged does NOT mean the code is still valid.
+        if !isempty(ch.assumed_ruleless) && _any_now_has_rules(space, ch.assumed_ruleless)
             COMPILED_FALLBACK_STALE[] += 1
             return nothing
         end

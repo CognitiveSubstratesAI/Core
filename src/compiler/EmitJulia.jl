@@ -46,7 +46,9 @@ import ..CompilerEmitIL: _atom_of
 # 🔴 IMPORTED EXPLICITLY, NOT ASSUMED. First run died on `UndefVarError: freshvar` — the guessed-name
 # class again. These five live in TWO modules: `match_atoms`/`is_present` in Atoms.jl (StandardMeTTa),
 # `rename_fresh`/`freshvar`/`subst` in Eval.jl. Located before importing, not after failing.
-import ..CompilerEmitJuliaCode: codegen_head, head_compilable, CompiledDepthExceeded
+import ..CompilerEmitJuliaCode
+import ..CompilerEmitJuliaCode: codegen_head, head_compilable, CompiledDepthExceeded,
+    _builds_reducible_arg
 import ..CompilerFrontend
 import ..CompilerANormal
 import ..Eval          # the MODULE, not only its names — `jit_head!` reaches Eval.all_atoms / _JIT_HEAD_HOOK
@@ -288,8 +290,23 @@ function emit_julia_program(clauses::Vector{ANClause}, space=nothing, reducible=
     by_head = Dict{Base.Symbol, Vector{Tuple{Expression, Vector, Expression}}}()
     an_by_head = Dict{Base.Symbol, Vector{ANClause}}()
     declined = Set{Base.Symbol}()
+    # TWO PASSES, because the soundness guard needs `red` and `red` needs the program's own heads
+    # when no space was given.
     for cl in clauses
         push!(get!(an_by_head, cl.name, ANClause[]), cl)
+    end
+    _red = isempty(red) && space === nothing ? Set(keys(an_by_head)) : red
+    for cl in clauses
+        # 🔴 THE SOUNDNESS GUARD APPLIES TO THE PLAN LANE TOO, AND OMITTING IT COST A LIVE PLN
+        # DEFECT. `_build_head` enforces it for CODEGEN only, so `compute-demand-field!` —
+        # `(let $seed (dem-join! $q 1.0) (propagate! $q))` — kept compiling on the PLAN lane, bound
+        # `$seed` to the ATOM `(dem-join! $q 1.0)` instead of calling it, and EVERY WRITE WAS
+        # SILENTLY SKIPPED: 5 `(dem …)` atoms became 0. Both lanes build arguments the same way, so
+        # both need the same refusal.
+        if _builds_reducible_arg(cl.goals, _red)
+            push!(declined, cl.name)
+            continue
+        end
         r = emit_julia_clause(cl)
         if r === nothing
             push!(declined, cl.name)
@@ -462,8 +479,14 @@ function jit_head!(name::Base.Symbol, space)::Bool
     # sink convention passes `sink(answer, bindings)` and the emitter passes `nothing` there, so a
     # callee that binds the CALLER'S variable loses it. `compiled_head` refuses a non-ground call to
     # this entry. When the emitter fills that argument in, this flips to `true` and the guard goes.
+    # the heads this compilation ASSUMED have no rules — part of the staleness key, see
+    # `CompiledHead.assumed_ruleless`.
+    _assumed = Base.Symbol[]
+    for c in mine
+        append!(_assumed, collect(CompilerEmitJuliaCode.assumed_ruleless(c.goals, rule_heads)))
+    end
     Eval.compile_head!(name, fn, key, space; arity = length(mine[1].head_args),
-                       carries_bindings = false)
+                       carries_bindings = false, assumed_ruleless = unique!(_assumed))
     true
 end
 

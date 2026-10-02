@@ -26,7 +26,8 @@ import ..CompilerIR: IRAtom, IRVariable, IRSymbol, IRGrounded, IRExpression
 # so a missing import fails at codegen time, not at load. (First run: UndefVarError.)
 import ..Eval: TOKEN_REGISTRY, Operation, ExecOk, ExecNoReduce, freshvar
 
-export codegen_clause, codegen_head, head_compilable, CompiledDepthExceeded, _MAX_CALL_DEPTH
+export codegen_clause, codegen_head, head_compilable, CompiledDepthExceeded, _MAX_CALL_DEPTH,
+    assumed_ruleless
 
 # 🔴 NO OP TABLE HERE, DELIBERATELY. A first draft of this file defined
 # `_J_ARITH = Dict(:+ => :+, …)` and generated `Grounded(x.value + 1)` — reinventing arithmetic the
@@ -400,11 +401,54 @@ _nested_reducible(a, reducible::Set{Base.Symbol}) =
     ((a.head isa IRSymbol && a.head.name in reducible) ||
      any(x -> _nested_reducible(x, reducible), a.args))
 
-"Does any goal pass an ARGUMENT that contains a reducible application? Then the clause declines."
+"""Does any goal BUILD a reducible application as a VALUE, rather than calling it? Then the clause
+declines.
+
+TWO POSITIONS, and the second was missed on the first pass — at the cost of a live PLN defect:
+  * a `GCall` ARGUMENT — `(+ 1 (g \$x))` hands `+` the atom `(g \$x)`;
+  * 🔴 a `GUnify` RIGHT-HAND SIDE — `(let \$seed (dem-join! \$q 1.0) (propagate! \$q))` binds `\$seed` to
+    the ATOM `(dem-join! \$q 1.0)` instead of CALLING it. MEASURED 2026-10-02: that is
+    `compute-demand-field!` in `lib/pln/pln_factor_graph.metta`, and compiling that ONE head took the
+    scenario from 5 `(dem …)` atoms to **0** — every write silently skipped, because the call is
+    never performed and `\$seed` is never used so nothing forces it. Found by bisecting the
+    compile counter (`COMPILE_FIRST_N`), which named the head in one step.
+
+⚠️ THE CLAUSE OUTPUT IS DELIBERATELY NOT CHECKED. A user-head application in TAIL position becomes
+the clause's `out` and is handed back to the interpreter, which reduces it correctly — that is why
+tail calls have always been sound. Declining on `out` would throw away the lane's main coverage."""
 _builds_reducible_arg(gs::Vector{Goal}, reducible::Set{Base.Symbol}) =
     any(_all_goals(gs)) do g
-        g isa GCall && any(a -> _nested_reducible(a, reducible), g.args)
+        (g isa GCall && any(a -> _nested_reducible(a, reducible), g.args)) ||
+        (g isa GUnify && _nested_reducible(g.rhs, reducible))
     end
+
+"Collect the heads of nested applications this clause BUILT AS DATA — i.e. applications whose head
+is NOT in `reducible`, so the guard let them through."
+function _nested_app_heads!(acc::Set{Base.Symbol}, a)
+    a isa IRExpression || return acc
+    a.head isa IRSymbol && push!(acc, a.head.name)
+    for x in a.args; _nested_app_heads!(acc, x); end
+    acc
+end
+
+"""Heads this clause compiled on the ASSUMPTION that they have no rules, so building them as data was
+sound. 🔴 THE COMPILE-TIME DECISION MUST BE PART OF THE STALENESS KEY, or a later `add-atom` falsifies
+it with our own clauses untouched: compile `(= (t \$x) (+ 1 (k \$x)))` while `k` has no rules, add
+`(= (k \$x) \$x)`, and `!(t 5)` answers `(+ 1 5)` where the interpreter says `6`, with
+`COMPILED_FALLBACK_STALE == 0`. Generated code must not encode a fact about another head without
+recording that it did — SWI's VM never does, because a call goes through the callee's definition."""
+function assumed_ruleless(gs::Vector{Goal}, reducible::Set{Base.Symbol})
+    acc = Set{Base.Symbol}()
+    for g in _all_goals(gs)
+        if g isa GCall
+            for a in g.args; _nested_app_heads!(acc, a); end
+        elseif g isa GUnify
+            _nested_app_heads!(acc, g.rhs)
+        end
+    end
+    setdiff!(acc, reducible)
+    acc
+end
 
 # ─── A REPEATED HEAD VARIABLE IS A UNIFICATION CONSTRAINT, AND NOTHING EMITS IT ──────────────────
 # 🔴 MEASURED 2026-10-01 by the compiled-head differential, on the FIRST corpus it was pointed at.
