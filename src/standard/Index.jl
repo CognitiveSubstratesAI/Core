@@ -384,26 +384,52 @@ struct ArgIndex
     argpos::Int
     speedup::Float64
     buckets::Dict{Symbol, Vector{Atom}}
+    # 🔴 ATOMS WITH A VARIABLE AT `argpos`, KEPT SEPARATELY AS WELL AS MERGED INTO EVERY BUCKET.
+    # They match ANY key — including one NO stored atom carries, which is exactly the case
+    # `get(buckets, key, Atom[])` used to answer with an empty list under the comment "absent key ⇒
+    # genuinely no candidates". That is false whenever this list is non-empty, and it DROPPED
+    # ANSWERS rather than merely slowing them down.
+    wild::Vector{Atom}
 end
 
 "Build the index `best` describes, over `atoms`. Var-at-position atoms go in EVERY bucket — they can match anything."
 function _build_arg_index(atoms::Vector{Atom}, best::ArgAssessment)::ArgIndex
-    buckets = Dict{Symbol, Vector{Atom}}()
+    _key(a) = (a isa Expression && length(a.children) >= best.argpos) ?
+              _idx_head(a.children[best.argpos]) : nothing
+
+    # 🔴 TWO PASSES, AND STORE ORDER IS THE REASON. The previous version filled the buckets and THEN
+    # `append!`ed the var-at-position atoms to the end of each one, so a bucket read back
+    # [keyed…, wild…] while the unindexed scan reads the store in insertion order. Answers came back
+    # REORDERED — set-equal but not list-equal — and MeTTa answers are a MULTISET whose ORDER
+    # `collapse` exposes, so that is a semantic difference, not a cosmetic one. MEASURED:
+    # `(≞ (⊗ Q) $t)` gave [0.4, 0.9] unindexed and [0.9, 0.4] indexed.
+    # Collecting the keys first lets ONE ordered walk place every atom — into its own bucket, or
+    # into EVERY bucket when it is wild — so each bucket keeps store order by construction.
+    # ⚠️ A SET ALONGSIDE THE VECTOR, NOT THE VECTOR ALONE. `k in keys_seen` on a Vector is O(K) per
+    # atom, so building costs O(N·K). With the HEAD-SYMBOL key K is tiny and that is invisible — but
+    # the DEEP KEY makes K ≈ N (one key per `(→, A_i)`), and the build becomes O(N²): exactly the
+    # shape the deep key exists to remove. The vector keeps FIRST-SEEN ORDER, which is what makes
+    # each bucket store-ordered; the set answers membership in O(1).
+    keys_seen = Symbol[]
+    keys_set  = Set{Symbol}()
+    for a in atoms
+        k = _key(a)
+        (k === nothing || k in keys_set) || (push!(keys_seen, k); push!(keys_set, k))
+    end
+    buckets = Dict{Symbol, Vector{Atom}}(k => Atom[] for k in keys_seen)
     wild = Atom[]
     for a in atoms
-        h = if (a isa Expression && length(a.children) >= best.argpos)
-            _idx_head(a.children[best.argpos])
+        k = _key(a)
+        if k === nothing
+            push!(wild, a)                       # matches any key …
+            for kk in keys_seen                  # … so it belongs in every bucket, IN ORDER
+                push!(buckets[kk], a)
+            end
         else
-            nothing
+            push!(buckets[k], a)
         end
-        h === nothing ? push!(wild, a) : push!(get!(() -> Atom[], buckets, h), a)
     end
-    # A var at this position matches ANY key, so it must appear under every one — this is exactly the
-    # `#var * #distinct` term in the speedup denominator, made real.
-    isempty(wild) || for (_, v) in buckets
-        append!(v, wild)
-    end
-    ArgIndex(best.argpos, best.speedup, buckets)
+    ArgIndex(best.argpos, best.speedup, buckets, wild)
 end
 
 """
@@ -416,24 +442,60 @@ unindexed scan, which is what makes this safe to put on `match`'s path.
 Upstream's `jiti_tried` is mirrored by the `tried` set: an assessment that declined must NOT be
 re-run on every query, or the assessment costs more than the scan it was meant to save.
 """
+# ─── IS JIT INDEXING LIVE, AND HOW WELL? — modelled on SWI's `library(prolog_jiti)`/`jiti_list` ──
+# 🔴 THERE WERE NO COUNTERS AT ALL, so "is indexing still wired after the store/space refactors"
+# could only be ANSWERED BY READING CALL SITES — and a seam added in front of `rule_results` could
+# bypass it with nothing to show. These make it a measurement. Cost is four integer increments on a
+# path that already builds a vector.
+"""Turn every candidate narrowing OFF, so `index_candidates` returns the whole store.
+
+🔴 THE UNINDEXED SCAN IS THE ORACLE for every narrowing in this file — a filter's only licence is to
+return a SUPERSET of what can match, and a filter that drops a candidate returns FEWER ANSWERS,
+which no assertion about the remaining answers can see. `test_index_candidates_differential.jl`
+runs each pattern both ways and demands identical answers, order and multiplicity included."""
+const INDEX_ENABLED = Ref(true)
+
+const _IDX_LOOKUPS   = Ref(0)   # calls to `index_candidates`
+const _IDX_SERVED    = Ref(0)   # … where an index actually applied (a bucket was returned)
+const _IDX_CANDS     = Ref(0)   # candidates handed back, summed
+const _IDX_STORE     = Ref(0)   # atoms that would have been scanned without an index, summed
+const _IDX_BUILT     = Ref(0)   # indexes constructed
+
+"""Per-run JIT-indexing statistics — the `jiti_list` equivalent. `served/lookups` is how often an
+index applied; `1 - cands/store` is the fraction of the store it SKIPPED. Zero lookups on a real
+workload means something bypassed the indexed path."""
+index_stats() = (; lookups = _IDX_LOOKUPS[], served = _IDX_SERVED[], built = _IDX_BUILT[],
+                 candidates = _IDX_CANDS[], store_scanned = _IDX_STORE[],
+                 skipped_frac = _IDX_STORE[] == 0 ? 0.0 :
+                                1 - _IDX_CANDS[] / _IDX_STORE[])
+reset_index_stats!() = (_IDX_LOOKUPS[] = 0; _IDX_SERVED[] = 0; _IDX_CANDS[] = 0;
+                        _IDX_STORE[] = 0; _IDX_BUILT[] = 0; nothing)
+
 function index_candidates(
     store_atoms::Vector{Atom},
     arg_index::Dict{Tuple{Symbol, Int}, ArgIndex},
     tried::Set{Tuple{Symbol, Int}},
     pattern::Atom
 )::Vector{Atom}
-    pattern isa Expression || return store_atoms
+    _IDX_LOOKUPS[] += 1
+    _IDX_STORE[] += length(store_atoms)
+    INDEX_ENABLED[] || (_IDX_CANDS[] += length(store_atoms); return store_atoms)
+    pattern isa Expression || (_IDX_CANDS[] += length(store_atoms); return store_atoms)
     head = _idx_head(pattern)
-    head === nothing && return store_atoms          # var-headed pattern: nothing to key on
+    head === nothing && (_IDX_CANDS[] += length(store_atoms); return store_atoms)          # var-headed pattern: nothing to key on
     inst = instantiated_positions(pattern)
-    isempty(inst) && return store_atoms             # pl-index.c:3068 — no instantiated argument
+    isempty(inst) && (_IDX_CANDS[] += length(store_atoms); return store_atoms)             # pl-index.c:3068 — no instantiated argument
 
     for pos in inst                                 # an index we already built and can use
         ix = get(arg_index, (head, pos), nothing)
         ix === nothing && continue
         key = _idx_head(pattern.children[pos])
         key === nothing && continue
-        return get(ix.buckets, key, Atom[])         # absent key ⇒ genuinely no candidates
+        # 🔴 AN ABSENT KEY IS NOT "no candidates" — the var-at-position atoms match it. Returning
+        # `Atom[]` here DROPPED THEM.
+        _b = get(ix.buckets, key, ix.wild)
+        _IDX_SERVED[] += 1; _IDX_CANDS[] += length(_b)
+        return _b
     end
 
     # 🔴 `tried` IS KEYED (head, position), NOT head — FIXED 2026-08-28, found by comparing against
@@ -443,21 +505,35 @@ function index_candidates(
     # to the full store and never assessed. MEASURED: 2123 of 2123 candidates, i.e. no narrowing at
     # all. Upstream has no such bug; `bestHash` is called with the CURRENT argument vector each time
     # and several indexes coexist per predicate (`args[MAX_MULTI_INDEX]`).
-    all(pos -> (head, pos) in tried, inst) && return store_atoms
+    all(pos -> (head, pos) in tried, inst) && (_IDX_CANDS[] += length(store_atoms); return store_atoms)
     for pos in inst
         push!(tried, (head, pos))
     end
 
+    # 🔴 `_idx_head(a) === nothing` MEANS THE STORED ATOM'S HEAD IS NOT A SYMBOL — a variable head
+    # like `($h A0 A1)`, which matches ANY head and so must stay a candidate for this one. Keeping
+    # only `=== head` silently dropped such atoms the moment an index applied. It is the HEAD that
+    # is wild, not the position, so these are still keyed by their argument and keep their
+    # selectivity. Filtering `store_atoms` in place preserves store order.
     same_head = Atom[
         a for a in store_atoms
-        if a isa Expression && !isempty(a.children) && _idx_head(a) === head
+        if a isa Expression && !isempty(a.children) &&
+           (_idx_head(a) === head || _idx_head(a) === nothing)
     ]
-    length(same_head) <= _TRIE_MIN_BUCKET && return store_atoms   # too small to be worth an index
+    length(same_head) <= _TRIE_MIN_BUCKET && (_IDX_CANDS[] += length(store_atoms); return store_atoms)   # too small to be worth an index
     best = best_index_argument(same_head, inst)
-    best === nothing && return store_atoms
+    best === nothing && (_IDX_CANDS[] += length(store_atoms); return store_atoms)
 
     ix = _build_arg_index(same_head, best)
     arg_index[(head, best.argpos)] = ix
     key = _idx_head(pattern.children[best.argpos])
-    key === nothing ? store_atoms : get(ix.buckets, key, Atom[])
+    # 🔴 THE BUILD PATH RETURNS CANDIDATES TOO, AND IT WAS UNCOUNTED — which is why `served` read 0
+    # on exactly the calls that were reordering answers, hiding the defect from the statistics.
+    if key === nothing
+        _IDX_CANDS[] += length(store_atoms)
+        return store_atoms
+    end
+    _b = get(ix.buckets, key, ix.wild)
+    _IDX_SERVED[] += 1; _IDX_CANDS[] += length(_b)
+    return _b
 end

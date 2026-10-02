@@ -136,8 +136,14 @@ end
     )
     @test ground == unindexed
 
-    # a key with no atoms yields nothing, not everything
-    @test isempty(load_metta!(s, raw"!(match &self (belief nosuch $s $c) $s)" * "\n"))
+    # 🔴 CORRECTED 2026-10-02 — THIS ASSERTION PINNED A DEFECT. It demanded `isempty` for a key no
+    # atom carries, but this very corpus contains `(belief $openvar s1 c1)`, whose variable at the
+    # indexed position matches ANY key — the line above asserts exactly that, `length(ground) == 3`
+    # counting "k7's two atoms + the open-var atom". So the two assertions contradicted each other,
+    # and the index satisfied this one by returning `Atom[]` from `get(ix.buckets, key, Atom[])`
+    # under the comment "absent key ⇒ genuinely no candidates", DROPPING a real answer.
+    # MEASURED against the unindexed scan, which is the oracle: BOTH arms return `["s1"]`.
+    @test string.(load_metta!(s, raw"!(match &self (belief nosuch $s $c) $s)" * "\n")) == ["s1"]
 
     # MUTATION MUST INVALIDATE — a stale index is a wrong answer, not a slow one.
     load_metta!(s, raw"!(match &self (belief k7 $s $c) $s)" * "\n")   # rebuild

@@ -2422,14 +2422,22 @@ _parse_type(s::AbstractString)::Atom = parse_from(tokenize(s), Ref(1))
 # guard. (NOT rename_fresh'd: that would assign new Var ids and change matching behavior — preserve parity.)
 const _GROUNDED_OP_TYPE_CACHE = Dict{Atom, Atom}()
 # arg_actual_types memo (ADR-059). A GROUND atom's actual types are invariant until a `(: …)` decl mutates the
-# space, so cache atom → (objectid(space), type_epoch, types). On a later reduction step the same ground
+# space, so cache atom → (space_id(space), type_epoch, types). On a later reduction step the same ground
 # subterm is a HIT instead of an O(term) re-query — collapsing the O(n²) re-descent (the dominant typed-program
 # allocator, ~71–79% of typed-Peano alloc) to O(n). Byte-identical to recomputation (semantics-preserving):
-# only `:`-decls change types and they bump type_epoch; the space objectid guards against a stale cross-space hit.
-const _ATOM_TYPE_MEMO = Dict{Atom, Tuple{UInt, Int, Vector{Atom}}}()
+# only `:`-decls change types and they bump type_epoch; the space_id guards against a stale cross-space hit.
+# 🔴 THE SPACE IS IDENTIFIED BY `space_id`, NOT `objectid` — MEASURED 2026-10-02, A LIVE WRONG
+# ANSWER. `objectid` of a mutable object is its ADDRESS, which Julia REUSES after a collection, and
+# this file says so twice already (the `CompiledHead.space` field and `_SPACE_IDS`) while these two
+# memos went on using it. In a 125-file suite run a FRESH `Space` landed on a dead one's address and
+# inherited its cached types; `match` then returned NOTHING for patterns whose cached type was
+# poisoned — empty answers, no error. Diagnosed by clearing the memos mid-run and re-querying the
+# same corpus: `recovered = true`, 0 answers became 3. `space_id` is a monotonic counter in a
+# `WeakKeyDict`, so an id is never handed out twice however many spaces die.
+const _ATOM_TYPE_MEMO = Dict{Atom, Tuple{Int, Int, Vector{Atom}}}()
 const _TYPE_MEMO_ON = Ref(true)     # gate for one release; health 4/4 proves parity before it's load-bearing
 const _TYPE_MEMO_CAP = 1 << 20      # bound growth on long-running servers (clears wholesale on overflow)
-const _DECL_TYPE_MEMO = Dict{Atom, Tuple{UInt, Int, Vector{Atom}}}()   # declared-types memo (atom_types); same keying/invalidation as _ATOM_TYPE_MEMO
+const _DECL_TYPE_MEMO = Dict{Atom, Tuple{Int, Int, Vector{Atom}}}()   # declared-types memo (atom_types); same keying/invalidation as _ATOM_TYPE_MEMO
 
 const NO_TYPES = Atom[]     # shared empty-types sentinel (no caller mutates an atom_types result); same
 # zero-alloc convention as EMPTY_VARS — the early-return below is alloc-free.
@@ -2450,7 +2458,7 @@ function atom_types(atom::Atom, space::Space)::Vector{Atom}
     # per-reduction `(: op $T)` space-query to a hit (the dominant cost on untyped/var-heavy libs like PLN).
     # Ground-only; a var-headed Expression recurses uncached exactly as before. Byte-identical to recomputation.
     if _TYPE_MEMO_ON[] && !(atom isa Expression && atom.has_vars)
-        sid = objectid(space)
+        sid = space_id(space)
         hit = get(_DECL_TYPE_MEMO, atom, nothing)
         (hit !== nothing && hit[1] == sid && hit[2] == space.type_epoch) && return hit[3]
         res = _atom_types_uncached(atom, space)
@@ -2512,7 +2520,7 @@ function arg_actual_types(arg::Atom, space::Space)::Vector{Atom}
     # typed-program allocator). `_has_vars` (the existing cached bit) is the cacheability predicate; a
     # var-containing arg recurses uncached exactly as before. Byte-identical to recomputation.
     if _TYPE_MEMO_ON[] && !(arg isa Expression && arg.has_vars)   # ground ⇒ memoisable (Var/Grounded returned above)
-        sid = objectid(space)
+        sid = space_id(space)
         hit = get(_ATOM_TYPE_MEMO, arg, nothing)
         (hit !== nothing && hit[1] == sid && hit[2] == space.type_epoch) && return hit[3]
         res = _arg_actual_types_uncached(arg, space)
