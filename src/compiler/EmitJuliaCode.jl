@@ -354,6 +354,66 @@ end
 _calls_impure(gs::Vector{Goal}) =
     any(g -> g isa GCall && String(g.head) in _IMPURE_OPS, _all_goals(gs))
 
+# ─── THE SOUNDNESS GUARD: A REDUCIBLE APPLICATION MUST NOT BE BUILT AS A VALUE ──────────────────
+# 🔴 MEASURED 2026-10-01 against the interpreter as oracle. `(= (g $x) (+ $x 1))` with
+# `(= (t3 $x) (+ 1 (g $x)))` answered `(+ 1 6)` on `!(t3 5)` where the interpreter answers `7` —
+# lane NATIVE, `fired == 1`, so a WRONG ANSWER and not a decline.
+#
+# CAUSE: `(+ 1 (g $x))` A-normalises to ONE goal, `GCall(+, [1, IRExpression(g $x)])`. The inner
+# user call is NEVER HOISTED into its own goal, though atomic arguments are the defining property of
+# the form, so `_atomexpr` builds it as a LITERAL ATOM and hands it to `+`, which cannot add an
+# expression and returns the application unreduced.
+#
+# Until the hoist lands these clauses DECLINE and the interpreter answers them correctly: less
+# coverage, no wrong answers. The hoist is not a simple lift — it must obey the interpreter's
+# ARGUMENT-EVALUATION RULES, which this guard does not have to know about:
+#   * only ONE ARM of an `if`/`case` is evaluated, so hoisting `(down (- $n 1))` out of an else
+#     branch and above the `if` evaluates it unconditionally and the base case never terminates.
+#     Hoist WITHIN a branch, never across one.
+#   * an `Atom`-typed parameter and a `quote`d argument must stay UNEVALUATED. That is exactly
+#     defect B in `test/standard/tabling/test_intercept_position.jl`, where tabling's `_reduced_goal`
+#     evaluated an `Atom`-typed argument and produced a wrong answer. A hoist that ignores parameter
+#     types repeats that defect inside the compiler.
+#
+# ⚠️ "REDUCIBLE" MEANS "HAS RULES IN THE SPACE", looked up once at compile time — NOT a syntactic
+# guess. A DATA CONSTRUCTOR has no rules, so `(stv (* $f1 $f2) …)` keeps compiling, which is the
+# whole PLN/NARS truth-formula corpus (`Truth_Deduction` and friends are NOT affected — measured).
+# The at-risk shape in real code is a nested ZERO-ARITY CONSTANT: `NARS.Derive` and `NARS.Query`
+# nest `NARS.Config.MaxSteps`, which HAS a rule and DOES reduce.
+_nested_reducible(a, reducible::Set{Base.Symbol}) =
+    a isa IRExpression &&
+    ((a.head isa IRSymbol && a.head.name in reducible) ||
+     any(x -> _nested_reducible(x, reducible), a.args))
+
+"Does any goal pass an ARGUMENT that contains a reducible application? Then the clause declines."
+_builds_reducible_arg(gs::Vector{Goal}, reducible::Set{Base.Symbol}) =
+    any(_all_goals(gs)) do g
+        g isa GCall && any(a -> _nested_reducible(a, reducible), g.args)
+    end
+
+# ─── A REPEATED HEAD VARIABLE IS A UNIFICATION CONSTRAINT, AND NOTHING EMITS IT ──────────────────
+# 🔴 MEASURED 2026-10-01 by the compiled-head differential, on the FIRST corpus it was pointed at.
+# `(= (eq $x $x) T)` in `conformance/b1_equal_chain.metta`:
+#     !(eq Green Blue)   interpreter -> (eq Green Blue)      compiled -> T
+# A NON-MATCHING CALL WRONGLY MATCHES. `_bindargs` binds head arguments POSITIONALLY and by name:
+#     x = _a[1]; x = _a[2]
+# so the second binding silently OVERWRITES the first and the constraint that both arguments be
+# EQUAL is never checked. The comment at the `IRVariable` test below says "positional binding only —
+# no unification here", which is accurate about what it does and was read as if a repeated variable
+# could not reach it. It can, and `(= (f $x $x) …)` is an ordinary MeTTa idiom.
+#
+# Declining is the soundness fix, not the final one: emitting the equality check is part of HEAD
+# PATTERNS, the 229-head blocker. Until then these heads stay interpreted and stay correct.
+function _repeated_head_var(head_args)::Bool
+    seen = Set{Base.Symbol}()
+    for a in head_args
+        a isa IRVariable || continue
+        a.name in seen && return true
+        push!(seen, a.name)
+    end
+    false
+end
+
 """
 Can this clause answer other than exactly once? Then it has no deterministic entry and must take the
 loop path. Three sources, and MISSING THE FIRST IS WHAT MADE `superpose` DECLINE: a `GDisj` or
@@ -738,9 +798,16 @@ starts with all heads as candidates and drops them until the set is stable. A bu
 it went would leave half-registered functions behind on every dropped candidate.
 """
 function _build_head(
-    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}, sid::Int=0
+    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}, sid::Int=0,
+    reducible::Set{Base.Symbol}=Set{Base.Symbol}()
 )
     isempty(clauses) && return nothing
+    # 🔴 THE GUARD, APPLIED HERE so BOTH paths below are covered — the deterministic fast path
+    # reaches `_gen_det`, which builds arguments with the same `_atomexpr` and has the same defect.
+    for cl in clauses
+        _builds_reducible_arg(cl.goals, reducible) && return nothing
+        _repeated_head_var(cl.head_args) && return nothing
+    end
     fname = _genname(name, sid)
     arity = length(clauses[1].head_args)
     for cl in clauses
@@ -786,9 +853,10 @@ end
 
 "True if this head would compile given `compilable` as the set of heads that do. No `eval`."
 head_compilable(
-    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol}
+    name::Base.Symbol, clauses::Vector{ANClause}, compilable::Set{Base.Symbol},
+    reducible::Set{Base.Symbol}=Set{Base.Symbol}()
 ) =
-    _build_head(name, clauses, compilable) !== nothing
+    _build_head(name, clauses, compilable, 0, reducible) !== nothing
 
 """
     codegen_head(name, clauses, compilable) -> Union{Function, Nothing}
@@ -812,8 +880,9 @@ ordinary call to the head's own ENTRY, which answers zero-to-N times through the
 that the old guard was protecting can no longer be dropped.
 """
 function codegen_head(name::Base.Symbol, clauses::Vector{ANClause},
-    compilable::Set{Base.Symbol}=Set{Base.Symbol}(), sid::Int=0)
-    fns = _build_head(name, clauses, compilable, sid)
+    compilable::Set{Base.Symbol}=Set{Base.Symbol}(), sid::Int=0,
+    reducible::Set{Base.Symbol}=Set{Base.Symbol}())
+    fns = _build_head(name, clauses, compilable, sid, reducible)
     fns === nothing && return nothing
     # ⚠️ INITIALISED, NOT `local`-DECLARED. JET: "local variable `last` may be undefined" — an empty
     # `fns` returned an unassigned local. `_build_head` never returns one today, but that is an

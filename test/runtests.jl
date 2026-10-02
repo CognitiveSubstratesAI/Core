@@ -480,6 +480,9 @@ Main.@suite("compiler/test_emit_substitution.jl")
 Main.@suite("compiler/test_emit_il.jl")
 Main.@suite("compiler/test_emit_julia.jl")   # stage 4c: registration path (milestone 1a)          # MeTTa → MeTTa-IL: the Figure-2 compile arrow
 Main.@suite("compiler/test_ab_space_collision.jl")  # CHUNK-017 gate: B's head must not answer A's
+Main.@suite("compiler/test_compiled_head_differential.jl")  # 🔴 THE TRIGGER'S GATE: every
+#   conformance directive, interpreted vs EVERY head compiled. 11 known divergences pinned BY VALUE
+#   in `chd_pins.jl` — a new one, or a pinned one changing value, fails. ~9 s.
 Main.@suite("compiler/test_crosshead_dispatch.jl")  # a cross-head call must AGREE with the
 #   interpreter. Holds 5 `@test_broken`: the native lane answers `(+ 1 6)` where the interpreter says
 #   7, because a user-head application in an argument is never hoisted into its own A-normal goal.

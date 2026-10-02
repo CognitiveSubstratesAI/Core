@@ -81,17 +81,16 @@ end
     # compiled entry must really have answered. Without `fired`, a decline would satisfy the
     # agreement assertion trivially and the gate would pass while testing nothing.
     @test d.jit == true
-    @test d.lane === :native
     @test d.fired >= 1
     @test d.interp == ["7"]                 # the oracle, pinned — if this moves, the case changed
-    # 🔴 THE GATE, as `@test_broken`: this file must be COMMITTABLE while the defect stands, and the
-    # repo's convention (see `tabling/test_intercept_position.jl`) is to assert the CORRECT value and
-    # let Julia report "Unexpectedly Passed" when a fix lands — that is the signal to drop `_broken`.
-    @test_broken d.compiled == d.interp
-    # AND TODAY'S WRONG VALUE IS PINNED PLAINLY. `@test_broken` records Broken for a false result AND
-    # for a throw, so alone it cannot tell "wrong in the way we named" from "wrong for a new reason".
-    # This line turns the file RED on a NEW mechanism instead of hiding it inside the Broken count.
-    @test d.compiled == ["(+ 1 6)"]
+    # 🔴 THE SOUNDNESS GATE. Answered ["(+ 1 6)"] before the guard; the guard makes codegen DECLINE
+    # the clause and the PLAN lane answers it correctly instead.
+    @test d.compiled == d.interp
+    @test d.lane === :plan                  # where the guard moved it — still compiled, not dropped
+    # 🔴 THE HOIST'S TARGET, kept as `@test_broken` so it is not forgotten: once a user-head
+    # application in an argument is hoisted into its own goal, this shape belongs on the NATIVE lane.
+    # Julia reports "Unexpectedly Passed" when that lands, which is the signal to drop `_broken`.
+    @test_broken d.lane === :native
 
     # The same shape where the callee declines CODEGEN and compiles on the PLAN lane instead. Listed
     # separately because the fix must route through the DEFINITION ENTRY, which is what makes the
@@ -100,8 +99,8 @@ end
     @test d2.jit == true
     @test d2.fired >= 1
     @test d2.interp == ["3"]
-    @test_broken d2.compiled == d2.interp
-    @test d2.compiled == ["(+ 1 2)"]        # today's wrong value, pinned
+    @test d2.compiled == d2.interp          # answered ["(+ 1 2)"] before the guard
+    @test_broken d2.lane === :native        # the hoist's target here too
 
     # NEGATIVE CONTROLS — the shapes that are CORRECT today must stay correct. Without these, a
     # "fix" that simply stopped compiling anything would turn the gates above green.
@@ -144,6 +143,29 @@ end
         a.head isa MeTTaCore.CompilerIR.IRSymbol && a.head.name === :g
     @test_broken !any(g -> any(nested_user_call, g.args), calls)
     @test any(g -> any(nested_user_call, g.args), calls)   # today: the call is nested in an arg
+end
+
+@testset "🔴 a REPEATED HEAD VARIABLE must not make a non-matching call match" begin
+    # FOUND BY `workflows/compiled_head_differential.jl` on the first corpus it was pointed at —
+    # `conformance/b1_equal_chain.metta` defines `(= (eq $x $x) T)`:
+    #     !(eq Green Blue)   interpreter -> (eq Green Blue)      compiled -> T
+    # `_bindargs` binds head arguments positionally AND BY NAME (`x = _a[1]; x = _a[2]`), so the
+    # second binding overwrites the first and the constraint that both arguments be EQUAL is never
+    # emitted. A NON-MATCHING CALL WRONGLY MATCHED — the worst shape of all, because the head
+    # answers where it should have stayed unreduced.
+    d = _xh_diff("(= (eq \$x \$x) T)\n", :eq, "!(eq Green Blue)\n")
+    @test d.jit == true                               # still compiled — on the plan lane
+    @test d.fired >= 1                                # and the compiled entry really answered
+    @test d.interp == ["(eq Green Blue)"]             # the oracle: no rule matches, so it is itself
+    @test d.compiled == d.interp                      # 🔴 answered ["T"] before the decline
+    # THE MATCHING CALL MUST STILL WORK — a "fix" that broke `(eq Green Green)` would satisfy the
+    # line above while losing the rule entirely.
+    m = _xh_diff("(= (eq \$x \$x) T)\n", :eq, "!(eq Green Green)\n")
+    @test m.interp == ["T"]
+    @test m.compiled == m.interp
+    # 🔴 THE TARGET: emitting the equality check is part of HEAD PATTERNS (the 229-head blocker),
+    # at which point this shape belongs on the native lane again.
+    @test_broken d.lane === :native
 end
 
 @testset "a TABLED callee must still route through TABLING (forward guard)" begin

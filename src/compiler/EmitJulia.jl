@@ -270,8 +270,15 @@ emitted. (`docs/architecture/COMPILED_HEAD_SEAM.md`, "the unit is the HEAD".)
 # A answering 101 instead of 2, gated by `test/compiler/test_ab_space_collision.jl`.
 # `nothing` ⇒ id 0, the unidentified namespace: correct for the isolated harnesses in
 # `test/compiler/` that compile one program at a time and never register two spaces' heads at once.
-function emit_julia_program(clauses::Vector{ANClause}, space=nothing)
+function emit_julia_program(clauses::Vector{ANClause}, space=nothing, reducible=nothing)
     sid = space === nothing ? 0 : Eval.space_id(space)
+    # WHICH HEADS REDUCE — the soundness guard's input (see `_builds_reducible_arg`). From the SPACE,
+    # because a data constructor and a function are told apart by HAVING RULES, which is a property
+    # of the space and not of this program fragment. `jit_head!` already walks `all_atoms` to collect
+    # its clauses and passes the set it saw, so the walk is not paid twice.
+    red = reducible === nothing ?
+        (space === nothing ? Set{Base.Symbol}() : _space_rule_heads(space)) :
+        reducible
     # TYPED, like `an_by_head` below. `emit_julia_clause` returns `(rule, plan, packed)` — NOT a
     # bare Atom; an earlier attempt typed this `Vector{Atom}` from the `_pack` helper's return and a
     # comment, and 3 suite files failed with
@@ -313,7 +320,7 @@ function emit_julia_program(clauses::Vector{ANClause}, space=nothing)
             drop = Base.Symbol[]
             for h in compilable
                 haskey(an_by_head, h) || (push!(drop, h); continue)
-                head_compilable(h, an_by_head[h], compilable) || push!(drop, h)
+                head_compilable(h, an_by_head[h], compilable, red) || push!(drop, h)
             end
             isempty(drop) && break
             setdiff!(compilable, drop)
@@ -321,7 +328,7 @@ function emit_julia_program(clauses::Vector{ANClause}, space=nothing)
     end
     out = Dict{Base.Symbol, Function}()
     for h in keys(an_by_head)
-        fn = h in compilable ? codegen_head(h, an_by_head[h], compilable, sid) : nothing
+        fn = h in compilable ? codegen_head(h, an_by_head[h], compilable, sid, red) : nothing
         if fn !== nothing
             CODEGEN_NATIVE_HEADS[] += 1
             out[h] = _codegen_seam_fn(h, fn)     # GENERATED JULIA -> LLVM -> native
@@ -388,6 +395,21 @@ const CODEGEN_ENABLED = Ref(true)
 const CODEGEN_NATIVE_HEADS = Ref(0)
 
 # ── THE LINK THAT DID NOT EXIST ──────────────────────────────────────────────────────────────────
+"""Every head that HAS RULES in `space` — i.e. every head that REDUCES, as opposed to a data
+constructor. The soundness guard's notion of "reducible"; see `_builds_reducible_arg`."""
+function _space_rule_heads(space)::Set{Base.Symbol}
+    hs = Set{Base.Symbol}()
+    for a in Eval.all_atoms(space)
+        a isa Expression && length(a.children) == 3 || continue
+        h = a.children[1]
+        (h isa Sym && String(h.name) == "=") || continue
+        lhs = a.children[2]
+        hd = lhs isa Expression && !isempty(lhs.children) ? lhs.children[1] : lhs
+        hd isa Sym && push!(hs, Base.Symbol(hd.name))
+    end
+    hs
+end
+
 """
     jit_head!(name, space) -> Bool
 
@@ -410,13 +432,16 @@ happened to be.
 """
 function jit_head!(name::Base.Symbol, space)::Bool
     rules = Atom[]
+    rule_heads = Set{Base.Symbol}()      # collected in THIS walk — see `_space_rule_heads`
     for a in Eval.all_atoms(space)
         a isa Expression && length(a.children) == 3 || continue
         h = a.children[1]
         (h isa Sym && String(h.name) == "=") || continue
         lhs = a.children[2]
         hd = lhs isa Expression && !isempty(lhs.children) ? lhs.children[1] : lhs
-        (hd isa Sym && Base.Symbol(hd.name) === name) && push!(rules, a)
+        hd isa Sym || continue
+        push!(rule_heads, Base.Symbol(hd.name))
+        (Base.Symbol(hd.name) === name) && push!(rules, a)
     end
     isempty(rules) && return false
     key = hash(rules)                                   # the CLAUSE SET, not the space
@@ -427,7 +452,7 @@ function jit_head!(name::Base.Symbol, space)::Bool
     end
     mine = ANClause[c for c in clauses if c.name === name]
     isempty(mine) && return false
-    heads = emit_julia_program(mine, space)   # space identity reaches _genname
+    heads = emit_julia_program(mine, space, rule_heads)   # space identity reaches _genname
     fn = get(heads, name, nothing)
     fn === nothing && return false                      # every clause must emit — all-or-nothing
     # ARITY comes from the clauses, so the definition is keyed (head, arity) — SWI's name/arity
