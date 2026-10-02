@@ -858,6 +858,44 @@ head_call_table() =
         sort([(h, n, head_lane(h)) for (h, n) in merged]; by=r -> -r[2])
     end
 
+"""Per-head COST, hottest by SELF time first: `(head, calls, lane, self_ms, incl_ms, candidates)`.
+
+🔴 SELF TIME IS THE ONE TO READ. Inclusive time makes every caller look expensive — a head that only
+calls two slow ones scores as high as they do. Self is inclusive minus the time its callees took,
+which is what distinguishes "this head is slow" from "something it calls is".
+
+`candidates` is how many stored atoms were examined while serving the head: SWI rejects a clause on
+one word comparison before any unification, so a large candidate count beside a small answer count
+is the clause-selection gap, measured per head rather than inferred from a scaling curve.
+
+Requires `lane_counting!(true)`; everything is zero otherwise."""
+function head_cost_table()
+    calls = Dict{Base.Symbol, Int}(); self = Dict{Base.Symbol, Int}()
+    incl  = Dict{Base.Symbol, Int}(); cand = Dict{Base.Symbol, Int}()
+    for s in _all_states()
+        for (h, n) in s.calls;   calls[h] = get(calls, h, 0) + n; end
+        for (h, n) in s.self_ns; self[h]  = get(self,  h, 0) + n; end
+        for (h, n) in s.incl_ns; incl[h]  = get(incl,  h, 0) + n; end
+        for (h, n) in s.cands;   cand[h]  = get(cand,  h, 0) + n; end
+    end
+    rows = [(h, get(calls, h, 0), head_lane(h),
+             round(get(self, h, 0) / 1e6, digits = 3),
+             round(get(incl, h, 0) / 1e6, digits = 3),
+             get(cand, h, 0))
+            for h in union(keys(calls), keys(self))]
+    sort(rows; by = r -> -r[4])
+end
+
+"Clear the per-head cost counters (and the call counts) in every space."
+function reset_head_cost!()
+    for s in _all_states()
+        empty!(s.calls); empty!(s.self_ns); empty!(s.incl_ns); empty!(s.cands)
+    end
+    empty!(_PROF_HEAD); empty!(_PROF_CHILD)
+    _LOOKUPS[] = 0
+    nothing
+end
+
 @inline function _count_head!(call::Atom, space)
     if call isa Expression && !isempty(call.children)
         h = call.children[1]
@@ -897,40 +935,85 @@ exactly as an equation whose body reduces to `Empty` does. It must NOT return ze
 indistinguishable from "no clause matched" and would silently turn a match into NotReducible. There
 is deliberately NO special empty branch here; the contract is two-valued so the lanes cannot diverge.
 """
+# The head currently being served, and the time its CALLEES took. Self time is inclusive minus
+# children, so the stack is what distinguishes "this head is slow" from "something it calls is".
+# ⚠️ ONE STACK, NOT PER TASK: evaluation is serialised under the server lock, the same assumption
+# `_REDUCE_DEPTH` and the compiled lane's depth counter already make.
+const _PROF_HEAD  = Base.Symbol[]
+const _PROF_CHILD = UInt64[]
+
+"Candidates examined while serving the head on top of the profiling stack (no-op when idle)."
+@inline function _prof_candidates!(space, n::Int)
+    (_LANE_COUNTING[] && !isempty(_PROF_HEAD)) || return nothing
+    c = _state!(space).cands
+    k = _PROF_HEAD[end]
+    c[k] = get(c, k, 0) + n
+    nothing
+end
+
 function rule_results(call::Atom, space, b::Bindings)::Vector{Tuple{Atom, Bindings}}
     _LOOKUPS[] += 1
     _LANE_COUNTING[] && _count_head!(call, space)
-    out = Tuple{Atom, Bindings}[]
-    let cc = compiled_head(call, space)
-        if cc !== nothing
-            cc isa ExecNoReduce && return out          # no clause matched ⇒ caller's miss branch
-            co = cc::CompiledOk
-            for (j, res) in enumerate(co.results)
-                for mb in merge_bindings(b, co.binds[j])
-                    # 🔴 `subst(res, mb)`, NOT bare `res` — PARITY WITH THE QUERY BRANCH BELOW, which
-                    # hands on `subst(X, mb)`. A compiled clause `(= (f $x) (g $x))` returns `(g $x)`
-                    # with `$x` bound only inside `mb`; passing it uninstantiated makes the answer's
-                    # shape depend on which lane's continuation consumes it. Seam test 1 did NOT catch
-                    # this — its hand-written closure returned a GROUND `schiphol`, so substitution was
-                    # a no-op. Gated now by a NON-GROUND seam test.
-                    push!(out, (subst(res, mb), mb))
+    # ─── PER-HEAD COST, MEASURED IN PLACE ───────────────────────────────────────────────────────
+    # 🔴 TIMED INLINE, NOT IN A HELPER. Splitting the body into `_rule_results_body` moved
+    # `compiled_head(` out of `rule_results` — and `test_compiled_head_seam.jl` locates that
+    # function BY SYMBOL and asserts the seam precedes the space query inside it. The invariant
+    # still held (the equation lookup is still in exactly one place) but the guard could no longer
+    # see it, and that guard exists because an earlier version of it asserted the wrong design and
+    # passed 5/5. Keep the lookup where the assertion looks.
+    _timed = _LANE_COUNTING[] && space !== nothing &&
+             call isa Expression && !isempty(call.children) && call.children[1] isa Sym
+    local _hn::Base.Symbol, _t0::UInt64
+    if _timed
+        _hn = Base.Symbol((call.children[1]::Sym).name)
+        push!(_PROF_HEAD, _hn); push!(_PROF_CHILD, UInt64(0))
+        _t0 = time_ns()
+    end
+    try
+        _LOOKUPS[] += 1
+        _LANE_COUNTING[] && _count_head!(call, space)
+        out = Tuple{Atom, Bindings}[]
+        let cc = compiled_head(call, space)
+            if cc !== nothing
+                cc isa ExecNoReduce && return out          # no clause matched ⇒ caller's miss branch
+                co = cc::CompiledOk
+                for (j, res) in enumerate(co.results)
+                    for mb in merge_bindings(b, co.binds[j])
+                        # 🔴 `subst(res, mb)`, NOT bare `res` — PARITY WITH THE QUERY BRANCH BELOW, which
+                        # hands on `subst(X, mb)`. A compiled clause `(= (f $x) (g $x))` returns `(g $x)`
+                        # with `$x` bound only inside `mb`; passing it uninstantiated makes the answer's
+                        # shape depend on which lane's continuation consumes it. Seam test 1 did NOT catch
+                        # this — its hand-written closure returned a GROUND `schiphol`, so substitution was
+                        # a no-op. Gated now by a NON-GROUND seam test.
+                        push!(out, (subst(res, mb), mb))
+                    end
                 end
+                return out
             end
-            return out
+        end
+        space === nothing && return out
+        X = freshvar("X")
+        for qb in query(space::Space, Expression(Sym("="), call, X)),
+            mb in merge_bindings(b, qb)
+            # resolve-filter (hyperon interpreter.rs query:619): drop a match whose rewrite-RHS X is
+            # TRULY unbound — a bare variable space atom binds itself to the `(= …)` query and would
+            # leak as a spurious `$X`. `is_present` NOT `resolve===nothing`: X equated to another var
+            # (e.g. `(= (id $x) $x)`) is LEGIT and must be kept.
+            is_present(mb, X) || continue
+            push!(out, (subst(X, mb), mb))
+        end
+        out
+    finally
+        if _timed
+            _incl = time_ns() - _t0
+            pop!(_PROF_HEAD); _child = pop!(_PROF_CHILD)
+            isempty(_PROF_CHILD) || (_PROF_CHILD[end] += _incl)   # charge the caller
+            _st = _state!(space)
+            _st.incl_ns[_hn] = get(_st.incl_ns, _hn, 0) + Int(_incl)
+            _st.self_ns[_hn] = get(_st.self_ns, _hn, 0) +
+                               Int(_incl > _child ? _incl - _child : zero(_incl))
         end
     end
-    space === nothing && return out
-    X = freshvar("X")
-    for qb in query(space::Space, Expression(Sym("="), call, X)),
-        mb in merge_bindings(b, qb)
-        # resolve-filter (hyperon interpreter.rs query:619): drop a match whose rewrite-RHS X is
-        # TRULY unbound — a bare variable space atom binds itself to the `(= …)` query and would
-        # leak as a spurious `$X`. `is_present` NOT `resolve===nothing`: X equated to another var
-        # (e.g. `(= (id $x) $x)`) is LEGIT and must be kept.
-        is_present(mb, X) || continue
-        push!(out, (subst(X, mb), mb))
-    end
-    out
 end
 
 # 🔴 HEADS WHOSE COMPILED LANE FAULTED ON ITS CALL-DEPTH BUDGET. **SESSION-SCOPED, DELIBERATELY.**
@@ -1510,10 +1593,19 @@ mutable struct SpaceCompileState
     # whose clauses change while the flag is on keeps its decline. Acceptable for the measurement
     # harness this currently serves; a production trigger must invalidate on `space.revision`.
     declined::Set{Tuple{Base.Symbol, Int}}
+    # ─── PER-HEAD COST, THE `jiti_list`/profiler EQUIVALENT FOR *HEADS* ──────────────────────────
+    # 🔴 "WHICH HEAD IS THE TIME IN" HAD NO INSTRUMENT. `calls` gave counts and `head_lane` gave the
+    # lane, but TIME came only from Julia's profiler, which reports Julia functions and needed
+    # hand-written bucketing to read. SWI's profiler answers it per predicate directly. Gated by
+    # `_LANE_COUNTING[]` with the call counter, so it costs nothing unless asked for.
+    incl_ns::Dict{Base.Symbol, Int}           # time in this head INCLUDING nested head calls
+    self_ns::Dict{Base.Symbol, Int}           # … EXCLUDING them — where the time actually is
+    cands::Dict{Base.Symbol, Int}             # candidate atoms examined while serving this head
 end
 SpaceCompileState() = SpaceCompileState(
     _DefTable(), Dict{Base.Symbol, Base.Symbol}(), Dict{Base.Symbol, Int}(), Set{Base.Symbol}(),
-    Set{Tuple{Base.Symbol, Int}}()
+    Set{Tuple{Base.Symbol, Int}}(),
+    Dict{Base.Symbol, Int}(), Dict{Base.Symbol, Int}(), Dict{Base.Symbol, Int}()
 )
 
 const _SPACE_STATE = WeakKeyDict{Space, SpaceCompileState}()
@@ -3244,6 +3336,7 @@ function _match_pat(space::Space, pat::Atom, b0::Bindings)::Vector{Bindings}
     cands = index_candidates(
         all_atoms(space), space.store.arg_index, space.store.arg_tried, p
     )
+    _prof_candidates!(space, length(cands))   # per-head, not just the global index total
     for atom in cands, mb in match_atoms(p, rename_fresh(atom))
         append!(out, merge_bindings(b0, mb))
     end

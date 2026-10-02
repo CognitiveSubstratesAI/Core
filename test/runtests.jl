@@ -110,6 +110,9 @@ struct SuiteSettings
     # one changes how everything after it behaves.
     index_enabled::Bool
     compile_on_first_call::Bool
+    # Gates the per-head call counts AND the per-head cost timing, so a file that leaves it on
+    # changes what every later file measures — and pays for.
+    lane_counting::Bool
     # NAME-KEYED SETS: process-global and keyed by BARE HEAD NAME, so a leftover entry silently
     # changes how a LATER file's same-named head behaves. CONTENTS, not counts — a file that
     # untables one head and tables a different one keeps the count identical.
@@ -130,6 +133,7 @@ _suite_settings() = SuiteSettings(
     MeTTaCore.CompilerEmitJulia.CODEGEN_ENABLED[],
     MeTTaCore.Eval.INDEX_ENABLED[],
     MeTTaCore.Eval.COMPILE_ON_FIRST_CALL[],
+    MeTTaCore.Eval._LANE_COUNTING[],
     # ONLY the process-global record: per-space marks die with their space and cannot leak between
     # files, and iterating the WeakKeyDict would make this delta depend on GC timing.
     MeTTaCore.Eval.unscoped_interpret_only(),
