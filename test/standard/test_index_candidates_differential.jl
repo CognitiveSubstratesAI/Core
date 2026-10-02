@@ -74,6 +74,16 @@ end
         "(≞ (⊃ A0 A1) (STV 1 0.4))",
         # a different head symbol and a different arity under the same head
         "(other A0 A1)", "(≞ A0)",
+        # ─── SHAPES THE DEEP KEY MUST HANDLE, ADDED BEFORE IT EXISTS ────────────────────────────
+        # The corpus above was designed for the HEAD-SYMBOL key, where a compound argument keys by
+        # its functor alone. The deep key will key it by functor PLUS first argument, `(→, A3)`, and
+        # these are the shapes that distinguishes. They must agree with the unindexed scan NOW (the
+        # head-symbol key is simply less selective) and keep agreeing after.
+        "(≞ (→ \$dvx A1) (STV 1 0.21))",     # a VARIABLE at the deep position, left
+        "(≞ (→ A0 \$dvy) (STV 1 0.22))",     # … and right
+        "(≞ (→ (f a) A1) (STV 1 0.23))",     # a COMPOUND as the deep position: keys by its head `f`
+        "(≞ (→ A0) (STV 1 0.24))",           # the SAME functor at a DIFFERENT ARITY …
+        "(≞ (→ A0 A1 A2) (STV 1 0.25))",     # … and a third
         # 🔴 PADDING PAST THE INDEX THRESHOLD, AND IT IS LOAD-BEARING. MEASURED: with only the dozen
         # atoms above, NO index is ever built (`_TRIE_MIN_BUCKET` = 16, and `bestHash` declines on a
         # small bucket), so `index_candidates` returns the WHOLE STORE on both arms and this file
@@ -129,6 +139,36 @@ end
             @test !isempty(both[false])        # anti-vacuity: the repeat still answers
             @test both[true] == both[false]    # 🔴 the lookup path must agree too
         end
+    end
+
+    @testset "🔴 DEEP-KEY SHAPES — written before the deep key exists" begin
+        # Each must agree with the unindexed scan, and each is a way a one-level deep key can go
+        # wrong. They pass under the head-symbol key too — that key is a SUPERSET, which is exactly
+        # the licence a narrowing has — so this testset is a forward guard, not a prediction.
+        for (label, q) in [
+            # a ground deep key: must still return the VARIABLE-at-deep-position atoms, which match
+            # any first argument, and the variable-at-POSITION atom `(≞ $anyp …)`
+            ("ground deep key",      "!(match &self (≞ (→ A0 A1) \$t) \$t)\n"),
+            # 🔴 A VARIABLE AT THE DEEP POSITION IN THE *QUERY* — the key cannot be formed, so this
+            # must fall back to the whole functor bucket, NOT to nothing.
+            ("var at deep position", "!(match &self (≞ (→ \$x \$y) \$t) \$t)\n"),
+            # a COMPOUND at the deep position: `(f a)` keys by its head `f`
+            ("compound deep key",    "!(match &self (≞ (→ (f a) A1) \$t) \$t)\n"),
+            # the same functor at OTHER arities must not be lost by a key that ignores arity
+            ("deep key, arity 1",    "!(match &self (≞ (→ A0) \$t) \$t)\n"),
+            ("deep key, arity 3",    "!(match &self (≞ (→ A0 A1 A2) \$t) \$t)\n"),
+        ]
+            (u, i) = _idx_agree(DEFS, q)
+            @test !isempty(u)              # anti-vacuity: the shape really is in the corpus
+            @test i == u                   # value, multiplicity and order
+        end
+
+        # 🔴 AND THE VARIABLE-AT-DEEP-POSITION ATOMS MUST BE AMONG THE GROUND LOOKUP'S ANSWERS.
+        # A deep key of `(→, A0)` that forgot them would return a strict subset and lose answers —
+        # the same union condition as the variable-at-POSITION atoms, one level down.
+        (u2, _) = _idx_agree(DEFS, "!(match &self (≞ (→ A0 A1) \$t) \$t)\n")
+        @test any(x -> occursin("0.21", x), u2)   # `(→ $dvx A1)` matches a ground A0
+        @test any(x -> occursin("0.22", x), u2)   # `(→ A0 $dvy)` matches a ground A1
     end
 
     @testset "🔴 ABSENT KEY must still return the variable-position atoms" begin

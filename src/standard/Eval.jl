@@ -858,11 +858,20 @@ head_call_table() =
         sort([(h, n, head_lane(h)) for (h, n) in merged]; by=r -> -r[2])
     end
 
-"""Per-head COST, hottest by SELF time first: `(head, calls, lane, self_ms, incl_ms, candidates)`.
+"""Per-head DISPATCH cost, hottest first:
+`(head, calls, lane, dispatch_self_ms, dispatch_incl_ms, candidates)`.
 
-🔴 SELF TIME IS THE ONE TO READ. Inclusive time makes every caller look expensive — a head that only
-calls two slow ones scores as high as they do. Self is inclusive minus the time its callees took,
-which is what distinguishes "this head is slow" from "something it calls is".
+🔴🔴 THIS IS RULE-DISPATCH COST, NOT "TIME SPENT IN THIS HEAD". `rule_results` looks a call up and
+returns the REWRITTEN body; the interpreter's continuation loop evaluates that body AFTERWARDS,
+OUTSIDE the timed region. So a head's own `match`/arithmetic/recursion is NOT charged to it — which
+is why `deduction` reads 22 ms inclusive on a run that takes 8.6 s. The columns are named
+`dispatch_*` so that small number cannot be read as "this head is cheap".
+⚠️ TRUE per-head inclusive time needs every continuation frame to carry the head that spawned it, so
+evaluation steps and grounded calls are charged back. That waits for the VM tier's frames.
+
+🔴 SELF IS THE ONE TO READ, within that scope. Inclusive makes every caller look expensive — a head
+that merely dispatches two slow ones scores as high as they do. Self is inclusive minus the dispatch
+time of its callees.
 
 `candidates` is how many stored atoms were examined while serving the head: SWI rejects a clause on
 one word comparison before any unification, so a large candidate count beside a small answer count
@@ -878,6 +887,7 @@ function head_cost_table()
         for (h, n) in s.incl_ns; incl[h]  = get(incl,  h, 0) + n; end
         for (h, n) in s.cands;   cand[h]  = get(cand,  h, 0) + n; end
     end
+    # columns: head, calls, lane, dispatch_self_ms, dispatch_incl_ms, candidates
     rows = [(h, get(calls, h, 0), head_lane(h),
              round(get(self, h, 0) / 1e6, digits = 3),
              round(get(incl, h, 0) / 1e6, digits = 3),
@@ -1598,8 +1608,10 @@ mutable struct SpaceCompileState
     # lane, but TIME came only from Julia's profiler, which reports Julia functions and needed
     # hand-written bucketing to read. SWI's profiler answers it per predicate directly. Gated by
     # `_LANE_COUNTING[]` with the call counter, so it costs nothing unless asked for.
-    incl_ns::Dict{Base.Symbol, Int}           # time in this head INCLUDING nested head calls
-    self_ns::Dict{Base.Symbol, Int}           # … EXCLUDING them — where the time actually is
+    # ⚠️ DISPATCH time, not evaluation time — `rule_results` returns a REWRITTEN body that the
+    # continuation loop evaluates later, outside the measured region. See `head_cost_table`.
+    incl_ns::Dict{Base.Symbol, Int}           # dispatch INCLUDING nested dispatches
+    self_ns::Dict{Base.Symbol, Int}           # … EXCLUDING them
     cands::Dict{Base.Symbol, Int}             # candidate atoms examined while serving this head
 end
 SpaceCompileState() = SpaceCompileState(
