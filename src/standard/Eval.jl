@@ -938,11 +938,31 @@ const COMPILED_FALLBACK_DEPTH = Ref(0)
 "How many times a lookup found a STALE compilation (clause set changed under it)."
 const COMPILED_FALLBACK_STALE = Ref(0)
 
+"""How many calls the compiled lane refused because an ARGUMENT CONTAINED AN UNBOUND VARIABLE.
+
+🔴 MEASURED 2026-10-01, interpreter as oracle, `conformance/e1_kb_write.metta`:
+    !(let \$r (green \$x) \$x)     interpreted ["Sam","Fritz"]     compiled ["\$x","\$x"]
+Both arms found BOTH solutions — what the compiled lane lost is THE CALLER'S BINDING. Attributed by
+compiling one head at a time: only `green`, only `ift`, only `croaks` are each correct; compiling
+only `frog` reproduces it. `(= (frog \$x) (and (croaks \$x) (eat_flies \$x)))` calls `croaks` with an
+UNBOUND `\$x`, the callee binds it, and the compiled entry DISCARDS the callee's bindings.
+
+That is the recorded limitation in the codegen — bindings are dropped, "sound only while head args
+are bound positionally, so no callee can produce one" — and a call with an unbound argument is
+exactly the case where a callee DOES produce one. `(green \$x)` meaning "find \$x such that…" is the
+NORMAL SHAPE OF A QUERY, so this reaches ordinary backward chaining and PLN, not a corner.
+
+Refusing at the seam is a CALL-TIME guard because groundness is a property of the CALL, not of the
+clause: the same head is sound when called ground. The real fix is read/write-mode head unification
+(SWI's two-mode model), at which point this counter should go to zero on its own."""
+const COMPILED_FALLBACK_NONGROUND = Ref(0)
+
 "Clear the session's compiled-lane fallback state. For tests and benchmarks."
 function reset_compiled_fallbacks!()
     clear_interpret_only!()
     COMPILED_FALLBACK_DEPTH[] = 0
     COMPILED_FALLBACK_STALE[] = 0
+    COMPILED_FALLBACK_NONGROUND[] = 0
     nothing
 end
 
@@ -962,6 +982,30 @@ function _head_clause_hash(space, name::Symbol)::UInt64
         (hd isa Sym && Symbol(hd.name) === name) && push!(rules, a)
     end
     hash(rules)
+end
+
+"""Was this head's entry produced by OUR EMITTER, rather than hand-registered by a caller?
+
+`set_head_lane!` is called only from `emit_julia_program`, so a recorded lane is the mark of
+generated code — and generated code is what cannot carry a callee's bindings. A hand-registered
+closure returns `CompiledOk(results, binds)` and carries them correctly."""
+_emitted_entry(space, hn::Symbol)::Bool =
+    (let st = _state(space); st !== nothing && haskey(st.lane, hn); end) ||
+    haskey(_UNSCOPED.lane, hn)
+
+"""Does this atom contain a variable anywhere? A call with one cannot use the compiled lane — see
+`COMPILED_FALLBACK_NONGROUND`.
+
+⚠️ WALKS THE CALL, SO IT IS ON THE HOT PATH. It runs only AFTER a definition has been found, which
+is already the rare branch: `compiled_head` returns on its first line while no head is compiled, and
+on the arity lookup when this head is not. Within a call it is O(term size) with no allocation."""
+function _has_var(a::Atom)::Bool
+    a isa Var && return true
+    a isa Expression || return false
+    for c in a.children
+        _has_var(c) && return true
+    end
+    false
 end
 
 """
@@ -990,6 +1034,29 @@ function compiled_head(to_eval::Atom, space)
     # entry a hand-registration leaves, so existing callers are unaffected.
     ch = _lookup_def(space, hn, length(to_eval.children) - 1)
     ch === nothing && return nothing
+    # 🔴 A NON-GROUND CALL TO *GENERATED* CODE GOES TO THE INTERPRETER. Generated entries discard
+    # the callee's bindings, so a call with an unbound argument answers correctly but LOSES THE
+    # BINDING — see `COMPILED_FALLBACK_NONGROUND`. Checked PER CALL, after the lookup, because
+    # groundness is a property of the CALL and not of the clause: the same head is sound called
+    # ground, and declining the head outright would throw that coverage away.
+    #
+    # 🔴 AND ONLY FOR EMITTER-PRODUCED ENTRIES — MEASURED, after a broader version broke 7
+    # assertions in `test_compiled_head_seam.jl`. A HAND-REGISTERED closure carries its bindings
+    # correctly through `CompiledOk(results, binds)`; that type exists BECAUSE this defect was found
+    # and fixed once already ("the answer CARRIES the binding — the defect's 3rd appearance"), and
+    # SEAM TESTS 1, 4 and 5 deliberately call such a closure with an unbound variable. Refusing
+    # those sent them to an interpreter that has no rules to run, so `!(m $w)` came back as
+    # `(pair $w (hc $w))` — UNREDUCED, strictly worse than before.
+    # `set_head_lane!` is called ONLY from `emit_julia_program`, so a recorded lane is exactly the
+    # mark of an entry this compiler generated, which is the code with the binding limitation.
+    if _emitted_entry(space, hn)
+        for i in 2:length(to_eval.children)
+            if _has_var(to_eval.children[i])
+                COMPILED_FALLBACK_NONGROUND[] += 1
+                return nothing
+            end
+        end
+    end
     # 🔴 THE STORED CLAUSE HASH IS CHECKED, BUT **GATED ON `revision`**, AND THE GATE IS THE POINT.
     # `CompiledHead.clause_hash` always existed and the comment above `_COMPILED_HEADS` always said
     # the registry is "keyed by the head's clause-set hash" — yet the lookup only matched the NAME,

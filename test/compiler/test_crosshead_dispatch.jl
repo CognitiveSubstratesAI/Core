@@ -168,6 +168,40 @@ end
     @test_broken d.lane === :native
 end
 
+@testset "🔴 a NON-GROUND call must not lose the CALLER'S BINDING" begin
+    # MEASURED on `conformance/e1_kb_write.metta` via the compiled-head differential, then
+    # attributed by compiling ONE head at a time: only `green`, only `ift`, only `croaks` are each
+    # correct; compiling only `frog` reproduces it. So `frog` owns it.
+    #     !(let $r (frog $x) $x)   interpreted ["Sam","Fritz"]   compiled ["$x","$x"]
+    # BOTH ARMS FIND BOTH SOLUTIONS. What is lost is the binding of the CALLER'S variable: `frog`
+    # calls `croaks` with an unbound `$x`, the callee binds it, and the compiled entry DISCARDS the
+    # callee's bindings. `(frog $x)` meaning "find $x such that…" is the normal shape of a query, so
+    # this is ordinary backward chaining, not a corner.
+    prog = "(= (croaks Fritz) True)\n(= (croaks Sam) True)\n" *
+           "(= (eat_flies Fritz) True)\n(= (eat_flies Sam) True)\n" *
+           "(= (frog \$x) (and (croaks \$x) (eat_flies \$x)))\n"
+
+    EV.uncompile_all!(); EV.reset_compiled_fallbacks!()
+    sp = EV.Space(); EV.load_core_stdlib!(sp); EV.load_metta!(sp, prog)
+    interp = sort(_xh(sp, "!(let \$r (frog \$x) \$x)\n"))
+    @test interp == ["Fritz", "Sam"]                  # the oracle, and the case is live
+    @test EJ.jit_head!(:frog, sp) == true             # anti-vacuity: the head really compiled
+    f0 = EV.fired(:frog)
+    @test sort(_xh(sp, "!(let \$r (frog \$x) \$x)\n")) == interp   # 🔴 was ["\$x","\$x"]
+    # 🔴 THE GUARD MUST BE WHAT SAVED IT, not luck: the seam refused the call, so the compiled entry
+    # never fired. Without this the assertion above could pass because the head quietly stopped
+    # compiling at all, which is a different and worse fix.
+    @test EV.COMPILED_FALLBACK_NONGROUND[] > 0
+    @test EV.fired(:frog) == f0
+
+    # AND A GROUND CALL MUST STILL DISPATCH COMPILED. The guard is per CALL, not per head — a head
+    # is sound when called ground, and declining it outright would throw that coverage away.
+    f1 = EV.fired(:frog)
+    @test _xh(sp, "!(frog Fritz)\n") == ["True"]
+    @test EV.fired(:frog) > f1
+    EV.uncompile_all!()
+end
+
 @testset "a TABLED callee must still route through TABLING (forward guard)" begin
     # ⚠️ THIS PASSES TODAY, AND SAYS SO. `go`'s call to `reach` is in TAIL position, so it is not a
     # goal at all: the interpreter reduces the clause output and tabling is reached normally. It

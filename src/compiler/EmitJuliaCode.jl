@@ -153,7 +153,22 @@ const _NONDET_OPS = Set(["superpose"])
 # an impure op (`println!`), 0.3%. So the exclusion costs one head and buys a re-runnable lane.
 # `add-atom`, `remove-atom`, `bind!`, `import!` and `auto-table!` are `SpaceOp`s and already decline.
 const _IMPURE_OPS = Set(["println!", "trace!", "table!", "change-state!",
-    "new-space", "fork-space", "new-mork-space"])
+    "new-space", "fork-space", "new-mork-space",
+    # ─── THE SPACE WRITERS, ADDED 2026-10-01 AS DEFENCE IN DEPTH ────────────────────────────────
+    # 🔴 THEY WERE ABSENT, AND THE NOTE BELOW EXPLAINS WHY: they are `SpaceOp`s, not `Operation`s,
+    # so `_gcall_parts` rejects them and CODEGEN ALREADY DECLINES. VERIFIED, not assumed — three
+    # shapes (`(= (p $n) (add-atom &self (Mark $n)))`, the same under a `let`, and `remove-atom`)
+    # all report `codegen=DECLINE`, compiling on the PLAN lane only.
+    #
+    # ⇒ the re-run hazard is NOT currently reachable: the depth fallback that re-interprets a
+    # half-executed call lives in `_codegen_seam_fn`, which is the CODEGEN path, and a write never
+    # gets there. That is why the double-write repro could not be built.
+    #
+    # They are listed ANYWAY because the invariant "a clause that writes may not be re-run" should
+    # be stated WHERE IT IS RELIED ON, not left resting on `_gcall_parts`'s type dispatch in another
+    # file — a refactor that taught `_gcall_parts` about `SpaceOp`s would silently re-open it. The
+    # cost is ~0 coverage, since codegen declines these clauses either way.
+    "add-atom", "remove-atom", "add-reduct", "bind!"])
 
 # ─── THE DEPTH BUDGET, AND WHY IT IS NOT A `try`/`catch` ON `StackOverflowError` ────────────────
 # 🔴 A STACK OVERFLOW IS NOT CATCHABLE IN ANY WAY CODE MAY DEPEND ON. Julia prints "detected a stack
