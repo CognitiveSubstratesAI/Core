@@ -57,9 +57,18 @@ const _CONF = normpath(joinpath(@__DIR__, "..", "standard", "conformance"))
     @test t.files == CHD_TOTALS.files                  # the corpus was really read, all of it
     @test t.answered == CHD_TOTALS.answered            # and every directive really answered
     @test t.answered == t.directives                   # none silently produced nothing
-    @test t.native > 0                                 # 🔴 codegen really ran — else classes A/B
-                                                       #    could not appear at all
-    @test t.plan > 0                                   # and so did the plan lane — class C needs it
+    # 🔴 FLOORS, NOT "> 0". MEASURED 2026-10-02: a swallowed `UndefVarError` made EVERY head
+    # decline — `native 0, plan 0, declined 1270` — and this file would have reported ZERO
+    # DIVERGENCES and passed, because a dead compiler diverges from nothing. `> 0` would have
+    # caught that particular collapse; a FLOOR also catches a partial one, which is the likelier
+    # shape when a guard is widened by accident. Current: 282 native, 155 plan.
+    @test t.native >= 200
+    @test t.plan >= 100
+    # 🔴 AND A CRASH IS NOT A DECLINE. Every compile path now funnels through
+    # `Eval.record_jit_error!`, so this is the assertion that a silent emitter failure cannot
+    # masquerade as "that head was out of scope".
+    @test t.jit_errors == 0
+    @test MeTTaCore.Eval.jit_errors() == 0
 
     # ── THE PINNED SET, EXACTLY ──────────────────────────────────────────────────────────────────
     got = sort([(basename(d.file), d.directive, d.interp, d.compiled) for d in r.divergences],

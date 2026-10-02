@@ -464,7 +464,11 @@ function jit_head!(name::Base.Symbol, space)::Bool
     key = hash(rules)                                   # the CLAUSE SET, not the space
     clauses = try
         CompilerANormal.translate_program(CompilerFrontend.lower_program(rules))
-    catch
+    catch e
+        # 🔴 COUNTED, NOT SWALLOWED. A bare `return false` here is indistinguishable from an
+        # out-of-scope head, so a translation crash looked like a normal decline — see
+        # `Eval.record_jit_error!` for the run where that hid a dead compiler.
+        Eval.record_jit_error!(e, catch_backtrace(), :jit_head_translate)
         return false
     end
     mine = ANClause[c for c in clauses if c.name === name]

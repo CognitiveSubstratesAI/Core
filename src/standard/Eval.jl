@@ -719,6 +719,23 @@ const _JIT_ERRORS = Ref(0)
 # which is the first thing wanted when a stress run fails ("where did it throw"), and a string loses
 # both. `Ref{Any}` would also trip the no-Any gate.
 const _JIT_FIRST_ERROR = Ref{Union{Nothing, CapturedException}}(nothing)
+"""Record a compiler CRASH — not a decline. 🔴 ONE PLACE, because the split used to be enforced
+only inside the `(compile-head …)` op: `jit_head!`'s internal `catch` and the first-call trigger both
+turned ANY exception into `false`, i.e. into a decline. MEASURED 2026-10-02 — an `UndefVarError` in
+the emitter made EVERY head "decline" (`native 0, plan 0, declined 1270`), and the PLN tests then
+"passed" with 0 divergences because the compiler was silently OFF. A swallowed error must never be
+able to fake a green result, so every caller funnels through here."""
+function record_jit_error!(e, bt, where::Base.Symbol)
+    _JIT_ERRORS[] += 1
+    if _JIT_FIRST_ERROR[] === nothing
+        _JIT_FIRST_ERROR[] = CapturedException(e, bt)
+        # ⚠️ ONCE, not per call: under a threshold-1 trigger this fires for every head and would
+        # flood the log, which is how a real signal gets scrolled away.
+        @warn "the compiler THREW — an ERROR, not a decline; head runs interpreted" site=where
+    end
+    nothing
+end
+
 jit_errors() = _JIT_ERRORS[]
 jit_first_error() = _JIT_FIRST_ERROR[]
 reset_jit_errors!() = (_JIT_ERRORS[] = 0; _JIT_FIRST_ERROR[] = nothing; nothing)
@@ -1118,7 +1135,17 @@ function compiled_head(to_eval::Atom, space)
             # search the wrong axis.
             if COMPILE_FIRST_N[] < 0 || length(_COMPILE_ORDER) < COMPILE_FIRST_N[]
                 _hook = _JIT_HEAD_HOOK[]
-                _ok = _hook === nothing ? false : (try _hook(hn, space)::Bool catch; false end)
+                _ok = if _hook === nothing
+                    false
+                else
+                    # 🔴 AN EXCEPTION HERE IS AN ERROR, NOT A DECLINE — this `catch` used to return
+                    # `false` and that is exactly how a dead compiler read as "everything declined".
+                    try _hook(hn, space)::Bool
+                    catch e
+                        record_jit_error!(e, catch_backtrace(), :first_call_trigger)
+                        false
+                    end
+                end
                 # A DECLINE IS CACHED, not merely counted — see `SpaceCompileState.declined`.
                 if _ok
                     push!(_COMPILE_ORDER, hn)
@@ -3015,15 +3042,9 @@ const COMPILE_HEAD = Grounded(
             ok = try
                 hook(name, space)::Bool
             catch e
-                # NOT a decline — see `_JIT_ERRORS`. Still falls back to the interpreter so
-                # evaluation stays CORRECT; what changes is that the failure is now visible.
-                _JIT_ERRORS[] += 1
-                if _JIT_FIRST_ERROR[] === nothing
-                    _JIT_FIRST_ERROR[] = CapturedException(e, catch_backtrace())
-                    # ⚠️ ONCE, not per call: under a threshold-1 trigger this fires for every head
-                    # and would flood the log, which is how a real signal gets scrolled away.
-                    @warn "compile-head THREW — an ERROR, not a decline; head runs interpreted" head=name
-                end
+                # NOT a decline. Still falls back to the interpreter so evaluation stays CORRECT;
+                # what changes is that the failure is VISIBLE.
+                record_jit_error!(e, catch_backtrace(), :compile_head_op)
                 false
             end
             ok || (_JIT_DECLINED[] += 1)
