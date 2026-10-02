@@ -59,6 +59,16 @@ function _idx_agree(defs, q)
     (a, b)
 end
 
+"""A grounded value whose `==` reaches a BUILT-IN INTEGER and whose `hash` does not follow it —
+the shape a single shared "unkeyed" bucket would still drop, because the stored atom would sit under
+that bucket while a query carrying `1` looks under `hash(1)`."""
+struct _MyN
+    v::Int
+end
+Base.:(==)(a::_MyN, b::_MyN) = a.v == b.v
+Base.:(==)(a::_MyN, b::Integer) = a.v == b
+Base.:(==)(a::Integer, b::_MyN) = a == b.v
+
 @testset "index_candidates — every narrowing agrees with the unindexed scan" begin
 
     # A corpus with all the shapes the two narrowings must respect, deliberately mixed so the
@@ -138,6 +148,90 @@ end
             end
             @test !isempty(both[false])        # anti-vacuity: the repeat still answers
             @test both[true] == both[false]    # 🔴 the lookup path must agree too
+        end
+    end
+
+    @testset "🔴 THE BUCKET TRIE MUST NOT KEY GROUNDED VALUES BY `hash`" begin
+        # `_tok` tokenises a grounded atom as `_Tok(_KGND, hash(a.value))`, and `_trie_collect!`
+        # follows a ground query token only along the concrete edge carrying THE SAME token. But
+        # `match` compares grounded values with `==`, and the two disagree exactly where it costs:
+        #     0.0 == -0.0  is TRUE   while  hash(0.0) == hash(-0.0)  is FALSE
+        # So a stored `(= (f 0.0) zero)` sits under one token and a call `(f -0.0)` looks under
+        # another, MISSES IT, and the answer is dropped — but only once the bucket exceeds
+        # `_TRIE_MIN_BUCKET`, so a program CHANGES BEHAVIOUR AS ITS CLAUSE COUNT CROSSES 16.
+        #
+        # 🔴 THE ORACLE IS THE SMALL BUCKET, not a hand-written expectation: the identical program
+        # below `_TRIE_MIN_BUCKET` takes the linear scan and is correct by construction.
+        # MEASURED before the fix: 4 clauses -> ["zero"], 41 clauses -> ["(f -0.0)"].
+        function _trie_probe(nfill)
+            sp = EV.Space(); EV.load_core_stdlib!(sp)
+            EV.load_metta!(sp, "(= (f 0.0) zero)\n")
+            for i in 1:nfill; EV.load_metta!(sp, "(= (f s\$i) v\$i)\n"); end
+            ([string(x) for x in EV.load_metta!(sp, "!(f -0.0)\n")],
+             [string(x) for x in EV.load_metta!(sp, "!(f 0.0)\n")])
+        end
+        (small_neg, small_pos) = _trie_probe(3)     # linear scan — the oracle
+        (big_neg,   big_pos)   = _trie_probe(40)    # the trie engages
+        @test small_neg == ["zero"]                 # anti-vacuity: `-0.0` really does match `0.0`
+        @test small_pos == ["zero"]
+        @test big_pos  == small_pos                 # the positive case was never broken
+        @test big_neg  == small_neg                 # 🔴 was ["(f -0.0)"] — the answer was DROPPED
+
+        # ── VALUES WHOSE `==` AND `hash` DISAGREE, EACH ABOVE THE TRIE THRESHOLD ────────────────
+        # `==` on a container compares ELEMENTS with `==` while `hash` goes through `isequal`, so a
+        # one-line signed-zero normalisation fixes the SCALAR case and leaves every container
+        # broken. VERIFIED `==`-equal with different hashes: [0.0]/[-0.0], (0.0,1)/(-0.0,1),
+        # 0.0+0.0im/0.0-0.0im, and any custom type with its own `==`.
+        # 🔴 AND ACROSS TYPES: a value whose `==` accepts a built-in scalar must still be found by a
+        # query carrying that scalar — which is why unkeyable values become a WILDCARD token rather
+        # than one shared grounded bucket. Both directions are tested.
+        function _trie_gnd(stored, query, nfill)
+            sp = EV.Space(); EV.load_core_stdlib!(sp)
+            EV.load_metta!(sp, "(= (g $stored) hit)\n")
+            for i in 1:nfill; EV.load_metta!(sp, "(= (g s$i) v$i)\n"); end
+            [string(x) for x in EV.load_metta!(sp, "!(g $query)\n")]
+        end
+        for (label, stored, query) in [
+            ("integer zero vs -0.0", "0",    "-0.0"),
+            ("integer zero vs 0.0",  "0",    "0.0"),
+            ("-0.0 stored, 0 asked", "-0.0", "0"),
+        ]
+            small = _trie_gnd(stored, query, 3)      # the oracle: below the threshold
+            big   = _trie_gnd(stored, query, 40)     # the trie engages
+            @test small == ["hit"]                   # anti-vacuity: they really are `==`
+            @test big == small                       # … and the trie must not lose it
+        end
+
+        # ── CONTAINERS AND CUSTOM TYPES, BUILT DIRECTLY — the cases MeTTa text cannot express ────
+        # These motivated the whitelist: `[0.0] == [-0.0]` is TRUE with DIFFERENT hashes, and the
+        # same holds for a tuple, a complex with a signed-zero part, and any custom `==`.
+        # 🔴 `_MyN` ALSO COMPARES EQUAL TO A BUILT-IN INTEGER, which is the case a shared
+        # "unkeyed" bucket would still drop: stored under that bucket, queried as `1`.
+        "built with Grounded(…) because no MeTTa surface syntax produces a Julia vector"
+        function _gnd_probe(stored_val, query_val, nfill)
+            sp = EV.Space(); EV.load_core_stdlib!(sp)
+            EV.add_atom!(sp, V.Expression(V.Atom[V.Sym("="),
+                V.Expression(V.Atom[V.Sym("h"), V.Grounded(stored_val)]), V.Sym("hit")]))
+            for i in 1:nfill
+                EV.add_atom!(sp, V.Expression(V.Atom[V.Sym("="),
+                    V.Expression(V.Atom[V.Sym("h"), V.Sym("s$i")]), V.Sym("v$i")]))
+            end
+            q = V.Expression(V.Atom[V.Sym("h"), V.Grounded(query_val)])
+            [string(x) for x in EV.metta_run(q, sp)]
+        end
+        for (label, sv, qv) in [
+            ("vector [0.0] vs [-0.0]",  [0.0],        [-0.0]),
+            ("tuple (0.0,1)",           (0.0, 1),     (-0.0, 1)),
+            ("complex signed zero",     0.0 + 0.0im,  0.0 - 0.0im),
+            ("custom ==",               _MyN(1),      _MyN(1)),
+            ("🔴 custom == Integer",    _MyN(1),      1),
+            ("🔴 Integer == custom",    1,            _MyN(1)),
+        ]
+            @test _MyN(1) == 1                       # anti-vacuity for the cross-type pair
+            small = _gnd_probe(sv, qv, 3)            # oracle: linear scan
+            big   = _gnd_probe(sv, qv, 40)           # the trie engages
+            @test small == ["hit"]                   # they really are `==`
+            @test big == small                       # … and the trie must not lose it
         end
     end
 

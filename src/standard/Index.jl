@@ -105,6 +105,57 @@
 # (a hash collision only WIDENS the candidate set — match_atoms stays authoritative — so a match is never dropped);
 # an Expression by its arity. `kind` disambiguates hash spaces (a Sym and a Grounded with equal hashes stay separate).
 const _KVAR = 0x00
+"""The index key for a GROUNDED value. 🔴 ONE FUNCTION, used by the bucket trie's `_tok` today and
+by the argument index's grounded keys when those land, so the two cannot drift apart.
+
+🔴 IT MUST AGREE WITH `==`, NOT WITH `hash` OR `isequal`, BECAUSE `match` COMPARES WITH `==` AND THE
+THREE DISAGREE EXACTLY WHERE IT COSTS ANSWERS. MEASURED 2026-10-02:
+
+    0.0 == -0.0   TRUE    isequal FALSE    hash(0.0) == hash(-0.0)   FALSE
+    1   == 1.0    TRUE    isequal TRUE     hash equal                TRUE
+    NaN == NaN    FALSE   isequal TRUE     hash equal                TRUE
+
+Keying by bare `hash` therefore put a stored `(= (f 0.0) zero)` under one token and a call
+`(f -0.0)` under another: the trie MISSED IT and the answer was DROPPED — and only once the bucket
+exceeded `_TRIE_MIN_BUCKET`, so a program changed behaviour as its clause count crossed 16.
+MEASURED: 4 clauses answered `["zero"]`, 41 answered `["(f -0.0)"]`.
+
+🔴 AND `hash`-AGREES-WITH-`isequal` ONLY HELPS WHERE `==` AND `isequal` AGREE, WHICH FAILS FOR
+CONTAINERS AND CUSTOM TYPES. `==` on a vector or tuple compares ELEMENTS with `==`, while `hash`
+goes through `isequal`. MEASURED 2026-10-02 — every one of these is `==`-equal with DIFFERENT hashes:
+
+    [0.0] vs [-0.0]        (0.0,1) vs (-0.0,1)        0.0+0.0im vs 0.0-0.0im
+    a custom grounded type with its own `==` and no matching `hash`
+
+Not hypothetical here: FactorVSA vectors and FabricPC tensors are grounded atoms.
+
+⇒ KEY ONLY TYPES WHERE AGREEMENT IS GUARANTEED; return `nothing` for everything else, exactly as
+`_idx_head` already signals "not indexable", so the two cannot drift apart.
+
+🔴 AND "UNKEYED" MUST MEAN **WILDCARD**, NOT A SHARED BUCKET. Emitting one constant grounded token
+for unkeyable values would put them all on a CONCRETE edge together — which fixes vector-vs-vector
+but breaks EQUALITY ACROSS TYPES: a grounded type whose `==` accepts a built-in scalar (a dual
+number, a unit-carrying quantity, a wrapper where `x == 1.0` holds) would sit under that shared
+token while a query `1.0` looks under `hash(1.0)`, and the answer is dropped again. `_tok` therefore
+emits `_Tok(_KVAR, 0)`, which is a wildcard in BOTH directions: a stored atom goes on the trie's
+`star` edge, followed for EVERY query token, and a variable token in the QUERY collects the whole
+subtrie (`_trie_collect!`). No narrowing, always a candidate.
+
+⚠️ SIGNED ZERO ACROSS TYPES: raw `hash(0)` and `hash(-0.0)` DIFFER, but the normalisation maps
+`-0.0` to `hash(0.0)` and `hash(0.0) == hash(0)`, so integer zero and both float zeros share one
+key. Pinned in the test.
+⚠️ `Bool <: Integer` in Julia, so it is covered by the `Integer` branch and agrees with `1`/`0` as
+`==` requires. Do NOT add a separate branch for it."""
+function gnd_key(v)::Union{UInt64, Nothing}
+    if v isa AbstractFloat
+        return v == 0.0 ? hash(0.0) : hash(v)   # -0.0 and 0.0 agree; NaN matches nothing anyway
+    elseif v isa Integer || v isa Rational || v isa AbstractString ||
+           v isa Char || v isa Symbol
+        return hash(v)                          # `==` and `isequal` agree on these
+    end
+    nothing                                     # containers, complex, user types ⇒ WILDCARD
+end
+
 const _KSYM = 0x01
 const _KEXPR = 0x02
 const _KGND = 0x03
@@ -154,7 +205,11 @@ const _TRIE_MIN_BUCKET = 16                # build/use the trie only for buckets
     elseif a isa Expression
         _Tok(_KEXPR, UInt64(length(a.children)))
     elseif a isa Grounded
-        _Tok(_KGND, hash(a.value))
+        # `nothing` ⇒ we cannot key this value in a way that agrees with `==` ⇒ WILDCARD, not a
+        # shared grounded bucket. See `gnd_key`.
+        let _k = gnd_key(a.value)
+            _k === nothing ? _Tok(_KVAR, UInt64(0)) : _Tok(_KGND, _k)
+        end
     else
         _Tok(_KVAR, UInt64(0))
     end               # Var (or unknown) = wildcard

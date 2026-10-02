@@ -1811,7 +1811,13 @@ function query(space::Space, pattern::Atom)::Vector{Bindings}
     end
     b = get(space.store.index, k, nothing)                   # same-discriminant atoms — the (= (f …) …) rules for this f
     if b !== nothing
-        if length(b) > _TRIE_MIN_BUCKET                # wide bucket → prune the scan by shared LHS structure
+        # 🔴 `INDEX_ENABLED` MUST REACH THE TRIE TOO. It gated only `index_candidates`, so
+        # `test_index_candidates_differential.jl` ran the trie in BOTH arms and was structurally
+        # BLIND to every defect in it — which is how the grounded-`hash` bug (a dropped answer for
+        # `(f -0.0)` once a bucket exceeds `_TRIE_MIN_BUCKET`) survived under a file whose entire
+        # job is comparing narrowed against unnarrowed. A flag that does not disable every narrowing
+        # does not give the differential an oracle.
+        if INDEX_ENABLED[] && length(b) > _TRIE_MIN_BUCKET   # wide bucket → prune by shared LHS structure
             for stored in _bucket_candidates(space.store.bucket_trie, k, b, pattern)
                 append!(out, match_atoms(pattern, prep(stored)))
             end
