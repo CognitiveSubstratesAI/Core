@@ -982,12 +982,29 @@ clause: the same head is sound when called ground. The real fix is read/write-mo
 (SWI's two-mode model), at which point this counter should go to zero on its own."""
 const COMPILED_FALLBACK_NONGROUND = Ref(0)
 
+"""COMPILE EVERY HEAD ON ITS FIRST CALL. **OFF BY DEFAULT, AND NOT A PRODUCTION TRIGGER YET.**
+
+This exists to make the trigger's threshold-1 configuration MEASURABLE: "compile on first call" IS
+"every head compiled", which is what `workflows/compiled_head_differential.jl` already simulates for
+ANSWERS. The flag lets the same configuration be timed on a real workload — the PLN tests build
+their spaces inline and there is no compile-all op, so nothing else can reach them.
+
+🔴 WHAT IT IS NOT: it has no hotness counter (measurement said first-call compilation costs 5.7% of
+a run for the hot set, so no counter is wanted), no atomic installation, and only coarse decline
+invalidation. The architecture decision — whether native codegen is the primary engine at all — is
+open, so this stays a harness.
+
+Pair every flip with `reset_compiled_fallbacks!`, and turn it off in a `finally`: it is
+process-global state in a long-lived warm daemon."""
+const COMPILE_ON_FIRST_CALL = Ref(false)
+
 "Clear the session's compiled-lane fallback state. For tests and benchmarks."
 function reset_compiled_fallbacks!()
     clear_interpret_only!()
     COMPILED_FALLBACK_DEPTH[] = 0
     COMPILED_FALLBACK_STALE[] = 0
     COMPILED_FALLBACK_NONGROUND[] = 0
+    for s in _all_states(); empty!(s.declined); end
     nothing
 end
 
@@ -1035,7 +1052,9 @@ function compiled_head(to_eval::Atom, space)
     # 🔴 FIRST LINE, DELIBERATELY. `rule_results` is on the hot path of EVERY MeTTa evaluation, and
     # every existing consumer has ZERO compiled heads — so this must cost nothing until one exists.
     # An empty-Dict check is cheaper than the `isa` chain plus a hash lookup below.
-    (isempty(_SPACE_STATE) && isempty(_UNSCOPED.defs)) && return nothing
+    # ⚠️ `COMPILE_ON_FIRST_CALL` DISARMS THIS EARLY-OUT, or the first call could never compile
+    # anything: with no entries registered yet, both tables are empty and we would return here.
+    (isempty(_SPACE_STATE) && isempty(_UNSCOPED.defs) && !COMPILE_ON_FIRST_CALL[]) && return nothing
     (to_eval isa Expression && !isempty(to_eval.children)) || return nothing
     h = to_eval.children[1]
     h isa Sym || return nothing
@@ -1048,7 +1067,19 @@ function compiled_head(to_eval::Atom, space)
     # ARITY comes from the CALL, so `(f 1)` and `(f 1 2)` select different definitions — SWI's
     # name/arity indexing. `_lookup_def` tries the exact arity, then the -1 (unscoped-by-arity)
     # entry a hand-registration leaves, so existing callers are unaffected.
-    ch = _lookup_def(space, hn, length(to_eval.children) - 1)
+    _ar = length(to_eval.children) - 1
+    ch = _lookup_def(space, hn, _ar)
+    # ── FIRST-CALL COMPILATION, BEHIND THE FLAG ──────────────────────────────────────────────────
+    if ch === nothing && COMPILE_ON_FIRST_CALL[] && space !== nothing
+        _k = (hn, _ar)
+        _st = _state!(space)
+        if !(_k in _st.declined)
+            _hook = _JIT_HEAD_HOOK[]
+            _ok = _hook === nothing ? false : (try _hook(hn, space)::Bool catch; false end)
+            # A DECLINE IS CACHED, not merely counted — see `SpaceCompileState.declined`.
+            _ok ? (ch = _lookup_def(space, hn, _ar)) : push!(_st.declined, _k)
+        end
+    end
     ch === nothing && return nothing
     # 🔴 A NON-GROUND CALL TO *GENERATED* CODE GOES TO THE INTERPRETER. Generated entries discard
     # the callee's bindings, so a call with an unbound argument answers correctly but LOSES THE
@@ -1388,9 +1419,19 @@ mutable struct SpaceCompileState
     lane::Dict{Base.Symbol, Base.Symbol}      # head -> :native | :plan, as registered
     calls::Dict{Base.Symbol, Int}             # head -> seam lookups, INCLUDING interpreted ones
     interpret_only::Set{Base.Symbol}          # heads whose compiled lane faulted on the depth budget
+    # 🔴 (head, arity) PAIRS THAT TRIED TO COMPILE AND DECLINED, so first-call compilation does not
+    # re-attempt them on EVERY call. Without it a head that can never compile re-runs the whole
+    # `lower -> translate -> codegen` chain per call, which presents as a performance mystery rather
+    # than a bug. Per SPACE and per ARITY because the decision is: the same name at another arity,
+    # or in another space, is a different definition.
+    # ⚠️ INVALIDATION IS COARSE — `uncompile_all!` and `reset_compiled_fallbacks!` clear it; a head
+    # whose clauses change while the flag is on keeps its decline. Acceptable for the measurement
+    # harness this currently serves; a production trigger must invalidate on `space.revision`.
+    declined::Set{Tuple{Base.Symbol, Int}}
 end
 SpaceCompileState() = SpaceCompileState(
-    _DefTable(), Dict{Base.Symbol, Base.Symbol}(), Dict{Base.Symbol, Int}(), Set{Base.Symbol}()
+    _DefTable(), Dict{Base.Symbol, Base.Symbol}(), Dict{Base.Symbol, Int}(), Set{Base.Symbol}(),
+    Set{Tuple{Base.Symbol, Int}}()
 )
 
 const _SPACE_STATE = WeakKeyDict{Space, SpaceCompileState}()
